@@ -6,8 +6,6 @@ contract:
     algedonic_result: object
     escalations_result: object
     memory_result: object
-    grounding_trend_result: object
-    grounding_coverage_result: object
   output:
     briefing: object
     briefing_complete: boolean
@@ -19,13 +17,11 @@ visibility: Public
    hidden flow of the cybernetic regulation system rendered as a readable
    digest (Meyer: "The gemba was always there. We just couldn't see it.").
 
-   Five sections:
+   Four sections:
    1. System health summary — one paragraph
    2. Algedonic alert digest — table of recent pain/pleasure signals
    3. Escalation backlog digest — table of pending human-review items
    4. Per-skill performance digest — table of skills with health classification
-   5. Grounding health digest — clean_rate, coverage_rate, trend direction,
-      top coverage gaps (agent types with delegations but no contract)
 
    Health classification per skill:
    - healthy: no recent issues, no escalations, no memory signals
@@ -38,7 +34,7 @@ visibility: Public
    the proxy signal. #}
 
 You are the Curator synthesizing a gemba walk briefing. Your job is to
-structure the five signal channels into a coherent, readable briefing
+structure the three signal channels into a coherent, readable briefing
 that the operator can act on. You do NOT make decisions — you surface
 signals and classify health. The operator decides.
 
@@ -65,19 +61,9 @@ Raw result from curator_escalations:
 Raw result from curator_consult (skill performance patterns):
 {{ memory_result | tojson }}
 
-## Signal Channel 4: Grounding Trend
-
-Raw result from curator_grounding_trend (global grounding trend):
-{{ grounding_trend_result | tojson }}
-
-## Signal Channel 5: Grounding Coverage
-
-Raw result from curator_grounding_coverage (coverage gap report):
-{{ grounding_coverage_result | tojson }}
-
 ## Your Task
 
-Synthesize these five channels into a structured briefing. Produce a JSON
+Synthesize these three channels into a structured briefing. Produce a JSON
 object with the following shape:
 
 ```json
@@ -108,22 +94,6 @@ object with the following shape:
       "classification_rationale": "Why this classification — grounded in the memory signals"
     }
   ],
-  "grounding_health": {
-    "delegations_with_zero_nulled": 0,
-    "clean_rate": 0.0,
-    "coverage_rate": 0.0,
-    "trend_direction": "improving | stable | degrading | no_baseline",
-    "total_delegations": 0,
-    "delegations_without_contract": 0,
-    "top_coverage_gaps": [
-      {
-        "agent_type": "...",
-        "delegations_without_contract": 0,
-        "delegations_with_contract": 0
-      }
-    ],
-    "narrative_leaks_detected": 0
-  },
   "signal_channel_gaps": [
     "List any signal channels that returned empty, failed, or are known to be unavailable via MCP. Specifically: skill feedback spans (outcome, operator_feedback, convergence) live in the in-memory RegulationLedger and are not exposed via MCP — note this gap explicitly."
   ],
@@ -136,24 +106,7 @@ object with the following shape:
 - Ground every claim in the raw signal data. Do not fabricate alerts,
   escalations, or skill issues that are not present in the inputs.
 - If a signal channel returned an error or empty result, note it in
-  signal_channel_gaps — do not silently omit it. This includes the
-  grounding trend and coverage channels (steps 4 and 5).
-- Grounding health digest rules:
-  - delegations_with_zero_nulled is the lead metric (deletion-resistant,
-    paper Rule 5.4). Report it as a raw count, not a derived ratio.
-  - clean_rate and coverage_rate are derived ratios — report them as
-    decimals (0.0 to 1.0). When there are no delegations, report null,
-    not 0.0 (absence is not a verdict).
-  - trend_direction: "improving" when violation count is falling,
-    "degrading" when rising, "stable" when flat, "no_baseline" when
-    there are fewer than 2 data points to compare.
-  - top_coverage_gaps: list agent types that have delegations_without_contract
-    > 0, sorted by that count descending. Limit to the top 5.
-  - narrative_leaks_detected: the count of narrative leaks from the trend
-    report, if available. When the trend query failed, set to null.
-  - If the grounding trend or coverage query returned an error or empty,
-    note it in signal_channel_gaps and set the corresponding fields to null
-    — do not fabricate grounding metrics that were not returned.
+  signal_channel_gaps — do not silently omit it.
 - The per_skill_digest should include every skill that appears in the
   memory consultation result. If focus_skill is set and the memory result
   is scoped to it, the digest has one entry.
@@ -166,7 +119,7 @@ object with the following shape:
   "skill_use_issue:<skill_name>") are the proxy signal for skill health.
   Skill feedback spans (outcome, operator_feedback) are NOT available via
   MCP — note this in signal_channel_gaps.
-- If all five signal channels returned empty or error, set
+- If all three signal channels returned empty or error, set
   briefing_complete to false and explain in system_health_summary that
   the regulation system has no recent signals to review (this may indicate
   a quiet system or a wiring gap — the operator should check curator_status).

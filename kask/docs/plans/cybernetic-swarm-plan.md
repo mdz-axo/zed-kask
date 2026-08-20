@@ -32,20 +32,6 @@ mds_categories: [composition, trust]
 > **Status:** reference + findings, 2026-08-02 (revision 2). Not yet implemented
 > — the components (§6) are proposals ranked by leverage, with implementation
 > sequencing in §8 governed by the dependency hierarchy (§3).
->
-> **Superseded terminology note (2026-08-12, revised 2026-08-14):** where the D1 Reliability
-> discussion credits "OCAP" as part of the spend membrane, that component no
-> longer exists. The per-call capability gate at `McpRuntime::invoke` was removed
-> because all three production mint sites derived the token's `resource_id` from
-> the same tool name they passed to `invoke` — the check compared a
-> caller-supplied value against itself and denied nothing
-> (`security/regressions/RR-0056.yaml`). The D1 elements that still stand are
-> the consent gate, the per-dispatch ceiling, and the ledger balance check.
-> Tool reach is bounded by the swarm card `mcp_tools` allowlist and the
-> inference IPC `tool_allowlist`, and the call ceiling is a runaway-loop breaker
-> that is fail-open on an unseeded agent (`RR-0057.yaml`). Read "OCAP" below as
-> "tool allowlist separation"; the cybernetic
-> argument is unaffected.
 
 ## Design constraints (this revision)
 

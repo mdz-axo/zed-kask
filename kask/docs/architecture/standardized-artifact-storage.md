@@ -47,7 +47,6 @@ erDiagram
     USER_AGENT ||--|| USER_DB : "{username}.db"
     USER_AGENT ||--|| USER_MEM : "memory.db"
     CURATOR ||--|| CURATOR_DB : "curator.db"
-    MCP ||--o{ CODEGRAPH : "codegraph/codegraph.db"
     MCP ||--o{ KATA_KANBAN : "kata-kanban/kanban.db"
     MCP ||--o{ SWARM : "swarm/ledger.db"
     MCP ||--o{ TRAINING : "training/training.db"

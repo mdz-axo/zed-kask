@@ -71,14 +71,13 @@ Core spans used across 2+ crates. This is the foundational enum implementing `Ob
 | `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP tool invocation | Any MCP server dispatches a tool call. Subsystem identifies which server |
 | `Inference` | `reg.inference` | LLM inference request/response | GovernedInference prepares/executes/checks an inference call |
 | `AgentPod` | `reg.pod` | Agent pod lifecycle events | Pod registration, activation, deactivation |
-| `Gas` | `reg.gas` | Gas (energy/budget) consumption | Gas reserved, settled, or depleted for any operation |
 | `Curation` | `reg.curation` | Curation loop operations | Registry sync, pod sync, directive issuance |
 | `SelfHeal` | `reg.heal` | Self-healing operation | The Regulation runtime's heal callback fires |
 | `MemoryEncode` | `reg.memory.encode` | Memory encoding operation | Episodic or semantic memory encodes an observation |
 
 **ToolSubsystem variants** for `RegulationSpan::Tool` (defined in `regulation.rs`):
 
-`WebSearch`, `Condenser`, `Training`, `Corpus`, `Research`, `Communication`, `Registry`, `Wallet`, `Media`, `Kanban`, `Memory`, `Companies`, `Filesystem`, `Curator`, `Other` (catch-all).
+`WebSearch`, `Training`, `Corpus`, `Research`, `Communication`, `Registry`, `Wallet`, `Kanban`, `Memory`, `Companies`, `Filesystem`, `Curator`, `Other` (catch-all).
 
 > **Note on retained variants:** `Communication`, `Filesystem`, and `Memory` remain in the
 > `ToolSubsystem` enum for span-name stability even though their corresponding MCP servers
@@ -171,7 +170,6 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 | `reg.skill.registry` | `.registry_validated` | Skill registry validated successfully |
 | `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured`, `.choice_misconfigured`, `.timeout_retry`, `.gate_passed`, `.gate_failed` | Cascade step execution; cascade escalation; branching/choice misconfiguration; timeout retry; gate pass/fail outcomes |
 | `reg.skill.convergence` | `.converged`, `.escalated` | Cascade convergence outcomes (metric ≤ threshold, or max iterations exhausted) |
-| `reg.skill.budget` | `.gas_exhausted`, `.gas_alert`, `.rjoule_exhausted`, `.rjoule_alert` | Gas and rJoule budget events |
 | `reg.skill.provenance` | (bare) | Skill provenance tracking |
 | `reg.skill.profile_enforcement` | (bare) | Skill profile enforcement |
 | `reg.skill.frontmatter` | `.missing` | SKILL.md frontmatter parse errors |
@@ -236,13 +234,12 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 | **Cybernetics** | `reg.cybernetics`, `.backpressure`, `.substitution` | Cybernetic loop operations |
 | **Email** | `reg.email`, `reg.email.sent` | Curator email — outbound sent (`reg.email.sent`) + inbound received (under `reg.email`) |
 | **Deploy** | `reg.deploy.backup_auto_export`, `.backup_export`, `.backup_upload`, `.session_close`, `.session_open` | Deploy/session lifecycle |
-| **Gas** | `reg.gas.calibration` | Gas calibration events (core `reg.gas` is `RegulationSpan::Gas`, §3.1) |
 | **Goal** | `reg.goal` | Goal operations |
 | **Guard** | ~~`reg.guard`, `.canary`, `.input`, `.output`, `.redact`, `.runtime_policy`, `.violation`~~ | **No longer registered or emitted.** No `reg.guard*` string appears in `CANONICAL_NAMESPACES`. `.canary`/`.input`/`.output`/`.redact` went with the guard crate (2026-08-10, RR-0055 `obsolete`); `.runtime_policy` went with the FIDES runtime policy (2026-08-12, RR-0053 — the gate's `Log` verdict was its only emitter). Historic records carrying these namespaces remain in the audit trail; `reg.guard.redact` marked **post-hoc redaction** of streaming output, sanitizing the *stored* version only. |
 | **Heal** | `reg.heal`, `.attempt`, `.code_change_proposed`, `.dotenv`, `.escalated`, `.file_created`, `.llm_assisted`, `.retry_loop`, `.set_env`, `.strategy`, `.unmatched` | Self-healing operations |
 | **Kata/Keystore** | `reg.kata`, `reg.keystore` | Kata and keystore operations |
 | **Ledger** | `reg.ledger` | Governance/rollback failure signals (runtime-posture-monitor visible) |
-| **MCP** | `reg.mcp`, `.cap`, `.health`, `.media.face` | MCP server health, capability events (`reg.mcp.cap`), and media face detection |
+| **MCP** | `reg.mcp`, `.cap`, `.health` | MCP server health and capability events (`reg.mcp.cap`) |
 | **Media/Memory** | `reg.media`, `reg.media.select`, `reg.memory`, `.budget`, `.decay`, `.encode`, `.episodic` | Media operations (`reg.media.select` = media model/endpoint selection) and memory operations |
 | **Multi-agent** | `reg.multi.invite.accepted`, `.invite.sent`, `.role.assigned` | Multi-agent coordination |
 | **Outcome** | `reg.outcome`, `.calibration`, `.coherence`, `.predictive` | Fermi impact-gate outcomes (v0.31.0). Note: `reg.outcome` appears twice in `CANONICAL_NAMESPACES` (event.rs:236 and :259) — a benign duplicate entry. |

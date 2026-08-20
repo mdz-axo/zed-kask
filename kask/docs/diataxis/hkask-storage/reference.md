@@ -366,8 +366,8 @@ Under D28, storage artifacts live under a single rooted data tree
 it — agent-owned under `agents/{name}/`, server-owned under
 `mcp/{server_id}/`. The curator DB is `agents/curator/curator.db` (the "pod"
 concept was deprecated; `pod.db` is gone). MCP server DBs follow
-`mcp/{server_id}/{purpose}.db` (e.g. `mcp/codegraph/codegraph.db`,
-`mcp/kata-kanban/kanban.db`, `mcp/media/gallery.db`). The `pod_meta` table
+`mcp/{server_id}/{purpose}.db` (e.g. `mcp/kata-kanban/kanban.db`,
+`mcp/swarm/ledger.db`). The `pod_meta` table
 in `schema.sql:22` is the in-DB metadata mirror, not a path component.
 
 ## See also

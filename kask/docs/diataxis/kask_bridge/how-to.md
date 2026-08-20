@@ -148,7 +148,7 @@ comments (e.g. `mcp_servers.rs:91-96` for the `HKASK_SERPAPI_API_KEY`
 normalization).
 
 Also add a `*_config_env_*` test if your server reads config vars, following
-the pattern at `mcp_servers.rs:887-919` for codegraph.
+the pattern at `mcp_servers.rs:887-919` for curator.
 
 ### Step 8 — Run clippy
 

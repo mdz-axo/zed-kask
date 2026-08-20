@@ -74,6 +74,16 @@ pub enum RegulationData {
     /// values (previously the action carried only a reason string and the
     /// budget/target were silently dropped).
     CuratorBudgetOverride { agent: String, new_budget: u64 },
+    /// A regulatory action whose impact should be verified against a rollout
+    /// in the event store (event-substrate phase 6). `verify_impact` queries
+    /// the wired `RolloutEventSource` for the metric's value at
+    /// `before_position` and at the rollout's end — the store answers "what
+    /// changed after this action" as a query instead of a struct walk.
+    RolloutImpactCheck {
+        rollout_id: String,
+        before_position: i64,
+        metric: String,
+    },
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]
     #[default]
@@ -94,6 +104,42 @@ impl RegulationData {
                 remaining_ratio, ..
             } => Some(*remaining_ratio),
             _ => None,
+        }
+    }
+
+    /// The rollout this action's impact should be verified against, and the
+    /// event position marking "before the action" (event-substrate phase 6).
+    /// `None` for actions that don't target a rollout — those take the
+    /// re-sense fallback in `verify_impact`.
+    pub fn rollout_target(&self) -> Option<(String, i64)> {
+        match self {
+            RegulationData::RolloutImpactCheck {
+                rollout_id,
+                before_position,
+                ..
+            } => Some((rollout_id.clone(), *before_position)),
+            _ => None,
+        }
+    }
+
+    /// The metric name this action's data concerns (for store queries).
+    pub fn metric_name(&self) -> &str {
+        match self {
+            RegulationData::EnergyBudgetLow { .. }
+            | RegulationData::BudgetGuardEscalation { .. }
+            | RegulationData::EnergyDepletionAutoAdjust { .. } => "energy_remaining",
+            RegulationData::VarietyDeficitExceeded { .. } => "variety_deficit",
+            RegulationData::ErrorRateExceeded { .. } => "error_rate",
+            RegulationData::ConnectorLatencyExceeded { .. } => "connector_latency",
+            RegulationData::CommunicationBackpressure { .. } => "queue_depth",
+            RegulationData::WalletBalanceLow { .. } => "wallet_balance",
+            RegulationData::WalletKeyUnhealthy { .. } => "wallet_health",
+            RegulationData::SeamCoverageDegraded { .. }
+            | RegulationData::SeamCoverageImproved { .. } => "seam_coverage",
+            RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
+            RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",
+            RegulationData::RolloutImpactCheck { metric, .. } => metric,
+            RegulationData::NoData => "no_metric",
         }
     }
 

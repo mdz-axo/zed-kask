@@ -28,6 +28,25 @@
 //! in `SetPoints` + regulation actions via `InferenceRegulation`.
 
 use crate::dampener::{Dampener, StagnationDetector};
+
+/// A read-only view of rollout events for impact verification (event-
+/// substrate phase 6). The regulation crate defines the port; the swarm
+/// side implements it over `hkask-event-store`. This keeps the regulation
+/// crate dependency-light (no storage dep) while letting `verify_impact`
+/// answer "for rollout R, what was the metric before action A and after
+/// it?" as a query instead of a special-case struct walk.
+pub trait RolloutEventSource: Send + Sync {
+    /// The value of `metric` for `rollout_id` at the event position
+    /// `before_position` (the last event before the action) and at the
+    /// rollout's end. `None` when the rollout has no event for that metric
+    /// — absence, not zero (a fabricated 0 would read as a real measurement).
+    fn metric_before_and_after(
+        &self,
+        rollout_id: &str,
+        metric: &str,
+        before_position: i64,
+    ) -> Result<Option<(f64, f64)>, String>;
+}
 use crate::energy::{AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
@@ -110,6 +129,11 @@ pub struct CyberneticsLoop {
     simulator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
+    /// Optional rollout event source (event-substrate phase 6). When wired,
+    /// `verify_impact` queries it for before/after metric values on rollouts
+    /// the action targeted — the store becomes the impact data plane and the
+    /// struct-walk below becomes the fallback instead of the only path.
+    rollout_events: Option<Arc<dyn RolloutEventSource>>,
 }
 
 impl CyberneticsLoop {
@@ -189,6 +213,7 @@ impl CyberneticsLoop {
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
             simulator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
+            rollout_events: None,
         }
     }
 
@@ -199,6 +224,18 @@ impl CyberneticsLoop {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_event_sink(mut self, sink: Arc<dyn RegulationSink>) -> Self {
         self.event_sink = Some(sink);
+        self
+    }
+
+    /// Wire the rollout event source (event-substrate phase 6). When wired,
+    /// `verify_impact` queries it for before/after metric values before
+    /// falling back to the in-memory re-sense path.
+    ///
+    /// expect: "The system provides configurable cybernetic self-regulation"
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_rollout_event_source(mut self, source: Arc<dyn RolloutEventSource>) -> Self {
+        self.rollout_events = Some(source);
         self
     }
 
@@ -1270,6 +1307,60 @@ impl CyberneticsLoop {
         drop(ledger);
 
         for action in previous_actions {
+            // Event-substrate path (phase 6): when the action's parameters
+            // name a rollout and a rollout event source is wired, query the
+            // store for the before/after values. This is the general path —
+            // the struct walk below is the fallback for actions that don't
+            // target a rollout. A query failure is logged and falls through
+            // to the fallback (degraded, not broken — the loop still
+            // verifies via re-sensing).
+            if let Some(source) = &self.rollout_events
+                && let Some((rollout_id, before_position)) = action.parameters.data.rollout_target()
+                && let Ok(Some((before_val, after_val))) = source.metric_before_and_after(
+                    &rollout_id,
+                    action.parameters.data.metric_name(),
+                    before_position,
+                )
+            {
+                let metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
+                    .unwrap_or(SignalMetric::EnergyRemaining);
+                let decision = {
+                    let delta = after_val - before_val;
+                    // Same per-metric direction semantics as the fallback
+                    // path below: EnergyRemaining improves upward, everything
+                    // else improves toward zero.
+                    let improved = match metric {
+                        SignalMetric::EnergyRemaining => delta > 0.0,
+                        _ => delta < 0.0,
+                    };
+                    let worsening = if improved { 0.0 } else { delta.abs() };
+                    let block_worsening_ratio = self
+                        .calibrated_thresholds
+                        .read()
+                        .await
+                        .block_worsening_ratio;
+                    classify_decision(
+                        worsening,
+                        self.set_points.stage_worsening_ratio,
+                        block_worsening_ratio,
+                    )
+                };
+                reports.push(ImpactReport::new(
+                    action.action_type,
+                    metric,
+                    before_val,
+                    after_val,
+                    decision,
+                ));
+                tracing::debug!(
+                    target: "reg.cybernetics",
+                    rollout = %rollout_id,
+                    before = before_val,
+                    after = after_val,
+                    "verify_impact answered from the rollout event store"
+                );
+                continue;
+            }
             // Determine metric and pre-action value from the typed RegulationData.
             let (before_val, metric) = match &action.parameters.data {
                 RegulationData::EnergyBudgetLow {

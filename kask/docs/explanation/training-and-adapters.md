@@ -10,7 +10,7 @@ mds_categories: [domain, lifecycle]
 
 # Training and Adapters
 
-Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the training MCP server (a child process over stdio). hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed via the training MCP server (one of the 13 builtin MCP servers registered inside zed-kask as child processes over stdio, D1–D3).
+Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the training MCP server (a child process over stdio). hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed via the training MCP server (one of the 10 builtin MCP servers registered inside zed-kask as child processes over stdio, D1–D3).
 
 ---
 
@@ -280,7 +280,7 @@ The operational assessment and remediation sequence is documented in the [zed-ka
 
 ### Replica Pipeline Dispatch
 
-Corpus pipeline operations are dispatched in-process through the unified `hkask-mcp-corpus` server. All corpus tools (`docproc_*` and `replica_*`) are now in-process — the former `corpus_pipeline_run` tool and the manifest executor have been removed. Pipeline workflows are orchestrated via the agent panel, which calls corpus MCP tools directly.
+Corpus pipeline operations are dispatched in-process through the unified `hkask-mcp-corpus` server. All corpus tools (`docproc_*` and `replica_*`) are in-process. Pipeline workflows are orchestrated via the agent panel, which calls corpus MCP tools directly.
 
 `execute_tool` wraps the MCP call with a tool span and records success or error against the caller's WebID. That is observability, not authorization: per [P4 — Clear Boundaries](../architecture/core/PRINCIPLES.md#p4--clear-boundaries), operators must not treat this dispatcher as an authority boundary. Nor is `McpRuntime::invoke` downstream of it one — it meters and dispatches (RR-0056). The authority boundaries are the tool allowlists named in P4.2.
 

@@ -21,31 +21,30 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 ## Instructions
 
-### SENSE+GATHER — Query five curator signal channels (step 1)
+### SENSE+GATHER — Query three curator signal channels (step 1)
 
-1. A single `mcp_batch` step queries five independent channels concurrently: `curator_algedonic_log` (default 24h lookback), `curator_escalations`, `curator_consult` (skill performance patterns, scoped to `focus_skill` when set), `curator_grounding_trend`, and `curator_grounding_coverage`.
-2. Algedonic alerts are pain/pleasure signals from the cybernetics loop — variety deficits, energy exhaustion, outcome plateaus. Grounding trend/coverage come from the verification ledger (clean_rate, coverage gaps).
+1. A single `mcp_batch` step queries three independent channels concurrently: `curator_algedonic_log` (default 24h lookback), `curator_escalations`, `curator_consult` (skill performance patterns, scoped to `focus_skill` when set).
+2. Algedonic alerts are pain/pleasure signals from the cybernetics loop — variety deficits, energy exhaustion, outcome plateaus.
 3. If any channel fails, on failure, report surfaces the issue and the synthesis proceeds with whichever results are available; missing channels are noted as gaps.
 
 ### ANALYZE — Synthesize briefing (step 2)
 
-1. Render the `gemba-walk/synthesize-briefing` template to structure the five signal channels into a coherent briefing.
-2. The briefing has five sections: system health summary, algedonic alert digest, escalation backlog digest, per-skill performance digest, grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps).
+1. Render the `gemba-walk/synthesize-briefing` template to structure the three signal channels into a coherent briefing.
+2. The briefing has four sections: system health summary, algedonic alert digest, escalation backlog digest, per-skill performance digest.
 3. Each per-skill entry includes issue count, recent failure patterns, and a health classification (healthy / watch / intervene).
 4. The briefing explicitly notes when skill feedback spans (outcome, operator_feedback) are not available via MCP — this is a known gap, not a silent omission.
 
 ### PRESENT — Render briefing (step 3)
 
 1. Render the `gemba-walk/present-briefing` template as a conversational summary with markdown tables.
-2. The summary opens with a one-paragraph system health overview, then the algedonic alert table, then the escalation backlog table, then the per-skill performance table, then the grounding health table.
+2. The summary opens with a one-paragraph system health overview, then the algedonic alert table, then the escalation backlog table, then the per-skill performance table.
 3. The presentation closes with a prompt for the operator to ask follow-up questions in the regular conversation.
 
 ### RECOMMEND — Propose actions (step 4)
 
 1. Render the `gemba-walk/recommend-actions` template to propose refinement actions for operator approval.
 2. For each skill with a "watch" or "intervene" classification, propose one of: `curator_directive`, `skill-maintenance`, `validate_golden_outputs`, `direct_edit`, or `no_action`.
-3. Additionally, propose grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations when the clean rate dropped, or investigate narrative leaks.
-4. The proposals are recommendations, not autonomous actions — the operator reviews and decides which to execute in the regular conversation.
+3. The proposals are recommendations, not autonomous actions — the operator reviews and decides which to execute in the regular conversation.
 
 ### CONVERGE — Deterministic check (step 5) and loop (step 6)
 
@@ -56,9 +55,9 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 | Template | Purpose |
 |----------|---------|
-| `synthesize-briefing.j2` | Structure the five signal channels (algedonic, escalations, memory, grounding trend, grounding coverage) into a coherent briefing with per-skill health classification (healthy / watch / intervene) and a grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps). |
-| `present-briefing.j2` | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
-| `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
+| `synthesize-briefing.j2` | Structure the three signal channels (algedonic, escalations, memory) into a coherent briefing with per-skill health classification (healthy / watch / intervene). |
+| `present-briefing.j2` | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
+| `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Recommendations, not autonomous actions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -141,6 +141,95 @@ impl SignalMetric {
             SignalMetric::MutationScore => "mutation_score",
         }
     }
+
+    /// Parse a metric from its snake_case name (the inverse of `as_str`).
+    /// `None` for unknown names — callers decide the fallback, never a
+    /// silent default that would mislabel the report.
+    pub fn from_str_name(name: &str) -> Option<Self> {
+        [
+            SignalMetric::EnergyRemaining,
+            SignalMetric::VarietyDeficit,
+            SignalMetric::ErrorRate,
+            SignalMetric::ConnectorLatency,
+            SignalMetric::CommunicationQueueDepth,
+            SignalMetric::StorageUsage,
+            SignalMetric::MemoryLife,
+            SignalMetric::TripleCount,
+            SignalMetric::LowConfidenceCount,
+            SignalMetric::CircuitBreakerState,
+            SignalMetric::InferenceAvailable,
+            SignalMetric::InferenceModelAvailable,
+            SignalMetric::AlgedonicEvents,
+            SignalMetric::AlgedonicLogApproachingCap,
+            SignalMetric::PendingEscalations,
+            SignalMetric::ConsolidationCandidates,
+            SignalMetric::GoalStaleCount,
+            SignalMetric::GoalExpiredCount,
+            SignalMetric::MetacognitionVarietyDeficit,
+            SignalMetric::MetacognitionCriticalAlerts,
+            SignalMetric::WalletBalanceRatio,
+            SignalMetric::WalletKeyHealth,
+            SignalMetric::SeamCoverage,
+            SignalMetric::ActionIneffective,
+            SignalMetric::RegulatoryPlateau,
+            SignalMetric::ActionDecisionBlocked,
+            SignalMetric::ToolReliability,
+            SignalMetric::TestCoverage,
+            SignalMetric::MutationScore,
+        ]
+        .into_iter()
+        .find(|metric| metric.as_str() == name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metric_name_round_trips() {
+        // Every variant must survive as_str -> from_str_name. A variant
+        // missing from the parse table would silently fall to the caller's
+        // fallback and mislabel impact reports.
+        let names = [
+            "energy_remaining",
+            "variety_deficit",
+            "error_rate",
+            "connector_latency",
+            "communication_queue_depth",
+            "storage_usage",
+            "memory_life",
+            "triple_count",
+            "low_confidence_count",
+            "circuit_breaker_state",
+            "inference_available",
+            "inference_model_available",
+            "algedonic_events",
+            "algedonic_log_approaching_cap",
+            "pending_escalations",
+            "consolidation_candidates",
+            "goal_stale_count",
+            "goal_expired_count",
+            "metacognition_variety_deficit",
+            "metacognition_critical_alerts",
+            "wallet_balance_ratio",
+            "wallet_key_health",
+            "seam_coverage",
+            "action_ineffective",
+            "regulatory_plateau",
+            "action_decision_blocked",
+            "tool_reliability",
+            "test_coverage",
+            "mutation_score",
+        ];
+        for name in names {
+            let parsed =
+                SignalMetric::from_str_name(name).unwrap_or_else(|| panic!("{name} must parse"));
+            assert_eq!(parsed.as_str(), name);
+        }
+        // Unknown names are None, not a silent default.
+        assert!(SignalMetric::from_str_name("not_a_metric").is_none());
+    }
 }
 
 /// Afferent signal from a loop's sensing phase.

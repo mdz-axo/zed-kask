@@ -5372,9 +5372,13 @@ mod internal_tests {
             );
 
             assert!(
-                state.skill_loading_issues.is_empty(),
-                "zed-kask disables description-length warnings; got {:?}",
-                state.skill_loading_issues,
+                state.skill_loading_issues.iter().any(|issue| {
+                    issue.kind == SkillLoadingIssueKind::DescriptionTooLong
+                        && issue.path == skill_path
+                        && issue.message.to_string().contains("1024-byte limit")
+                }),
+                "expected a description-length warning issue, got {:?}",
+                state.skill_loading_issues
             );
 
             (*disk[0]).clone()
@@ -5389,8 +5393,11 @@ mod internal_tests {
                 .expect("long-description should appear in available skills");
             assert_eq!(available_skill.description, long_description);
             assert!(
-                available_skill.warning.is_none(),
-                "zed-kask disables description-length warnings; available skill should carry no warning, got {:?}",
+                available_skill
+                    .warning
+                    .as_ref()
+                    .is_some_and(|warning| warning.contains("1024-byte limit")),
+                "available skill should expose warning text, got {:?}",
                 available_skill.warning
             );
         });

@@ -47,7 +47,7 @@ hKask operates under a Magna Carta — a charter of liberties that honors user s
 1. **User Sovereignty** — Data is owned by the user, correctly categorized, portable, and consent is atomic. Grounded in Berners-Lee's SOLID architecture principles.[^solid]
 2. **Affirmative Consent** — Default is deny. Nothing passes without an explicit yes. Consent is scoped, versioned, and expiring.
 3. **Generative Space** — Within boundaries, hKask is maximally generative. Inference and tooling expose all probabilistic/generative settings to users. No privileged engineer access. Open-source only.
-4. **Clear Boundaries** — Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability tokens.[^miller-ocap]
+4. **Clear Boundaries** — Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability allowlists.[^miller-ocap]
 
 ---
 
@@ -65,15 +65,6 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager`, charged in `McpRuntime::invoke` | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
-> **Removed 2026-08-12 — `McpRuntime::invoke` is NOT an authorization gate.**
-> The former OCAP capability-match gate (`DelegationToken::is_valid_for` +
-> `verify_capability_domain`) was deleted because it could not deny anything: all
-> three production mint sites derived the token's `resource_id` from the same tool
-> name they passed to `invoke`, so the check compared a caller-supplied value
-> against itself. `DelegationToken`, `panel_default_token`, `capabilities_match`,
-> and `ToolPortError::CapabilityDenied` no longer exist; `invoke` takes
-> `agent: WebID` for metering only. See `kask/security/regressions/RR-0056.yaml`.
->
 > There is no longer a single "enforcement membrane." Authority is the allowlist
 > rows above — boundaries whose list the caller being checked does not choose.
 
@@ -91,7 +82,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous (RR-0056). Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
 | `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `hkask-types/src/visibility.rs:18-20` and `:29-30`; no struct or impl exists |
 
-The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch. (The OCAP capability-match gate this paragraph previously cited was removed as vacuous; see the note above and RR-0056.) The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
+The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch. The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
 
 ---
 
@@ -106,8 +97,8 @@ Data sovereignty boundaries implement the principle of informational self-determ
 > **OUGHT — not implemented.** `DataSovereigntyBoundary` is a charter design
 > intention, not live code (zero hits in `kask/crates/`; see
 > [IS vs OUGHT Status](#is-vs-ought-status)). The live per-h_mem enforcement is
-> the `Visibility` enum at `hkask-types/src/visibility.rs:34-39` plus the OCAP
-> capability-match gate in `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs:531`).
+> the `Visibility` enum at `hkask-types/src/visibility.rs:34-39` and the
+> delegated-tool allowlist on the inference IPC `tool_invoke` dispatch.
 
 **Default hKask Configuration:**
 - **Sovereign (Private):** episodic_memory, personal_context, capability_tokens, capability_boundaries
@@ -194,7 +185,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-04; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch. (The OCAP capability-match gate previously cited here was removed as vacuous; see RR-0056.)
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-04; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
 
 ---
 
@@ -310,8 +301,8 @@ This is not a contradiction. This is the core.
 The Curator is not just a quality gate. The Curator is the Magna Carta enforcer, maintaining requisite variety through curation decisions:[^ashby-law]
 
 > **OUGHT — charter role.** The sovereignty and consent checking duties below
-> are the Curator's intended charter duties. The live enforcement membrane is
-> the OCAP capability-match gate in `McpRuntime::invoke`; the
+> are the Curator's intended charter duties. The live enforcement is the
+> delegated-tool allowlist on the inference IPC `tool_invoke` dispatch; the
 > `SovereigntyChecker` / `require_sovereignty` surface is not yet implemented
 > (see [IS vs OUGHT Status](#is-vs-ought-status)).
 
@@ -365,9 +356,9 @@ The Magna Carta Verifier is a skill that verifies each principle using YAML mani
 > intentions, not verifiable code (`SovereigntyChecker` appears only in doc
 > comments at `hkask-types/src/visibility.rs:18-20, 29-30`; `require_sovereignty`
 > has zero hits). The manifest's `gate: require_sovereignty` field describes the
-> intended (OUGHT) surface. The live denial gate is the OCAP capability-match in
-> `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs:531`). See
-> [IS vs OUGHT Status](#is-vs-ought-status).
+> intended (OUGHT) surface. The live denial gate is the delegated-tool allowlist
+> on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`).
+> See [IS vs OUGHT Status](#is-vs-ought-status).
 
 ### Skill Structure
 
@@ -525,7 +516,7 @@ impl SovereigntyChecker {
 
 The Magna Carta is not aspirational. It is enforced:
 
-1. **Capability Boundaries (IS)** — In-process capability tokens verify authority via `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs:508-514`)[^miller-ocap]
+1. **Capability Boundaries (IS)** — The delegated-tool allowlist on the inference IPC `tool_invoke` dispatch verifies authority before dispatch (`kask_bridge/src/inference_ipc_server.rs`)[^miller-ocap]
 2. **Sovereignty Checks (OUGHT — not yet enforced)** — The charter intent is that every invocation is sovereignty-checked; `require_sovereignty` is not yet implemented (see [IS vs OUGHT Status](#is-vs-ought-status))
 3. **Consent Verification (OUGHT — not yet enforced)** — Scoped, versioned, expiring consent is the charter intent; `SovereigntyConsent`/`DenyAllConsent` are not yet implemented
 4. **Regulation Alerts (IS)** — Violations of the live capability gate trigger `Regulation` alerts

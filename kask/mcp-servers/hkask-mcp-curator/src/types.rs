@@ -96,22 +96,3 @@ pub struct ReportSkillUseIssueRequest {
     /// "schema_mismatch").
     pub failure_type: Option<String>,
 }
-
-/// Request the grounding trend from the central verification ledger.
-/// Answers the paper's §4.1 question: "is this getting better?" The
-/// trend aggregates across all delegations (cross-tool, cross-server) or
-/// filters by agent/source depending on `scope`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GroundingTrendToolRequest {
-    /// Scope: "global" (all delegations), "by_agent" (filter by agent_id),
-    /// or "by_source" (filter by source tool like "kanban_task_spawn").
-    /// Default: "global".
-    #[serde(default)]
-    pub scope: Option<String>,
-    /// Agent id to filter by when `scope == "by_agent"`.
-    #[serde(default)]
-    pub agent_name: Option<String>,
-    /// Source tool to filter by when `scope == "by_source"`.
-    #[serde(default)]
-    pub source: Option<String>,
-}

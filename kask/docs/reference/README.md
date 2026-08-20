@@ -30,7 +30,7 @@ for the D1–D28 integration seams and the essentialist split.
 
 ## MCP Servers
 
-- [MCP Server Registry](mcp-servers/README.md) — All 13 on-disk MCP servers with tool tables and capability tiers
+- [MCP Server Registry](mcp-servers/README.md) — All 10 on-disk MCP servers with tool tables and capability tiers
 - [Companies MCP Server](mcp-servers/companies.md) — 44 tools, dual-provider routing, forecast store, portfolio ledger
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas
 - [Scenarios MCP Server](mcp-servers/scenarios.md) — Event-tree forecasting pipeline

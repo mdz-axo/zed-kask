@@ -71,7 +71,6 @@ pub const CORE_SKILL_NAMES: &[&str] = &[
     "swarm-steering",
     "kanban-task-management",
     // code-review optional delegates (Q16: editable delegate = backdoor)
-    "kali-audit",
     "bug-hunt",
 ];
 
@@ -1743,13 +1742,16 @@ Content.
             &content,
             SkillSource::Global,
         )
-        .expect("long descriptions should load without a warning");
+        .expect("long descriptions should load with a warning");
 
         assert_eq!(skill.description, long_desc);
-        assert!(
-            skill.load_warnings.is_empty(),
-            "zed-kask disables description-length warnings; got {:?}",
-            skill.load_warnings,
+        assert_eq!(skill.load_warnings.len(), 1);
+        assert_eq!(
+            skill.load_warnings[0],
+            SkillLoadWarning::DescriptionTooLong {
+                actual_len: MAX_SKILL_DESCRIPTION_LEN + 1,
+                max_len: MAX_SKILL_DESCRIPTION_LEN,
+            }
         );
     }
 
@@ -2539,7 +2541,6 @@ description: A skill with no body content
         let known_skills = [
             "bug-hunt",
             "lora-training",
-            "kali-audit",
             "metacognition",
             "pragmatic-semantics",
             "pragmatic-cybernetics",

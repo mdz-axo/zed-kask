@@ -38,7 +38,7 @@ When the agent invokes the `skill` tool with a skill name:
 4. The envelope is returned to the agent as the tool result (`SkillToolOutput::Found { rendered }`).
 5. The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
 
-There is no cascade, no convergence loop, no gas budget. The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
+The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
 
 ### Two Supporting Tools
 
@@ -243,9 +243,9 @@ See [`skill-mcp-integration.md`](skill-mcp-integration.md) §Co-Evolution Patter
 
 Skill execution is bounded by the **per-agent call cap** (System A): every governed MCP tool call via `McpRuntime::invoke` charges one call against the agent's `CallCap` (`CallCapManager::charge_metered` → `CallMeterOutcome`). The cap resets to its ceiling each regulation tick. An agent with no registered cap is **auto-registered** at `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and the wiring gap is logged — a missing seed is a wiring omission, not an authorization decision (RR-0057).
 
-There is no per-cascade gas budget or rJoule tracking. Tool-call bounding is solely the per-agent `CallCap`.
+Tool-call bounding is the per-agent `CallCap`.
 
-Gas/cost consumption is observable via Regulation spans. Query the in-process Regulation span surface (agent panel) and look for `reg.tool.invoked` (pre-invocation) and `reg.tool.completed` (post-invocation).
+Cost consumption is observable via Regulation spans. Query the in-process Regulation span surface (agent panel) and look for `reg.tool.invoked` (pre-invocation) and `reg.tool.completed` (post-invocation).
 
 ### Error Handling
 
