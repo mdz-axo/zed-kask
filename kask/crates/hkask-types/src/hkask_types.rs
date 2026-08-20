@@ -25,17 +25,16 @@ pub mod regulation;
 pub mod secret;
 pub mod skill;
 pub mod template;
-pub mod template_type;
 
 pub mod ports;
 pub mod time;
 pub mod tool_response;
 pub mod tool_schema;
 
-pub mod url_utils;
-pub mod visibility;
 #[cfg(feature = "sql")]
 pub mod sql_impls;
+pub mod url_utils;
+pub mod visibility;
 
 // ── Essential re-exports (used by ≥3 downstream crates) ─────────────────
 
@@ -55,7 +54,6 @@ pub use regulation::LedgerHealth;
 pub use observable_span::ObservableSpan;
 pub use skill::SkillPolarity;
 pub use template::LLMParameters;
-pub use template_type::TemplateType;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 
 pub use hmem_ontology::HMemOntology;

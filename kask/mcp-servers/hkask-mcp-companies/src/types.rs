@@ -434,7 +434,7 @@ pub struct ForecastPersistRequest {
     /// tool computes it from `forecast_price` and `current_price`.
     pub forecast_price_change: Option<f64>,
     /// Forecast valuation multiple (e.g., P/E or EV/FCF). Optional —
-    /// pre-computed PTs from flowdef valuation synthesis may not carry a
+    /// pre-computed PTs from skill valuation synthesis may not carry a
     /// multiple. When omitted, the multiple-direction Brier score is null.
     pub forecast_multiple: Option<f64>,
     /// Forecast price target (absolute price). When provided with
@@ -448,7 +448,7 @@ pub struct ForecastPersistRequest {
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Optional caller-supplied forecast ID. When omitted, the server
-    /// generates a UUID. Useful for flowdef steps that need a stable ID
+    /// generates a UUID. Useful for skill steps that need a stable ID
     /// to thread to a later forecast_record call.
     pub forecast_id: Option<String>,
 }

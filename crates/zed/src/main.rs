@@ -2270,7 +2270,7 @@ fn main() {
 
                 // Launch MCP servers via McpRuntime for app-global metered
                 // dispatch (call metering + regulation spans). These instances
-                // serve the skill cascade (FlowDef) and kask panel.
+                // serve the skill cascade and kask panel.
                 //
                 // Zed's ContextServerStore (per-project) launches separate
                 // instances for the agent tool picker — registered via

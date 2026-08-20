@@ -8,7 +8,6 @@ pub mod embedding;
 pub mod inference_port;
 pub mod inference_types;
 pub mod memory_port;
-pub mod registry;
 pub mod regulation;
 
 pub use embedding::EmbeddingGenerationError;
@@ -21,7 +20,4 @@ pub use inference_types::{
     compute_confidence,
 };
 pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, TurnRecord};
-pub use registry::{
-    RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
-};
 pub use regulation::{ConsolidationOutcome, ConsolidationRequest};

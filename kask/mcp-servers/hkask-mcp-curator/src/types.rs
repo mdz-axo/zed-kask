@@ -85,7 +85,7 @@ pub struct ReportSkillUseIssueRequest {
     /// The MCP tool name that failed or produced unexpected output
     /// (e.g. "market_match", "scenario_score").
     pub tool_name: String,
-    /// The step ordinal in the skill's flowdef where the failure occurred.
+    /// The step ordinal in the skill's cascade where the failure occurred.
     pub step_ordinal: u32,
     /// The error message or unexpected output description.
     pub error: String,
