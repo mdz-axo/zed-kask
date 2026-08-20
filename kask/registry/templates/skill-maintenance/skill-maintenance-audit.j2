@@ -44,7 +44,6 @@ A skill is stale if it exhibits any of these signals:
 | Signal | Detection Method | Severity |
 |--------|-------------------|----------|
 | Missing registry crate | No `manifest.yaml` in `registry/manifests/<name>.yaml` (process manifest) or `registry/templates/<name>/manifest.yaml` (crate catalog) | Critical |
-| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef/RenderAct (deprecated — act types no longer enforced) | Critical |
 | Broken file references | Referenced path does not exist in workspace | Critical |
 | Outdated crate references | References `hkask-*` crate that has been renamed or removed | Critical |
 | Outdated architecture references | References architecture that has been superseded | High |
@@ -52,7 +51,6 @@ A skill is stale if it exhibits any of these signals:
 | Contradictory instructions | Instructions conflict with each other or with project constraints | High |
 | Vague or generic description | Description could apply to any skill, not this one specifically | Medium |
 | Magna Carta violations | Skill violates P1–P4 principles | High |
-| template_type mismatch | template_type in manifest doesn't match .j2 frontmatter | Medium |
 | Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
 | Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |
 | Regulation span mismatches | References `reg.*` spans not in defined namespace set | Low |

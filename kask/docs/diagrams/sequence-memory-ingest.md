@@ -101,7 +101,7 @@ sequenceDiagram
 - [Memory Recall Flow](./flowchart-memory-recall.md) — the read side
 - [Memory Store ERD](./erd-memory-store.md) — the storage schema
 - [Memory System Specification](../architecture/memory-system-specification.md) — the architecture spec
-- [D6: Thread → memory](../../DIVERGENCE.md) — the divergence seam
+- [D6: Thread → memory](../../../DIVERGENCE.md) — the divergence seam
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-INGEST

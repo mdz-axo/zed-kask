@@ -100,7 +100,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | `swarm_delete_agent` | `DELETE /api/agents/{id}`        | Permanently delete an authored agent (irreversible; removes it from your library and all rosters). A synced local card is NOT touched. |
 | `swarm_delete_swarm` | `DELETE /api/teams/{id}`         | Permanently delete a workspace and its roster (irreversible).                                                                          |
 
-## Tool reference — Local (26 tools)
+## Tool reference — Local (27 tools)
 
 Local-mode tools route to zed-kask's local substrate (`hkask-inference`,
 `hkask-ledger`). They are **always exposed regardless of
@@ -171,6 +171,7 @@ Local agent cards live at `agents/local/curated/<id>/agent_card.json`
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `swarm_evaluate_local`     | Run a deterministic evaluator against a delegation response and return a `TaskSuccessVerdict` (pass/fail + detail). The evaluator name + spec are caller-supplied; the verdict feeds the swarm-intelligence ORIENT step. |
 | `swarm_execute_plan_local` | Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected `LocalDelegateResult` array with `task_success` verdicts stamped. Capped at 10 delegations. |
+| `swarm_eval_agent_local`   | Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator, and report per-task pass rates with standard error plus totals (cost, tokens, overall pass rate). In-memory only — no event store. Tasks capped at 10, repeats at 10, total rollouts at 50. |
 
 ### `LocalDelegateResult` shape
 
