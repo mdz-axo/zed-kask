@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Tutorial: Reading the Foundation Crate"
 audience: [developers new to hKask]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [lifecycle]
@@ -48,7 +48,9 @@ so downstream crates import `InferencePort` or `MemoryPort` directly from
 The crate forbids `unsafe` code (`#![forbid(unsafe_code)]` at
 `hkask_types.rs:1`) and declares no implementations of its own port traits.
 It defines abstractions; implementations live in `kask_bridge`,
-`hkask-storage`, `hkask-regulation`, and `hkask-templates`.
+`hkask-storage`, and `hkask-regulation`. (The former `hkask-templates` crate
+was deleted, commit `5f4cf5f10d`; skill execution is now upstream-Zed body
+injection via `SkillTool::run` → `render_skill_envelope`.)
 
 ## Step 2: Read agent_paths.rs
 

@@ -115,28 +115,3 @@ pub struct GroundingTrendToolRequest {
     #[serde(default)]
     pub source: Option<String>,
 }
-
-/// Request recent grounding violations from the central verification ledger.
-/// Returns delegations with nulled fields or narrative leaks since `since`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GroundingViolationsToolRequest {
-    /// ISO 8601 timestamp — return violations at or after this time.
-    /// Default: 24 hours ago.
-    #[serde(default)]
-    pub since: Option<String>,
-    /// Scope: same as `GroundingTrendToolRequest.scope`.
-    #[serde(default)]
-    pub scope: Option<String>,
-    /// Agent id to filter by when `scope == "by_agent"`.
-    #[serde(default)]
-    pub agent_name: Option<String>,
-    /// Source tool to filter by when `scope == "by_source"`.
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
-/// Request a grounding coverage report from the central verification ledger.
-/// Reports which agent types have grounding contracts vs. which have
-/// delegations but no contract (the coverage gap, paper §6).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GroundingCoverageToolRequest {}

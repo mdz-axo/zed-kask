@@ -1,8 +1,8 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-05
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -12,12 +12,13 @@ mds_categories: [domain, curation]
 
 Regulation spans are the observability substrate of hKask's Cybernetic Nervous System (Loop 6). Every operation that affects system state — tool invocations, inference calls, gas consumption, contract lifecycle events — emits a **span** through the Regulation tracing infrastructure.[^otel-spans][^beer-cybernetics]
 
-> **Hosting note (v0.32.0):** hKask runs in-process inside zed-kask. The standalone `kask` CLI and
+> **Hosting note (v0.32.0; updated 2026-08-20):** hKask runs in-process inside zed-kask. The standalone `kask` CLI and
 > `hkask-api` HTTP server have been **deleted**. Span query/subscribe commands previously exposed
 > via `kask regulation ...` are now available through programmatic `RegulationLedger` calls
-> (the former kask panel D10 was deleted; no UI surface remains). Skill spans (§3.9) are now emitted by `hkask-templates`
-> (which owns `ManifestExecutor` and skill execution via D1), replacing the deleted
-> `hkask-services-skill`.
+> (the former kask panel D10 was deleted; no UI surface remains). Skill spans (§3.9) are now emitted
+> by the agent crate's `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs`) via upstream-Zed
+> body injection (`render_skill_envelope`) — the `hkask-templates` crate and its `ManifestExecutor`
+> were deleted (commit `5f4cf5f10d`), replacing the earlier `hkask-services-skill`.
 
 A **span** is a typed identifier that pins an observation to a canonical dot-separated namespace (e.g., `reg.tool.web_search`). Spans carry an **operation** verb (e.g., `invoked`, `completed`, `reserved`) and optional structured fields. They flow through two paths:
 
@@ -155,14 +156,16 @@ Additional QA namespaces in `CANONICAL_NAMESPACES` (emitted as tracing events, n
 
 ### 3.9 Skill Spans
 
-**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `kask/crates/hkask-templates/src/executor.rs` (skill execution via D1)
+**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `crates/agent/src/tools/skill_tool.rs` (skill execution via D1, upstream-Zed body injection)
 
 Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enforcement, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer. The hierarchical `is_canonical()` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
 
-> **Ownership note (v0.32.0):** Skill execution moved from the deleted `hkask-services-skill`
-> crate to `hkask-templates` (`ManifestExecutor` + registry + cascade + PDCA), invoked in-process
-> via the D1 seam (`agent/tools/skill_tool.rs` → bridge.ManifestExecutor). The span emission
-> points are unchanged; only the emitting crate moved.
+> **Ownership note (v0.32.0; updated 2026-08-20):** Skill execution moved from the deleted `hkask-services-skill`
+> crate to upstream-Zed body injection: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`)
+> reads the `SKILL.md` body via `agent_skills::read_skill_body` and injects it via
+> `render_skill_envelope`. The prior `hkask-templates` (`ManifestExecutor` + registry + cascade +
+> PDCA) intermediary was deleted (commit `5f4cf5f10d`); the D1 seam is now direct. The span
+> emission points are unchanged; only the emitting crate moved.
 
 | Namespace group | Sub-namespaces | Emitted When |
 |---|---|---|
