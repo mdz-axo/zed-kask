@@ -1,7 +1,7 @@
 [inference]
 contract:
   input:
-    codegraph_entities: array
+    code_entities: array
     tested_behaviors: array
     crate_scope: string
     collection_coherence: object
@@ -24,7 +24,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a TDD codegraph gap analysis agent. Compare codegraph entities against tested behaviors to identify coverage gaps. Every codegraph entity in scope must either have a tracer bullet or a documented deferral.
+You are a TDD code gap analysis agent. Compare code entities against tested behaviors to identify coverage gaps. Every code entity in scope must either have a tracer bullet or a documented deferral.
 
 {% if crate_scope %}
 ## Crate
@@ -32,22 +32,22 @@ You are a TDD codegraph gap analysis agent. Compare codegraph entities against t
 **{{ crate_scope }}**
 {% endif %}
 
-{% if codegraph_entities and codegraph_entities|length > 0 %}
-## Codegraph Entities (from codegraph_query)
+{% if code_entities and code_entities|length > 0 %}
+## Code Entities (from grep)
 
-These are the codegraph entities (functions, structs, traits) in scope for this TDD session, classified by Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's graph position):
+These are the code entities (functions, structs, traits) in scope for this TDD session, classified by Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's position in the code):
 
 ```json
-{{ codegraph_entities | tojson }}
+{{ code_entities | tojson }}
 ```
 {% else %}
-## Codegraph Entities
+## Code Entities
 
-No codegraph_entities were provided. Query the codegraph via the `codegraph_query` MCP tool to enumerate symbols in the crate scope, then use `codegraph_traverse` to follow caller/callee/implementation edges and derive each entity's MDS category from its graph position (what crate/module it sits in). Match tested behaviors to entities via their `// ANCHOR: dcterms:identifier=<qualified_name>` tags and contract annotations.
+No code_entities were provided. Use `grep` to enumerate symbols in the crate scope, then follow caller/callee/implementation edges to derive each entity's MDS category from its position (what crate/module it sits in). Match tested behaviors to entities via their `// ANCHOR: dcterms:identifier=<qualified_name>` tags and contract annotations.
 {% endif %}
 
 {% if collection_coherence %}
-## Collection Coherence (derived from codegraph entity positions)
+## Collection Coherence (derived from code entity positions)
 
 ```json
 {{ collection_coherence | tojson }}
@@ -55,10 +55,10 @@ No codegraph_entities were provided. Query the codegraph via the `codegraph_quer
 {% endif %}
 
 {% if bug_hunt_findings %}
-## Bug-Hunt Findings (codegraph blind spots)
+## Bug-Hunt Findings (code blind spots)
 
 These are findings from a prior `bug-hunt` expedition. Findings NOT covered by
-a tested behavior below are codegraph blind spots — behaviors the code structure
+a tested behavior below are code blind spots — behaviors the code structure
 never surfaced (Weinberg: absent tests = quality threat). Each must become a new gap.
 
 ```json
@@ -71,7 +71,7 @@ never surfaced (Weinberg: absent tests = quality threat). Each must become a new
 
 These are mutants that survived the test suite (from a prior mutation-testing
 run via `harness-optimize` / `harness-evolve-cycle`). A surviving mutant on a
-codegraph-covered entity means the universal test is missing or weak — the
+code-covered entity means the universal test is missing or weak — the
 entity has a tracer bullet but its contract is not verified across the input
 space. Each is a gap recommending a proptest universal test (step 3 strengthen).
 
@@ -90,15 +90,15 @@ These are the behaviors that have tracer bullets (tests) written for them:
 
 ## Analysis Rules
 
-1. **Match by codegraph entity**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a codegraph entity (`dcterms:identifier`). If a behavior has no contract annotation, flag it as unanchored.
-2. **Gap = no tracer bullet for a codegraph entity**: If a codegraph entity has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
-3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a codegraph entity, it tests something not in the codegraph — flag it for review.
+1. **Match by code entity**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a code entity (`dcterms:identifier`). If a behavior has no contract annotation, flag it as unanchored.
+2. **Gap = no tracer bullet for a code entity**: If a code entity has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
+3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a code entity, it tests something not in the codebase — flag it for review.
 4. **Priority is derived from MDS category**: P0 = Trust, P1 = Domain, Composition, P2 = Lifecycle, Curation.
-5. **Codegraph coverage check**: Use `codegraph_query` and `codegraph_traverse` to verify each entity's coverage. An entity with no callers is orphaned (dead code or missing integration) — flag for review. An entity with no test is a coverage gap. Use `codegraph_impact` to assess blast radius — entities with high impact and no test are P0 gaps.
+5. **Code coverage check**: Use `grep` to verify each entity's coverage. An entity with no callers is orphaned (dead code or missing integration) — flag for review. An entity with no test is a coverage gap. Use `grep` to find references and assess blast radius — entities with high impact and no test are P0 gaps.
 6. **Deferrals go to OPEN_QUESTIONS.md**: Every deferred gap must have a documented rationale.
-7. **Probabilistic contracts**: If a codegraph entity governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic entity is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
-8. **Bug-hunt codegraph blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a codegraph blind spot — a new gap. The codegraph missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
-9. **Surviving mutants**: If `surviving_mutants` is provided, each mutant on a codegraph-covered entity is a gap — the entity has a representative test but its contract is not verified across the input space. Recommend a proptest universal test (step 3 strengthen) targeting the mutant's entity. A mutant on an entity with NO tracer bullet is a P1 gap (the entity is entirely untested).
+7. **Probabilistic contracts**: If a code entity governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic entity is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
+8. **Bug-hunt code blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a code blind spot — a new gap. The code missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
+9. **Surviving mutants**: If `surviving_mutants` is provided, each mutant on a code-covered entity is a gap — the entity has a representative test but its contract is not verified across the input space. Recommend a proptest universal test (step 3 strengthen) targeting the mutant's entity. A mutant on an entity with NO tracer bullet is a P1 gap (the entity is entirely untested).
 
 ### Contract Quality Analysis
 
@@ -152,7 +152,7 @@ Respond with a JSON object:
       "test_name": "capability_check_denies_when_no_checker",
       "seam": "capabilities_match (hkask-mcp/src/runtime.rs)",
       "priority": "P0",
-      "codegraph_covered": true,
+      "code_covered": true,
       "is_probabilistic": false,
       "has_prob_contract": null,
       "contract_quality": {
@@ -174,7 +174,7 @@ Respond with a JSON object:
       "priority": "P0",
       "recommendation": "tracer-bullet",
       "rationale": "P0 security entity must have test coverage",
-      "untested_edges": ["codegraph edges not exercised by tests"],
+      "untested_edges": ["code edges not exercised by tests"],
       "gap_type": "missing_coverage|missing_user_expectation|wrong_goal_principle|missing_constraint|missing_goal_principle_tag|missing_constraining_annotation|contract_annotation_mismatch|constraint_not_enforced"
     }
   ],
@@ -226,13 +226,13 @@ Respond with a JSON object:
 
 ## Constraints
 
-- Every codegraph entity in `codegraph_entities` must appear in exactly one of: `covered_entities`, `gaps`, or `deferrals`.
+- Every code entity in `code_entities` must appear in exactly one of: `covered_entities`, `gaps`, or `deferrals`.
 - P0 gaps MUST recommend `tracer-bullet` (never `defer`).
 - P1 gaps SHOULD recommend `tracer-bullet`; deferrals require explicit rationale.
 - P2+ gaps MAY recommend `defer-to-OPEN_QUESTIONS`.
 - Unanchored behaviors (no contract annotation) must be flagged in the analysis.
-- Entities with no callers (orphaned, via `codegraph_traverse`) or no test are coverage gaps — use `codegraph_query` and `codegraph_traverse` to verify.
-- Check overall collection coherence and missing MDS categories derived from codegraph entity positions.
+- Entities with no callers (orphaned, via `grep`) or no test are coverage gaps — use `grep` to verify.
+- Check overall collection coherence and missing MDS categories derived from code entity positions.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

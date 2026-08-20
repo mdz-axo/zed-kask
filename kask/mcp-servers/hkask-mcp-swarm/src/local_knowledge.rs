@@ -279,6 +279,216 @@ pub(crate) async fn record_delegation(
     }
 }
 
+// ── Episodic turn memory (the shared knowledgebase) ───────────────────────
+//
+// `record_delegation` above is the stigmergy trail — the ACO pheromone signals
+// (latency, task-success, response) stored as separate triples under the
+// agent's namespace root (`agent:<agent_id>`) for fitness assessment. The
+// functions below are the episodic complement: the FULL turn (task + response
+// + model) stored as one coherent h_mem per turn, plus an embedding of the
+// task so the turn is retrievable by semantic similarity. There is ONE
+// `swarm_memory.db` for all swarms and all agents — `search_similar` has no
+// entity filter, so a turn any agent produced is retrievable by any other.
+// That is the shared knowledgebase: swarms build on each other's experience.
+
+/// Ingest a completed local-swarm delegation as an episodic h_mem into the
+/// shared `swarm_memory.db`, plus an embedding of the task for semantic recall.
+///
+/// The turn is stored under a unique per-turn entity
+/// (`agent:<agent_id>:turn:<uuid>`) so each turn is individually retrievable by
+/// embedding KNN. The h_mem value is the full turn JSON (`agent_id`, `task`,
+/// `response`, `model`), so recall returns the complete provenance — not just
+/// the response (which is what the stigmergy trail already stores). The
+/// embedding is stored under the same entity, so `search_similar` →
+/// `query_deduped_untouched(entity_ref)` recovers the turn text.
+///
+/// Graceful degradation mirrors `record_delegation`: a failed store open,
+/// h_mem write, or embedding is logged with `tracing::warn!` and never fails
+/// the delegation (memory is an enhancement, not a dependency). A turn
+/// stored without an embedding is still in the KB but not the KNN index —
+/// entity-reachable, not similarity-reachable.
+pub(crate) async fn ingest_turn(
+    memory: &LazyLocalMemory,
+    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    agent_id: &str,
+    task: &str,
+    response: &str,
+    model: &str,
+) {
+    let store = match memory.get_or_init().await {
+        Ok(store) => store,
+        Err(reason) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %reason,
+                agent = %agent_id,
+                "episodic turn ingest skipped — swarm memory unavailable (non-fatal)"
+            );
+            return;
+        }
+    };
+    let owner = WebID::for_agent_name("swarm_delegate_local");
+    let turn_id = uuid::Uuid::new_v4();
+    let entity = format!("{AGENT_PREFIX}{agent_id}:turn:{turn_id}");
+
+    // Cap the response to prevent unbounded memory growth — mirrors the cap
+    // in `record_delegation` and `AgentExecutor::run`'s tool-result handling.
+    let capped_response: String = if response.len() > 64 * 1024 {
+        response.chars().take(64 * 1024).collect()
+    } else {
+        response.to_string()
+    };
+    let turn_value = serde_json::json!({
+        "agent_id": agent_id,
+        "task": task,
+        "response": capped_response,
+        "model": model,
+    });
+
+    // Process-axis anchoring (P5.4): a swarm delegation is a PKO step
+    // execution of the delegate procedure, anchored to the agent so recall
+    // can distinguish turns by producer.
+    let ontology = HMemOntology::episodic("swarm_delegate", "turn", agent_id);
+    let mut h_mem = HMem::new(&entity, "chatted", turn_value, owner).with_ontology(ontology);
+    // Shared visibility so the turn is part of the shared knowledgebase —
+    // recallable across all agents/swarms, not just the producing agent.
+    h_mem.access.visibility = Visibility::Shared;
+    if let Err(error) = store.store(h_mem) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            error = %error,
+            agent = %agent_id,
+            "episodic turn h_mem write failed (non-fatal)"
+        );
+        // An embedding without its h_mem is an orphan the recall path cannot
+        // resolve, so do not store one if the turn itself did not land.
+        return;
+    }
+
+    // Embed the task so the turn is retrievable by semantic similarity. The
+    // embedding is stored under the same entity as the h_mem, so
+    // `search_similar` → `query_deduped_untouched(entity_ref)` recovers the
+    // full turn text. A failed embed degrades the turn to entity-only recall.
+    let embedding_model = hkask_inference::model_constants::embedding_model();
+    match inference.embed(&embedding_model, &[task.to_string()]).await {
+        Ok(vectors) => match vectors.into_iter().next() {
+            Some(vector) => {
+                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model) {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        error = %error,
+                        agent = %agent_id,
+                        "episodic turn embedding store failed — turn is in the KB but not the KNN index (non-fatal)"
+                    );
+                }
+            }
+            None => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %agent_id,
+                    "embedding model returned no vector for the task — turn is in the KB but not the KNN index (non-fatal)"
+                );
+            }
+        },
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %error,
+                agent = %agent_id,
+                "episodic turn embedding failed — turn is in the KB but not the KNN index (non-fatal)"
+            );
+        }
+    }
+}
+
+/// A prior swarm turn recalled from the shared knowledgebase by semantic
+/// similarity. `text` is the full turn JSON stored by `ingest_turn`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct RecalledTurn {
+    /// The producing agent's id (which agent ran the turn).
+    pub agent_id: String,
+    /// The full turn JSON (`agent_id`, `task`, `response`, `model`).
+    pub text: String,
+    /// Cosine distance to the query (lower = more similar).
+    pub distance: f64,
+}
+
+/// Recall prior swarm turns from the shared `swarm_memory.db` by semantic
+/// similarity to the query. `search_similar` has no entity filter, so this
+/// spans ALL agents and ALL swarms — the shared knowledgebase. A turn any
+/// agent produced is retrievable here.
+///
+/// Returns turns ranked by similarity (most similar first). Only episodic
+/// turns carry embeddings (the stigmergy triples from `record_delegation`
+/// have none), so every KNN hit resolves to a turn. Degrades to an error when
+/// the store is unavailable or the query cannot be embedded — callers
+/// surface a `memory_unconfigured` note rather than fabricating empty hits
+/// (the `.rules` unwrap_or(0) trap: a failed recall is not "no memory").
+pub(crate) async fn recall_turns(
+    memory: &LazyLocalMemory,
+    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<RecalledTurn>, LocalSwarmError> {
+    let store = memory.get_or_init().await?;
+    let embedding_model = hkask_inference::model_constants::embedding_model();
+    let vectors = inference
+        .embed(&embedding_model, &[query.to_string()])
+        .await
+        .map_err(|error| {
+            LocalSwarmError::Unavailable(format!("embedding the recall query failed: {error}"))
+        })?;
+    let query_vector = vectors.into_iter().next().ok_or_else(|| {
+        LocalSwarmError::Unavailable(
+            "embedding model returned no vector for the recall query".to_string(),
+        )
+    })?;
+    let results = store
+        .search_similar(&query_vector, limit)
+        .map_err(|error| {
+            LocalSwarmError::Database(format!("semantic search over swarm memory failed: {error}"))
+        })?;
+    let mut turns = Vec::with_capacity(results.len());
+    for result in results {
+        let entity_ref = result.embedding.entity_ref.clone();
+        match store.query_deduped_untouched(&entity_ref) {
+            Ok(h_mems) => {
+                for h_mem in h_mems {
+                    let text = h_mem.value.as_str().unwrap_or("").to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    // Recover the producing agent from the turn JSON so the
+                    // caller knows which agent produced the recalled turn.
+                    let agent_id = serde_json::from_str::<serde_json::Value>(&text)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("agent_id")
+                                .and_then(|agent| agent.as_str())
+                                .map(String::from)
+                        })
+                        .unwrap_or_default();
+                    turns.push(RecalledTurn {
+                        agent_id,
+                        text,
+                        distance: result.distance,
+                    });
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    error = %error,
+                    entity_ref = %entity_ref,
+                    "failed to resolve KNN hit to its turn h_mem — skipping (non-fatal)"
+                );
+            }
+        }
+    }
+    Ok(turns)
+}
+
 /// A one-shot LLM generate over the local inference port.
 ///
 /// `inference` is the resolved local `InferencePort` (from `LocalSwarmRuntime`).

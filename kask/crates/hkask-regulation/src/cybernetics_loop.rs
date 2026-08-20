@@ -112,6 +112,12 @@ pub struct CyberneticsLoop {
     /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
     /// Direct curator directive channel: Curation → Cybernetics.
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
+    /// Externally-submitted rollout impact checks, drained by the next
+    /// `tick`'s `verify_impact`. Producers (the rollout harness, the
+    /// Curator) submit a `RolloutImpactCheck` when they want the loop to
+    /// verify a rollout's metric movement across an action — this is the
+    /// producer side of the event-substrate phase 6 seam.
+    submitted_rollout_checks: tokio::sync::Mutex<Vec<RegulatoryAction>>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
     /// Path for persisting call caps across restarts.
@@ -204,6 +210,7 @@ impl CyberneticsLoop {
             alerts_tx: None,
             alert_email_sink: None,
             curator_directive_rx: None,
+            submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
             loop_quality: RwLock::new(LoopMetrics::default()),
             budget_persistence_path: None,
             stagnation_detector,
@@ -562,6 +569,47 @@ impl CyberneticsLoop {
     /// Returns count loaded (0 if first run or no path configured).
     ///
     /// expect: "The system provides observability into Regulation regulation state"
+    /// Submit a rollout impact check for the next `verify_impact` pass.
+    ///
+    /// This is the producer side of the event-substrate phase 6 seam: a
+    /// caller that observed a metric-relevant event on a rollout (e.g. the
+    /// harness observing a pass-rate regression after a card change) asks
+    /// the loop to verify the before/after movement from the rollout event
+    /// store. The check is queued and answered on the next tick — the
+    /// submitter never blocks on the answer.
+    ///
+    /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
+    /// post: the check is queued for the next tick's verify_impact
+    pub async fn submit_rollout_impact_check(
+        &self,
+        rollout_id: String,
+        before_position: i64,
+        metric: String,
+    ) {
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Notify,
+            RegulatoryActionParams::with_data(
+                "rollout_impact_check",
+                RegulationData::RolloutImpactCheck {
+                    rollout_id,
+                    before_position,
+                    metric,
+                },
+            ),
+        );
+        let mut queue = self.submitted_rollout_checks.lock().await;
+        // Bound the queue: a producer runaway must not grow it unboundedly.
+        // Dropping the OLDEST check is correct — the newest observations are
+        // the most relevant, and the drop is visible (the queue is drained
+        // and reported per tick).
+        const MAX_SUBMITTED_CHECKS: usize = 64;
+        if queue.len() >= MAX_SUBMITTED_CHECKS {
+            queue.remove(0);
+        }
+        queue.push(action);
+    }
+
     pub async fn load_budgets(&self) -> Result<usize, CallCapError> {
         if let Some(ref path) = self.budget_persistence_path {
             let contents = match tokio::fs::read_to_string(path).await {
@@ -1537,7 +1585,19 @@ impl CyberneticsLoop {
             "REG"
         );
         let deviations = self.compare(&signals).await;
-        let actions = self.compute(&deviations).await;
+        let mut actions = self.compute(&deviations).await;
+        // Drain externally-submitted rollout impact checks into this tick's
+        // verification pass — the producer side of the phase 6 seam.
+        let submitted: Vec<RegulatoryAction> =
+            std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
+        if !submitted.is_empty() {
+            tracing::debug!(
+                target: "reg.cybernetics",
+                count = submitted.len(),
+                "drained submitted rollout impact checks into verify_impact"
+            );
+            actions.extend(submitted);
+        }
         self.act(&actions).await;
 
         // Fermi impact-gate: verify whether actions improved their targets.

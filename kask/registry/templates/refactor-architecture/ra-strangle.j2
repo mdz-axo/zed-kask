@@ -77,7 +77,7 @@ Write one failing test per service operation in `hkask-services`. Each test must
 - Exercise the public interface of the service module
 - Use a `ServiceContext` (or mock) to provide dependencies
 - Verify a domain behavior, not a surface presentation
-- Carry a contract annotation (`expect:` + `[P{N}]`) anchored to a codegraph entity (`dcterms:identifier` = the function/struct being tested)
+- Carry a contract annotation (`expect:` + `[P{N}]`) anchored to a code entity (`dcterms:identifier` = the function/struct being tested)
 
 **Pattern (not actual API — adapt to your service crate's conventions):**
 

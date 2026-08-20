@@ -123,7 +123,7 @@ seed_installed_state
 cat > "$XDG_CONFIG_HOME/zed-kask/settings.json" <<JSON
 {
   "context_servers": {
-    "kask-server": { "command": "$BIN_DIR/hkask-mcp-condenser" },
+    "kask-server": { "command": "$BIN_DIR/hkask-mcp-swarm" },
     "user-custom": { "command": "/usr/local/bin/something-else" }
   }
 }

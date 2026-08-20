@@ -877,6 +877,21 @@ pub struct GenerateOntologyLocalRequest {
     pub agent_name: Option<String>,
 }
 
+/// Recall prior swarm turns from the shared knowledgebase by semantic
+/// similarity (the episodic-memory analog of `swarm_search_knowledge_local`,
+/// which searches the EAV graph). Spans ALL agents and ALL swarms — the
+/// single shared `swarm_memory.db`. Degrades to a `memory_unconfigured` note
+/// when the store cannot be opened or the query cannot be embedded.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecallLocalRequest {
+    /// The natural-language query. Embedded and matched against every prior
+    /// turn's task embedding via KNN — returns the most similar past turns.
+    pub query: String,
+    /// Maximum turns to return. Default 10.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 /// AI assist for the swarm panel authoring forms — suggests completions for
 /// partial inputs or validates well-formedness. Authoring aid — read-only,
 /// spends nothing. Uses the local `InferencePort` (one-shot LLM generate).

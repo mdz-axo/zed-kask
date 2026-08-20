@@ -43,7 +43,7 @@ pub struct BridgeRolloutsRequest {
 #[tool_router(router = rollout_bridge_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
-        description = "Bridge verdict-labeled rollouts from the swarm event store into training datasets. Emits ChatML JSONL for SFT (passed rollouts) and/or DPO preference pairs (passed+failed on the same task). Reads the event store (mcp/swarm/events.db); writes the dataset under the contained write root."
+        description = "Survey verdict-labeled rollouts in the swarm event store and emit a bridge MANIFEST (counts of SFT candidates from passed rollouts and DPO preference-pair candidates from passed+failed on the same task), written to a JSON file. Does NOT emit training examples yet — the event store retains request shape, not bodies; body retention is the next store capability. Use this to size a future dataset before assembling it."
     )]
     pub async fn training_bridge_rollouts(
         &self,
@@ -138,13 +138,6 @@ impl TrainingServer {
                     let entry = by_task
                         .entry((harness_run_id.to_string(), task_index))
                         .or_default();
-                    // The rollout id is the group key; the response text is
-                    // fetched below from the model_request events? No — the
-                    // response is not in the store (retention: request shape,
-                    // not full body). The bridge therefore emits rollout ids
-                    // as placeholders the operator resolves via the harness
-                    // report. See the doc comment: this is the honest limit.
-                    let _ = &mut entry.passed;
                     if passed {
                         entry.passed.push(event.rollout_id.clone());
                     } else {
