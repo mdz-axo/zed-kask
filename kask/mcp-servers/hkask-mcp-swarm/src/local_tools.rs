@@ -1545,6 +1545,18 @@ impl SwarmServer {
                                 &r.response,
                             )
                             .await;
+                            // Episodic turn memory (shared knowledgebase) —
+                            // mirrors swarm_delegate_local so plan-executed
+                            // delegations build the KB too. Non-fatal.
+                            local_knowledge::ingest_turn(
+                                &self.local_memory,
+                                &runtime.inference(),
+                                &entry.agent_name,
+                                &entry.task,
+                                &r.response,
+                                &r.model,
+                            )
+                            .await;
                             results.push(serde_json::to_value(&r).unwrap_or_else(
                                 |_| serde_json::json!({ "error": "failed to serialize result" }),
                             ));

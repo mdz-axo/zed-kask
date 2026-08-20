@@ -10543,6 +10543,29 @@ mod tests {
         });
     }
 
+    // zed-kask: D6/D34 — subagent inherits parent's agent_id so curator-spawned
+    // subagents route turns to the curator's sovereign DB for memory ingestion.
+    #[gpui::test]
+    async fn test_subagent_inherits_parent_agent_id(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+
+        let curator_id = crate::CURATOR_AGENT_ID.clone();
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_agent_id(curator_id.clone(), cx);
+            });
+        });
+
+        let subagent = cx.new(|cx| Thread::new_subagent(&parent, cx));
+
+        let subagent_id = subagent.read(cx).agent_id().cloned();
+        assert_eq!(
+            subagent_id,
+            Some(curator_id),
+            "subagent must inherit parent's agent_id so curator-spawned subagents route turns to the curator's sovereign DB"
+        );
+    }
+
     #[gpui::test]
     async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
         let (parent, _event_stream) = setup_thread_for_test(cx).await;

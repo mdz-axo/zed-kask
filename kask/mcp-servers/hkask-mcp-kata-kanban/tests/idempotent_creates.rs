@@ -50,7 +50,7 @@ fn make_server_with_shared_driver() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, None)),
+        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path)),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(hkask_inference::UnavailableWorktreeSpawn),
         Arc::new(idempotency),
@@ -327,7 +327,6 @@ async fn replay_is_absorbed_across_processes() {
                 .join(format!("kanban-idem-b-{}.db", std::process::id()))
                 .to_string_lossy()
                 .to_string(),
-            None,
         )),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(hkask_inference::UnavailableWorktreeSpawn),
@@ -366,7 +365,7 @@ async fn non_durable_protection_is_labelled_in_the_response() {
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, None)),
+        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path)),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(hkask_inference::UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),

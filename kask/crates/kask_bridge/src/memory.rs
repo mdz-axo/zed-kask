@@ -38,13 +38,6 @@ mod curator_stores;
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 pub use curator_stores::{curator_db_path, open_curator_regulation_archive};
 
-// ── Swarm store infrastructure — extracted to `memory/swarm_stores.rs` ───
-// Mirrors `curator_stores` for the swarm's sovereign `swarm_memory.db`.
-// Opened directly in the bridge process so `recall_context_swarm` can read
-// swarm memory without an IPC round-trip to the swarm MCP server.
-mod swarm_stores;
-pub(crate) use swarm_stores::SwarmStore;
-
 // ── Alert escalation — extracted to `memory/alert_escalation.rs` ──────────
 // Deep-module split (bridge-audit BD-04): the algedonic alert path implements a
 // *different* port (`AlertEscalationSink`) with zero coupling to the memory
@@ -79,14 +72,6 @@ pub struct RealMemoryPort {
     /// failure is signaled with a warn-once per healing attempt, never
     /// silently.
     curator_store: Arc<CuratorStore>,
-    /// The swarm's sovereign store (`swarm_memory.db`) behind a self-healing
-    /// handle — mirrors `curator_store`. Opened directly in the bridge process
-    /// so `recall_context_swarm` can read swarm memory without an IPC
-    /// round-trip. `None`-valued (self-heals to `Some`) when the swarm DB
-    /// cannot be opened (not configured, locked, passphrase mismatch).
-    /// Swarm recall degrades to empty — the cascade runs without swarm
-    /// memory instead of erroring.
-    swarm_store: Arc<SwarmStore>,
     embedding_port: LanguageModelEmbeddingPort,
     embedding_model: String,
     user_webid: WebID,
@@ -229,30 +214,6 @@ impl RealMemoryPort {
         // Curator store behind the self-healing handle — see the field docs.
         let curator_store = Arc::new(CuratorStore::new(passphrase, embedding_dim));
 
-        // Swarm store behind a self-healing handle — mirrors `curator_store`.
-        // Opened from `HKASK_SWARM_MEMORY_DB` + `HKASK_SWARM_MEMORY_PASSPHRASE`
-        // (same env vars the swarm MCP server reads). When the swarm DB is
-        // not configured (passphrase empty / DB missing), the store is `None`
-        // and swarm recall degrades to empty — the cascade runs without swarm
-        // memory instead of erroring. This is the correct default: swarm
-        // memory is only relevant when a swarm agent is participating, and
-        // not every deployment runs swarms.
-        let swarm_passphrase = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| {
-                // The swarm server's compiled-in default (config.rs) is
-                // "allostery" — use the same default so the bridge opens the
-                // same DB the swarm MCP server opens.
-                "allostery".to_string()
-            });
-        let swarm_embedding_dim = std::env::var("HKASK_SWARM_EMBEDDING_DIM")
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .filter(|d: &usize| *d > 0)
-            .unwrap_or(embedding_dim);
-        let swarm_store = Arc::new(SwarmStore::new(&swarm_passphrase, swarm_embedding_dim));
-
         // Consolidation service — perspective-bound → shared promotion.
         // Only constructed when the cadence is non-zero; a zero cadence disables
         // the trigger entirely (the operator can still fire consolidation
@@ -271,7 +232,6 @@ impl RealMemoryPort {
         Ok(Self {
             store,
             curator_store,
-            swarm_store,
             embedding_port,
             embedding_model,
             user_webid,
@@ -1001,11 +961,9 @@ impl RealMemoryPort {
     /// polling doesn't drive the re-open path.
     pub fn memory_health_json(&self) -> serde_json::Value {
         let curator_up = self.curator_store.availability();
-        let swarm_up = self.swarm_store.availability();
         serde_json::json!({
             "curator_store": curator_up,
-            "swarm_store": swarm_up,
-            "degraded": !curator_up || !swarm_up,
+            "degraded": !curator_up,
         })
     }
 
@@ -1066,33 +1024,6 @@ impl RealMemoryPort {
                 "recall_thread_curator",
             )
             .await
-        })
-    }
-
-    /// Recall memory snippets from the **swarm's** sovereign store
-    /// (`swarm_memory.db`). Mirrors `recall_context_curator` but reads from
-    /// the swarm's `MemoryStore`, opened directly in the bridge process.
-    ///
-    /// Used by the cascade context provider when a swarm agent is
-    /// participating in the thread. Returns `Ok(vec![])` when the swarm
-    /// store is not available (graceful degradation — the cascade runs
-    /// without swarm memory instead of erroring).
-    pub fn recall_context_swarm<'a>(
-        &'a self,
-        query: &'a str,
-        limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
-        Box::pin(async move {
-            let Some(ref swarm_store) = self.swarm_store.get() else {
-                return Ok(Vec::new());
-            };
-            // The swarm store uses a single shared WebID
-            // (`swarm_delegate_local`) for all swarm agents — there is no
-            // per-agent perspective scoping in the swarm store. `None`
-            // skips the episodic perspective filter and recalls across all
-            // swarm agents' episodic records.
-            self.recall_from(swarm_store, None, query, limit, "recall_context_swarm")
-                .await
         })
     }
 
@@ -1481,6 +1412,14 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                     "no_declaration".to_string()
                 }
             };
+            // D34 — increment the process-global failure counter on
+            // Incomplete verdicts so the MetacognitionLoop senses it.
+            if matches!(
+                report.verdict,
+                agent::skill_step_tracker::SkillVerificationVerdict::Incomplete { .. }
+            ) {
+                hkask_regulation::metacognition::record_skill_verification_failure();
+            }
             hkask_types::regulation::RegulationSpan::Curation.emit("skill_verification");
             tracing::info!(
                 target: "reg.curation",
@@ -1540,7 +1479,6 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
     RealMemoryPort {
         store,
         curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-        swarm_store: Arc::new(SwarmStore::for_tests(None)),
         embedding_port,
         embedding_model: "test-model".to_string(),
         user_webid: WebID::new(),
@@ -1612,7 +1550,6 @@ mod tests {
         RealMemoryPort {
             store,
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-            swarm_store: Arc::new(SwarmStore::for_tests(None)),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
@@ -1661,7 +1598,6 @@ mod tests {
         RealMemoryPort {
             store,
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-            swarm_store: Arc::new(SwarmStore::for_tests(None)),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
@@ -2607,11 +2543,10 @@ mod tests {
 
         let healthy = port.memory_health_json();
         assert_eq!(healthy["curator_store"], true);
-        // The swarm store is `None` in the test port (for_tests(None)), so
-        // `degraded` is true even when the curator store is healthy — the
-        // swarm store is simply not configured in tests.
-        assert_eq!(healthy["swarm_store"], false);
-        assert_eq!(healthy["degraded"], true);
+        // `degraded` follows the curator store alone now — the bridge-side
+        // swarm store was removed (swarm memory lives in the swarm MCP
+        // server, not the bridge).
+        assert_eq!(healthy["degraded"], false);
 
         // Simulate a curator outage. Healing is disabled in test handles, so
         // if the probe attempted a heal it would fail — the point is it must
@@ -2619,48 +2554,10 @@ mod tests {
         port.curator_store.set_for_tests(None);
         let degraded = port.memory_health_json();
         assert_eq!(degraded["curator_store"], false);
-        assert_eq!(degraded["swarm_store"], false);
         assert_eq!(degraded["degraded"], true);
 
         // Store still down after the probe — the probe didn't heal.
         assert!(port.curator_store.get().is_none());
-    }
-
-    /// `memory_health_json` must reflect the swarm store's availability, not
-    /// just the curator store's. The down-state is covered by
-    /// `memory_health_json_reports_degraded_without_healing` (the test port
-    /// builds `SwarmStore::for_tests(None)`); this test pins the up-state by
-    /// installing a real in-memory `MemoryStore` via `set_for_tests` and
-    /// asserting `swarm_store` flips to true and `degraded` follows the
-    /// curator store (which is healthy here).
-    #[tokio::test]
-    async fn memory_health_json_reflects_swarm_store_availability() {
-        let port = in_memory_port();
-
-        // Baseline: curator up, swarm down (the test port's default).
-        let baseline = port.memory_health_json();
-        assert_eq!(baseline["curator_store"], true);
-        assert_eq!(baseline["swarm_store"], false);
-        assert_eq!(baseline["degraded"], true);
-
-        // Install a real in-memory swarm store — `availability()` must flip.
-        let swarm_driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
-        let swarm_store = Arc::new(MemoryStore::new(
-            HMemStore::from_driver(Arc::clone(&swarm_driver)).expect("swarm hmem init"),
-            EmbeddingStore::from_driver(swarm_driver, 1024).expect("swarm embedding init"),
-        ));
-        port.swarm_store.set_for_tests(Some(swarm_store));
-
-        let healthy = port.memory_health_json();
-        assert_eq!(healthy["curator_store"], true);
-        assert_eq!(healthy["swarm_store"], true);
-        assert_eq!(healthy["degraded"], false);
-
-        // Take the swarm store back down — `degraded` returns.
-        port.swarm_store.set_for_tests(None);
-        let degraded = port.memory_health_json();
-        assert_eq!(degraded["swarm_store"], false);
-        assert_eq!(degraded["degraded"], true);
     }
 
     /// Self-healing pin: when the curator store is down, `get()` returns
