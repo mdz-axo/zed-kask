@@ -1,6 +1,6 @@
 //! Generic OpenAI-compatible model discovery via the standard `/v1/models` endpoint.
 //!
-//! Most OpenAI-compatible providers (DeepInfra, OpenRouter,
+//! Most OpenAI-compatible providers (OpenRouter,
 //! etc.) expose a `/v1/models` endpoint that returns a list of
 //! available models in the standard OpenAI shape:
 //!
@@ -45,7 +45,7 @@ pub enum ListModelsError {
 ///
 /// Mirrors the standard OpenAI model object plus the most common provider
 /// extensions. Fields beyond the standard `id` are optional so this parses
-/// cleanly across DeepInfra and OpenRouter
+/// cleanly across OpenRouter
 /// (which extends the shape with `context_length` and capability hints).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiscoveredModel {
@@ -116,7 +116,7 @@ pub struct ListModelsResponse {
 /// Fetch the list of models from an OpenAI-compatible `/v1/models` endpoint.
 ///
 /// `api_url` should be the base URL the provider uses for chat completions
-/// (e.g. `"https://api.deepinfra.com/v1/openai"`). The `/models` path is
+/// (e.g. `"https://openrouter.ai/api/v1"`). The `/models` path is
 /// appended. This matches the convention zed's `OpenAiCompatibleLanguageModel`
 /// uses for chat completions (it appends `/chat/completions` to `api_url`).
 ///
@@ -173,8 +173,8 @@ impl DiscoveredModel {
     ///
     /// When `supported_parameters` is absent (empty), the provider didn't
     /// advertise capabilities — that's "unknown", not "unsupported".
-    /// Default to `true` so providers like DeepInfra (which omit the field but
-    /// whose models do support tools) don't get tool calling silently disabled.
+    /// Default to `true` so providers that omit the field but
+    /// whose models do support tools don't get tool calling silently disabled.
     /// This matches `OpenAiCompatibleModelCapabilities::default()` (tools: true)
     /// used for the manual-config path, so discovery and manual config agree.
     pub fn supports_tools(&self) -> bool {
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(parsed.data.len(), 2);
         assert_eq!(parsed.data[0].id, "gpt-4o");
         // No `supported_parameters` field → unknown, not unsupported. Default
-        // to `true` so providers that omit the field (DeepInfra, standard
+        // to `true` so providers that omit the field (standard
         // OpenAI) don't get tool calling silently disabled.
         assert!(parsed.data[0].supports_tools());
         assert!(!parsed.data[0].supports_images());
@@ -297,11 +297,11 @@ mod tests {
     }
 
     #[test]
-    fn test_atlascloud_max_output_length_alias() {
-        // AtlasCloud uses the field name `max_output_length` (not
-        // `max_output_tokens`, not `top_provider.max_completion_tokens`) for
-        // the per-model output cap, and wraps the list in {code, msg, data}.
-        // Without the serde alias, every AtlasCloud model would discover with
+    fn test_max_output_length_alias() {
+        // Some OpenAI-compatible providers use the field name `max_output_length`
+        // (not `max_output_tokens`, not `top_provider.max_completion_tokens`) for
+        // the per-model output cap, and wrap the list in {code, msg, data}.
+        // Without the serde alias, every such model would discover with
         // `max_output_tokens: None` and the agent would send no output cap —
         // the same mid-tool-call truncation class as the OpenRouter bug.
         let body = json!({
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(
             model.max_output_tokens,
             Some(131072),
-            "AtlasCloud's max_output_length must deserialize into max_output_tokens via the alias"
+            "max_output_length must deserialize into max_output_tokens via the alias"
         );
         assert_eq!(model.context_length, Some(131072));
     }

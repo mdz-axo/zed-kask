@@ -56,11 +56,9 @@ pub mod test_utils {
     /// primitives) directly without an `InferencePort`.
     pub use crate::compute::{ComputeRef, dispatch_compute};
 
-    /// Re-export the step-condition evaluator and choice-condition parser so
-    /// external proptest tests can drive the pure string-parsing and
-    /// boolean-evaluation surfaces directly. Both are total over arbitrary
-    /// condition strings and arbitrary context — the property tests pin that.
-    pub use crate::condition::{evaluate_step_condition, parse_choice_condition};
+    /// Re-export the step-condition evaluator so external proptest tests can
+    /// drive the pure string-parsing and boolean-evaluation surfaces directly.
+    pub use crate::condition::evaluate_step_condition;
 
     /// Re-export the dot-path resolver so external proptest tests can drive the
     /// pure context-lookup surface directly. Total over arbitrary paths and

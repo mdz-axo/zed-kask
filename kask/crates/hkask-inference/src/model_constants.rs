@@ -23,8 +23,13 @@
 /// and the `LanguageModelRegistry` resolves the `OpenRouter/` prefix to the provider.
 pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Default embedding model.
-pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
+/// Default embedding model. No bundled cloud provider serves embeddings
+/// (OpenRouter doesn't; RunPod is vision/OCR-only), so this defaults to a
+/// local Ollama embedding model. Operators without a local Ollama must set
+/// `HKASK_EMBEDDING_MODEL` (or the corpus embedding settings) to a provider
+/// they have credentials for — embedding calls fail with a clear error
+/// otherwise.
+pub const DEFAULT_EMBEDDING_MODEL: &str = "ollama/nomic-embed-text";
 
 /// Default OCR model for scanned PDF fallback.
 /// Uses OLMOCR-2 on RunPod serverless (endpoint `hsldzov6932wf5`, named `kask-ocr`
@@ -40,22 +45,13 @@ pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Default TTS model — DeepInfra Kokoro-82B (DeepInfraBackend::generate_speech default).
-pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
-
-/// Default STT model — DeepInfra Whisper (DeepInfraBackend::transcribe endpoint).
-pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
-
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
-/// Default image-gen model — DeepInfra FLUX-2-klein-4B (DeepInfraBackend::generate_image).
-pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";
-
 // ── Test fixtures (arbitrary identifiers, no network calls) ──────────────
 
-pub const TEST_MODEL_SMALL: &str = "DeepInfra/google/gemma-4-9b-it";
-pub const TEST_MODEL_MEDIUM: &str = "DeepInfra/meta-llama/Llama-4-Scout-17B-16E-Instruct";
+pub const TEST_MODEL_SMALL: &str = "OpenRouter/google/gemma-4-9b-it";
+pub const TEST_MODEL_MEDIUM: &str = "OpenRouter/meta-llama/Llama-4-Scout-17B-16E-Instruct";
 
 // ── Resolved model accessors (env var → default) ──────────────────────────
 

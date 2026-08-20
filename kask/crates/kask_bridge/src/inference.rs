@@ -811,7 +811,7 @@ impl LanguageModelEmbeddingPort {
     /// Construct the port and spawn the receiver task on the tokio runtime.
     ///
     /// `api_url` is the OpenAI-compatible base URL (e.g.
-    /// `https://api.deepinfra.com/v1/openai`). `api_key` is the bearer token.
+    /// `https://openrouter.ai/api/v1`). `api_key` is the bearer token.
     /// Both are resolved once at construction from `INFERENCE_PROVIDERS` +
     /// env var; no GPUI access is needed at request time. The `tokio_handle`
     /// is used to spawn the receiver task (obtained via

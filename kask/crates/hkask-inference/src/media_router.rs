@@ -13,16 +13,14 @@
 //!
 //! Media is routed to zed via the IPC bridge, but terminates here (the hKask
 //! `MediaRouter`) rather than zed's `LanguageModelRegistry`, because media
-//! generation uses non-chat APIs (AtlasCloud submit+poll task routing; DeepInfra
-//! inference/tts/transcription with binary returns) that `LanguageModel`
-//! cannot represent. If zed later adds a media trait to its registry, this
-//! terminal can delegate to it instead — until then the providers live here.
+//! generation uses non-chat APIs (submit+poll task routing, binary audio
+//! returns) that `LanguageModel` cannot represent. If zed later adds a media
+//! trait to its registry, this terminal can delegate to it instead — until
+//! then the providers live here.
 //! Adding a provider = implement [`crate::provider::MediaProvider`] + register
 //! in [`MediaRouter::new`]; no dispatch edits.
 
-use crate::atlascloud_backend::AtlasCloudBackend;
 use crate::config::InferenceConfig;
-use crate::deepinfra_backend::DeepInfraBackend;
 use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
@@ -39,9 +37,9 @@ use std::sync::Arc;
 /// Constructed from `InferenceConfig::from_env()`. Providers are created
 /// lazily: a provider is only registered if its API key is present. Media
 /// methods that find no supporting provider return a clear `Connection`
-/// error. The registry order encodes the preference policy: DeepInfra first
-/// (cheapest for background removal / TTS / STT, with AtlasCloud fallback),
-/// AtlasCloud for everything else.
+/// error. The registry is currently empty — no media backends are compiled
+/// in — so every media op returns "no provider configured for media op: …"
+/// until a backend is registered in [`MediaRouter::new`].
 pub struct MediaRouter {
     pub(crate) registry: ProviderRegistry,
 }
@@ -51,51 +49,27 @@ impl MediaRouter {
     ///
     /// Constructs providers lazily — a provider is only created if its
     /// configuration is valid (non-empty API key). Providers that fail to
-    /// construct are not registered and emit a `reg.inference` warn. The
-    /// registry order is DeepInfra-first so the runtime fallback preserves
-    /// the prior DeepInfra-first / AtlasCloud-fallback policy for the three shared
-    /// ops (remove_background, generate_speech, transcribe).
+    /// construct are not registered and emit a `reg.inference` warn.
     ///
     /// expect: "The system creates provider membranes requiring valid API keys"
     /// \[P4\] Motivating: Clear Boundaries — providers registered only with valid keys
     /// pre:  none (reads config)
     /// post: returns MediaRouter whose registry holds all constructible providers
     #[must_use]
-    pub fn new(config: InferenceConfig) -> Self {
-        let shared_client = config
-            .build_client()
-            .map(Arc::new)
-            .map_err(|e| tracing::warn!(target: "reg.inference", "HTTP client build failed: {}", e))
-            .ok();
-
-        let mut providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
-
-        if let Some(client) = &shared_client {
-            // DeepInfra first: preferred for remove_background / speech /
-            // transcribe (cheapest). Registered before AtlasCloud so the registry
-            // tries it first and falls back to AtlasCloud on runtime error.
-            match DeepInfraBackend::new(&config, Arc::clone(client)) {
-                Ok(di) => providers.push(Arc::new(di)),
-                Err(_) => tracing::warn!(
-                    target: "reg.inference",
-                    "DeepInfra backend unavailable (no API key) — \
-                     speech/transcription fallback disabled"
-                ),
-            }
-            match AtlasCloudBackend::new(&config, Arc::clone(client)) {
-                Ok(ac) => providers.push(Arc::new(ac)),
-                Err(_) => tracing::warn!(
-                    target: "reg.inference",
-                    "AtlasCloud backend unavailable (no API key) — image/video generation fallback disabled"
-                ),
-            }
-        }
+    pub fn new(_config: InferenceConfig) -> Self {
+        // Register media backends here as they are (re-)added. A backend is
+        // pushed only when its constructor returns Ok (API key present); a
+        // failed construction emits a reg.inference warn and the backend is
+        // not registered. The registry is intentionally empty for now —
+        // ProviderRegistry::execute returns a clear "no provider configured
+        // for media op" error for every op.
+        let providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
 
         if providers.is_empty() {
             tracing::warn!(
                 target: "reg.inference",
                 "no media providers configured — all media generation will fail \
-                 (set DEEPINFRA_API_KEY and/or ATLASCLOUD_API_KEY)"
+                 (no media backends are registered in MediaRouter::new)"
             );
         }
 
@@ -138,7 +112,7 @@ impl MediaRouter {
         self.registry.execute(MediaOp::ImageToImage, &params).await
     }
 
-    /// Remove background from an image. DeepInfra first (cheapest), AtlasCloud fallback.
+    /// Remove background from an image.
     #[must_use = "result must be used"]
     pub async fn remove_background(
         &self,
@@ -200,7 +174,7 @@ impl MediaRouter {
         self.registry.execute(MediaOp::ImageToVideo, &params).await
     }
 
-    /// Generate speech from text. DeepInfra first, AtlasCloud fallback.
+    /// Generate speech from text.
     #[must_use = "result must be used"]
     pub async fn generate_speech(
         &self,
@@ -217,7 +191,7 @@ impl MediaRouter {
             .await
     }
 
-    /// Transcribe speech audio to text. DeepInfra first, AtlasCloud fallback.
+    /// Transcribe speech audio to text.
     #[must_use = "result must be used"]
     pub async fn transcribe(
         &self,
@@ -335,40 +309,6 @@ mod tests {
         assert!(router.registry.is_empty(), "no API keys → empty registry");
         assert!(!router.registry.supports(MediaOp::GenerateImage));
         assert!(!router.registry.supports(MediaOp::RemoveBackground));
-    }
-
-    /// An AtlasCloud key alone registers AtlasCloud, which supports all
-    #[test]
-    fn media_router_with_atlascloud_key_supports_all_ops() {
-        let config = InferenceConfig {
-            atlascloud_api_key: "test-key".into(),
-            ..Default::default()
-        };
-        let router = MediaRouter::new(config);
-        assert!(!router.registry.is_empty());
-        assert!(router.registry.supports(MediaOp::GenerateImage));
-        assert!(router.registry.supports(MediaOp::GenerateVideo));
-        assert!(router.registry.supports(MediaOp::Upscale));
-    }
-
-    /// A DeepInfra key alone registers DeepInfra, which supports only the
-    /// three ops it's preferred for — image generation is NOT available
-    /// (DeepInfra's generate_image method is intentionally not advertised,
-    /// preserving the AtlasCloud-only image dispatch).
-    #[test]
-    fn media_router_with_deepinfra_key_supports_only_three_ops() {
-        let config = InferenceConfig {
-            deepinfra_api_key: "di-key".into(),
-            ..Default::default()
-        };
-        let router = MediaRouter::new(config);
-        assert!(router.registry.supports(MediaOp::RemoveBackground));
-        assert!(router.registry.supports(MediaOp::GenerateSpeech));
-        assert!(router.registry.supports(MediaOp::Transcribe));
-        assert!(
-            !router.registry.supports(MediaOp::GenerateImage),
-            "image generation must require AtlasCloud — DeepInfra's generate_image is not advertised"
-        );
     }
 
     /// `media_generate` with an unknown op string returns a clear error

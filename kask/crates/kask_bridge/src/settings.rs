@@ -118,7 +118,7 @@ pub struct KaskSettings {
 pub struct KaskGeneralSettings {
     /// Maximum concurrent cloud inference provider calls across the whole
     /// process. Default 96. Providers throttle at different levels;
-    /// OpenRouter and DeepInfra scale to this ceiling.
+    /// OpenRouter scales to this ceiling.
     pub max_concurrency: u32,
 
     /// Concurrency step — the ramp origin and increment. The limiter starts
@@ -188,9 +188,8 @@ pub struct KaskDataServiceSettings {
 
 /// Inference provider toggles. API keys are in the keychain, not here.
 ///
-/// When a provider is enabled, the composition root writes an
-/// `openai_compatible.<provider_id>` entry to settings.json so zed's
-/// OpenAI-compatible provider machinery registers it.
+/// When a provider is enabled, the composition root mirrors its API key to
+/// kask MCP servers (see `credential_urls_for_mcp`).
 ///
 /// `Default` returns all-false (pure, no side effects). The env-var-based
 /// auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>`,
@@ -198,14 +197,8 @@ pub struct KaskDataServiceSettings {
 /// tests and `KaskSettings::default()`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskInferenceProvidersSettings {
-    /// Enable DeepInfra (OpenAI-compatible inference).
-    pub deepinfra_enabled: bool,
-
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
-
-    /// Enable AtlasCloud (task-based media + OpenAI-compatible LLM).
-    pub atlascloud_enabled: bool,
 }
 
 impl KaskInferenceProvidersSettings {
@@ -217,9 +210,7 @@ impl KaskInferenceProvidersSettings {
     #[must_use]
     pub fn from_env() -> Self {
         Self {
-            deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
-            atlascloud_enabled: std::env::var("ATLASCLOUD_API_KEY").is_ok(),
         }
     }
 }
@@ -498,16 +489,16 @@ fn default_embedding_model() -> String {
 /// Media MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMediaSettings {
-    /// TTS model override (e.g., "DeepInfra/hexgrad/Kokoro-82M").
+    /// TTS model override (provider-prefixed, e.g. "ollama/kokoro").
     pub tts_model: String,
 
-    /// STT model override (e.g., "DeepInfra/whisper-large-v3").
+    /// STT model override (provider-prefixed, e.g. "ollama/whisper-large-v3").
     pub stt_model: String,
 
     /// Vision model override (e.g., "OpenRouter/qwen/qwen3-vl-235b-a22b-instruct").
     pub vision_model: String,
 
-    /// Image generation model override (e.g., "DeepInfra/black-forest-labs/FLUX-2-klein-4b").
+    /// Image generation model override (provider-prefixed).
     pub image_gen_model: String,
 }
 
@@ -659,7 +650,7 @@ impl Default for KaskSwarmSettings {
 /// Training MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskTrainingSettings {
-    /// Training host override: "deepinfra", "nebius", or "runpod".
+    /// Training host override: "nebius" or "runpod".
     /// When empty, auto-detects from available API keys.
     pub host: String,
 
@@ -1417,9 +1408,7 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
         // and tests remain deterministic and side-effect-free.
         let from_env = Self::from_env();
         Self {
-            deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
-            atlascloud_enabled: c.atlascloud_enabled.unwrap_or(from_env.atlascloud_enabled),
         }
     }
 }
@@ -1887,7 +1876,7 @@ mod tests {
     }
 
     // The `embedding_model` field has a non-empty `Default`
-    // (`DeepInfra/Qwen/Qwen3-Embedding-0.6B`), so the comparison must be
+    // (`ollama/nomic-embed-text`), so the comparison must be
     // against `Default`, not `is_empty()`. A user override must be emitted;
     // the default must not.
     #[test]
@@ -2036,9 +2025,7 @@ mod tests {
     #[test]
     fn inference_providers_default_is_all_false() {
         let default = KaskInferenceProvidersSettings::default();
-        assert!(!default.deepinfra_enabled);
         assert!(!default.openrouter_enabled);
-        assert!(!default.atlascloud_enabled);
     }
 
     // `KaskSettings::default()` must also have all-false inference providers,
@@ -2046,7 +2033,6 @@ mod tests {
     #[test]
     fn kask_settings_default_inference_providers_all_false() {
         let settings = KaskSettings::default();
-        assert!(!settings.inference_providers.deepinfra_enabled);
         assert!(!settings.inference_providers.openrouter_enabled);
     }
 
@@ -2072,12 +2058,9 @@ mod tests {
         let settings = KaskSettings::default();
         // All inference toggles default to false → no inference credential URLs.
         let urls = crate::inference_providers::credential_urls_for_mcp(&settings);
-        let has_inference_key = urls.iter().any(|(env_var, _)| {
-            matches!(
-                env_var.as_str(),
-                "DEEPINFRA_API_KEY" | "OPENROUTER_API_KEY" | "ATLASCLOUD_API_KEY"
-            )
-        });
+        let has_inference_key = urls
+            .iter()
+            .any(|(env_var, _)| env_var == "OPENROUTER_API_KEY");
         assert!(
             !has_inference_key,
             "disabled inference providers must not produce credential URLs — \

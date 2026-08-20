@@ -1653,7 +1653,7 @@ pub struct KaskGeneralSettingsContent {
     /// Maximum concurrent cloud inference provider calls across the whole
     /// process — skills, corpus OCR, MCP tool calls, any consumer of the
     /// global concurrency service. Default 96. Providers throttle at
-    /// different levels; OpenRouter and DeepInfra scale to this ceiling.
+    /// different levels; OpenRouter scales to this ceiling.
     pub max_concurrency: Option<u32>,
 
     /// Concurrency step — the ramp origin and increment. The limiter starts
@@ -1699,14 +1699,11 @@ pub struct KaskDataServiceSettingsContent {
 
 /// Inference provider toggles (non-secret — API keys are in the keychain).
 ///
-/// When a provider is enabled, an `openai_compatible.<provider_id>` entry is
-/// written to settings.json so zed's OpenAI-compatible provider machinery
-/// registers it in the LLM Providers page and the agent model picker.
+/// When a provider is enabled, its API key is mirrored to kask MCP servers
+/// (see `kask_bridge::inference_providers::credential_urls_for_mcp`).
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskInferenceProvidersSettingsContent {
-    pub deepinfra_enabled: Option<bool>,
     pub openrouter_enabled: Option<bool>,
-    pub atlascloud_enabled: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

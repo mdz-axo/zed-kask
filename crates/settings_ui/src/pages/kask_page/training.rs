@@ -20,7 +20,7 @@ pub(crate) fn render_training_page(
     let host_input = kask_string_input(
         "kask-training-host",
         "Training Host",
-        "deepinfra | nebius | runpod",
+        "nebius | runpod",
         host,
         "training",
         "host",
@@ -62,7 +62,7 @@ pub(crate) fn render_training_page(
                 .gap_1()
                 .child(Label::new("Training Host"))
                 .child(
-                    Label::new("Host override: deepinfra, nebius, or runpod. Leave empty for auto-detect from API keys.")
+                    Label::new("Host override: nebius or runpod. Leave empty for auto-detect from API keys.")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )

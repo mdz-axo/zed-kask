@@ -26,7 +26,7 @@ pub(crate) fn render_corpus_page(
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",
         "Embedding Model",
-        "DeepInfra/Qwen/Qwen3-Embedding-0.6B",
+        "ollama/nomic-embed-text",
         embedding_model,
         "corpus",
         "embedding_model",

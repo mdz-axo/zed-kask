@@ -317,7 +317,7 @@ impl InferenceIpcClient {
     /// Generate embeddings for a batch of texts via the IPC bridge.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The zed process strips the
+    /// `ollama/nomic-embed-text`). The zed process strips the
     /// prefix and resolves credentials from its `LanguageModelRegistry`.
     pub async fn embed(
         &self,
@@ -528,7 +528,7 @@ impl InferenceIpcClient {
     ///
     /// `op` selects the backend method (e.g. "generate_image", "transcribe").
     /// `params` carries the op-specific fields. The zed process dispatches
-    /// to its hKask `MediaRouter` (DeepInfra/AtlasCloud backends).
+    /// to its hKask `MediaRouter` (registered `MediaProvider` backends).
     pub async fn media_generate(
         &self,
         op: &str,

@@ -9,7 +9,7 @@
 
 use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
-use crate::step_graph::{ExitKind, StepId};
+use crate::step_graph::StepId;
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine, parse_json_response};
 use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
@@ -102,107 +102,6 @@ fn load_sub_manifest_yaml(
 }
 
 impl StepMachine {
-    /// **Choice** — evaluate a condition and jump to a target step.
-    /// Pure: no inference, no tools, no side effects.
-    pub(crate) fn execute_choice(&self, node: &crate::step_graph::StepNode) -> Result<Effect> {
-        let mapping = match &node.input_mapping {
-            Some(m) => m,
-            None => {
-                tracing::warn!(
-                    target: "reg.skill.cascade.choice_misconfigured",
-                    step = node.ordinal,
-                    "Step {} (action 'choice') has no `input_mapping` — the `branches` array lives under \
-                     `input_mapping.branches`. The choice will never branch.",
-                    node.ordinal
-                );
-                return Ok(Effect::NoOp);
-            }
-        };
-
-        if let Some(branches) = mapping.get("branches").and_then(|b| b.as_array()) {
-            for branch in branches {
-                let condition = branch
-                    .get("condition")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
-                let action = branch.get("action").and_then(|a| a.as_str()).unwrap_or("");
-
-                let matched = match condition {
-                    "default" | "else" => true,
-                    _ => {
-                        if let Some((field, op, val_str)) =
-                            crate::condition::parse_choice_condition(condition)
-                        {
-                            let current = self
-                                .context
-                                .lookup(field)
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or_else(|| {
-                                    tracing::warn!(
-                                        target: "reg.skill.cascade.choice_misconfigured",
-                                        field,
-                                        "execute_choice: condition field not found or non-numeric — defaulting to non-match"
-                                    );
-                                    f64::NAN
-                                });
-                            let target: f64 = val_str.parse().unwrap_or_else(|_| {
-                                tracing::warn!(
-                                    target: "reg.skill.cascade.choice_misconfigured",
-                                    field,
-                                    value = val_str,
-                                    "execute_choice: target value failed to parse as f64 — defaulting to non-match"
-                                );
-                                f64::NAN
-                            });
-                            match op {
-                                "<" => current < target,
-                                "<=" => current <= target,
-                                ">" => current > target,
-                                ">=" => current >= target,
-                                "==" => (current - target).abs() < 0.001,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-                if matched {
-                    return match action {
-                        "continue" => Ok(Effect::NoOp),
-                        "abort" => Ok(Effect::Exit(ExitKind::Converged)),
-                        "escalate" => Ok(Effect::Exit(ExitKind::Escalated)),
-                        _ => {
-                            if let Some(ordinal) = action.parse::<u32>().ok() {
-                                if let Some(step_id) = self.graph.find(ordinal) {
-                                    Ok(Effect::Jump(step_id))
-                                } else {
-                                    Err(TemplateError::Manifest(format!(
-                                        "Choice action '{action}' — ordinal {ordinal} not found in graph"
-                                    )))
-                                }
-                            } else {
-                                Err(TemplateError::Manifest(format!(
-                                    "Choice action '{action}' is not a valid ordinal"
-                                )))
-                            }
-                        }
-                    };
-                }
-            }
-        } else {
-            tracing::warn!(
-                target: "reg.skill.cascade.choice_misconfigured",
-                step = node.ordinal,
-                "Step {} (action 'choice') has `input_mapping` but no `branches` array.",
-                node.ordinal
-            );
-        }
-
-        Ok(Effect::NoOp)
-    }
-
     /// **Loop** — re-enter the cascade from a target step. Bounded by
     /// `max_iterations` (checked by the machine in the `Reenter` arm).
     pub(crate) fn execute_loop(
@@ -486,30 +385,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: parsed,
-        })
-    }
-
-    /// **Populate** — render a template with the accumulated context.
-    pub(crate) async fn execute_populate(
-        &mut self,
-        node: crate::step_graph::StepNode,
-        infra: Infra,
-    ) -> Result<Effect> {
-        // Apply input_mapping.
-        if let Some(ref mapping) = node.input_mapping {
-            crate::step_actions::apply_input_mapping(
-                &mut self.context,
-                mapping,
-                &infra.template_renderer,
-            );
-        }
-
-        let populated = render_step_template(&node, &self.context, &infra)?;
-
-        Ok(Effect::StoredNamed {
-            step_id: node.id,
-            suffix: "populated".to_string(),
-            value: Value::String(populated),
         })
     }
 
@@ -898,22 +773,10 @@ impl StepMachine {
             self.tool_calls.push(summary);
         }
 
-        // Join mode: `list` (default, backward-compat) = Promise.all — first
-        // Err aborts. `allSettled` = Promise.allSettled — collect every tool
-        // outcome, store Ok results with an `errors` sidecar. Read from the
-        // step's `input_mapping.join` (same convention as `execute_parallel`).
-        let join_mode = node
-            .input_mapping
-            .as_ref()
-            .and_then(|m| m.get("join"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("list");
-
         let tool_count = results.len();
         let (oks, errs): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
-        // Observability at the consolidation boundary — closes the regulation
-        // loop's sense input. Fires on both success and error paths.
+        // Observability at the consolidation boundary.
         tracing::info!(
             target: "reg.skill.cascade.tool_batch_joined",
             step_ordinal = node.ordinal,
@@ -921,29 +784,12 @@ impl StepMachine {
             ok_count = oks.len(),
             err_count = errs.len(),
             elapsed_ms = elapsed_ms,
-            join_mode = join_mode,
             "REG tool batch joined"
         );
 
-        // `list` mode (default): Promise.all semantics. First Err aborts.
-        if join_mode == "list" {
-            let mut map = serde_json::Map::new();
-            for result in oks {
-                let (key, value) = result.unwrap();
-                map.insert(key, value);
-            }
-            if let Some(first_err) = errs.into_iter().next() {
-                return Err(first_err.unwrap_err());
-            }
-            return Ok(Effect::Stored {
-                step_id: node.id,
-                value: Value::Object(map),
-            });
-        }
-
-        // `allSettled` mode: Promise.allSettled semantics. No tool outcome is
-        // silently dropped. If every tool failed, propagate the first error.
-        // Otherwise store the partial result + an `errors` sidecar.
+        // allSettled semantics: collect every tool outcome. Successful results
+        // go at the top level, failures go into an `errors` sidecar. If every
+        // tool failed, propagate the first error.
         if oks.is_empty() {
             if errs.is_empty() {
                 return Err(TemplateError::Manifest(format!(
@@ -990,16 +836,14 @@ impl StepMachine {
             err_count = err_summaries.len(),
             "tool batch completed with partial failures — successful results preserved"
         );
-        // Move the successful results under a `results` key and attach the
-        // errors sidecar. Downstream steps read `results.<key>` for the
-        // successful tools and `errors` for the failures.
-        let ok_results = Value::Object(std::mem::replace(&mut map, serde_json::Map::new()));
-        let mut out = serde_json::Map::new();
-        out.insert("results".to_string(), ok_results);
-        out.insert("errors".to_string(), Value::Array(err_summaries));
+        // Flat layout: merge successful results at the top level and attach
+        // an `errors` sidecar. This keeps downstream `step_N_result.<key>`
+        // mappings working without a `.results.` prefix, regardless of
+        // whether all tools succeeded or some failed.
+        map.insert("errors".to_string(), Value::Array(err_summaries));
         Ok(Effect::Stored {
             step_id: node.id,
-            value: Value::Object(out),
+            value: Value::Object(map),
         })
     }
 
@@ -1495,122 +1339,6 @@ impl StepMachine {
             step_id: node.id,
             value: Value::Object(map),
         })
-    }
-
-    /// **Gate** — run a shell command and check its output for `GATE_PASS` or
-    /// `GATE_FAIL`. Used by pipeline manifests to verify disk artifacts and
-    /// invariants between tool steps. The command runs via `sh -c`, stdout
-    /// and stderr are captured, and the last non-empty line is checked for
-    /// the pass/fail marker. A non-zero exit code is also a failure.
-    ///
-    /// On pass: the full stdout is stored as the step result (for downstream
-    /// inspection and display) and execution falls through to the next step.
-    /// On fail: if the step has `on_failure`, the executor produces
-    /// `Effect::Exit(ExitKind::Escalated)` with the `resume` text and the
-    /// gate output. If no `on_failure` is declared, the error propagates as
-    /// a `TemplateError::Manifest`.
-    pub(crate) async fn execute_gate(
-        &mut self,
-        node: crate::step_graph::StepNode,
-        _infra: Infra,
-    ) -> Result<Effect> {
-        let command = node.command.as_deref().ok_or_else(|| {
-            TemplateError::Manifest(format!("Gate step {} has no `command` field", node.ordinal))
-        })?;
-        // `command` borrows `node.command`; clone to an owned `String` so the
-        // borrow doesn't cross the `.output()` await (rustc's HRTB `Send` check
-        // rejects `&str` from a struct field held across `.await` under
-        // `tokio::spawn`).
-        let command = command.to_string();
-
-        let timeout_dur = effective_timeout(node.timeout_seconds);
-        let output = match tokio::time::timeout(
-            timeout_dur,
-            tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&command)
-                .output(),
-        )
-        .await
-        {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => {
-                return Err(TemplateError::Manifest(format!(
-                    "Gate step {} failed to execute command: {e}",
-                    node.ordinal
-                )));
-            }
-            Err(_elapsed) => {
-                return Err(TemplateError::Timeout {
-                    step_ordinal: node.ordinal,
-                    elapsed_seconds: timeout_dur.as_secs(),
-                });
-            }
-        };
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = if stderr.is_empty() {
-            stdout.to_string()
-        } else {
-            format!("{stdout}\n--- stderr ---\n{stderr}")
-        };
-
-        // Check the last non-empty line for GATE_PASS or GATE_FAIL.
-        let last_line = combined
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-
-        let passed = output.status.success() && last_line.contains("GATE_PASS");
-        let failed = !output.status.success() || last_line.contains("GATE_FAIL");
-
-        if passed && !failed {
-            tracing::info!(
-                target: "reg.skill.cascade.gate_passed",
-                step = node.ordinal,
-                "REG"
-            );
-            return Ok(Effect::Stored {
-                step_id: node.id,
-                value: serde_json::json!({
-                    "status": "passed",
-                    "output": combined,
-                }),
-            });
-        }
-
-        // Gate failed.
-        tracing::warn!(
-            target: "reg.skill.cascade.gate_failed",
-            step = node.ordinal,
-            exit_code = output.status.code(),
-            "REG"
-        );
-
-        let resume_text = node
-            .on_failure
-            .as_ref()
-            .map(|of| of.resume.as_str())
-            .unwrap_or("");
-
-        if let Some(ref on_failure) = node.on_failure {
-            match on_failure.action.as_str() {
-                "halt" | "escalate" => {
-                    return Ok(Effect::Exit(ExitKind::Escalated));
-                }
-                _ => {}
-            }
-        }
-
-        Err(TemplateError::Manifest(format!(
-            "Gate step {} failed. Exit code: {:?}.\n{}\nResume: {}",
-            node.ordinal,
-            output.status.code(),
-            combined,
-            resume_text,
-        )))
     }
 }
 

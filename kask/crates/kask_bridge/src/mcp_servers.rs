@@ -232,7 +232,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — image generation and media workflows",
-        credentials: Some(&["DEEPINFRA_API_KEY", "ATLASCLOUD_API_KEY"]),
+        // No media backends are currently registered in the MediaRouter, so no
+        // provider credentials are injected. Re-add the relevant API key env
+        // vars here when a media backend is registered again.
+        credentials: Some(&[]),
         config_env: Some(&[
             // Durable gallery DB path (WS-3). Unencrypted file SQLite — the
             // media server reads it via std::env::var; absent → in-memory.
@@ -994,22 +997,20 @@ mod tests {
             "swarm server must not receive SMTP credentials"
         );
         assert!(
-            !filtered.iter().any(|(k, _)| k == "DEEPINFRA_API_KEY"),
+            !filtered.iter().any(|(k, _)| k == "OPENROUTER_API_KEY"),
             "swarm server must not receive inference keys"
         );
     }
 
-    // The media server should only receive the keys it actually reads
-    // (DEEPINFRA_API_KEY, ATLASCLOUD_API_KEY), not other inference keys or
-    // unrelated secrets. Vision routes through the IPC bridge to zed's
+    // The media server has no registered media backends, so its credential
+    // allowlist is empty — it must not receive any provider keys or unrelated
+    // secrets. Vision routes through the IPC bridge to zed's
     // LanguageModelRegistry — the media server process never reads
     // OPENROUTER_API_KEY. This pins the allowlist against a future edit
     // that re-widens it. See kask/docs/plans/media-system-refactor.md §6 (F-2).
     #[test]
     fn media_credentials_only_include_used_keys() {
         let all_credentials: Vec<(String, String)> = [
-            "DEEPINFRA_API_KEY",
-            "ATLASCLOUD_API_KEY",
             "OPENROUTER_API_KEY",
             "HKASK_SMTP_PASSWORD",
             "HKASK_DB_PASSPHRASE",
@@ -1021,17 +1022,12 @@ mod tests {
         let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             keys.len(),
-            2,
-            "media server should receive DEEPINFRA_API_KEY + ATLASCLOUD_API_KEY, got {keys:?}"
+            0,
+            "media server has no media backends — its credential allowlist is empty, got {keys:?}"
         );
-        assert!(keys.contains(&"DEEPINFRA_API_KEY"));
         assert!(
             !keys.contains(&"FALAI_API_KEY"),
             "media server must not receive FALAI_API_KEY — fal.ai backend removed"
-        );
-        assert!(
-            keys.contains(&"ATLASCLOUD_API_KEY"),
-            "media server reads ATLASCLOUD_API_KEY — it must be in credentials"
         );
         assert!(
             !keys.contains(&"OPENROUTER_API_KEY"),

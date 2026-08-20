@@ -15,9 +15,10 @@ pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
 
 /// zed-kask (D12): compute the API-key env var name for an OpenAI/Anthropic-compatible
 /// provider ID. The kask contract is `<ID uppercased, non-alphanumeric stripped>_API_KEY`
-/// (e.g. `DeepInfra` → `DEEPINFRA_API_KEY`, `fal.ai` → `FALAI_API_KEY`).
+/// (e.g. `OpenRouter` → `OPENROUTER_API_KEY`, `fal.ai` → `FALAI_API_KEY`).
 /// Upstream uses `convert_case::Case::UpperSnake`,
-/// which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai` as
+/// which splits multi-word IDs on case boundaries (e.g. `SomeProvider` →
+/// `SOME_PROVIDER_API_KEY`) and leaves `fal.ai` as
 /// an invalid env var name. The entire kask ecosystem (`.env` template, MCP servers,
 /// keystore, UI text, docs) uses the concatenated form, so the upstream computation
 /// never matches the env vars kask users set. See DIVERGENCE.md D12.
@@ -324,12 +325,10 @@ mod tests {
     fn test_api_key_env_var_name_kask_contract() {
         // Cases from settings.json `openai_compatible` / `anthropic_compatible`.
         // The expected names match the kask `.env.example` template and every
-        // `std::env::var("DEEPINFRA_API_KEY")` call in the kask MCP servers.
-        assert_eq!(api_key_env_var_name_for("DeepInfra"), "DEEPINFRA_API_KEY");
+        // `std::env::var("OPENROUTER_API_KEY")` call in the kask MCP servers.
         assert_eq!(api_key_env_var_name_for("OpenRouter"), "OPENROUTER_API_KEY");
         assert_eq!(api_key_env_var_name_for("fal.ai"), "FALAI_API_KEY");
         // Lowercase IDs (used by some kask docs) must also resolve correctly.
-        assert_eq!(api_key_env_var_name_for("deepinfra"), "DEEPINFRA_API_KEY");
         assert_eq!(api_key_env_var_name_for("openrouter"), "OPENROUTER_API_KEY");
     }
 }
