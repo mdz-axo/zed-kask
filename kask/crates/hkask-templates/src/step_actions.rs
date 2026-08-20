@@ -283,10 +283,13 @@ impl StepMachine {
         let tools: Option<Vec<ChatToolDefinition>> = structured_tool.map(|tool| vec![tool]);
 
         // Merge per-step inference parameters from the template's `[inference]`
-        // block over the default params. Templates declare temperature
-        // and thinking_budget per step — without this, every call
-        // uses the default (temperature 0.6), which is too
+        // block over the default params. Templates declare temperature,
+        // thinking_budget, work_effort, and verbosity per step — without this,
+        // every call uses the default (temperature 0.6), which is too
         // low for complex templates that need thinking + a full JSON response.
+        // work_effort is a fallback for thinking_budget (high/medium → ON,
+        // low/minimal → OFF); thinking_budget takes precedence when both are set.
+        // verbosity injects a system-prompt instruction controlling output length.
         let mut params = infra.default_params.clone();
         if let Some(temp) = inference_block.temperature {
             params.temperature = temp;
@@ -309,7 +312,27 @@ impl StepMachine {
                     "Unrecognized thinking_budget value — falling back to default disable_thinking"
                 );
             }
-            None => {}
+            None => {
+                // thinking_budget not set — check work_effort as fallback.
+                // work_effort maps: "high"/"medium" → thinking ON,
+                // "low"/"minimal" → thinking OFF.
+                match inference_block.work_effort.as_deref() {
+                    Some("high") | Some("medium") => {
+                        params.disable_thinking = false;
+                    }
+                    Some("low") | Some("minimal") => {
+                        params.disable_thinking = true;
+                    }
+                    Some(other) => {
+                        tracing::warn!(
+                            target: "hkask.templates.inference_block",
+                            work_effort = %other,
+                            "Unrecognized work_effort value — falling back to default disable_thinking"
+                        );
+                    }
+                    None => {}
+                }
+            }
         }
 
         let timeout_dur = effective_timeout(node.timeout_seconds);
@@ -320,8 +343,12 @@ impl StepMachine {
         // Without this, each template step is an isolated single-prompt call
         // with no conversational context, confusing the model (the original
         // bug this fixes).
-        let messages =
-            build_cascade_messages(&infra.prior_messages, &infra.memory_snippets, &prompt);
+        let messages = build_cascade_messages(
+            &infra.prior_messages,
+            &infra.memory_snippets,
+            &prompt,
+            inference_block.verbosity.as_deref(),
+        );
 
         // Gate the inference call with the global concurrency limiter. The
         // permit is held across the cloud round-trip and released on drop
@@ -1693,10 +1720,22 @@ fn build_cascade_messages(
     prior_messages: &[ChatMessage],
     memory_snippets: &[MemorySnippet],
     rendered_template: &str,
+    verbosity: Option<&str>,
 ) -> Vec<ChatMessage> {
-    let mut messages = Vec::with_capacity(2 + prior_messages.len() + 1);
+    let mut messages = Vec::with_capacity(3 + prior_messages.len() + 1);
 
-    // Long-term memory as a system message (if non-empty).
+    // Verbosity instruction as a system message (if non-standard).
+    // This is a soft lever — it instructs the model on output length without
+    // imposing a hard token limit. Injected before the template so the model
+    // processes it as a global constraint on its output style.
+    if let Some(level) = verbosity {
+        if let Some(instruction) = verbosity_instruction(level) {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: instruction.to_string(),
+            });
+        }
+    }
     if !memory_snippets.is_empty() {
         let memory_text = format_cascade_memory_context(memory_snippets);
         messages.push(ChatMessage {
@@ -1723,6 +1762,35 @@ fn build_cascade_messages(
     messages
 }
 
+/// Map a verbosity level to a system-prompt instruction controlling output length.
+/// Returns `None` for "standard" (no instruction — the default).
+/// This is a soft lever: it instructs the model on conciseness without imposing
+/// a hard token limit. The template's own instructions still take precedence
+/// for fields that require specific content.
+fn verbosity_instruction(level: &str) -> Option<&'static str> {
+    match level {
+        "terse" => Some(
+            "Be extremely concise. Minimize unnecessary words and explanations. Prefer short sentences over paragraphs.",
+        ),
+        "concise" => Some("Be concise and direct. Avoid unnecessary elaboration."),
+        "standard" => None,
+        "detailed" => {
+            Some("Be thorough and detailed in your analysis. Provide complete explanations.")
+        }
+        "verbose" => Some(
+            "Be comprehensive and exhaustive in your analysis. Leave no relevant detail unexplored.",
+        ),
+        _ => {
+            tracing::warn!(
+                target: "hkask.templates.inference_block",
+                verbosity = %level,
+                "Unrecognized verbosity value — no instruction injected"
+            );
+            None
+        }
+    }
+}
+
 /// Format long-term memory snippets as a system message.
 ///
 /// Uses a simple bulleted format with source tags — distinct from the
@@ -1746,12 +1814,9 @@ fn format_cascade_memory_context(snippets: &[MemorySnippet]) -> String {
 }
 
 /// Call inference with streaming, timeout, and reasoning-delta forwarding,
-/// using the message-array API (`generate_stream_with_messages`).
-///
-/// This is the cascade-aware variant of `call_inference_stream` — it takes a
-/// `&[ChatMessage]` instead of a single `&str` prompt, so the provider sees
-/// the full conversation (memory + prior turns + template) as proper
-/// role-tagged messages.
+/// using the message-array API (`generate_stream_with_messages`). Takes a
+/// `&[ChatMessage]` so the provider sees the full conversation (memory +
+/// prior turns + template) as proper role-tagged messages.
 async fn call_inference_stream_with_messages(
     inference: Arc<dyn InferencePort + 'static>,
     messages: Vec<ChatMessage>,
@@ -1893,8 +1958,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn call_inference_stream_threads_finish_reason_length() {
-        // zed-kask: D25 — `call_inference_stream` must return the chunk's
+    async fn call_inference_stream_with_messages_threads_finish_reason_length() {
+        // zed-kask: D25 — `call_inference_stream_with_messages` must return the chunk's
         // finish_reason so `execute_select` can detect truncation
         // (finish_reason "length") and refuse to parse partial output as JSON.
         use hkask_types::{InferenceError, InferenceResult, InferenceUsage};
@@ -1969,8 +2034,8 @@ mod tests {
     }
 
     // zed-kask: D25 — pinning test for the execute_select truncation refusal.
-    // The stream-level test above (call_inference_stream_threads_finish_reason_length)
-    // only asserts that finish_reason is threaded out of call_inference_stream.
+    // The stream-level test above (call_inference_stream_with_messages_threads_finish_reason_length)
+    // only asserts that finish_reason is threaded out of call_inference_stream_with_messages.
     // This test exercises the full execute_select path: when finish_reason is
     // "length" AND output_schema is set AND no structured tool call was emitted,
     // execute_select must return Err containing "truncated at token limit" — not
@@ -3309,6 +3374,65 @@ steps:
 
         let msg = result
             .expect_err("must hit depth guard, not hang")
+            .to_string();
+        assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
+    }
+
+    /// Discriminates `execute_parallel`'s depth increment from `execute_flowdef`'s.
+    /// A 2-level parallel-only manifest (no `flowdef` in any sub-cascade) must
+    /// still hit the matryoshka guard. Without the `parent_depth + 1` line in
+    /// `execute_parallel`, this test hangs (each parallel branch resets depth
+    /// to 0, so the guard never fires).
+    #[tokio::test]
+    async fn execute_parallel_depth_increment_independent_of_flowdef() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let limiter = Arc::new(ConcurrencyLimiter::new(1, 1));
+        let tmp = std::env::temp_dir().join(format!(
+            "hkask-matryoshka-parallel-only-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Self-referencing parallel manifest — no flowdef anywhere.
+        let self_ref_yaml = r#"
+manifest:
+  id: parallel-only-self-ref
+  category: skill
+convergence:
+  max_iterations: 1
+steps:
+  - ordinal: 1
+    action: parallel
+    description: "parallel-only self-ref"
+    input_mapping:
+      branches:
+        - template_ref: parallel-only-self-ref
+      join: allSettled
+"#;
+        std::fs::write(tmp.join("parallel-only-self-ref.yaml"), self_ref_yaml).unwrap();
+
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(NoopToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        )
+        .with_concurrency_limiter(limiter)
+        .with_template_base_path(tmp.clone());
+
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(self_ref_yaml).expect("parse");
+        let result = executor
+            .execute_manifest_into(manifest, std::collections::HashMap::new())
+            .await;
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let msg = result
+            .expect_err("parallel-only self-ref must hit depth guard")
             .to_string();
         assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
     }

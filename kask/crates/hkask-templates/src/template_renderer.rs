@@ -286,6 +286,8 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 /// [inference]
 /// temperature = 0.2
 /// thinking_budget = "full"
+/// work_effort = "high"
+/// verbosity = "detailed"
 /// ```
 /// This struct captures the parsed values. Fields not present in the block
 /// remain `None` — the caller merges them over `LLMParameters::default()`.
@@ -293,6 +295,15 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 pub struct InferenceBlock {
     pub temperature: Option<f32>,
     pub thinking_budget: Option<String>,
+    /// Work effort level: "high" | "medium" | "low" | "minimal".
+    /// Maps to thinking_budget when thinking_budget is not explicitly set:
+    /// "high"/"medium" → thinking ON, "low"/"minimal" → thinking OFF.
+    /// thinking_budget takes precedence if both are declared.
+    pub work_effort: Option<String>,
+    /// Output verbosity: "terse" | "concise" | "standard" | "detailed" | "verbose".
+    /// Injects a system-prompt instruction controlling output length.
+    /// "standard" is the default (no instruction injected).
+    pub verbosity: Option<String>,
 }
 
 /// Parse and strip the `[inference]` config block from a template body.
@@ -344,6 +355,12 @@ pub fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
                 }
                 "thinking_budget" => {
                     config.thinking_budget = Some(unquoted.to_string());
+                }
+                "work_effort" => {
+                    config.work_effort = Some(unquoted.to_string());
+                }
+                "verbosity" => {
+                    config.verbosity = Some(unquoted.to_string());
                 }
                 _ => {}
             }
@@ -664,5 +681,33 @@ mod tests {
         let body = "[inference]\nthinking_budget = \"on\"\n\nGenerate a response.\n";
         let (_stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.thinking_budget.as_deref(), Some("on"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_work_effort() {
+        let body = "[inference]\nwork_effort = \"high\"\n\nYou are an analyst.";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.work_effort.as_deref(), Some("high"));
+        assert!(stripped.starts_with("You are an analyst."));
+        assert!(!stripped.contains("work_effort"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_verbosity() {
+        let body = "[inference]\nverbosity = \"concise\"\n\nYou are an analyst.";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.verbosity.as_deref(), Some("concise"));
+        assert!(stripped.starts_with("You are an analyst."));
+        assert!(!stripped.contains("verbosity"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_all_params() {
+        let body = "[inference]\ntemperature = 0.3\nthinking_budget = \"full\"\nwork_effort = \"high\"\nverbosity = \"detailed\"\n\nYou are an analyst.";
+        let (_stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.temperature, Some(0.3));
+        assert_eq!(config.thinking_budget.as_deref(), Some("full"));
+        assert_eq!(config.work_effort.as_deref(), Some("high"));
+        assert_eq!(config.verbosity.as_deref(), Some("detailed"));
     }
 }

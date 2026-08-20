@@ -1601,6 +1601,8 @@ impl SwarmServer {
         Some(val)
     }
 }
+
+#[cfg(test)]
 mod grounding_wiring_tests {
     use super::*;
     use crate::config::SwarmConfig;

@@ -200,7 +200,7 @@ impl ConvergenceTracker {
     }
 
     /// Record a PDCA cycle's convergence signal only (when Brier is not yet
-    /// available — e.g., the first cycle before any prediction has been made).
+    /// available). Test-only — production uses `push_cycle_from_context`.
     pub fn push_signal(&mut self, signal: f64) {
         self.signal_history.push(signal);
         // Push NaN for Brier so the histories stay aligned by cycle count.
@@ -259,8 +259,9 @@ impl ConvergenceTracker {
         }
     }
 
-    /// Capture the baseline quality on the first full pass. Called once,
-    /// after the first pass completes; subsequent calls are no-ops.
+    /// Capture the baseline quality on the first full pass. Test-only —
+    /// production never calls this (`push_cycle_from_context` reads
+    /// `resolve_quality` directly).
     pub fn capture_baseline<C: ContextLookup>(&mut self, context: &C) {
         if self.baseline_quality.is_none() {
             self.baseline_quality = self.resolve_quality(context);
