@@ -900,7 +900,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Use this when a flowdef valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
+        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Use this when a skill valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
     )]
     pub async fn forecast_persist(
         &self,
