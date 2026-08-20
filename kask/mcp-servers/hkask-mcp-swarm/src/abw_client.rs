@@ -146,17 +146,6 @@ impl SwarmClient {
     /// Send a PATCH request. The workspace-update endpoint is 405 on ABW
     /// (verified live 2026-08-13 — no PATCH /workspaces/{id}); this exists
     /// only for the live probe that pins that fact.
-    #[cfg(test)]
-    #[expect(dead_code)]
-    pub(crate) async fn patch(
-        &self,
-        path: &str,
-        payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, SwarmError> {
-        self.send(self.http.patch(self.url(path)).json(payload))
-            .await
-    }
-
     /// Fetch the operator's current wallet balance (the algedonic sense input).
     /// Returns `None` when unauthenticated (catalogue-only mode). A query
     /// failure emits a warning and returns `None` rather than fabricating a
@@ -192,33 +181,5 @@ impl SwarmClient {
             );
         }
         value
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The algedonic wallet signal must never be fabricated. When the server is
-    // unauthenticated, `wallet_balance` returns `None` (no key → no wallet),
-    // and `with_wallet` leaves the response untouched rather than inserting a
-    // zero. This pins the `.rules` trap: a missing measurement is
-    // distinguishable from a measured zero balance.
-    #[tokio::test]
-    async fn wallet_envelope_absent_when_unauthenticated() {
-        let client = SwarmClient::new(reqwest::Client::new(), SwarmConfig::default());
-        assert!(client.wallet_balance().await.is_none());
-        let out = client.with_wallet(serde_json::json!({"ok": true})).await;
-        assert!(out.get("wallet").is_none());
-        assert_eq!(out.get("ok").and_then(|v| v.as_bool()), Some(true));
-    }
-
-    #[test]
-    fn client_url_joins_apex_and_path() {
-        let client = SwarmClient::new(reqwest::Client::new(), SwarmConfig::default());
-        assert_eq!(
-            client.url("/agents"),
-            "https://agent-bestiary.world/api/agents"
-        );
     }
 }

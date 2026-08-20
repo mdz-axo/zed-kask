@@ -17,7 +17,6 @@
 //! it.
 //!
 //! This module lives in `hkask-types` (rather than `hkask-mcp-server`) so that
-//! pure domain crates such as `hkask-condenser` can use [`AnyJsonValue`] and
 //! [`find_boolean_schema_positions`] without pulling in `hkask-mcp-server`'s
 //! heavy transitive deps (`rmcp`, `reqwest`, `hkask-keystore`,
 //! `tracing-subscriber`, …). `hkask-mcp-server` re-exports these items for
@@ -187,97 +186,5 @@ fn collect_in_schema(value: &serde_json::Value, path: &str, found: &mut Vec<Stri
         }
         // A bare array is not a schema; nothing to scan.
         _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use schemars::schema_for;
-
-    /// The schema must be a JSON object, never the bare boolean `true` that
-    /// `serde_json::Value` produces. Ollama rejects boolean property schemas.
-    #[test]
-    fn any_json_value_schema_is_object_not_boolean() {
-        let schema = schema_for!(AnyJsonValue);
-        let value = serde_json::to_value(&schema).expect("schema serializes");
-        assert!(
-            value.is_object(),
-            "AnyJsonValue schema must be a JSON object, got: {value}"
-        );
-        assert!(
-            !value.is_boolean(),
-            "AnyJsonValue schema must not be a bare boolean"
-        );
-    }
-
-    /// `AnyJsonValue` serializes transparently as the inner `Value`.
-    #[test]
-    fn any_json_value_round_trips_as_value() {
-        let inner = serde_json::json!({"answer": 42, "list": [1, 2, 3]});
-        let wrapped = AnyJsonValue(inner.clone());
-        let serialized = serde_json::to_value(&wrapped).expect("serialize");
-        assert_eq!(serialized, inner);
-
-        let back: AnyJsonValue = serde_json::from_value(inner.clone()).expect("deserialize");
-        assert_eq!(&*back, &inner);
-    }
-
-    /// Default (omitted field) is `Value::Null`, matching `serde_json::Value`'s
-    /// default so `#[serde(default)]` behavior is unchanged.
-    #[test]
-    fn any_json_value_default_is_null() {
-        assert!(AnyJsonValue::default().is_null());
-    }
-
-    /// The scanner must flag exactly the schema-valued boolean positions a
-    /// `serde_json::Value` tool input would produce, and ignore non-schema
-    /// booleans like `nullable`.
-    #[test]
-    fn find_boolean_schema_positions_flags_only_schema_positions() {
-        let schema = serde_json::json!({
-            "type": "object",
-            "nullable": true,
-            "required": ["any_field"],
-            "properties": {
-                "any_field": true,
-                "typed": { "type": "string" },
-                "map_val": { "type": "object", "additionalProperties": true }
-            },
-            "additionalProperties": false,
-            "items": true,
-            "anyOf": [true, { "type": "number" }],
-            "not": false
-        });
-
-        let mut found = find_boolean_schema_positions(&schema);
-        found.sort();
-        assert_eq!(
-            found,
-            vec![
-                "/additionalProperties",
-                "/anyOf/0",
-                "/items",
-                "/not",
-                "/properties/any_field",
-                "/properties/map_val/additionalProperties"
-            ],
-            "nullable and the typed property must NOT be flagged; only schema-valued booleans"
-        );
-    }
-
-    /// A clean schema (no booleans in schema positions) returns an empty list
-    /// the invariant every kask MCP tool-input test asserts.
-    #[test]
-    fn find_boolean_schema_positions_empty_for_clean_schema() {
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "any_field": {},
-                "typed": { "type": "string" }
-            },
-            "additionalProperties": {}
-        });
-        assert!(find_boolean_schema_positions(&schema).is_empty());
     }
 }

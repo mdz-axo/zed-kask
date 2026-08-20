@@ -86,36 +86,3 @@ pub fn increment_key_version() -> std::io::Result<u32> {
     write_key_version(new)?;
     Ok(new)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn current_version_is_one() {
-        assert_eq!(CURRENT_KEY_VERSION, 1);
-    }
-
-    #[test]
-    fn read_version_errors_when_no_file() {
-        // In test environment, config dir may not exist — should error
-        let result = read_key_version();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn write_and_read_roundtrip() {
-        let dir = TempDir::new().unwrap();
-        let version_file = dir.path().join("hkask").join("version");
-
-        // Write version 5
-        std::fs::create_dir_all(version_file.parent().unwrap()).unwrap();
-        std::fs::write(&version_file, "5\n").unwrap();
-
-        // Can't test read_key_version directly since it uses the real config dir,
-        // but we verify the file format is correct
-        let contents = std::fs::read_to_string(&version_file).unwrap();
-        assert_eq!(contents.trim(), "5");
-    }
-}

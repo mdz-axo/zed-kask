@@ -172,3 +172,15 @@ pub struct InferenceResult {
     #[serde(default)]
     pub cost_usd: Option<f64>,
 }
+
+/// Streaming inference chunk — one piece of a streaming LLM response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceStreamChunk {
+    pub text_delta: String,
+    pub reasoning_delta: String,
+    pub model: String,
+    pub finish_reason: Option<String>,
+    pub usage: Option<InferenceUsage>,
+    pub tool_calls: Vec<StructuredToolCall>,
+    pub cost_usd: Option<f64>,
+}

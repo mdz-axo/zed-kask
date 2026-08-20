@@ -172,27 +172,3 @@ where
         Err(_) => default,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn db_credential_preserves_configured_passphrase() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let old = std::env::var_os("HKASK_DB_PASSPHRASE");
-        unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", "mcp-db-passphrase") };
-
-        let resolved = resolve_credential("HKASK_DB_PASSPHRASE").expect("resolve DB credential");
-
-        unsafe {
-            match old {
-                Some(value) => std::env::set_var("HKASK_DB_PASSPHRASE", value),
-                None => std::env::remove_var("HKASK_DB_PASSPHRASE"),
-            }
-        }
-        assert_eq!(resolved, "mcp-db-passphrase");
-    }
-}

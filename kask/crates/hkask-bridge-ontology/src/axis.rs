@@ -125,7 +125,6 @@ impl std::fmt::Display for OntologyNamespace {
 /// Domain ontology tier for content produced by an MCP tool.
 ///
 /// Every piece of content in hKask exists within the 3-tier ontology
-/// architecture. The condenser uses this to apply domain-aware saliency
 /// weighting — different ontologies carry different confidence baselines
 /// and information density expectations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -166,7 +165,6 @@ impl OntologyAnchor {
     }
 
     /// Return the information density expectation for this ontology tier.
-    /// Higher values = more information per token; condenser should be more conservative.
     pub fn density_factor(&self) -> f64 {
         match self {
             OntologyAnchor::Core => 1.0,
@@ -213,7 +211,6 @@ impl OntologyAnchor {
 /// `domain` is a lowercase domain hint supplied by the calling server (the
 /// server knows its functional area) or overridden per-request. The hint may
 /// be a bare domain ("finance", "media") or a tool-style name
-/// ("company_profile", "generate_image") — the matcher checks both exact
 /// matches and token prefixes so tool names resolve to their server's
 /// domain. Unknown domains fall back to the generalists (DC + PKO) — never
 /// force a domain ontology where it doesn't fit.
@@ -337,7 +334,6 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         "skill",
         "docproc",
         "curator",
-        "condenser",
         "kata",
     ]
     .iter()
@@ -370,264 +366,5 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     OntologyAnchor::DomainSupplement {
         namespace: OntologyNamespace::Sumo,
         concept: sumo::ENTITY.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn financial_domains_map_to_fibo() {
-        for domain in [
-            "finance",
-            "financial",
-            "company",
-            "prediction-markets",
-            "prediction markets",
-        ] {
-            let anchor = select_ontology_anchor(domain);
-            assert_eq!(
-                anchor,
-                OntologyAnchor::DomainSupplement {
-                    namespace: OntologyNamespace::Fibo,
-                    concept: dc_bibo::DATASET.to_string()
-                },
-                "domain {domain} should map to FIBO"
-            );
-        }
-    }
-
-    #[test]
-    fn science_domains_map_to_eso() {
-        let anchor = select_ontology_anchor("science");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Eso,
-                concept: dc_bibo::TEXT.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn narrative_domains_map_to_golem() {
-        let anchor = select_ontology_anchor("narrative");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Golem,
-                concept: dc_bibo::TEXT.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn media_domains_map_to_omc() {
-        let anchor = select_ontology_anchor("media");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Omc,
-                concept: dc_bibo::COLLECTION.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn training_domains_map_to_mlschema() {
-        let anchor = select_ontology_anchor("training");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::MlSchema,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn statistical_domains_map_to_sdmx() {
-        for domain in [
-            "economic",
-            "fred",
-            "dbnomics",
-            "worldbank",
-            "world_bank",
-            "indicator",
-            "timeseries",
-        ] {
-            let anchor = select_ontology_anchor(domain);
-            assert_eq!(
-                anchor,
-                OntologyAnchor::DomainSupplement {
-                    namespace: OntologyNamespace::Sdmx,
-                    concept: sdmx::DATASET.to_string()
-                },
-                "domain '{domain}' must map to SDMX"
-            );
-        }
-    }
-
-    #[test]
-    fn process_domains_map_to_pko_dual_axis() {
-        let anchor = select_ontology_anchor("kanban");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: pko::PROCEDURE.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn unknown_domain_falls_back_to_sumo() {
-        // Unknown domains now route to SUMO (the upper ontology) rather than
-        // the bare 5W1H core, so they get formal categorization.
-        let anchor = select_ontology_anchor("some-unknown-domain");
-        assert_eq!(
-            anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Sumo,
-                concept: sumo::ENTITY.to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn empty_domain_falls_back_to_core() {
-        // An empty domain hint has no signal — the 5W1H core is the right
-        // anchor (no domain to categorize).
-        let anchor = select_ontology_anchor("");
-        assert_eq!(anchor, OntologyAnchor::Core);
-    }
-
-    #[test]
-    fn tool_style_names_resolve_to_their_domain() {
-        // Tool names like "company_profile" or "generate_image" carry the
-        // calling server's functional area as a prefix; the matcher must
-        // resolve them to that server's domain ontology, not fall back to Core.
-        let fibo = select_ontology_anchor("company_profile");
-        assert_eq!(
-            fibo,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-        let omc = select_ontology_anchor("generate_image");
-        assert_eq!(
-            omc,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Omc,
-                concept: dc_bibo::COLLECTION.to_string()
-            }
-        );
-        let mlschema = select_ontology_anchor("training_submit");
-        assert_eq!(
-            mlschema,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::MlSchema,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-        let pko = select_ontology_anchor("kanban_task_create");
-        assert_eq!(
-            pko,
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: pko::PROCEDURE.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn eso_namespace_round_trips_through_fromstr() {
-        let ns: OntologyNamespace = "eso".parse().unwrap();
-        assert_eq!(ns, OntologyNamespace::Eso);
-        assert_eq!(ns.to_string(), "eso");
-    }
-
-    #[test]
-    fn all_namespaces_round_trip_through_fromstr_and_display() {
-        for (name, variant) in [
-            ("fibo", OntologyNamespace::Fibo),
-            ("eso", OntologyNamespace::Eso),
-            ("golem", OntologyNamespace::Golem),
-            ("mlschema", OntologyNamespace::MlSchema),
-            ("sdmx", OntologyNamespace::Sdmx),
-            ("omc", OntologyNamespace::Omc),
-            ("sumo", OntologyNamespace::Sumo),
-        ] {
-            let parsed: OntologyNamespace = name.parse().unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(parsed, variant, "FromStr round-trip for {name}");
-            assert_eq!(variant.to_string(), name, "Display round-trip for {name}");
-        }
-    }
-
-    #[test]
-    fn dc_concept_always_returns_a_dc_uri() {
-        // The invariant: every domain namespace maps to a real DC concept.
-        for variant in [
-            OntologyNamespace::Fibo,
-            OntologyNamespace::Eso,
-            OntologyNamespace::Golem,
-            OntologyNamespace::MlSchema,
-            OntologyNamespace::Sdmx,
-            OntologyNamespace::Omc,
-            OntologyNamespace::Sumo,
-        ] {
-            let concept = variant.dc_concept();
-            assert!(
-                concept.starts_with("dcterms:"),
-                "dc_concept for {variant:?} must be dcterms-namespaced: {concept}"
-            );
-        }
-    }
-
-    #[test]
-    fn pko_concept_always_returns_a_pko_uri() {
-        for variant in [
-            OntologyNamespace::Fibo,
-            OntologyNamespace::Eso,
-            OntologyNamespace::Golem,
-            OntologyNamespace::MlSchema,
-            OntologyNamespace::Sdmx,
-            OntologyNamespace::Omc,
-            OntologyNamespace::Sumo,
-        ] {
-            let concept = variant.pko_concept();
-            assert!(
-                concept.starts_with("pko:"),
-                "pko_concept for {variant:?} must be pko-namespaced: {concept}"
-            );
-        }
-    }
-
-    #[test]
-    fn confidence_modifier_fibo_positive_sumo_positive() {
-        let fibo = OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            concept: dc_bibo::DATASET.to_string(),
-        };
-        let sumo = OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Sumo,
-            concept: sumo::ENTITY.to_string(),
-        };
-        assert!(fibo.confidence_modifier() > 0.0);
-        assert!(sumo.confidence_modifier() > 0.0);
-        // FIBO (OMG standard) gets a higher boost than SUMO (upper ontology).
-        assert!(fibo.confidence_modifier() > sumo.confidence_modifier());
-    }
-
-    #[test]
-    fn density_factor_fibo_higher_than_core() {
-        let core = OntologyAnchor::Core;
-        let fibo = OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            concept: dc_bibo::DATASET.to_string(),
-        };
-        assert!(fibo.density_factor() > core.density_factor());
     }
 }

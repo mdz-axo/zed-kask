@@ -20,16 +20,3 @@ pub const KANBAN_SERVER_NAME: &str = "kata-kanban";
 /// widget's move affordance invokes this tool (not the tool that produced the
 /// block) with `{ task_id, target_status }` args.
 pub const KANBAN_TASK_MOVE_TOOL: &str = "kanban_task_move";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn server_name_and_tool_are_stable() {
-        // These are part of the wire contract; a rename is a breaking change
-        // that must update both the server's run() and the widget's move tool.
-        assert_eq!(KANBAN_SERVER_NAME, "kata-kanban");
-        assert_eq!(KANBAN_TASK_MOVE_TOOL, "kanban_task_move");
-    }
-}

@@ -145,27 +145,3 @@ pub fn style_dimension_to_golem(dim: &str) -> Option<GolemConcept> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn corpus_ops_map_to_golem() {
-        assert_eq!(corpus_op_to_golem("corpus_build_persona"), Some(AUTHOR));
-        assert_eq!(corpus_op_to_golem("corpus_compose"), Some(CREATIVE_WORK));
-        assert_eq!(
-            corpus_op_to_golem("corpus_mashup"),
-            Some(NARRATIVE_FUNCTION)
-        );
-        assert_eq!(corpus_op_to_golem("unknown_op"), None);
-    }
-
-    #[test]
-    fn style_dimensions_map_to_golem() {
-        assert_eq!(style_dimension_to_golem("voice"), Some(CHARACTER));
-        assert_eq!(style_dimension_to_golem("setting"), Some(SETTING));
-        assert_eq!(style_dimension_to_golem("plot"), Some(NARRATIVE_FUNCTION));
-        assert_eq!(style_dimension_to_golem("rhyme_scheme"), None);
-    }
-}

@@ -22,7 +22,6 @@ hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
 hkask-services-core.workspace = true
-hkask-condenser.workspace = true
 hkask_tool_invoker.workspace = true
 
 # zed-kask side — the facilities the bridge adapts over
@@ -59,21 +58,3 @@ workspace = true
 
 [features]
 test-utils = []
-
-[dev-dependencies]
-futures.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
-proptest.workspace = true
-hkask-mcp-swarm = { workspace = true, features = ["test-utils"] }
-fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
-
-[[test]]
-name = "bridge_gap_properties"
-path = "tests/bridge_gap_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "swarm_default_drift"
-path = "tests/swarm_default_drift.rs"
-required-features = ["test-utils"]

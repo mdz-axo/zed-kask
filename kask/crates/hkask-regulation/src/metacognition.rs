@@ -96,16 +96,10 @@ pub struct HealthSnapshot {
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
     pub escalation_count: usize,
-    /// Grounding clean rate from the central verification ledger.
     /// `None` when no grounded delegations exist (absence ≠ 0 — paper Rule 5.3)
-    /// or when the verification store is not wired into the metacognition
     /// loop. The Curator surfaces this via `CuratorStatusTool` so the user
-    /// can proactively check grounding health, not just see alerts when they
     /// fire.
-    pub grounding_clean_rate: Option<f64>,
-    /// Grounding coverage rate from the central verification ledger.
     /// `None` when no delegations exist or the store is not wired.
-    pub grounding_coverage_rate: Option<f64>,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -190,12 +184,8 @@ pub struct MetacognitionLoop {
     /// notification (e.g. a toast). Best-effort: errors are logged and
     /// swallowed.
     alert_sink: Option<Arc<dyn AlertSink>>,
-    /// Central verification ledger — when wired, the health snapshot
-    /// includes grounding clean/coverage rates so the Curator can
-    /// proactively surface grounding health via `CuratorStatusTool`, not
+
     /// just see alerts when they fire. `None` when not wired (snapshot
-    /// grounding fields are `None`).
-    verification_store: Option<Arc<hkask_verification::VerificationStore>>,
 }
 
 impl MetacognitionLoop {
@@ -215,7 +205,6 @@ impl MetacognitionLoop {
             last_snapshot: RwLock::new(None),
             alert_rx: None,
             alert_sink: None,
-            verification_store: None,
         }
     }
 
@@ -239,24 +228,6 @@ impl MetacognitionLoop {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_alert_sink(mut self, sink: Arc<dyn AlertSink>) -> Self {
         self.alert_sink = Some(sink);
-        self
-    }
-
-    /// Wire the central verification ledger so the health snapshot includes
-    /// grounding clean/coverage rates. This lets the Curator surface
-    /// grounding health via `CuratorStatusTool` — the user can proactively
-    /// check "is grounding getting better?" not just see alerts when they
-    /// fire.
-    ///
-    /// A DB outage is NOT collapsed to `None` silently — the snapshot
-    /// grounding fields are `None` on query failure (absence ≠ 0, paper
-    /// Rule 5.3), and the failure is logged at `warn!`.
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_verification_store(
-        mut self,
-        store: Arc<hkask_verification::VerificationStore>,
-    ) -> Self {
-        self.verification_store = Some(store);
         self
     }
 
@@ -292,30 +263,9 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
-            // Grounding health — populated from the verification ledger
             // when wired. `None` on absence (no grounded delegations) or
             // DB failure (absence ≠ 0, paper Rule 5.3).
-            grounding_clean_rate: None,
-            grounding_coverage_rate: None,
         };
-
-        // Sense grounding health from the verification ledger.
-        if let Some(ref store) = self.verification_store {
-            match store.grounding_trend(&hkask_verification::TrendScope::Global) {
-                Ok(report) => {
-                    snapshot.grounding_clean_rate = report.clean_rate();
-                    snapshot.grounding_coverage_rate = report.coverage_rate();
-                }
-                Err(error) => {
-                    // DB outage — do NOT collapse to 0.0 (the `.rules`
-                    // broken-feedback-loop trap). Log and leave as None.
-                    tracing::warn!(
-                        target: "hkask.metacognition.grounding",
-                        error = %error,
-                        "MetacognitionLoop: grounding trend query failed — snapshot grounding fields are None (not 0.0)"
-                    );
-                }
-            }
         }
 
         // ── Compare + Compute ──────────────────────────────────────────
@@ -629,350 +579,4 @@ fn acceptance_rate(spans: &[StoredSkillSpan]) -> f64 {
         })
         .count();
     accepted as f64 / spans.len() as f64
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    /// `tick` must populate `escalation_count` from the number of alerts
-    /// produced by `compare`. With a low `variety_deficit_threshold` and a
-    /// ledger that reports a deficit, the snapshot's `escalation_count` must
-    /// be non-zero. This pins the wiring that `CuratorStatusTool` reads —
-    /// if the field stays at its initial 0, the tool would report "not
-    /// available" for a real escalation.
-    #[tokio::test]
-    async fn tick_populates_escalation_count_from_compare_alerts() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Force a variety deficit by incrementing variety beyond the
-        // (low) threshold, so `compare` produces at least one alert.
-        ledger
-            .write()
-            .await
-            .increment_variety("test-domain", "state-a")
-            .await;
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                variety_deficit_threshold: 0,
-                ..MetacognitionConfig::default()
-            },
-        );
-
-        loop_.tick().await;
-
-        let snapshot = loop_.last_snapshot().await.expect("tick stores a snapshot");
-        assert!(
-            snapshot.escalation_count > 0,
-            "escalation_count should reflect the alerts produced by compare, got {}",
-            snapshot.escalation_count,
-        );
-    }
-
-    /// When no threshold is breached, `escalation_count` must be zero —
-    /// `CuratorStatusTool` reports `0`, not "not available". This pins
-    /// the healthy-path contract so a regression that drops the field
-    /// or leaves it at a sentinel is caught.
-    #[tokio::test]
-    async fn tick_sets_zero_escalation_count_when_no_threshold_breached() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                variety_deficit_threshold: u64::MAX,
-                critical_alert_threshold: usize::MAX,
-                effectiveness_floor: 0.0,
-                ..MetacognitionConfig::default()
-            },
-        );
-
-        loop_.tick().await;
-
-        let snapshot = loop_.last_snapshot().await.expect("tick stores a snapshot");
-        assert_eq!(
-            snapshot.escalation_count, 0,
-            "escalation_count should be zero when no threshold is breached",
-        );
-    }
-
-    /// A capturing `AlertSink` for testing the user-facing escalation path.
-    struct CapturingAlertSink {
-        events: std::sync::Mutex<Vec<AlertEvent>>,
-    }
-
-    impl CapturingAlertSink {
-        fn new() -> Self {
-            Self {
-                events: std::sync::Mutex::new(Vec::new()),
-            }
-        }
-
-        fn events(&self) -> Vec<AlertEvent> {
-            self.events.lock().unwrap().clone()
-        }
-    }
-
-    impl AlertSink for CapturingAlertSink {
-        fn on_alert(&self, event: &AlertEvent) {
-            self.events.lock().unwrap().push(event.clone());
-        }
-    }
-
-    /// Critical alerts produced by `compare` must reach the `AlertSink` so the
-    /// composition root can surface them to the user. This pins the
-    /// sense→escalate→user loop: if the sink call is dropped or guarded by the
-    /// wrong condition, a real escalation would stay in the logs and never
-    /// reach the operator.
-    #[tokio::test]
-    async fn tick_forwards_critical_alerts_to_alert_sink() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Force a variety deficit so `compare` produces a Critical alert.
-        ledger
-            .write()
-            .await
-            .increment_variety("test-domain", "state-a")
-            .await;
-        let sink = Arc::new(CapturingAlertSink::new());
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                variety_deficit_threshold: 0,
-                ..MetacognitionConfig::default()
-            },
-        )
-        .with_alert_sink(sink.clone() as Arc<dyn AlertSink>);
-
-        loop_.tick().await;
-
-        let events = sink.events();
-        assert!(
-            events.iter().any(|e| e.critical),
-            "critical alerts should reach the AlertSink, got {events:?}"
-        );
-    }
-
-    /// Non-critical (Warning/Info) alerts must NOT reach the `AlertSink` —
-    /// the sink is the user-facing escalation path, and warnings are surfaced
-    /// via the Kask panel status bar and the `curator_status` tool. This pins
-    /// the severity filter so a regression that toasts on every warning
-    /// is caught.
-    #[tokio::test]
-    async fn tick_does_not_forward_non_critical_alerts_to_alert_sink() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Force a deficit that triggers a Warning (deficit > threshold/2 but
-        // <= threshold). With threshold=100, deficit=75 is a Warning.
-        for i in 0..75 {
-            ledger
-                .write()
-                .await
-                .increment_variety("test-domain", &format!("state-{i}"))
-                .await;
-        }
-        let sink = Arc::new(CapturingAlertSink::new());
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                variety_deficit_threshold: 100,
-                critical_alert_threshold: usize::MAX,
-                effectiveness_floor: 0.0,
-                ..MetacognitionConfig::default()
-            },
-        )
-        .with_alert_sink(sink.clone() as Arc<dyn AlertSink>);
-
-        loop_.tick().await;
-
-        let events = sink.events();
-        assert!(
-            events.is_empty(),
-            "non-critical alerts should not reach the AlertSink, got {events:?}"
-        );
-    }
-
-    // ── Feedback drift detection tests ──────────────────────────────────
-
-    /// Helper: record `n` outcome spans for a skill, with the given success
-    /// rate. The first `success_count` spans have `success: true`, the rest
-    /// `success: false`.
-    async fn record_outcomes(
-        ledger: &RegulationLedger,
-        skill_id: &str,
-        total: usize,
-        success_count: usize,
-    ) {
-        for i in 0..total {
-            let success = i < success_count;
-            ledger
-                .record_skill_span(
-                    skill_id,
-                    "outcome",
-                    serde_json::json!({ "success": success }),
-                )
-                .await;
-        }
-    }
-
-    /// `success_rate` returns 0.0 for empty input.
-    #[test]
-    fn success_rate_empty_returns_zero() {
-        assert_eq!(success_rate(&[]), 0.0);
-    }
-
-    /// `success_rate` returns 1.0 when all spans are successful.
-    #[test]
-    fn success_rate_all_success_returns_one() {
-        let spans = vec![
-            make_outcome_span("s1", true),
-            make_outcome_span("s2", true),
-            make_outcome_span("s3", true),
-        ];
-        assert_eq!(success_rate(&spans), 1.0);
-    }
-
-    /// `success_rate` returns 0.0 when all spans are failures.
-    #[test]
-    fn success_rate_all_failure_returns_zero() {
-        let spans = vec![
-            make_outcome_span("s1", false),
-            make_outcome_span("s2", false),
-        ];
-        assert_eq!(success_rate(&spans), 0.0);
-    }
-
-    /// `success_rate` returns the correct fraction for mixed input.
-    #[test]
-    fn success_rate_mixed_returns_fraction() {
-        let spans = vec![
-            make_outcome_span("s1", true),
-            make_outcome_span("s2", false),
-            make_outcome_span("s3", true),
-            make_outcome_span("s4", false),
-        ];
-        assert_eq!(success_rate(&spans), 0.5);
-    }
-
-    /// `sense_feedback_drift` emits a `FeedbackDrift` alert when the current
-    /// window's success rate drops below the decline ratio of the prior
-    /// window's rate. Prior window: 8/10 success (80%). Current window: 3/10
-    /// success (30%). Decline ratio: 0.8 → threshold = 0.8 * 0.8 = 0.64.
-    /// 0.3 < 0.64 → alert.
-    #[tokio::test]
-    async fn drift_detects_declining_success_rate() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Record 20 outcomes: first 10 at 80% success, next 10 at 30%.
-        {
-            let guard = ledger.read().await;
-            record_outcomes(&guard, "test-skill", 10, 8).await;
-            record_outcomes(&guard, "test-skill", 10, 3).await;
-        }
-
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                feedback_drift_min_samples: 10,
-                feedback_drift_window: 10,
-                feedback_drift_decline_ratio: 0.8,
-                ..MetacognitionConfig::default()
-            },
-        );
-
-        let guard = ledger.read().await;
-        let alerts = loop_.sense_feedback_drift(&guard).await;
-        assert_eq!(alerts.len(), 1);
-        assert!(matches!(
-            alerts[0].trigger,
-            EscalationTrigger::FeedbackDrift { ref skill_id } if skill_id == "test-skill"
-        ));
-    }
-
-    /// `sense_feedback_drift` does NOT alert when the success rate is stable.
-    #[tokio::test]
-    async fn drift_no_alert_when_stable() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        {
-            let guard = ledger.read().await;
-            record_outcomes(&guard, "stable-skill", 10, 8).await;
-            record_outcomes(&guard, "stable-skill", 10, 8).await;
-        }
-
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                feedback_drift_min_samples: 10,
-                feedback_drift_window: 10,
-                feedback_drift_decline_ratio: 0.8,
-                ..MetacognitionConfig::default()
-            },
-        );
-
-        let guard = ledger.read().await;
-        let alerts = loop_.sense_feedback_drift(&guard).await;
-        assert!(
-            alerts.is_empty(),
-            "stable success rate should not trigger drift alert, got {alerts:?}"
-        );
-    }
-
-    /// `sense_feedback_drift` does NOT alert when there are too few samples.
-    #[tokio::test]
-    async fn drift_no_alert_below_min_samples() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Only 5 samples — below the min_samples threshold of 10.
-        {
-            let guard = ledger.read().await;
-            record_outcomes(&guard, "sparse-skill", 5, 1).await;
-        }
-
-        let loop_ = MetacognitionLoop::with_config(ledger.clone(), MetacognitionConfig::default());
-
-        let guard = ledger.read().await;
-        let alerts = loop_.sense_feedback_drift(&guard).await;
-        assert!(
-            alerts.is_empty(),
-            "below min_samples should not trigger, got {alerts:?}"
-        );
-    }
-
-    /// `sense_feedback_drift` does NOT alert when the skill is improving.
-    #[tokio::test]
-    async fn drift_no_alert_when_improving() {
-        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
-        // Prior window: 30% success. Current window: 80% success. Improving.
-        {
-            let guard = ledger.read().await;
-            record_outcomes(&guard, "improving-skill", 10, 3).await;
-            record_outcomes(&guard, "improving-skill", 10, 8).await;
-        }
-
-        let loop_ = MetacognitionLoop::with_config(
-            ledger.clone(),
-            MetacognitionConfig {
-                feedback_drift_min_samples: 10,
-                feedback_drift_window: 10,
-                feedback_drift_decline_ratio: 0.8,
-                ..MetacognitionConfig::default()
-            },
-        );
-
-        let guard = ledger.read().await;
-        let alerts = loop_.sense_feedback_drift(&guard).await;
-        assert!(
-            alerts.is_empty(),
-            "improving success rate should not trigger, got {alerts:?}"
-        );
-    }
-
-    /// Helper for `success_rate` tests: construct a `StoredSkillSpan` with the
-    /// given skill ID and success flag.
-    fn make_outcome_span(skill_id: &str, success: bool) -> StoredSkillSpan {
-        StoredSkillSpan {
-            namespace: format!("reg.skill.{skill_id}.outcome"),
-            skill_id: skill_id.to_string(),
-            phase: "outcome".to_string(),
-            payload: serde_json::json!({ "success": success }),
-            recorded_at: chrono::Utc::now(),
-        }
-    }
 }

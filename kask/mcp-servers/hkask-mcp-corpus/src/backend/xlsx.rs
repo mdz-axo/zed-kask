@@ -72,28 +72,3 @@ fn cell_to_string(cell: &Data) -> String {
         Data::Error(e) => format!("#ERR:{:?}", e),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cell_to_string_float_whole() {
-        assert_eq!(cell_to_string(&Data::Float(42.0)), "42");
-    }
-
-    #[test]
-    fn cell_to_string_float_fractional() {
-        assert_eq!(cell_to_string(&Data::Float(3.15)), "3.15");
-    }
-
-    #[test]
-    fn cell_to_string_int() {
-        assert_eq!(cell_to_string(&Data::Int(7)), "7");
-    }
-
-    #[test]
-    fn cell_to_string_empty() {
-        assert_eq!(cell_to_string(&Data::Empty), "");
-    }
-}

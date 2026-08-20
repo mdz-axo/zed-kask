@@ -45,6 +45,3 @@ futures.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
-proptest.workspace = true

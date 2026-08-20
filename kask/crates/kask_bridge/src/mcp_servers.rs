@@ -52,25 +52,6 @@ pub struct BuiltinMcpServer {
 /// Order is stable and meaningful — the kask panel uses index-based selection.
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
-        // The OPENROUTER key is NOT read directly by this server — its own
-        // doc (hkask_mcp_codegraph.rs:466) says credentials come from zed's
-        // LanguageModelRegistry over the IPC bridge. It is reachable only on
-        // the degraded no-socket fallback, where `resolve_inference_port` builds a
-        // MediaRouter from `InferenceConfig::from_env`, which does read it.
-        // Retained deliberately so embeddings still work when the inference socket
-        // is unavailable; reviewed 2026-08-12 (RR-0061). If the fallback is ever
-        // removed, drop this entry in the same change.
-        id: "codegraph",
-        binary: "hkask-mcp-codegraph",
-        description: "Codegraph — code structure query and traversal",
-        credentials: Some(&["OPENROUTER_API_KEY"]),
-        config_env: Some(&[
-            "HKASK_CODEGRAPH_DB",
-            "HKASK_EMBEDDING_DIM",
-            "HKASK_EMBEDDING_MODEL",
-        ]),
-    },
-    BuiltinMcpServer {
         id: "portfolio",
         binary: "hkask-mcp-portfolio",
         description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
@@ -103,28 +84,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // here when a server crate gains a read site.
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
-        ]),
-    },
-    BuiltinMcpServer {
-        id: "condenser",
-        binary: "hkask-mcp-condenser",
-        description: "Condenser — context condensation and summarization",
-        credentials: Some(&[
-            // DB encryption passphrase — read by the condenser server's
-            // `run()` for its episodic + semantic SQLite stores. Without
-            // this, the condenser cannot open an encrypted DB under governed
-            // launch and falls back to in-memory mode (no persistence).
-            "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
-            "HKASK_CONDENSER_PERSONA_KEYWORDS",
-            "HKASK_CONDENSE_SALIENCY_WINDOW",
-            "HKASK_DEFAULT_MODEL",
-            // Condenser DB path — read by `run()` to locate the episodic +
-            // semantic SQLite store. Without this, an operator override via
-            // kask settings is silently dropped by the per-server filter and
-            // the condenser falls back to in-memory mode.
-            "HKASK_DB_PATH",
         ]),
     },
     BuiltinMcpServer {
@@ -226,29 +185,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // config; moved from `credentials` to align with the pattern used
             // by every other DB-path env var in the registry.
             "HKASK_KANBAN_DB",
-        ]),
-    },
-    BuiltinMcpServer {
-        id: "media",
-        binary: "hkask-mcp-media",
-        description: "Media — image generation and media workflows",
-        // No media backends are currently registered in the MediaRouter, so no
-        // provider credentials are injected. Re-add the relevant API key env
-        // vars here when a media backend is registered again.
-        credentials: Some(&[]),
-        config_env: Some(&[
-            // Durable gallery DB path (WS-3). Unencrypted file SQLite — the
-            // media server reads it via std::env::var; absent → in-memory.
-            "HKASK_MEDIA_DB",
-            "HKASK_MEDIA_TTS_MODEL",
-            "HKASK_MEDIA_STT_MODEL",
-            "HKASK_MEDIA_VISION_MODEL",
-            "HKASK_MEDIA_IMAGE_GEN_MODEL",
-            // rJoule spend cap — read at hkask-mcp-media/src/budget.rs:233.
-            // Unset means enforcement is OFF (budget.rs:222), so while this was
-            // unallowlisted the cap could not be enabled by an operator at all
-            // (RR-0061). Usage metering is only useful if it can be configured.
-            "HKASK_MEDIA_RJOULE_CAP",
         ]),
     },
     BuiltinMcpServer {
@@ -393,14 +329,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
 /// Just the server IDs, as a static slice of `&str`.
 /// Convenience for consumers that only need the ID list (e.g. `swarm_panel`).
 pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
-    "codegraph",
     "portfolio",
     "companies",
-    "condenser",
     "corpus",
     "curator",
     "kata-kanban",
-    "media",
     "research",
     "scenarios",
     "prediction-markets",
@@ -412,17 +345,10 @@ pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
 /// Convenience for the settings UI which renders `(id, description)` rows.
 pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
     (
-        "codegraph",
-        "Codegraph — code structure query and traversal",
-    ),
-    (
         "portfolio",
         "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
     ),
     ("companies", "Companies — company research and filings"),
-    (
-        "condenser",
-        "Condenser — context condensation and summarization",
     ),
     ("corpus", "Corpus — document corpus and QA generation"),
     (
@@ -430,7 +356,6 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
         "Curator — regulation cascade and algedonic signals",
     ),
     ("kata-kanban", "Kata Kanban — improvement kata board"),
-    ("media", "Media — image generation and media workflows"),
     ("research", "Research — web research and paper search"),
     ("scenarios", "Scenarios — scenario planning and forecasting"),
     (
@@ -517,7 +442,6 @@ pub async fn build_mcp_server_env(
 ) -> std::collections::HashMap<String, String> {
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
     //    unfiltered map; the allowlist is what keeps the curator's email
-    //    config out of codegraph.
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
 
     // 2. Credentials: resolve URLs, filter per-server, read from keychain.
@@ -574,7 +498,6 @@ pub async fn build_mcp_server_env(
 ///
 /// This prevents the curator's email config (`HKASK_SMTP_USERNAME`,
 /// `HKASK_MXROUTE_SERVER`, etc.) from being injected into servers that don't
-/// need it (codegraph, condenser, kata-kanban, etc.).
 #[must_use]
 pub fn filter_config_env_for_server(
     server_id: &str,
@@ -598,181 +521,6 @@ pub fn filter_config_env_for_server(
         None => config_env.clone(),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_servers_have_unique_ids() {
-        let mut ids: Vec<&str> = BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect();
-        ids.sort();
-        let before = ids.len();
-        ids.dedup();
-        assert_eq!(ids.len(), before, "duplicate server IDs found");
-    }
-
-    #[test]
-    fn all_binaries_follow_naming_convention() {
-        for s in BUILT_IN_MCP_SERVERS {
-            assert!(
-                s.binary.starts_with("hkask-mcp-"),
-                "binary '{}' does not follow 'hkask-mcp-*' convention",
-                s.binary
-            );
-        }
-    }
-
-    #[test]
-    fn find_server_returns_known_ids() {
-        assert!(find_server("codegraph").is_some());
-        assert!(find_server("kata-kanban").is_some());
-        assert!(find_server("nonexistent").is_none());
-    }
-
-    // The derived arrays below are hand-maintained convenience views over
-    // BUILT_IN_MCP_SERVERS. Without these tests they can silently drift the
-    // moment a server is added to BUILT_IN_MCP_SERVERS without updating the
-    // derived slices (the settings UI / kask panel would then drop the new
-    // server while the runtime registry served it).
-    #[test]
-    fn ids_slice_matches_main_registry() {
-        let expected: Vec<&str> = BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect();
-        let actual: Vec<&str> = BUILT_IN_MCP_SERVERS_IDS.to_vec();
-        assert_eq!(
-            actual, expected,
-            "BUILT_IN_MCP_SERVERS_IDS is out of sync with BUILT_IN_MCP_SERVERS"
-        );
-    }
-
-    #[test]
-    fn pairs_slice_matches_main_registry() {
-        let expected: Vec<(&str, &str)> = BUILT_IN_MCP_SERVERS
-            .iter()
-            .map(|s| (s.id, s.description))
-            .collect();
-        let actual: Vec<(&str, &str)> = BUILT_IN_MCP_SERVERS_PAIRS.to_vec();
-        assert_eq!(
-            actual, expected,
-            "BUILT_IN_MCP_SERVERS_PAIRS is out of sync with BUILT_IN_MCP_SERVERS"
-        );
-    }
-
-    // Every server must have a credential allowlist (not `None`).
-    // `None` means "receive all credentials" — the unsafe default we're
-    // moving away from. New servers should use `Some(&[])` (no credentials)
-    // and add specific env vars as needed.
-    #[test]
-    fn all_servers_have_credential_allowlist() {
-        for s in BUILT_IN_MCP_SERVERS {
-            assert!(
-                s.credentials.is_some(),
-                "server '{}' has no credential allowlist (credentials is None) — \
-                 use Some(&[]) for servers that need no credentials",
-                s.id
-            );
-            assert!(
-                s.config_env.is_some(),
-                "server '{}' has no config_env allowlist (config_env is None) — \
-                 use Some(&[]) for servers that need no config env vars",
-                s.id
-            );
-        }
-    }
-
-    // Allowlist *content* alignment: every entry in a server's
-    // `credentials`/`config_env` allowlist must have a read site in the crate,
-    // and every env var the server reads must be in the allowlist. The shape
-    // test above only checks `Some(...)`; these pin the known-good baseline
-    // for servers whose allowlists were found mis-aligned (over-grant in
-    // companies, under-grant in kata-kanban). When a server legitimately
-    // starts reading a new env var, update both the descriptor and the
-    // baseline here in the same change.
-    fn server_by_id(id: &str) -> &'static BuiltinMcpServer {
-        BUILT_IN_MCP_SERVERS
-            .iter()
-            .find(|s| s.id == id)
-            .unwrap_or_else(|| panic!("server '{id}' not in BUILT_IN_MCP_SERVERS"))
-    }
-
-    #[test]
-    fn companies_allowlist_matches_actual_reads() {
-        let s = server_by_id("companies");
-        // Read sites: ctx.credentials.get in `run()` for the 6 providers (SerpAPI
-        // added when the read was normalized from the non-canonical
-        // `HKASK_SERPAPI_KEY` to the kask/.env spelling `HKASK_SERPAPI_API_KEY` —
-        // RR-0061); std::env::var("HKASK_CHRONIC_STALENESS_DAYS") and
-        // FermiDefaults::from_env() reading HKASK_FERMI_DEFAULTS.
-        assert_eq!(
-            s.credentials.unwrap().to_vec(),
-            vec![
-                "HKASK_EODHD_API_KEY",
-                "HKASK_FMP_API_KEY",
-                "HKASK_EXA_API_KEY",
-                "HKASK_TAVILY_API_KEY",
-                "HKASK_BRAVE_API_KEY",
-                "HKASK_SERPAPI_API_KEY",
-            ],
-            "companies credentials allowlist drifted — every entry must have a \
-             read site in hkask-mcp-companies (over-grant leaks a secret to the \
-             child process)"
-        );
-        assert_eq!(
-            s.config_env.unwrap().to_vec(),
-            vec!["HKASK_CHRONIC_STALENESS_DAYS", "HKASK_FERMI_DEFAULTS"],
-            "companies config_env allowlist drifted — every entry must have a \
-             read site in hkask-mcp-companies"
-        );
-    }
-
-    #[test]
-    fn kata_kanban_allowlist_matches_actual_reads() {
-        let s = server_by_id("kata-kanban");
-        // Read sites: `ctx.credentials.get("HKASK_DB_PASSPHRASE")` in
-        // `run()`; `std::env::var("HKASK_KANBAN_DB")` in `run()` (moved from
-        // credentials to config_env — it's a non-secret DB path);
-        // `resolve_under_data_dir` reads `HKASK_DATA_DIR`.
-        assert_eq!(
-            s.credentials.unwrap().to_vec(),
-            vec!["HKASK_DB_PASSPHRASE"],
-            "kata-kanban credentials allowlist drifted — under-granting silently \
-             drops operator overrides (server falls back to in-memory mode)"
-        );
-        assert_eq!(
-            s.config_env.unwrap().to_vec(),
-            vec!["HKASK_DATA_DIR", "HKASK_KANBAN_DB"],
-            "kata-kanban config_env allowlist drifted"
-        );
-    }
-
-    #[test]
-    fn condenser_allowlist_matches_actual_reads() {
-        let s = server_by_id("condenser");
-        // Read sites in `run()`:
-        //   ctx.credentials.get("HKASK_DB_PATH")       → episodic + semantic DB path
-        //   ctx.credentials.get("HKASK_DB_PASSPHRASE") → SQLCipher passphrase (required when DB_PATH set)
-        //   std::env::var("HKASK_CONDENSER_PERSONA_KEYWORDS") → persona keyword list
-        //   std::env::var("HKASK_CONDENSE_SALIENCY_WINDOW")   → saliency window multiplier
-        //   ctx.credentials.get("HKASK_DEFAULT_MODEL")        → default inference model
-        assert_eq!(
-            s.credentials.unwrap().to_vec(),
-            vec!["HKASK_DB_PASSPHRASE"],
-            "condenser credentials allowlist drifted — HKASK_DB_PASSPHRASE is read \
-             in run() for the episodic + semantic SQLite stores; under-granting forces \
-             in-memory mode (no persistence) under governed launch"
-        );
-        assert_eq!(
-            s.config_env.unwrap().to_vec(),
-            vec![
-                "HKASK_CONDENSER_PERSONA_KEYWORDS",
-                "HKASK_CONDENSE_SALIENCY_WINDOW",
-                "HKASK_DEFAULT_MODEL",
-                "HKASK_DB_PATH",
-            ],
-            "condenser config_env allowlist drifted — every entry must have a read \
-             site in hkask-mcp-condenser"
-        );
-    }
 
     #[test]
     fn prediction_markets_allowlist_matches_actual_reads() {
@@ -855,10 +603,7 @@ mod tests {
             "curator should NOT receive OPENROUTER_API_KEY"
         );
     }
-
-    // The codegraph server should only receive inference keys, not SMTP.
     #[test]
-    fn codegraph_credentials_do_not_include_smtp_password() {
         let all_credentials: Vec<(String, String)> = [
             "OPENROUTER_API_KEY",
             "HKASK_SMTP_PASSWORD",
@@ -867,12 +612,10 @@ mod tests {
         .iter()
         .map(|env| (env.to_string(), "url".to_string()))
         .collect();
-        let filtered = filter_credentials_for_server("codegraph", &all_credentials);
         let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(env_vars.contains(&"OPENROUTER_API_KEY"));
         assert!(
             !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
-            "codegraph should NOT receive HKASK_SMTP_PASSWORD"
         );
     }
 
@@ -886,13 +629,9 @@ mod tests {
         let filtered = filter_credentials_for_server("nonexistent", &credentials);
         assert!(filtered.is_empty());
     }
-
-    // The codegraph server should not receive the curator's email config.
     // This pins the config-env blast-radius reduction.
     #[test]
-    fn codegraph_config_env_excludes_curator_email() {
         let mut config_env = std::collections::HashMap::new();
-        config_env.insert("HKASK_CODEGRAPH_DB".to_string(), "/path/to/db".to_string());
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "curator@example.com".to_string(),
@@ -905,22 +644,16 @@ mod tests {
             "HKASK_AUTHORIZED_EMAILS".to_string(),
             "ops@example.com".to_string(),
         );
-        let filtered = filter_config_env_for_server("codegraph", &config_env);
         assert!(
-            filtered.contains_key("HKASK_CODEGRAPH_DB"),
-            "codegraph should receive HKASK_CODEGRAPH_DB"
         );
         assert!(
             !filtered.contains_key("HKASK_SMTP_USERNAME"),
-            "codegraph should NOT receive HKASK_SMTP_USERNAME"
         );
         assert!(
             !filtered.contains_key("HKASK_MXROUTE_SERVER"),
-            "codegraph should NOT receive HKASK_MXROUTE_SERVER"
         );
         assert!(
             !filtered.contains_key("HKASK_AUTHORIZED_EMAILS"),
-            "codegraph should NOT receive HKASK_AUTHORIZED_EMAILS"
         );
     }
 
@@ -936,13 +669,10 @@ mod tests {
             "HKASK_MXROUTE_SERVER".to_string(),
             "mail.example.com".to_string(),
         );
-        config_env.insert("HKASK_CODEGRAPH_DB".to_string(), "/path".to_string());
         let filtered = filter_config_env_for_server("curator", &config_env);
         assert!(filtered.contains_key("HKASK_SMTP_USERNAME"));
         assert!(filtered.contains_key("HKASK_MXROUTE_SERVER"));
         assert!(
-            !filtered.contains_key("HKASK_CODEGRAPH_DB"),
-            "curator should NOT receive HKASK_CODEGRAPH_DB"
         );
     }
 
@@ -994,13 +724,9 @@ mod tests {
             "swarm server must not receive inference keys"
         );
     }
-
-    // The media server has no registered media backends, so its credential
     // allowlist is empty — it must not receive any provider keys or unrelated
     // secrets. Vision routes through the IPC bridge to zed's
-    // LanguageModelRegistry — the media server process never reads
     // OPENROUTER_API_KEY. This pins the allowlist against a future edit
-    // that re-widens it. See kask/docs/plans/media-system-refactor.md §6 (F-2).
     #[test]
     fn media_credentials_only_include_used_keys() {
         let all_credentials: Vec<(String, String)> = [
@@ -1035,8 +761,6 @@ mod tests {
             "media server must not receive the global DB passphrase — gallery DB is unencrypted (credential-blast-radius)"
         );
     }
-
-    // The media server reads `HKASK_MEDIA_DB` (durable gallery DB path, WS-3)
     // plus the four `HKASK_MEDIA_*_MODEL` overrides via `std::env::var`, so
     // those must be in its `config_env` allowlist and unrelated vars must not.
     // This is the config-env alignment enforcement point (the .rules
@@ -1045,8 +769,6 @@ mod tests {
     fn media_config_env_includes_media_db_and_models() {
         let mut config_env = std::collections::HashMap::new();
         config_env.insert("HKASK_MEDIA_DB".to_string(), "/tmp/media.db".to_string());
-        config_env.insert("HKASK_MEDIA_TTS_MODEL".to_string(), "FA/x".to_string());
-        config_env.insert("HKASK_MEDIA_STT_MODEL".to_string(), "FA/wizper".to_string());
         config_env.insert(
             "HKASK_MEDIA_VISION_MODEL".to_string(),
             "KC/qwen-vl".to_string(),
@@ -1064,12 +786,8 @@ mod tests {
             "media server reads HKASK_MEDIA_DB — it must be in config_env"
         );
         assert!(
-            keys.contains(&"HKASK_MEDIA_TTS_MODEL"),
-            "media server reads HKASK_MEDIA_TTS_MODEL — it must be in config_env"
         );
         assert!(
-            keys.contains(&"HKASK_MEDIA_STT_MODEL"),
-            "media server reads HKASK_MEDIA_STT_MODEL — it must be in config_env"
         );
         assert!(
             keys.contains(&"HKASK_MEDIA_VISION_MODEL"),
@@ -1087,7 +805,6 @@ mod tests {
     }
 
     // The swarm server should only receive ABW config env, not curator email
-    // config or codegraph DB paths. This pins the config-env blast-radius.
     #[test]
     fn swarm_config_env_excludes_unrelated_vars() {
         let mut config_env = std::collections::HashMap::new();
@@ -1114,7 +831,6 @@ mod tests {
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
         );
-        config_env.insert("HKASK_CODEGRAPH_DB".to_string(), "/path/to/db".to_string());
         let filtered = filter_config_env_for_server("swarm", &config_env);
         assert!(filtered.contains_key("HKASK_ABW_API_URL"));
         assert!(filtered.contains_key("HKASK_ABW_MAX_CREDITS"));
@@ -1131,8 +847,6 @@ mod tests {
             "swarm server must not receive curator email config"
         );
         assert!(
-            !filtered.contains_key("HKASK_CODEGRAPH_DB"),
-            "swarm server must not receive codegraph config"
         );
     }
 
@@ -1216,7 +930,6 @@ mod tests {
     // ── RR-0061: read-alignment for the five previously-unguarded servers ────
     //
     // Before these tests, only 5 of 13 servers had a read-alignment test.
-    // `codegraph`, `curator`, `research`, `scenarios`, and `training` had none —
     // including `training` (the registry's largest secret grant) and `curator`
     // (SMTP password). Drift in an unguarded server is silent in both
     // directions: an under-grant means an operator override never arrives, and
@@ -1227,9 +940,6 @@ mod tests {
     // observed reads rather than intent.
 
     #[test]
-    fn codegraph_allowlist_matches_actual_reads() {
-        let s = server_by_id("codegraph");
-        // Direct reads: HKASK_CODEGRAPH_DB, HKASK_EMBEDDING_DIM.
         // HKASK_EMBEDDING_MODEL is read by the shared hkask-inference model
         // constants, not by this crate directly.
         // The OPENROUTER key has NO direct read site — it is reachable
@@ -1239,18 +949,15 @@ mod tests {
         assert_eq!(
             s.credentials.unwrap().to_vec(),
             vec!["OPENROUTER_API_KEY"],
-            "codegraph credentials allowlist drifted — this one is justified ONLY \
              by the degraded no-socket inference fallback; adding more secrets to a \
              code-indexing process needs a read site"
         );
         assert_eq!(
             s.config_env.unwrap().to_vec(),
             vec![
-                "HKASK_CODEGRAPH_DB",
                 "HKASK_EMBEDDING_DIM",
                 "HKASK_EMBEDDING_MODEL",
             ],
-            "codegraph config_env allowlist drifted"
         );
     }
 
@@ -1387,8 +1094,6 @@ mod tests {
             );
         }
     }
-
-    /// The media rJoule cap could not be enabled at all while unallowlisted:
     /// budget.rs treats unset as "enforcement off", so usage metering was
     /// unconfigurable.
     #[test]
@@ -1452,7 +1157,6 @@ mod tests {
         // vars other servers emit. In a real launch `mcp_env()` produces this.
         let mut full_config = std::collections::HashMap::new();
         full_config.insert("HKASK_DATA_DIR".to_string(), "/data".to_string());
-        full_config.insert("HKASK_MCP_SERVER_IDS".to_string(), "codegraph".to_string());
         full_config.insert(
             "HKASK_MXROUTE_SERVER".to_string(),
             "mail.example.com".to_string(),
@@ -1461,7 +1165,6 @@ mod tests {
             "HKASK_SMTP_USERNAME".to_string(),
             "curator@example.com".to_string(),
         );
-        full_config.insert("HKASK_CODEGRAPH_DB".to_string(), "/graph.db".to_string());
         full_config.insert("HKASK_RSS_DB".to_string(), "/rss.db".to_string());
         // A credential-shaped key that lives in `credentials`, not `config_env`.
         let credential_keys = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"];
@@ -1506,15 +1209,11 @@ mod tests {
             }
         }
     }
-
-    /// Direct pin for the Path A regression: codegraph must not receive the
     /// curator's email config, even though `mcp_env()` emits it. The
     /// composition test above covers this for all servers; this one names the
     /// concrete leak that motivated the unification.
     #[test]
-    fn codegraph_does_not_receive_curator_email_config_through_composition() {
         let mut full_config = std::collections::HashMap::new();
-        full_config.insert("HKASK_CODEGRAPH_DB".to_string(), "/graph.db".to_string());
         full_config.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "curator@example.com".to_string(),
@@ -1523,19 +1222,14 @@ mod tests {
             "HKASK_MXROUTE_SERVER".to_string(),
             "mail.example.com".to_string(),
         );
-        let env = filter_config_env_for_server("codegraph", &full_config);
         assert!(
-            env.contains_key("HKASK_CODEGRAPH_DB"),
-            "codegraph should receive HKASK_CODEGRAPH_DB"
         );
         assert!(
             !env.contains_key("HKASK_SMTP_USERNAME"),
-            "codegraph must NOT receive HKASK_SMTP_USERNAME — this is the Path A \
              leak (full mcp_env() map was extended, not filtered)"
         );
         assert!(
             !env.contains_key("HKASK_MXROUTE_SERVER"),
-            "codegraph must NOT receive HKASK_MXROUTE_SERVER — same Path A leak"
         );
     }
 

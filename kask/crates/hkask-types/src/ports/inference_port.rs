@@ -1,8 +1,6 @@
 use super::EmbeddingGenerationError;
-use super::inference_types::{
-    ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceUsage,
-    StructuredToolCall,
-};
+use super::inference_types::InferenceStreamChunk;
+use super::inference_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
 use crate::template::LLMParameters;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
@@ -19,51 +17,7 @@ use std::sync::Arc;
 pub type EmbedFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>;
 
-/// Future returned by [`InferencePort::media_generate`].
-///
-/// Same rationale as `EmbedFuture` — keeps the trait signature under
-/// clippy's `type_complexity` threshold.
-pub type MediaFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
-
-/// Parameters for [`InferencePort::media_generate`].
-///
-/// Carries the media-generation fields (image/video/speech/transcription)
-/// that the IPC bridge forwards to the MediaRouter. Grouped into a struct
-/// so the trait method signature doesn't grow 12+ optional parameters.
-///
-/// The `op` string (e.g. "generate_image", "transcribe") is passed as the
-/// first argument to `media_generate`, not as a field here — it selects the
-/// backend method. The remaining fields are op-specific; the server-side
-/// dispatch reads only the fields relevant to each op.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MediaGenerateParams {
-    /// Text prompt for image/video generation.
-    pub prompt: Option<String>,
-    /// Image URL for image-to-image, image-to-video, upscale, etc.
-    pub image_url: Option<String>,
-    /// Audio URL for transcription.
-    pub audio_url: Option<String>,
-    /// Text for speech synthesis.
-    pub text: Option<String>,
-    /// Voice name for speech synthesis.
-    pub voice: Option<String>,
-    /// Image size for image generation.
-    pub size: Option<String>,
-    /// Number of images to generate.
-    pub count: Option<u32>,
-    /// Strength for image-to-image.
-    pub strength: Option<f32>,
-    /// Scale factor for upscaling.
-    pub scale: Option<u32>,
-    /// Duration for video generation.
-    pub duration: Option<f32>,
-    /// Language hint for transcription.
-    pub language: Option<String>,
-}
-
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
-/// Impls: `MediaRouter` and `InferenceIpcClient` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
 /// A model available from an inference provider.
 ///
 /// Simplified version of `hkask_inference::RouterModelEntry` that lives in
@@ -86,7 +40,6 @@ pub struct ModelEntry {
 /// `McpRuntime`. The zed side mints the OCAP panel token — the child never
 /// sees or holds token material. `InferenceIpcClient` implements this over
 /// the `InferenceMethod::ToolInvoke` IPC method; backends without a bridge
-/// (MediaRouter fallback) return a clear error.
 ///
 /// Two implementors: the IPC client (real dispatch) and the fallback stub
 /// (clear error) — the swarm delegate loop reads it, so it is not
@@ -137,7 +90,6 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
 pub enum SkillExecError {
     /// Skill execution is unavailable (no IPC socket, no manifest executor
     /// wired). The message names the missing dependency so an operator can
-    /// remediate.
     #[error("skill execution unavailable: {0}")]
     Unavailable(String),
     /// An inference-layer failure while running the cascade (connection,
@@ -356,7 +308,6 @@ pub trait InferencePort: Send + Sync {
     ///
     /// Default: returns an empty vec. `InferenceIpcClient` overrides this to
     /// enumerate models from zed's `LanguageModelRegistry` via the IPC bridge.
-    /// `MediaRouter` returns empty (media-only; model listing is not available
     /// when running standalone without the IPC bridge).
     ///
     /// Returns `Err` when the underlying provider is unreachable (IPC bridge
@@ -386,40 +337,6 @@ pub trait InferencePort: Send + Sync {
             Ok(models.into_iter().filter(|m| m.supports_vision).collect())
         })
     }
-
-    /// Generate media (image, video, speech, transcription) via the MediaRouter.
-    ///
-    /// `op` selects the backend method (see `MediaGenerateParams::op`). The
-    /// default returns an error — `InferenceIpcClient` overrides this to route
-    /// through zed's IPC bridge, which dispatches to the hKask `MediaRouter`
-    /// held by the zed process. The media MCP server calls this through its
-    /// `Arc<dyn InferencePort>` so it no longer needs its own `MediaRouter`.
-    fn media_generate<'a>(&'a self, _op: &str, _params: &MediaGenerateParams) -> MediaFuture<'a> {
-        let op = _op.to_string();
-        Box::pin(async move {
-            Err(InferenceError::Connection(format!(
-                "media_generate not supported by this InferencePort (op: {op})"
-            )))
-        })
-    }
-}
-
-/// A single chunk of streaming inference output. Final chunk has `finish_reason` + `usage`.
-#[derive(Debug, Clone)]
-pub struct InferenceStreamChunk {
-    pub text_delta: String,
-    /// Thinking-mode reasoning delta (Qwen3/GLM-5.2 `reasoning_content`,
-    /// Ollama `delta.reasoning`). Empty when the provider emits no thinking.
-    pub reasoning_delta: String,
-    pub model: String,
-    pub finish_reason: Option<String>,
-    pub usage: Option<InferenceUsage>,
-    pub tool_calls: Vec<StructuredToolCall>,
-    /// USD cost of this inference call. Populated on the final chunk (or the
-    /// single chunk from the default `generate_stream` impl). `None` for
-    /// intermediate streaming chunks (cost is only known when the provider
-    /// completes the response).
-    pub cost_usd: Option<f64>,
 }
 
 impl From<InferenceResult> for InferenceStreamChunk {
@@ -527,8 +444,5 @@ impl InferencePort for Arc<dyn InferencePort> {
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
         self.as_ref().list_vision_models()
-    }
-    fn media_generate<'a>(&'a self, op: &str, params: &MediaGenerateParams) -> MediaFuture<'a> {
-        self.as_ref().media_generate(op, params)
     }
 }

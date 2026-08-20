@@ -23,5 +23,3 @@ blake3.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
-proptest = { workspace = true }

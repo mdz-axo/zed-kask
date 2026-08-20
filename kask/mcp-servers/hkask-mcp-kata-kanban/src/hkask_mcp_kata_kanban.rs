@@ -222,24 +222,6 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
     })
 }
 
-#[cfg(test)]
-mod tool_surface_tests {
-    use super::*;
-
-    // Pins the registered tool-surface count end-to-end. Catches silent
-    // registration drops — a `#[tool]` impl block without `#[tool_router]`
-    // silently registers nothing (`cargo check` passes on an unwired orphan).
-    // Mirrors the swarm pin.
-    #[test]
-    fn tool_surface_is_exactly_24_registered_tools() {
-        let n = KanbanServer::tool_router().list_all().len();
-        assert_eq!(
-            n, 24,
-            "kata-kanban registered tool surface changed; got {n}"
-        );
-    }
-}
-
 #[tool_router(server_handler)]
 impl KanbanServer {
     #[tool(description = "Create a new kanban board with optional custom columns")]

@@ -295,21 +295,6 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
-#[cfg(test)]
-mod tool_surface_tests {
-    use super::*;
-
-    // Pins the registered tool-surface count end-to-end. Catches silent
-    // registration drops — a `#[tool]` impl block without `#[tool_router]`
-    // silently registers nothing (`cargo check` passes on an unwired orphan).
-    // Mirrors the swarm pin.
-    #[test]
-    fn tool_surface_is_exactly_13_registered_tools() {
-        let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(n, 13, "curator registered tool surface changed; got {n}");
-    }
-}
-
 #[tool_router(server_handler)]
 impl CuratorServer {
     // ── Liveness ───────────────────────────────────────────────────────

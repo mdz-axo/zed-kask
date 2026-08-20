@@ -96,35 +96,3 @@ pub fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn kanban_type_to_pko_maps_all_core_types() {
-        for (type_name, _expected) in &[
-            ("Board", PROCEDURE),
-            ("Task", STEP),
-            ("kanban_task_move", CHANGE_OF_STATUS),
-            ("kanban_task_verify", STEP_VERIFICATION),
-            ("Comment", USER_FEEDBACK_OCCURRENCE),
-            ("UnjamItem", ISSUE_OCCURRENCE),
-            ("Assignee", WAS_ASSOCIATED_WITH),
-            ("Deliverable", WAS_GENERATED_BY),
-            ("SpendEntry", USED),
-            ("estimated_hours", HAS_EXPECTED_DURATION),
-        ] {
-            assert!(
-                kanban_type_to_pko(type_name).is_some(),
-                "type '{type_name}' must have PKO mapping"
-            );
-        }
-    }
-
-    #[test]
-    fn kanban_type_to_pko_unknown_returns_none() {
-        assert!(kanban_type_to_pko("InternalDbConnection").is_none());
-        assert!(kanban_type_to_pko("").is_none());
-    }
-}

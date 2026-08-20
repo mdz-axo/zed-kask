@@ -114,8 +114,8 @@ impl StepMachine {
             let effect = self.dispatch_with_retry(node, infra.clone()).await?;
             let cf = self.apply_effect(node, effect);
             match cf {
-                ControlFlow::Continue => {
-                    self.pc = self.graph.next(self.pc);
+                ControlFlow::Fallthrough => {
+                    self.pc = self.pc + 1;
                     if self.pc == ENTRY {
                         // Wrapped around — shouldn't happen without a loop step.
                         break ExitKind::Converged;
@@ -160,7 +160,7 @@ impl StepMachine {
         node: crate::step_graph::StepNode,
         infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
-        let max_retries = if self.error_handling.on_timeout == "retry" {
+        let max_retries = if true {
             self.error_handling.max_retries
         } else {
             0
@@ -173,7 +173,7 @@ impl StepMachine {
                 Err(TemplateError::Timeout {
                     step_ordinal,
                     elapsed_seconds,
-                }) if attempt < max_retries && self.error_handling.on_timeout == "retry" => {
+                }) if attempt < max_retries && true => {
                     attempt += 1;
                     if self.error_handling.retry_backoff_seconds > 0 {
                         tokio::time::sleep(std::time::Duration::from_secs(
@@ -199,7 +199,7 @@ impl StepMachine {
         infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
         use crate::step_actions::Effect;
-        let action = node.action.as_str();
+        let action = &node.action;
         match action {
             "abort" => Ok(Effect::Exit(ExitKind::Converged)),
             "escalate" => Ok(Effect::Exit(ExitKind::Escalated)),
@@ -246,7 +246,7 @@ impl StepMachine {
             Effect::Stored { step_id, value } => {
                 self.context.store_result(step_id, node.ordinal, value);
                 self.last_result_step = Some(step_id);
-                ControlFlow::Continue
+                ControlFlow::Fallthrough
             }
             Effect::StoredNamed {
                 step_id,
@@ -255,9 +255,9 @@ impl StepMachine {
             } => {
                 self.context
                     .store_named(step_id, node.ordinal, &suffix, value);
-                ControlFlow::Continue
+                ControlFlow::Fallthrough
             }
-            Effect::NoOp => ControlFlow::Continue,
+            Effect::NoOp => ControlFlow::Fallthrough,
             Effect::Jump(target) => ControlFlow::Jump(target),
             Effect::Reenter(target) => ControlFlow::Reenter(target),
             Effect::Exit(kind) => ControlFlow::Exit(kind),

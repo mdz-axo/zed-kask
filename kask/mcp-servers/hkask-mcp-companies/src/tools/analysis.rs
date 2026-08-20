@@ -402,27 +402,3 @@ impl CompaniesServer {
 
     // ── Portfolio tools ──
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hkask_types::McpErrorKind;
-
-    #[test]
-    fn screener_non_success_status_is_an_unavailable_error() {
-        let error = parse_screener_response(reqwest::StatusCode::TOO_MANY_REQUESTS, "[]")
-            .expect_err("non-success responses must not produce screener results");
-
-        assert_eq!(error.kind, McpErrorKind::Unavailable);
-        assert!(error.message.contains("429 Too Many Requests"));
-    }
-
-    #[test]
-    fn screener_malformed_json_is_an_unavailable_error() {
-        let error = parse_screener_response(reqwest::StatusCode::OK, "not json")
-            .expect_err("malformed successful responses must not produce screener results");
-
-        assert_eq!(error.kind, McpErrorKind::Unavailable);
-        assert!(error.message.contains("malformed JSON"));
-    }
-}

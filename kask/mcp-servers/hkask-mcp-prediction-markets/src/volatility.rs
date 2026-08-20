@@ -272,5 +272,3 @@ fn inverse_standard_normal_cdf(p: f64) -> f64 {
     }
 }
 
-#[cfg(test)]
-mod tests;

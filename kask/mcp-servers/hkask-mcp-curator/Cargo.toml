@@ -30,5 +30,3 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
-[dev-dependencies]
-uuid.workspace = true

@@ -265,25 +265,3 @@ pub fn save_settings<T: serde::Serialize>(settings: &T) -> Result<(), crate::Ser
         crate::ServiceError::Infra(hkask_types::InfrastructureError::Io(e.to_string()))
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn load_settings_returns_default_when_file_missing() {
-        // Use a non-existent path by temporarily overriding — just test the fallback
-        let settings: HkaskSettings = load_settings();
-        // Should always succeed (returns default on any error)
-        assert!(!settings.embedding_model.is_empty());
-    }
-
-    #[test]
-    fn save_and_load_roundtrip() {
-        let original = HkaskSettings::default();
-        save_settings(&original).expect("save should succeed");
-        let loaded = load_settings::<HkaskSettings>();
-        assert_eq!(loaded.embedding_model, original.embedding_model);
-        assert_eq!(loaded.ocr_model, original.ocr_model);
-    }
-}

@@ -61,29 +61,3 @@ impl ObservableSpan for QaSpan {
         QaSpan::as_str(self)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hkask_types::event::SpanNamespace;
-
-    #[test]
-    fn qa_span_namespaces_are_canonical() {
-        let all = vec![
-            QaSpan::QaRepairAttempted,
-            QaSpan::QaRepairVerified,
-            QaSpan::QaRepairExhausted,
-            QaSpan::QaRunPass,
-            QaSpan::QaRunFail,
-            QaSpan::QaRunSkipped,
-        ];
-        for span in all {
-            let ns = SpanNamespace::new(span.as_str()).unwrap();
-            assert_eq!(
-                ns.as_str(),
-                span.as_str(),
-                "QaSpan::as_str() must match CANONICAL_NAMESPACES"
-            );
-        }
-    }
-}

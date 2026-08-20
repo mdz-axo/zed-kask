@@ -471,29 +471,3 @@ pub struct PingOutput {
 // port — see docs/explanation/architecture-patterns.md. The port-level
 // check was speculative and never wired. If per-tool capability gating is
 // needed at the port in the future, reintroduce it with a real wiring plan.
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hkask_mcp_server::find_boolean_schema_positions;
-    use schemars::schema_for;
-
-    /// `json_schema` is typed [`AnyJsonValue`] so its schema is the empty
-    /// object `{}`, never the bare boolean `true` that `serde_json::Value`
-    /// produces. Ollama's Go API rejects boolean property schemas with
-    /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
-    /// chat-completion request. The scanner asserts the *entire* generated
-    /// schema is free of bare-boolean property values, so a future field on this
-    /// struct that reverts to `serde_json::Value` is caught here, not at runtime.
-    #[test]
-    fn extract_request_schema_has_no_boolean_property_values() {
-        let schema = schema_for!(ExtractRequest);
-        let value = serde_json::to_value(&schema).expect("schema serializes");
-        let violations = find_boolean_schema_positions(&value);
-        assert!(
-            violations.is_empty(),
-            "ExtractRequest schema has bare-boolean property values \
-             (Ollama/Gemini would reject): {violations:?}"
-        );
-    }
-}

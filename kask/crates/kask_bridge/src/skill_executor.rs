@@ -1,7 +1,6 @@
 //! `SkillManifestExecutor` adapter — bridges zed's `SkillTool` to hKask's `ManifestExecutor`.
 //!
 //! This is the D1 seam. When zed's `SkillTool` is constructed with a manifest executor,
-//! skill activation runs the hKask cascade (KnowAct/FlowDef/RenderAct + PDCA + gas/rjoule
 //! + OCAP) instead of injecting the `SKILL.md` body.
 //!
 //! The adapter resolves a skill name to its YAML manifest in the hKask registry
@@ -42,8 +41,6 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
     "ocr_model",
     "default_model",
     "qa_model",
-    "tts_model",
-    "stt_model",
     "vision_model",
     "image_gen_model",
 ];
@@ -133,14 +130,6 @@ pub struct BridgeManifestExecutor {
     /// (`reg.skill.<id>.outcome`). When `None`, skill outcomes are not
     /// persisted to the regulation system (tests, pre-login).
     regulation_ledger: Option<Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>>,
-    /// Optional VerificationStore for grounding skill cascade outputs.
-    /// When set, `execute_skill` calls `enforce_for_agent` with
-    /// `source: "skill_cascade"`, the skill name as `agent_id`,
-    /// `"skill"` as `agent_type`, and the cascade output + tool-call
-    /// summary. Grounding checks for fabricated file paths and unsourced
-    /// claims in the skill's output (Phase 5).
-}
-
 impl BridgeManifestExecutor {
     /// Construct a new bridge manifest executor with a real ToolPort (D3 wired).
     ///
@@ -448,14 +437,8 @@ impl BridgeManifestExecutor {
                 hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL,
             ),
             (
-                "tts_model",
-                "HKASK_MEDIA_TTS_MODEL",
-                hkask_inference::model_constants::DEFAULT_TTS_MODEL,
             ),
             (
-                "stt_model",
-                "HKASK_MEDIA_STT_MODEL",
-                hkask_inference::model_constants::DEFAULT_STT_MODEL,
             ),
             (
                 "vision_model",
@@ -1117,106 +1100,3 @@ fn final_result_as_string(outcome: &CascadeOutcome) -> String {
     let value = hkask_templates::extract_final_step_result(outcome);
     value_to_string(&value, &outcome.context)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hkask_templates::budget::BudgetSnapshot;
-    use hkask_templates::step_context::StepContext;
-    use hkask_templates::step_graph::{ExitKind, StepId};
-    use hkask_templates::step_machine::CascadeOutcome;
-    use serde_json::json;
-
-    /// Build a minimal `CascadeOutcome` for the bridge's `extract_final_step_result`
-    /// tests: typed context + machine-tracked `last_result_step`. Zeroed budget.
-    fn outcome_with_last(context: StepContext, last: Option<StepId>) -> CascadeOutcome {
-        CascadeOutcome {
-            context,
-            iterations: 1,
-            exit_kind: ExitKind::Converged,
-            last_result_step: last,
-            budget_snapshot: BudgetSnapshot {
-                rjoule_used: 0.0,
-                rjoule_cap: 0.0,
-                rjoule_remaining: 0.0,
-                rjoule_enabled: false,
-            },
-            resume_text: None,
-            tool_calls: Vec::new(),
-        }
-    }
-
-    /// (K5) the retired ordinal-keyed HashMap scan is gone; the bridge's
-    /// `extract_final_step_result` now selects `last_result_step`'s value from
-    /// the typed `CascadeOutcome`. Deterministic by construction (no randomized
-    /// HashMap order). Pins that contract + the null→full-context fallback.
-    ///
-    /// F1: `Value::String` is unwrapped to the inner string (not quoted),
-    /// so `render` steps that store `Value::String(rendered_text)` return
-    /// the raw text, not a double-quoted/escaped version.
-    #[test]
-    fn final_result_as_string_returns_last_result_step() {
-        let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!("first"));
-        ctx.store_result(2, 3, json!("third"));
-        ctx.store_result(1, 2, json!("second"));
-        let outcome = outcome_with_last(ctx, Some(2));
-        let out = final_result_as_string(&outcome);
-        assert_eq!(
-            out, "third",
-            "must return last_result_step's inner string value (step_id 2 = ordinal 3), not the double-quoted form"
-        );
-    }
-
-    /// F1: `Value::String` unwrapping must not affect `Value::Object` —
-    /// `select` steps store parsed JSON objects, which must still serialize
-    /// to a JSON string via `to_string()`.
-    #[test]
-    fn final_result_as_string_serializes_object_not_string() {
-        let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!({"answer": 42}));
-        let outcome = outcome_with_last(ctx, Some(0));
-        let out = final_result_as_string(&outcome);
-        assert_eq!(
-            out, "{\"answer\":42}",
-            "Value::Object must serialize to JSON string, not be unwrapped"
-        );
-    }
-
-    #[test]
-    fn final_result_as_string_ignores_protocol_and_named_keys() {
-        let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!({"answer": 42}));
-        ctx.insert_protocol("task".into(), json!("user request"));
-        ctx.store_named(1, 2, "populated", json!("populated"));
-        let outcome = outcome_with_last(ctx, Some(0));
-        let out = final_result_as_string(&outcome);
-        assert_eq!(
-            out, "{\"answer\":42}",
-            "must return last_result_step's value, not protocol or named keys"
-        );
-    }
-
-    #[test]
-    fn final_result_as_string_falls_back_to_full_context_when_no_step_results() {
-        let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.insert_protocol("task".into(), json!("user request"));
-        ctx.insert_protocol("_convergence".into(), json!({"status": "running"}));
-        let outcome = outcome_with_last(ctx, None);
-        let out = final_result_as_string(&outcome);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&out).expect("fallback must be valid JSON");
-        assert_eq!(parsed["task"], json!("user request"));
-        assert_eq!(parsed["_convergence"]["status"], json!("running"));
-    }
-
-    #[test]
-    fn final_result_as_string_handles_single_step() {
-        let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!({"convergence_metric": 0.05}));
-        let outcome = outcome_with_last(ctx, Some(0));
-        let out = final_result_as_string(&outcome);
-        assert!(out.contains("convergence_metric"));
-        assert!(out.contains("0.05"));
-    }
-

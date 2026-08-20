@@ -10,9 +10,7 @@
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
 mod cascade_context;
-mod concurrency;
-mod condenser_bridge;
-mod context_injector;
+mod concurrency;mod context_injector;
 
 mod identity;
 mod inference;
@@ -26,16 +24,14 @@ mod skill_executor;
 
 pub use cascade_context::{AgentCascadeContextProviderAdapter, BridgeCascadeContextProvider};
 pub use concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};
-pub use condenser_bridge::BridgeThreadCondenser;
-pub use context_injector::BridgeContextInjector;
+pub pub use context_injector::BridgeContextInjector;
 
 pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
 /// types.
-pub use hkask_inference::{InferenceConfig, MediaRouter};
-/// Re-exported so the settings UI can display the resolved default data
+pub /// Re-exported so the settings UI can display the resolved default data
 /// directory without a direct `hkask-types` dependency.
 pub use hkask_types::agent_paths::resolve_data_dir;
 pub use identity::{
@@ -61,15 +57,7 @@ pub use memory::{
     open_curator_regulation_archive,
 };
 pub use model_resolution::resolve_model_names;
-pub use settings::{
-    KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
-    KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
-    KaskGeneralSettings, KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
-    KaskTrainingSettings, SwarmModeConfig,
-};
-pub use skill_executor::{
+pub pub use skill_executor::{
     BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
 };
 

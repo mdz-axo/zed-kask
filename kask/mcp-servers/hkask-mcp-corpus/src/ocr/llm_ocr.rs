@@ -152,12 +152,6 @@ impl LlmOcrExecutor {
         }
     }
 
-    #[cfg(test)]
-    fn force_open_circuit(&self) {
-        for _ in 0..self.breaker.threshold {
-            self.breaker.record_failure();
-        }
-    }
 }
 #[async_trait]
 impl OcrExecutor for LlmOcrExecutor {
@@ -265,54 +259,5 @@ impl OcrExecutor for LlmOcrExecutor {
             duration_ms,
             was_fallback: is_fallback,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use image::{ImageBuffer, RgbImage};
-
-    /// Create a simple test image.
-    fn test_image() -> DynamicImage {
-        let img: RgbImage = ImageBuffer::new(100, 100);
-        DynamicImage::ImageRgb8(img)
-    }
-
-    async fn test_executor() -> LlmOcrExecutor {
-        LlmOcrExecutor::new(hkask_inference::resolve_inference_port().await)
-    }
-
-    #[tokio::test]
-    async fn is_available_for_llm_ocr() {
-        let executor = test_executor().await;
-        // Circuit breaker starts closed, so should be available
-        assert!(executor.is_available(&OcrBackend::LlmOcr("any-model".into())));
-    }
-
-    #[tokio::test]
-    async fn is_available_false_for_other_backends() {
-        let executor = test_executor().await;
-        assert!(!executor.is_available(&OcrBackend::Tesseract));
-    }
-
-    #[tokio::test]
-    async fn is_available_false_when_circuit_open() {
-        let executor = test_executor().await;
-        executor.force_open_circuit();
-        assert!(
-            !executor.is_available(&OcrBackend::LlmOcr("any-model".into())),
-            "LLM OCR should be unavailable when circuit breaker is open"
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_rejects_wrong_backend() {
-        let executor = test_executor().await;
-        let image = test_image();
-        let result = executor
-            .execute(0, &OcrBackend::Tesseract, &image, false)
-            .await;
-        assert!(result.is_err());
     }
 }

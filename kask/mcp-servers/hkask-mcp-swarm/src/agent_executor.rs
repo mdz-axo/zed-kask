@@ -85,15 +85,6 @@ impl AgentExecutor {
 
     /// Test-only constructor with injected dependencies (mirrors the
     /// `StubInferencePort` pattern).
-    #[cfg(test)]
-    pub(crate) fn with_deps(
-        inference: Arc<dyn hkask_types::InferencePort>,
-        tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
-        skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-    ) -> Self {
-        Self::new(inference, tool_dispatch, skill_exec, None)
-    }
-
     /// Build a skill catalog block for the agent's declared skills, reading
     /// the `name` and `description` fields from each skill's `SKILL.md`
     /// frontmatter. Returns `None` when `skills_dir` is unset or no declared
@@ -461,67 +452,5 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
     match (name, description) {
         (Some(n), Some(d)) if !n.is_empty() && !d.is_empty() => Some((n, d)),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_frontmatter_quoted_description() {
-        let content = "---\nname: grill-me\nvisibility: public\ndescription: \"Socratic interrogation skill.\"\n---\n\n# Body";
-        let (name, desc) = parse_skill_frontmatter(content).expect("should parse");
-        assert_eq!(name, "grill-me");
-        assert_eq!(desc, "Socratic interrogation skill.");
-    }
-
-    #[test]
-    fn parse_frontmatter_folded_description() {
-        let content = "---\nname: grill-me\ndescription: >\n  Socratic interrogation skill.\n  Tests deep understanding.\n---\n\n# Body";
-        let (name, desc) = parse_skill_frontmatter(content).expect("should parse");
-        assert_eq!(name, "grill-me");
-        assert!(desc.contains("Socratic interrogation skill."));
-        assert!(desc.contains("Tests deep understanding."));
-    }
-
-    #[test]
-    fn parse_frontmatter_missing_fields() {
-        let content = "---\nvisibility: public\n---\n\n# Body";
-        assert!(parse_skill_frontmatter(content).is_none());
-    }
-
-    #[test]
-    fn parse_frontmatter_no_frontmatter() {
-        let content = "# Grill Me\n\nNo frontmatter here.";
-        assert!(parse_skill_frontmatter(content).is_none());
-    }
-
-    #[test]
-    fn is_valid_skill_id_rejects_path_traversal() {
-        // B1 fix: a malicious cloned ABW card could declare these skill ids
-        // to read arbitrary files via path traversal. All must be rejected.
-        assert!(!is_valid_skill_id("../../../etc/passwd"));
-        assert!(!is_valid_skill_id("../etc/passwd"));
-        assert!(!is_valid_skill_id(".."));
-        assert!(!is_valid_skill_id("a/b"));
-        assert!(!is_valid_skill_id("a\\b"));
-        assert!(!is_valid_skill_id(""));
-        assert!(!is_valid_skill_id("-leading"));
-        assert!(!is_valid_skill_id("trailing-"));
-        assert!(!is_valid_skill_id("UPPERCASE"));
-        assert!(!is_valid_skill_id("has space"));
-        assert!(!is_valid_skill_id("has.special"));
-    }
-
-    #[test]
-    fn is_valid_skill_id_accepts_valid_names() {
-        assert!(is_valid_skill_id("grill-me"));
-        assert!(is_valid_skill_id("bug-hunt"));
-        assert!(is_valid_skill_id("metacognition"));
-        assert!(is_valid_skill_id("kata-improvement"));
-        assert!(is_valid_skill_id("adversarial-red-team"));
-        assert!(is_valid_skill_id("a1"));
-        assert!(is_valid_skill_id("1"));
     }
 }

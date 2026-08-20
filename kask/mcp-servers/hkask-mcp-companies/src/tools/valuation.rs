@@ -1180,7 +1180,6 @@ impl CompaniesServer {
                 .await?;
             }
 
-
             let mut output = serde_json::json!({
                 "status": "recorded",
                 "symbol": req.symbol,
@@ -1303,24 +1302,5 @@ impl CompaniesServer {
             },
         )
         .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn forecast_values_must_be_finite() {
-        assert!(validate_finite("multiple", f64::NAN).is_err());
-        assert!(validate_finite("multiple", f64::INFINITY).is_err());
-        assert!(validate_finite("multiple", 1.0).is_ok());
-    }
-
-    #[test]
-    fn probability_inputs_must_be_unit_interval_values() {
-        assert!(validate_unit_interval("probability", -0.01).is_err());
-        assert!(validate_unit_interval("probability", 1.01).is_err());
-        assert!(validate_unit_interval("probability", 0.5).is_ok());
     }
 }

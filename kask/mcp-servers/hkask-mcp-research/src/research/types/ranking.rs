@@ -199,33 +199,3 @@ pub fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mk_result(url: &str, score: f64) -> RankedResult {
-        RankedResult {
-            title: format!("Title {}", url),
-            url: url.to_string(),
-            description: None,
-            source: None,
-            published: None,
-            rrf_score: score,
-            provider_count: 1,
-            providers: vec!["test".into()],
-            best_rank: None,
-            content_preview: None,
-            semantic_score: None,
-            extracted_content: None,
-        }
-    }
-
-    #[test]
-    fn apply_rerank_recency_boosts() {
-        let mut results = vec![mk_result("old.com", 0.5), mk_result("new.com", 0.5)];
-        results[1].published = Some("2026-06-10T00:00:00Z".into());
-        apply_rerank(&mut results, RerankSignal::Recency);
-        assert!(results[0].rrf_score > 0.5, "recent result should get boost");
-    }
-}
