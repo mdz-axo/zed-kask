@@ -58,14 +58,14 @@ Brier. Evaluate convergence after each iteration.
 
 | Template | Purpose |
 |----------|---------|
-| `sequential-inquiry-grasp.j2` |  | Measure the agent's current understanding of the problem. Produces current_artifacts and current_procedure for gap computation. |
-| `sequential-inquiry-target.j2` |  | Declare the target understanding — what sufficient understanding looks like for this problem. Produces target_artifacts and target_procedure. |
-| `sequential-inquiry-predict.j2` |  | Predict which deep-dive delegation will close the gap and by how much. Carry a confidence for Brier scoring. |
-| `sequential-inquiry-engine.j2` |  | Core reasoning engine — advances the chain-of-thought with the predicted delegation. Generates, branches, revises, hypothesizes, and verifies. Re-measures the current condition after the experiment. |
-| `sequential-inquiry-delegate-hypothesis-framer.j2` |  | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem. |
-| `sequential-inquiry-delegate-mcda.j2` |  | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff. |
-| `sequential-inquiry-delegate-diagnose.j2` |  | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
-| `sequential-inquiry-delegate-falsifiability.j2` |  | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
+| `sequential-inquiry-grasp.j2` | Measure the agent's current understanding of the problem. Produces current_artifacts and current_procedure for gap computation. |
+| `sequential-inquiry-target.j2` | Declare the target understanding — what sufficient understanding looks like for this problem. Produces target_artifacts and target_procedure. |
+| `sequential-inquiry-predict.j2` | Predict which deep-dive delegation will close the gap and by how much. Carry a confidence for Brier scoring. |
+| `sequential-inquiry-engine.j2` | Core reasoning engine — advances the chain-of-thought with the predicted delegation. Generates, branches, revises, hypothesizes, and verifies. Re-measures the current condition after the experiment. |
+| `sequential-inquiry-delegate-hypothesis-framer.j2` | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem. |
+| `sequential-inquiry-delegate-mcda.j2` | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff. |
+| `sequential-inquiry-delegate-diagnose.j2` | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
+| `sequential-inquiry-delegate-falsifiability.j2` | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

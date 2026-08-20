@@ -56,9 +56,9 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 | Template | Purpose |
 |----------|---------|
-| `synthesize-briefing.j2` |  | Structure the five signal channels (algedonic, escalations, memory, grounding trend, grounding coverage) into a coherent briefing with per-skill health classification (healthy / watch / intervene) and a grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps). |
-| `present-briefing.j2` |  | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
-| `recommend-actions.j2` |  | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
+| `synthesize-briefing.j2` | Structure the five signal channels (algedonic, escalations, memory, grounding trend, grounding coverage) into a coherent briefing with per-skill health classification (healthy / watch / intervene) and a grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps). |
+| `present-briefing.j2` | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
+| `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

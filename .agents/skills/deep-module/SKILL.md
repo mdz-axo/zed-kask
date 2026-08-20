@@ -59,9 +59,9 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 
 | Template | Purpose |
 |----------|---------|
-| `deep-module-assess.j2` |  | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/ Very Shallow. Identify interface cost drivers and behavior gaps. |
-| `deep-module-delete.j2` |  | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
-| `deep-module-design.j2` |  | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
+| `deep-module-assess.j2` | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/ Very Shallow. Identify interface cost drivers and behavior gaps. |
+| `deep-module-delete.j2` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
+| `deep-module-design.j2` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

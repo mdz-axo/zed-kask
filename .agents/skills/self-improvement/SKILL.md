@@ -200,20 +200,20 @@ The skill implements the paper's safety recommendations (Section 9.1):
 
 | Template | Purpose |
 |----------|---------|
-| `si-kata-direction.j2` |  | Improvement Kata Step 1 — understand the strategic direction from the level above and articulate the challenge. |
-| `si-kata-current.j2` |  | Improvement Kata Step 2 — gather facts and data to establish the baseline state of the agent's current capabilities. |
-| `si-kata-target.j2` |  | Improvement Kata Step 3 — set a measurable, time-bounded target beyond the current knowledge threshold. |
-| `si-select-pathway.j2` |  | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
-| `si-execute-improvement.j2` |  | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
-| `si-evaluate-improvement.j2` |  | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
-| `si-commit-or-rollback.j2` |  | Decide whether to commit the improvement (persist the change) or rollback (revert to the prior state) based on the evaluation. |
-| `si-exec-fm-demos.j2` |  | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
-| `si-exec-fm-experience.j2` |  | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
-| `si-exec-fm-feedback.j2` |  | Foundation Model Improvement pathway — process intrinsic evaluative feedback from the improvement cycle. |
-| `si-exec-scaffold-full.j2` |  | Scaffolding Improvement pathway — update the full scaffold (prompt, memory, tool configuration) based on the improvement evaluation. |
-| `si-exec-scaffold-memory.j2` |  | Scaffolding Improvement pathway — update the agent's memory configuration based on the improvement evaluation. |
-| `si-exec-scaffold-prompt.j2` |  | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
-| `si-exec-scaffold-tool.j2` |  | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
+| `si-kata-direction.j2` | Improvement Kata Step 1 — understand the strategic direction from the level above and articulate the challenge. |
+| `si-kata-current.j2` | Improvement Kata Step 2 — gather facts and data to establish the baseline state of the agent's current capabilities. |
+| `si-kata-target.j2` | Improvement Kata Step 3 — set a measurable, time-bounded target beyond the current knowledge threshold. |
+| `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
+| `si-execute-improvement.j2` | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
+| `si-evaluate-improvement.j2` | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
+| `si-commit-or-rollback.j2` | Decide whether to commit the improvement (persist the change) or rollback (revert to the prior state) based on the evaluation. |
+| `si-exec-fm-demos.j2` | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
+| `si-exec-fm-experience.j2` | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
+| `si-exec-fm-feedback.j2` | Foundation Model Improvement pathway — process intrinsic evaluative feedback from the improvement cycle. |
+| `si-exec-scaffold-full.j2` | Scaffolding Improvement pathway — update the full scaffold (prompt, memory, tool configuration) based on the improvement evaluation. |
+| `si-exec-scaffold-memory.j2` | Scaffolding Improvement pathway — update the agent's memory configuration based on the improvement evaluation. |
+| `si-exec-scaffold-prompt.j2` | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
+| `si-exec-scaffold-tool.j2` | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

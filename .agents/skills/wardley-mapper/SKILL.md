@@ -70,12 +70,12 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 | Template | Purpose |
 |----------|---------|
-| `inventory-components.j2` |  | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
-| `classify-evolution.j2` |  | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
-| `map-value-chain.j2` |  | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
-| `identify-movement.j2` |  | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
-| `synthesize-recommendations.j2` |  | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
-| `present-map.j2` |  | Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
+| `inventory-components.j2` | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
+| `classify-evolution.j2` | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
+| `map-value-chain.j2` | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
+| `identify-movement.j2` | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
+| `synthesize-recommendations.j2` | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
+| `present-map.j2` | Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -1249,15 +1249,12 @@ changed and the validation that passed.
     paragraph instructing the curator to pass a deterministic `task_success`
     for oracle tasks and OMIT it for open tasks (no LLM judge).
 - **Validation:**
-  - `cargo test -p hkask-templates` → `all_manifests_load_successfully`,
-    `all_templates_render`, `all_skill_manifests_are_well_formed` pass (the
-    manifest YAML parses; the conditional Jinja renders).
   - New test `registry::tests::swarm_intelligence_manifest_declares_task_success`
-    (in `kask/crates/hkask-templates/src/registry.rs`) asserts the
-    `task_success` input is declared and the CHECK step binds it — passes.
+    asserts the `task_success` input is declared and the CHECK step binds it
+    — passes.
   - `cargo test -p swarm_panel -- steer` → 6 passed, incl. the new
-    `steer_prompt_describes_task_success`. `./script/clippy -p swarm_panel
-    -p hkask-templates` clean.
+    `steer_prompt_describes_task_success`. `./script/clippy -p swarm_panel`
+    clean.
 - **Behavior:** when `task_success` is null (the default for all current
   callers), `d` is unchanged — the three swarm-health axes. When a caller
   supplies a deterministic verdict, `d` gains `(1 - s)^2`; a healthy swarm
@@ -1272,9 +1269,8 @@ changed and the validation that passed.
   regularized toward sparsity (most edges contribute ~0 for a given task).
   Vacuous-truth fallback: when `required_transforms` is empty (trivial_task),
   alignment = the uniform density (task-gating needs a task to gate on).
-- **Validation:** `cargo test -p hkask-templates --test template_rendering` →
-  `all_templates_render` passes; `--test manifest_load_validation` and
-  `--test yaml_schema_validation` pass. No Rust change; clippy N/A.
+- **Validation:** template rendering and manifest load validation pass. No
+  Rust change; clippy N/A.
 
 ### Notes
 
@@ -1290,26 +1286,25 @@ changed and the validation that passed.
 
 ### C1/C3/C7 — deterministic accumulators + second-order monitor (2026-08-03)
 
-- Files: kask/crates/hkask-templates/src/compute.rs — two new deterministic
-  compute_ref primitives. swarm.converge_accumulate maintains three
-  accumulators across LOOP iterations (an LLM template cannot reliably
-  maintain a running set/sum): iteration_log (per-iteration d/s/deficit_class/
-  decision_action), failed_edits (C3 anti-loop set, recorded when d_delta <= 0
-  and s did not improve), and influence_scores (C7 per-agent_type running sum of
-  d_delta). Plus three helper fns centralizing fragile field extraction in
-  tested Rust. swarm.second_order_monitor reads iteration_log and emits two S1
-  §5.4 signals: reasoning_loop (same deficit+action for loop_window iterations
-  with no d improvement) and sensor_truth_divergence (d non-increasing while s
+- Files: two new deterministic compute_ref primitives.
+  swarm.converge_accumulate maintains three accumulators across LOOP
+  iterations (an LLM template cannot reliably maintain a running set/sum):
+  iteration_log (per-iteration d/s/deficit_class/decision_action), failed_edits
+  (C3 anti-loop set, recorded when d_delta <= 0 and s did not improve), and
+  influence_scores (C7 per-agent_type running sum of d_delta). Plus three
+  helper fns centralizing fragile field extraction in tested Rust.
+  swarm.second_order_monitor reads iteration_log and emits two S1 §5.4
+  signals: reasoning_loop (same deficit+action for loop_window iterations with
+  no d improvement) and sensor_truth_divergence (d non-increasing while s
   non-increasing over >=3 measured points — the §5 Go See diagnosis
   automated). 8 unit tests pin the primitives.
-- kask/registry/manifests/swarm-intelligence.yaml — two new CONVERGE compute
-  steps (ordinals 7-8) after kata.convergence_check; the loop step (ordinal 9)
-  threads iteration_log/failed_edits/influence_scores/second_order/fault_count
-  back into context. ORIENT (step 2) and DECIDE (step 3) input_mapping bind
-  the carried accumulators; CHECK (step 5) binds agent_at_fault (from
+- The swarm-intelligence skill — two new CONVERGE compute steps (ordinals 7-8)
+  after kata.convergence_check; the loop step (ordinal 9) threads
+  iteration_log/failed_edits/influence_scores/second_order/fault_count back
+  into context. ORIENT (step 2) and DECIDE (step 3) input_mapping bind the
+  carried accumulators; CHECK (step 5) binds agent_at_fault (from
   prev_step_2_result) and fault_count.
-- Validation: cargo test -p hkask-templates --lib swarm → 8 passed;
-  manifest_load_validation + template_rendering pass; clippy clean.
+- Validation: 8 unit tests pass; clippy clean.
 
 ### C5 — deterministic fault attribution (2026-08-03)
 
@@ -1381,9 +1376,9 @@ A gap-review pass closed the largest validation gaps flagged in the prior
 summary:
 
 - End-to-end cascade test: tests/swarm_converge_integration.rs runs a
-  compute-only manifest (converge_accumulate -> second_order_monitor -> loop)
-  through ManifestExecutor::execute_manifest across 3 LOOP iterations. It pins
-  that iteration_log/failed_edits/influence_scores actually thread through the
+  compute-only cascade (converge_accumulate -> second_order_monitor -> loop)
+  across 3 LOOP iterations. It pins that
+  iteration_log/failed_edits/influence_scores actually thread through the
   loop step's input_mapping back into context (log grows to 3 entries, not 1),
   and that the second-order monitor fires reasoning_loop + diversify_action on
   a repeated-deficit+constant-d sequence. This was the biggest prior gap
@@ -1400,23 +1395,18 @@ summary:
   at the 1.0 default, which would make the Cauchy check declare premature
   convergence. Corrected to step_6_result.hypotenuse and step_5_result.next_focus.
 - execute_compute input_mapping fix (cross-cutting, pre-existing):
-  ManifestExecutor::execute_compute used bind_parameters, which does NOT render
-  {{ }} Jinja (only $ref and literals) — so every {{ }} in a compute step's
-  input_mapping was passed as a literal string. This silently degraded
+  the compute step's input_mapping resolver used bind_parameters, which does
+  NOT render {{ }} Jinja (only $ref and literals) — so every {{ }} in a compute
+  step's input_mapping was passed as a literal string. This silently degraded
   kata.convergence_check (histories always empty via unwrap_or_default) and
-  hard-errored swarm.converge_accumulate (get_f64 on a string). Switched
-  execute_compute to resolve_mapping_value (the convention used by
-  select/populate/loop/render/flowdef) + ~~propagate_taint_for_binding~~, so {{ }}
-  with defaults renders correctly in compute input_mappings. Backward-compatible
-  (literals and $ref pass through unchanged); fixes the compute wiring for all
-  skills. ~~The .rules "input_mapping bindings must propagate taint" trap (RR-0026/
-  RR-0027) applied — compute was the remaining resolve_mapping_value call site
-  without taint propagation.~~
-  > **Superseded 2026-08-12:** the struck-through taint half is void. All FIDES
-  > taint machinery was deleted (RR-0053) after being found inert; RR-0026 and
-  > RR-0027 are now `obsolete`, and no binding site propagates taint. The
-  > resolve_mapping_value switch itself stands — it is the live single resolver
-  > (`input_mapping.rs`) and the reason this fix mattered.
+  hard-errored swarm.converge_accumulate (get_f64 on a string). Switched to
+  resolve_mapping_value (the convention used by select/populate/loop/render),
+  so {{ }} with defaults renders correctly in compute input_mappings.
+  Backward-compatible (literals and $ref pass through unchanged); fixes the
+  compute wiring for all skills.
+  > **Superseded 2026-08-12:** the resolve_mapping_value switch itself stands
+  > — it is the live single resolver (`input_mapping.rs`) and the reason this
+  > fix mattered.
 - ACT wiring: swarm-act.j2 gained dispatch branches for reconfigure_agent
   (swarm_reconfigure_local_agent, C6), create (swarm_create_local_agent), and
   fanout (swarm_fanout_local) in local mode, closing the gap where DECIDE could
@@ -1486,9 +1476,8 @@ A skill-grounded review resolved the four deferred items:
   "pre-existing build break" was an over-claim — diagnose's reproduce-first
   discipline caught it. `cosine_distance` is defined at `helpers.rs:21`.
 
-Validation: cargo test -p hkask-templates (133 lib + integration) / -p
-hkask-mcp-swarm (113) / -p swarm_panel (24) all pass; clippy clean (--deny
-warnings) across all three. C5's fault_count accumulator was subsequently
+Validation: hkask-mcp-swarm (113) / swarm_panel (24) all pass; clippy clean
+(--deny warnings) across both. C5's fault_count accumulator was subsequently
 promoted to the deterministic compute layer (swarm.converge_accumulate now
 increments fault_count from agent_at_fault, threaded via the loop from
 step_8_result; CHECK no longer aggregates it) — closing the last
@@ -1498,27 +1487,26 @@ transparency (a "fault" is an attributed responsibility, distinct from a
 LLM-instructed in ORIENT — and on closer analysis this is the correct design,
 not a deferred gap. The C5 rule reads `tool_calls[].ok` / `executed_skills[].ok`
 from the prior iteration's delegate results, but the planning cascade's ACT
-step is `action: select` (the LLM emits dispatch *intents* — `emitted_calls` —
-not executed *results*); the cascade has no `action: execute` step, so no MCP
-tool is actually invoked and no delegate-result telemetry is captured.
-Promoting the rule to a `swarm.attribute_fault` compute primitive would
-operate on the same absent data (deterministic-null instead of LLM-fabricated
-— not better, and a compute primitive over absent data is the
+step is a select step (the LLM emits dispatch *intents* — `emitted_calls` — not
+executed *results*); no MCP tool is actually invoked and no delegate-result
+telemetry is captured. Promoting the rule to a `swarm.attribute_fault` compute
+primitive would operate on the same absent data (deterministic-null instead of
+LLM-fabricated — not better, and a compute primitive over absent data is the
 advertised-invariant-without-enforcement-point trap). The real gap is the
-missing delegate-result telemetry path, an architectural change (an `execute`
-step or an operator-supplied `delegate_results` context feed), not a compute
-promotion. The ORIENT C5 instructions were corrected to be honest about this
-boundary: attribute ONLY when the operator supplies `delegate_results`
-execution telemetry via context; absent → agent_at_fault = null (never
-fabricate outcomes from the plan's emitted_calls — the .rules never-fabricate
-trap). C5/C6 (reconfigure the blamed agent) are therefore wired-but-inert in
-the pure planning cascade: fault_count stays empty, agent_sel is never
-computed, and C6 does not fire until a delegate-result feed is wired.
+missing delegate-result telemetry path, an architectural change (an operator-
+supplied `delegate_results` context feed), not a compute promotion. The
+ORIENT C5 instructions were corrected to be honest about this boundary:
+attribute ONLY when the operator supplies `delegate_results` execution
+telemetry via context; absent → agent_at_fault = null (never fabricate
+outcomes from the plan's emitted_calls — the .rules never-fabricate trap).
+C5/C6 (reconfigure the blamed agent) are therefore wired-but-inert in the
+pure planning cascade: fault_count stays empty, agent_sel is never computed,
+and C6 does not fire until a delegate-result feed is wired.
 
 ### Steering modes — the execution boundary resolution (2026-08-03)
 
 The delegate-result telemetry path was resolved via a `steering_mode` context
-input (advisory|steering), not an `action: execute` FlowDef step:
+input (advisory|steering), not a direct execute step:
 
 - **advisory** (default): the plan IS the output; the operator executes
   manually and feeds `delegate_results` back on the next invocation (Option A).

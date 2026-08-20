@@ -54,11 +54,11 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 
 | Template | Purpose |
 |----------|---------|
-| `coaching-q1-target.j2` |  | Q1 — What is the Target Condition? Ground learner in their goal. |
-| `coaching-q2-actual.j2` |  | Q2 — What is the Actual Condition now? Ground learner in reality with data. |
-| `coaching-q3-obstacles.j2` |  | Q3 — What obstacles? Which ONE now? Force prioritization. |
-| `coaching-q4-experiment.j2` |  | Q4 — What is your Next Step? What do you expect? Drive action with prediction. |
-| `coaching-q5-learn.j2` |  | Q5 — How quickly can we go and see? Close the feedback loop. |
+| `coaching-q1-target.j2` | Q1 — What is the Target Condition? Ground learner in their goal. |
+| `coaching-q2-actual.j2` | Q2 — What is the Actual Condition now? Ground learner in reality with data. |
+| `coaching-q3-obstacles.j2` | Q3 — What obstacles? Which ONE now? Force prioritization. |
+| `coaching-q4-experiment.j2` | Q4 — What is your Next Step? What do you expect? Drive action with prediction. |
+| `coaching-q5-learn.j2` | Q5 — How quickly can we go and see? Close the feedback loop. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -35,11 +35,11 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 
 | Template | Purpose |
 |----------|---------|
-| `gpa-sample-trajectories.j2` |  | Step 1 — Execute the target artifact against its eval set and capture trajectories (input, output, reasoning, tool calls, outcome scores). On iteration 1, samples from target_artifact. On iteration 2+, samples from the current Pareto frontier. |
-| `gpa-reflect.j2` |  | Step 2 — Reflect in natural language on trajectories. Diagnose failures, surface high-level rules, identify success and failure patterns. This reflection IS the gradient signal — it replaces sparse scalar rewards. |
-| `gpa-propose-mutations.j2` |  | Step 3 — Generate artifact variants from reflected lessons via mutation (targeted edit) and crossover (recombine complementary lessons from non-dominated frontier members). Each variant tests one hypothesis. |
-| `gpa-test-variants.j2` |  | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, rJoules, latency). |
-| `gpa-frontier-update.j2` |  | Step 5 — Update Pareto frontier. Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
+| `gpa-sample-trajectories.j2` | Step 1 — Execute the target artifact against its eval set and capture trajectories (input, output, reasoning, tool calls, outcome scores). On iteration 1, samples from target_artifact. On iteration 2+, samples from the current Pareto frontier. |
+| `gpa-reflect.j2` | Step 2 — Reflect in natural language on trajectories. Diagnose failures, surface high-level rules, identify success and failure patterns. This reflection IS the gradient signal — it replaces sparse scalar rewards. |
+| `gpa-propose-mutations.j2` | Step 3 — Generate artifact variants from reflected lessons via mutation (targeted edit) and crossover (recombine complementary lessons from non-dominated frontier members). Each variant tests one hypothesis. |
+| `gpa-test-variants.j2` | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, rJoules, latency). |
+| `gpa-frontier-update.j2` | Step 5 — Update Pareto frontier. Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

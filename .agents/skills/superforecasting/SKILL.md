@@ -157,16 +157,16 @@ preserving the forecast probability (alignment invariant).
 
 | Template | Purpose |
 |----------|---------|
-| `stage_0_triage.j2` |  | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. |
-| `stage_1_fermi_decompose.j2` |  | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. |
-| `stage_2_outside_view.j2` |  | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. |
-| `stage_3_probability_estimate.j2` |  | Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. |
-| `stage_4_evidence_update.j2` |  | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
-| `stage_5_synthesis.j2` |  | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
-| `stage_6_calibration.j2` |  | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
-| `stage_7_record.j2` |  | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
-| `forecast-quality-gate.j2` |  | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
-| `forecast-quality-gate.j2` |  | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| `stage_0_triage.j2` | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. |
+| `stage_1_fermi_decompose.j2` | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. |
+| `stage_2_outside_view.j2` | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. |
+| `stage_3_probability_estimate.j2` | Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. |
+| `stage_4_evidence_update.j2` | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
+| `stage_5_synthesis.j2` | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
+| `stage_6_calibration.j2` | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
+| `stage_7_record.j2` | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
+| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -1,15 +1,7 @@
 # Skill–MCP Co-Evolution Feedback Loops
 
-> **⚠️ Deprecated 2026-08-20.** This plan describes feedback loops that
-> depend on deleted subsystems:
-> - `BridgeManifestExecutor::execute_skill` and the `reg.skill.<id>.outcome`
->   span emission path were removed with `hkask-templates` (commit
->   `5f4cf5f10d`). Skill execution is now upstream-Zed body injection
->   (`SkillTool::run` → `render_skill_envelope`); there is no
->   `BridgeManifestExecutor`.
-> - The `hkask-verification` grounding enforcement surface
->   (`enforce_grounding`, `VerificationStore`) was deleted (commit
->   `9e9c41ef3c`). The grounding-contract tightening loop (Loop 2) is gone.
+> **⚠️ Deprecated 2026-08-20.** Skill execution is upstream-Zed body
+> injection (`SkillTool::run` → `render_skill_envelope`).
 >
 > The calibration loop (Loop 1, forecast outcomes → adjusted priors) and the
 > regulation-threshold loop (Loop 4) survive in reduced form. Retained for
@@ -93,8 +85,8 @@ follow-up task.
 **Status:** Wired. Existing infrastructure.
 
 **Path:**
-1. `BridgeManifestExecutor::execute_skill` records `reg.skill.<id>.outcome`
-   and `reg.skill.<id>.convergence` spans to the `RegulationLedger` after each
+1. Skill execution records `reg.skill.<id>.outcome` and
+   `reg.skill.<id>.convergence` spans to the `RegulationLedger` after each
    cascade.
 2. The `CyberneticsLoop`'s sensors read from the `RegulationLedger` to detect
    drift (e.g. a skill whose convergence rate is declining over time).
@@ -103,8 +95,7 @@ follow-up task.
 4. The operator reviews the alert and decides whether to adjust thresholds
    via `curator_directive` or refine the skill via `skill-maintenance`.
 
-**Key tools:** `BridgeManifestExecutor::with_regulation_ledger`,
-`RegulationLedger::record_skill_span`, `curator_algedonic_log`.
+**Key tools:** `RegulationLedger::record_skill_span`, `curator_algedonic_log`.
 
 **Lead metric:** Convergence rate per skill (fraction of cascades that exit
 `Converged` vs `MaxedOut` or `Escalated`). The `reg.skill.<id>.convergence`
@@ -122,16 +113,15 @@ server. The gemba walk uses `curator_consult` (skill-use issues) as a proxy.
 grounding extension.
 
 **Path:**
-1. `BridgeManifestExecutor::execute_skill` calls
-   `VerificationStore::enforce_for_agent("skill_cascade", skill_name, "skill", ...)`
-   after each cascade completes (Phase 5).
-2. The tool-call summary from the cascade (`CascadeOutcome.tool_calls`) is
-   passed so the grounding check can verify that sourced fields (e.g.
-   `deliverable_path`) were produced by a successful tool call.
+1. Skill execution calls the grounding enforcement surface after each
+   cascade completes (Phase 5).
+2. The tool-call summary from the cascade is passed so the grounding check
+   can verify that sourced fields (e.g. `deliverable_path`) were produced by
+   a successful tool call.
 3. Violations (nulled fields, narrative leaks) are:
    - Logged at `warn!` with `nulled_fields` and `narrative_leaks`
-   - Written as `GroundingRecord`s to the `VerificationStore` central ledger
-     (append-only, cross-tool, cross-server)
+   - Written as `GroundingRecord`s to the central ledger (append-only,
+     cross-tool, cross-server)
 4. Three `GroundingSensor` instances (clean rate, coverage rate, violation
    delta) are registered in the `CyberneticsLoop`'s sensor registry. Each tick,
    they query the verification ledger and produce signals when metrics drop
@@ -146,15 +136,13 @@ grounding extension.
    - `trend_direction` (improving / stable / degrading / no_baseline)
    - `top_coverage_gaps` (agent types with delegations but no contract, paper §6)
 7. The operator sees coverage gaps and degrading trends, then:
-   - Registers contracts via `VerificationStore::register_contract()` for
-     agent types with coverage gaps
+   - Registers contracts for agent types with coverage gaps
    - Queries `curator_grounding_violations` to review recent violations
    - Tightens existing contracts (adds field sources, narrows `why` requirements)
 8. The next cascade's grounding enforcement uses the new/updated contracts —
    the loop closes.
 
-**Key tools:** `VerificationStore::enforce_for_agent`,
-`VerificationStore::register_contract`, `curator_grounding_trend`,
+**Key tools:** `curator_grounding_trend`,
 `curator_grounding_coverage`, `curator_grounding_violations`,
 `GroundingSensor` (3 variants).
 
@@ -235,7 +223,7 @@ graph TD
     end
 
     subgraph "Loop 4: Grounding Feedback"
-        EFA[VerificationStore::enforce_for_agent]
+        EFA[Grounding enforcement]
         VL[Verification Ledger]
         GS[GroundingSensor x3]
     end
@@ -315,9 +303,9 @@ graph TD
    not numeric with defaults. A failed query returns `None` and logs at `warn!`,
    distinguishing "not configured" from "configured but broken."
 
-5. **The central ledger is the source of truth.** `VerificationStore` is the
-   single source of truth for grounding records. Every MCP server that delegates
-   to agents calls `enforce_for_agent` or `enforce_and_stamp`. Records are
+5. **The central ledger is the source of truth.** The verification ledger is
+   the single source of truth for grounding records. Every MCP server that
+   delegates to agents calls the grounding enforcement surface. Records are
    append-only, cross-tool, and cross-server.
 
 6. **The six-valued grounding vocabulary** (Sourced / Inferred / Derived /

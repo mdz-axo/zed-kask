@@ -66,11 +66,11 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 | Template | Purpose |
 |----------|---------|
-| `../media/logo-discovery.yaml` |  | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
-| `../media/logo-discovery-map.j2` |  | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
-| `../media/logo-formal-prompt.j2` |  | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
-| `../media/logo-iterative-refine.yaml` |  | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables. |
-| `../media/logo-presentation.yaml` |  | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use. |
+| `../media/logo-discovery.yaml` | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
+| `../media/logo-discovery-map.j2` | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
+| `../media/logo-formal-prompt.j2` | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
+| `../media/logo-iterative-refine.yaml` | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables. |
+| `../media/logo-presentation.yaml` | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

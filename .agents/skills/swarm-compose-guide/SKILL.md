@@ -54,7 +54,7 @@ top-level template variables.
 
 | Template | Purpose |
 |----------|---------|
-| `../swarm-intelligence/swarm-compose-guide.j2` |  | Renders guidance for agent/swarm composition forms. Returns suggested completions (action=suggest) or a validation verdict (action=validate) over the supplied fields. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool. |
+| `../swarm-intelligence/swarm-compose-guide.j2` | Renders guidance for agent/swarm composition forms. Returns suggested completions (action=suggest) or a validation verdict (action=validate) over the supplied fields. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
