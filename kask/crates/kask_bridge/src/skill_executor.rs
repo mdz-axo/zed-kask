@@ -435,15 +435,15 @@ impl BridgeManifestExecutor {
     fn inject_model_defaults(&self, context: &mut HashMap<String, Value>) {
         // Function-based defaults (no env var override).
         const FN_DEFAULTS: &[(&str, fn() -> String)] = &[
-            ("embedding_model", || {
-                hkask_inference::model_constants::embedding_model().to_string()
-            }),
-            ("classifier_model", || {
-                hkask_inference::model_constants::classifier_model().to_string()
-            }),
-            ("ocr_model", || {
-                hkask_inference::model_constants::ocr_model().to_string()
-            }),
+            (
+                "embedding_model",
+                hkask_inference::model_constants::embedding_model,
+            ),
+            (
+                "classifier_model",
+                hkask_inference::model_constants::classifier_model,
+            ),
+            ("ocr_model", hkask_inference::model_constants::ocr_model),
         ];
         for (key, f) in FN_DEFAULTS {
             if !context.contains_key(*key) {

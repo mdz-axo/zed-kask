@@ -283,10 +283,13 @@ impl StepMachine {
         let tools: Option<Vec<ChatToolDefinition>> = structured_tool.map(|tool| vec![tool]);
 
         // Merge per-step inference parameters from the template's `[inference]`
-        // block over the default params. Templates declare temperature
-        // and thinking_budget per step — without this, every call
-        // uses the default (temperature 0.6), which is too
+        // block over the default params. Templates declare temperature,
+        // thinking_budget, work_effort, and verbosity per step — without this,
+        // every call uses the default (temperature 0.6), which is too
         // low for complex templates that need thinking + a full JSON response.
+        // work_effort is a fallback for thinking_budget (high/medium → ON,
+        // low/minimal → OFF); thinking_budget takes precedence when both are set.
+        // verbosity injects a system-prompt instruction controlling output length.
         let mut params = infra.default_params.clone();
         if let Some(temp) = inference_block.temperature {
             params.temperature = temp;
@@ -309,7 +312,27 @@ impl StepMachine {
                     "Unrecognized thinking_budget value — falling back to default disable_thinking"
                 );
             }
-            None => {}
+            None => {
+                // thinking_budget not set — check work_effort as fallback.
+                // work_effort maps: "high"/"medium" → thinking ON,
+                // "low"/"minimal" → thinking OFF.
+                match inference_block.work_effort.as_deref() {
+                    Some("high") | Some("medium") => {
+                        params.disable_thinking = false;
+                    }
+                    Some("low") | Some("minimal") => {
+                        params.disable_thinking = true;
+                    }
+                    Some(other) => {
+                        tracing::warn!(
+                            target: "hkask.templates.inference_block",
+                            work_effort = %other,
+                            "Unrecognized work_effort value — falling back to default disable_thinking"
+                        );
+                    }
+                    None => {}
+                }
+            }
         }
 
         let timeout_dur = effective_timeout(node.timeout_seconds);
@@ -320,8 +343,12 @@ impl StepMachine {
         // Without this, each template step is an isolated single-prompt call
         // with no conversational context, confusing the model (the original
         // bug this fixes).
-        let messages =
-            build_cascade_messages(&infra.prior_messages, &infra.memory_snippets, &prompt);
+        let messages = build_cascade_messages(
+            &infra.prior_messages,
+            &infra.memory_snippets,
+            &prompt,
+            inference_block.verbosity.as_deref(),
+        );
 
         // Gate the inference call with the global concurrency limiter. The
         // permit is held across the cloud round-trip and released on drop
@@ -1693,10 +1720,22 @@ fn build_cascade_messages(
     prior_messages: &[ChatMessage],
     memory_snippets: &[MemorySnippet],
     rendered_template: &str,
+    verbosity: Option<&str>,
 ) -> Vec<ChatMessage> {
-    let mut messages = Vec::with_capacity(2 + prior_messages.len() + 1);
+    let mut messages = Vec::with_capacity(3 + prior_messages.len() + 1);
 
-    // Long-term memory as a system message (if non-empty).
+    // Verbosity instruction as a system message (if non-standard).
+    // This is a soft lever — it instructs the model on output length without
+    // imposing a hard token limit. Injected before the template so the model
+    // processes it as a global constraint on its output style.
+    if let Some(level) = verbosity {
+        if let Some(instruction) = verbosity_instruction(level) {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: instruction.to_string(),
+            });
+        }
+    }
     if !memory_snippets.is_empty() {
         let memory_text = format_cascade_memory_context(memory_snippets);
         messages.push(ChatMessage {
@@ -1721,6 +1760,35 @@ fn build_cascade_messages(
     });
 
     messages
+}
+
+/// Map a verbosity level to a system-prompt instruction controlling output length.
+/// Returns `None` for "standard" (no instruction — the default).
+/// This is a soft lever: it instructs the model on conciseness without imposing
+/// a hard token limit. The template's own instructions still take precedence
+/// for fields that require specific content.
+fn verbosity_instruction(level: &str) -> Option<&'static str> {
+    match level {
+        "terse" => Some(
+            "Be extremely concise. Minimize unnecessary words and explanations. Prefer short sentences over paragraphs.",
+        ),
+        "concise" => Some("Be concise and direct. Avoid unnecessary elaboration."),
+        "standard" => None,
+        "detailed" => {
+            Some("Be thorough and detailed in your analysis. Provide complete explanations.")
+        }
+        "verbose" => Some(
+            "Be comprehensive and exhaustive in your analysis. Leave no relevant detail unexplored.",
+        ),
+        _ => {
+            tracing::warn!(
+                target: "hkask.templates.inference_block",
+                verbosity = %level,
+                "Unrecognized verbosity value — no instruction injected"
+            );
+            None
+        }
+    }
 }
 
 /// Format long-term memory snippets as a system message.

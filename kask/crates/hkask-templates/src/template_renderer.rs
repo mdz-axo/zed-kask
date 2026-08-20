@@ -356,6 +356,12 @@ pub fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
                 "thinking_budget" => {
                     config.thinking_budget = Some(unquoted.to_string());
                 }
+                "work_effort" => {
+                    config.work_effort = Some(unquoted.to_string());
+                }
+                "verbosity" => {
+                    config.verbosity = Some(unquoted.to_string());
+                }
                 _ => {}
             }
         }
@@ -675,5 +681,33 @@ mod tests {
         let body = "[inference]\nthinking_budget = \"on\"\n\nGenerate a response.\n";
         let (_stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.thinking_budget.as_deref(), Some("on"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_work_effort() {
+        let body = "[inference]\nwork_effort = \"high\"\n\nYou are an analyst.";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.work_effort.as_deref(), Some("high"));
+        assert!(stripped.starts_with("You are an analyst."));
+        assert!(!stripped.contains("work_effort"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_verbosity() {
+        let body = "[inference]\nverbosity = \"concise\"\n\nYou are an analyst.";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.verbosity.as_deref(), Some("concise"));
+        assert!(stripped.starts_with("You are an analyst."));
+        assert!(!stripped.contains("verbosity"));
+    }
+
+    #[test]
+    fn parse_inference_block_extracts_all_params() {
+        let body = "[inference]\ntemperature = 0.3\nthinking_budget = \"full\"\nwork_effort = \"high\"\nverbosity = \"detailed\"\n\nYou are an analyst.";
+        let (_stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.temperature, Some(0.3));
+        assert_eq!(config.thinking_budget.as_deref(), Some("full"));
+        assert_eq!(config.work_effort.as_deref(), Some("high"));
+        assert_eq!(config.verbosity.as_deref(), Some("detailed"));
     }
 }
