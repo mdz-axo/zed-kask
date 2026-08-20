@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     bug_description: string
@@ -17,10 +16,6 @@ contract:
     architecture_note: string
 visibility: Public
 ---
-{# Template: diagnose/diagnose-fix.j2 #}
-{# Functional Role: KnowAct — Fix with regression test, cleanup, post-mortem #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: regression_test_code, test_file_path, fix_applied, original_repro_fixed, diagnostic_tags_removed, postmortem, architecture_note #}
 
 [inference]
 temperature = 0.1

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     crate_scope: string
@@ -14,10 +13,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: tdd/tdd-explore.j2 #}
-{# Functional Role: KnowAct — Explore for codegraph blind spots via bug-hunt #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: bug_hunt_findings, new_gaps, routing, bug_hunt_dispatch, rationale #}
 {# Design: kask/docs/plans/evolving-test-harness.md §3.5; test-harness-skill-evolution.md §2.6 #}
 
 [inference]

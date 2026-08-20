@@ -1,6 +1,5 @@
 {# goal: Derive per-scenario implications and identify early-warning indicators. Produces robust strategies (for all scenarios) and contingent strategies (for specific unfoldings). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     refined_question: string
@@ -13,10 +12,6 @@ contract:
     monitoring_plan: string
 visibility: Public
 ---
-{# Template: scenario-builder/implications-indicators.j2 #}
-{# Functional Role: KnowAct — Derive per-scenario implications and early-warning indicators #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: per_scenario_implications, robust_strategies, contingent_strategies, early_indicators, monitoring_plan #}
 
 [inference]
 temperature = 0.4

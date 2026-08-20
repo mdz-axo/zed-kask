@@ -1,6 +1,5 @@
 {# goal: Update the Pareto frontier on (novelty, validity, cost-inverted). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     current_frontier: array
@@ -13,8 +12,6 @@ contract:
     frontier_changed: boolean
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-frontier.j2 #}
-{# Produces: frontier, dominated, new_non_dominated, frontier_changed #}
 
 [inference]
 temperature = 0.2

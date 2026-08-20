@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     target_path: string
@@ -12,10 +11,6 @@ contract:
 visibility: Public
 
 ---
-{# Template: skill-maintenance/logic-load-goal.j2 #}
-{# Functional Role: WordAct — Parse the annotated goal: block from a target template or manifest #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: goal, goal_found, file_type #}
 
 [inference]
 temperature = 0.0

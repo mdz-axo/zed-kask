@@ -1,6 +1,5 @@
 {# goal: Generate divergent scenario narratives by selecting two critical uncertainty axes from identified driving forces. Produces four quadrant scenarios with internally consistent narratives. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     refined_question: string
@@ -13,10 +12,6 @@ contract:
     challenges_current_assumptions: boolean
 visibility: Public
 ---
-{# Template: scenario-builder/axes-and-narratives.j2 #}
-{# Functional Role: KnowAct — Construct a 2x2 scenario matrix and write detailed narratives #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: scenario_matrix_and_narratives #}
 
 [inference]
 temperature = 0.6

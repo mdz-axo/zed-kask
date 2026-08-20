@@ -1,6 +1,5 @@
 {# goal: Map macro-level driving forces (STEEP: society, technology, economy, environment, politics) against an importance-uncertainty matrix to identify critical uncertainties. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     refined_question: string
@@ -11,10 +10,6 @@ contract:
     critical_uncertainties: array
 visibility: Public
 ---
-{# Template: scenario-builder/driving-forces.j2 #}
-{# Functional Role: KnowAct — Map macro driving forces across STEEP domains #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: driving_forces_analysis #}
 
 [inference]
 temperature = 0.4

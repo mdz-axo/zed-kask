@@ -1,6 +1,5 @@
 {# goal: Produce the verdict + named structural remedies + coverage honesty + lessons_learned/next_review_focus loop closure. Verdict driven by Blocker presence, not nit count. Never a bare "LGTM". #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     adjudicated_findings: array
@@ -16,10 +15,6 @@ contract:
     next_review_focus: string
 visibility: Public
 ---
-{# Template: code-review/code-review-report.j2 #}
-{# Functional Role: KnowAct — Verdict + structural remedies + coverage honesty #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: report #}
 {# Phase 4 — REPORT (Fagan outputs: verdict + remedies + follow-up signals) #}
 {# hKask v0.36.0 — Code Review #}
 {#

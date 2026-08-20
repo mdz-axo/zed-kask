@@ -4,7 +4,6 @@
 {#   Type coercion follows the JSON Schema Validation spec (Wright & Andrews, #}
 {#   draft-07+). Coverage ratio is a standard IE metric (populated/total). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     source_text: string
@@ -19,10 +18,6 @@ contract:
     unresolved_fields: array
 visibility: Public
 ---
-{# Template: structured-extraction/map-to-schema.j2 #}
-{# Functional Role: KnowAct — Map identified entities to target schema #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: extracted_data, field_coverage, inferred_fields, unresolved_fields #}
 
 [inference]
 temperature = 0.2

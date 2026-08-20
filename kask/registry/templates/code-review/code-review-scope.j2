@@ -1,6 +1,5 @@
 {# goal: Scope the change — compute the real diff (Fagan sizing), identify critical paths, build a change model (Good Regulator), and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     change_spec: string
@@ -15,10 +14,6 @@ contract:
     focus_axes: array
 visibility: Public
 ---
-{# Template: code-review/code-review-scope.j2 #}
-{# Functional Role: KnowAct — Scope the change (Fagan Planning + Good Regulator) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: scope #}
 {# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
 {# hKask v0.36.0 — Code Review #}
 {#

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     operation: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Recover from missing API key errors by creating a default config file with placeholder content. #}
-{# Template: heal/missing_api_key.j2 #}
-{# KnowAct — Diagnose and recover from missing API key #}
 
 [inference]
 temperature = 0.1

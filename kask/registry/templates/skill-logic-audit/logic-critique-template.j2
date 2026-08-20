@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     goal: string
@@ -14,10 +13,6 @@ contract:
 visibility: Public
 
 ---
-{# Template: skill-maintenance/logic-critique-template.j2 #}
-{# Functional Role: KnowAct — Critique a template body against its annotated goal #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: flaws, valid_concerns, spurious_concerns, verdict #}
 
 [inference]
 temperature = 0.2

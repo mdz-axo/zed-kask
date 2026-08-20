@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     error_message: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Classify runtime errors to select the single best healing strategy. #}
-{# Template: heal/classify-error.j2 #}
-{# KnowAct — Classify runtime error for healing strategy dispatch #}
 
 [inference]
 temperature = 0.1

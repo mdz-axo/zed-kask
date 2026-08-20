@@ -1,6 +1,5 @@
 {# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, propose evidence-backed regressions, emit reg.lora.report (P9), and require userpod_host (P12). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     findings: array
@@ -15,8 +14,6 @@ contract:
     reg_span_emitted: boolean
 visibility: Public
 ---
-{# Template: lora-training/report.j2 #}
-{# Functional Role: KnowAct — lossless finding report and regression proposal #}
 {# Registry authoritative; no finding reclassification (P5.1, P8). #}
 
 [inference]

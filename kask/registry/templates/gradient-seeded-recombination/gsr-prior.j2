@@ -1,6 +1,5 @@
 {# goal: Build the complete-graph prior K_n — every ontology should have a recombination surface with every other. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     namespaces: array
@@ -12,8 +11,6 @@ contract:
     prior_confidence: number
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-prior.j2 #}
-{# Produces: prior_type, prior_graph, expected_pairs, prior_confidence #}
 
 [inference]
 temperature = 0.2

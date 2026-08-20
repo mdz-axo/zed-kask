@@ -1,6 +1,5 @@
 {# goal: Derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, then operationalize into research aims and objectives with alignment verification and feasibility recheck. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     structured_question: string
@@ -19,10 +18,6 @@ contract:
     feasibility_recheck: object
 visibility: Public
 ---
-{# Template: hypothesis-framer/hypothesis-operationalize.j2 #}
-{# Functional Role: KnowAct — Hypothesis formulation + aims/objectives operationalization with alignment verification #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: research_hypothesis, null_hypothesis, hypothesis_type, directional, testability_assessment, primary_aim, secondary_aims, alignment_check, feasibility_recheck #}
 
 [inference]
 temperature = 0.2

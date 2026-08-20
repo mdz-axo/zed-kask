@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target_condition: string
@@ -14,10 +13,6 @@ contract:
     open_questions: array
 visibility: Public
 ---
-{# Template: task-breakdown/task-breakdown-plan.j2 #}
-{# Functional Role: KnowAct — Grasp the current condition relative to the target condition #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: context_summary, dependency_graph, risks, open_questions #}
 {# v0.36.0: anchored on target_condition (mapped from {{ task }}), not spec_or_intent #}
 
 [inference]

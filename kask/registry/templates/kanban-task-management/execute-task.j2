@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -13,10 +12,6 @@ contract:
     blockers: array
 visibility: Public
 ---
-{# Template: kanban-task-management/execute-task.j2 #}
-{# Functional Role: KnowAct — Execute one delegated kanban task and report its evidence #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: status, deliverables, progress_note, blockers #}
 
 [inference]
 temperature = 0.2

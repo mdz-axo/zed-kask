@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     emitted_calls: array
@@ -16,9 +15,6 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Template: swarm-steering/swarm-steering-direct.j2 #}
-{# Functional Role: KnowAct — Produce the local-swarm steering directive #}
-{# Produces: steering_directive #}
 {# hKask v0.36.0 — Swarm Steering (local mode, Cybernetic Swarm Plan steering_mode) #}
 {#
   Codifies the execute-and-feed-back loop for the Kask Curator or a human in

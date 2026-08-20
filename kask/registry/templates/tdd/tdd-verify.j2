@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 visibility: Public
 contract:
   input:
@@ -20,10 +19,6 @@ contract:
      reg_spans_emitted: array
      passed: boolean
 ---
-{# Template: tdd/tdd-verify.j2 #}
-{# Functional Role: KnowAct — TDD cycle verification with functional coverage check #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: all_tests_pass, clippy_clean, no_todo_stubs, behavior_coverage, functional_gaps, violations, contract_expectations_valid, reg_spans_emitted, passed #}
 
 [inference]
 temperature = 0.1

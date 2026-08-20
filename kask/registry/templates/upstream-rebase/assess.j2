@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target_file: string
@@ -15,9 +14,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: upstream-rebase/assess.j2 #}
-{# Functional Role: KnowAct — Assess a D-seam file against the strategy decision rule #}
-{# Produces: line counts, call site count, marker count, strategy recommendation #}
 
 [inference]
 temperature = 0.2

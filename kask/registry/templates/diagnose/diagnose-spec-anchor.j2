@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     bug_description: string
@@ -19,8 +18,6 @@ contract:
     anchor_summary: string
 visibility: Public
 ---
-{# Template: diagnose/diagnose-spec-anchor.j2 #}
-{# KnowAct — Anchor the diagnosis to the code graph via Dublin Core (things) + PKO (flows) #}
 {# Replaces spec-anchoring: the bug is placed in the actual code structure, not a spec document #}
 
 [inference]

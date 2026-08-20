@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     topic: string
@@ -12,10 +11,6 @@ contract:
     reason: string
 visibility: Public
 ---
-{# Template: grill-me/grill-me-escalate.j2 #}
-{# Functional Role: KnowAct — Difficulty escalation decision #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: new_level, action, reason #}
 
 [inference]
 temperature = 0.1

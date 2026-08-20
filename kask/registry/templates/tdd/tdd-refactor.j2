@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     crate_scope: string
@@ -12,10 +11,6 @@ contract:
     simplification_notes: array
 visibility: Public
 ---
-{# Template: tdd/tdd-refactor.j2 #}
-{# Functional Role: KnowAct — Refactor while GREEN: extract, deepen, simplify #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: refactor_steps, each_step_passes, contract_changes, simplification_notes #}
 
 [inference]
 temperature = 0.2

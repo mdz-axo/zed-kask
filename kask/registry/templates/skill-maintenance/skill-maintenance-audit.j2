@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     skill_name: string
@@ -11,9 +10,7 @@ contract:
     deprecation_recommendations: array
 visibility: Public
 ---
-{# Template: skill-maintenance/skill-maintenance-audit.j2 #}
-{# goal: Audit registry crates for staleness signals: manifest validity, .j2 contract drift, template_type correctness, FlowDef tool/template validation, and health scoring. #}
-{# KnowAct — Registry crate staleness audit and health scoring #}
+{# goal: Audit registry crates for staleness signals: manifest validity, .j2 contract drift, tool/template validation, and health scoring. #}
 {# hKask v0.36.0 — A Minimal Viable Container for UserPods #}
 
 [inference]

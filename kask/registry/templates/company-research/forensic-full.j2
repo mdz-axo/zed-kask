@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     ticker: string
@@ -17,7 +16,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: company-research/forensic-full.j2 #}
 {# goal: Agent 04 FORENSIC (full) — full audit: accruals, governance, management profile. Consumes company_transcript MCP tool output for mgmt quotes. BLOCK is a terminal gate. FORENSIC cannot be skipped. #}
 
 [inference]

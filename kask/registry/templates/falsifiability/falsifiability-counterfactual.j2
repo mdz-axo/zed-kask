@@ -1,6 +1,5 @@
 {# goal: Pearl/Halpern counterfactual generation — construct minimal counterfactuals and derive their testable consequences. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     hypotheses: array
@@ -11,10 +10,6 @@ contract:
     irreducible: array
 visibility: Public
 ---
-{# Template: falsifiability/falsifiability-counterfactual.j2 #}
-{# Functional Role: KnowAct — Pearl/Halpern counterfactual generation #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: counterfactuals, irreducible #}
 
 [inference]
 temperature = 0.4

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     module_assessment: object
@@ -14,10 +13,6 @@ contract:
     merge_target: string
 visibility: Public
 ---
-{# Template: deep-module/deep-module-delete.j2 #}
-{# Functional Role: KnowAct — Execute Ousterhout's deletion test in both directions #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: caller_test_result, module_test_result, recommendation, rationale, merge_target #}
 
 [inference]
 temperature = 0.2

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     verdict: string
@@ -13,7 +12,6 @@ contract:
     escalate_reason: string
 visibility: Public
 ---
-{# Template: goal-analysis/goal-resolve.j2 #}
 {# goal: Route goal verdict to resolution action and emit appropriate Regulation spans. #}
 
 [inference]

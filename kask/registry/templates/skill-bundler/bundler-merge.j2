@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     skill_names: array
@@ -13,10 +12,6 @@ contract:
     recommendations: array
 visibility: Public
 ---
-{# Template: skill-bundler/bundler-merge.j2 #}
-{# Functional Role: KnowAct — merge parallel skill outputs into a unified report. #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: merged_report, skill_summaries, cross_skill_insights, conflicts, recommendations #}
 {# Skill Bundler — Merge Parallel Skill Outputs #}
 
 [inference]

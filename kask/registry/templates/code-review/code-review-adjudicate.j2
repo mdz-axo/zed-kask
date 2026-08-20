@@ -1,6 +1,5 @@
 {# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity from constraint force. Compute blocker_delta vs prior_review. Does NOT re-scan the code. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     raw_findings: array
@@ -14,10 +13,6 @@ contract:
     blocker_delta: integer
 visibility: Public
 ---
-{# Template: code-review/code-review-adjudicate.j2 #}
-{# Functional Role: KnowAct — Defect COLLECTION (Fagan collection; Sauer separation) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: adjudicate #}
 {# Phase 3 — ADJUDICATE (collection: semantics + falsifiability + grill-me + no-fiction) #}
 {# hKask v0.36.0 — Code Review #}
 {#

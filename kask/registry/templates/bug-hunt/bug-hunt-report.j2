@@ -1,6 +1,5 @@
 {# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. v0.31.0: emits lessons_learned and pattern_signatures for feedback loop closure. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     charter: object
@@ -22,10 +21,6 @@ contract:
     next_charter_focus: string
 visibility: Public
 ---
-{# Template: bug-hunt/bug-hunt-report.j2 #}
-{# Functional Role: KnowAct — Produce a structured JSON bug report from charter, oracle, and taxonomy results #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: report #}
 {# Phase 5 — REPORT (structured JSON bug report) #}
 {# hKask v0.36.0 — Bug Hunting Expedition #}
 {#

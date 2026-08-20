@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     bug_description: string
@@ -13,10 +12,6 @@ contract:
     isolation_strategy: string
 visibility: Public
 ---
-{# Template: diagnose/diagnose-instrument.j2 #}
-{# Functional Role: KnowAct — Targeted instrumentation mapped to hypotheses #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: probe_plan, diagnostic_tags, probe_type, isolation_strategy #}
 
 [inference]
 temperature = 0.2

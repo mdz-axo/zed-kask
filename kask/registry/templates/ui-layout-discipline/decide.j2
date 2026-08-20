@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target:
@@ -24,9 +23,7 @@ contract:
       description: Names of gates that failed (empty if all passed).
 visibility: Public
 ---
-{# Template: ui-layout-discipline/decide.j2 #}
 {# Phase: DECIDE — Fagan inspection checklist as hard gates #}
-{# Produces: gates, all_gates_passed, layout_health, failing_gates #}
 
 [inference]
 temperature = 0.1

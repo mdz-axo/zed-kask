@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     skill_spec: object
@@ -11,9 +10,6 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Template: create-skill/create-skill-scaffold.j2 #}
-{# Functional Role: KnowAct — Generate full registry crate #}
-{# Produces: scaffold #}
 {# Phase 2 — SCAFFOLD (DO: generate manifest + templates + process manifest + SKILL.md) #}
 {# hKask v0.36.0 — Create Skill #}
 {#
@@ -115,7 +111,6 @@ Each template should be lean — no redundancy:
 ```
 {% raw %}
 [inference]
-template_type: KnowAct
 contract:
   input:
     <field>: <type>
@@ -123,9 +118,6 @@ contract:
     <field>: <type>
 visibility: Public
 ---
-{# Template: <skill_name>/<phase>.j2 #}
-{# Functional Role: KnowAct — <phase purpose> #}
-{# Produces: <output fields> #}
 {# Phase N — <PHASE NAME> (<PDCA role>: <description>) #}
 {# hKask v0.36.0 — <Skill Name> #}
 

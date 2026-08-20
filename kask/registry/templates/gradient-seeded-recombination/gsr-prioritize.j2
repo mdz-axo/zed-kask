@@ -1,6 +1,5 @@
 {# goal: Prioritize recombination sites by reason class, fractal recurrence, magnitude, populated-side criticality. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     gradients: array
@@ -12,8 +11,6 @@ contract:
     pattern_signatures: array
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-prioritize.j2 #}
-{# Produces: priority_ranking, lessons_learned, pattern_signatures #}
 
 [inference]
 temperature = 0.2

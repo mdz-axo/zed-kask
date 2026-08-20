@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     codegraph_entities: array
@@ -18,10 +17,6 @@ contract:
     expectation_quality: array
 visibility: Public
 ---
-{# Template: tdd/tdd-gap-check.j2 #}
-{# Functional Role: KnowAct — Codegraph gap analysis: codegraph entities vs tested behaviors #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: covered_entities, gaps, deferrals, coverage_percentage, goal_principle_alignment, constraining_completeness, expectation_quality #}
 
 [inference]
 temperature = 0.1

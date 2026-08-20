@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     ticker: string
@@ -17,7 +16,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: company-research/critical-factor.j2 #}
 {# goal: Agent 03 CRITICAL FACTOR — Bull/Base/Bear thesis engine. Consumes scenario_build MCP tool output. Empty factors = DROP terminal gate. Cross-references superforecasting/stage_3_probability_estimate for granular probabilities. #}
 
 [inference]

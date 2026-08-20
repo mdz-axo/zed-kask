@@ -1,6 +1,5 @@
 {# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. v0.31.0: dynamic pattern expansion (Ashby), missing-tests detection, algedonic escalation. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     charter: object
@@ -17,10 +16,6 @@ contract:
     probe_escalation: array
 visibility: Public
 ---
-{# Template: bug-hunt/bug-hunt-probe.j2 #}
-{# Functional Role: KnowAct — Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: probe_results #}
 {# Phase 2 — PROBE (MCP tool-driven code exploration) #}
 {# hKask v0.36.0 — Bug Hunting Expedition #}
 {#

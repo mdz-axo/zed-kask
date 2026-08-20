@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     friction_points: array
@@ -12,10 +11,6 @@ contract:
     question_for_user: string
 visibility: Public
 ---
-{# Template: refactor-architecture/arch-candidates.j2 #}
-{# Functional Role: KnowAct — Present deepening candidates with recommendation strength #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: candidates, top_recommendation, question_for_user #}
 
 [inference]
 temperature = 0.3

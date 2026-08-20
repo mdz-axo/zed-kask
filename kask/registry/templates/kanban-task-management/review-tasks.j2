@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -11,10 +10,6 @@ contract:
     modified: array
 visibility: Public
 ---
-{# Template: kanban-task-management/review-tasks.j2 #}
-{# Functional Role: KnowAct — Review decomposed task list for quality and completeness #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: accepted, rejected, modified #}
 
 [inference]
 temperature = 0.2

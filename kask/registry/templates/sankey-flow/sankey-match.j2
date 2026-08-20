@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     prompt: string
@@ -18,8 +17,6 @@ contract:
     match_notes: string
 visibility: Public
 ---
-{# Template: sankey-flow/sankey-match.j2 #}
-{# KnowAct — MATCH: classify domain + match against canonical example library #}
 {# Replaces the old classify + gather two-step with a single example-anchored match #}
 
 {% include 'sankey-flow/sankey-examples.j2' %}

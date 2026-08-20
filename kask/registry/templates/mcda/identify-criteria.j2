@@ -1,6 +1,5 @@
 {# goal: Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     decision_question: string
@@ -12,10 +11,6 @@ contract:
     criteria_count: integer
 visibility: Public
 ---
-{# Template: mcda/identify-criteria.j2 #}
-{# Functional Role: KnowAct — Decision criteria identification and classification #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: criteria, criteria_independence_check, criteria_count #}
 
 [inference]
 temperature = 0.3

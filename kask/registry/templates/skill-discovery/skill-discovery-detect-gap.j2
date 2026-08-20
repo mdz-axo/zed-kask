@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     task_patterns: array
@@ -9,9 +8,7 @@ contract:
     priority_ranking: array
 visibility: Public
 ---
-{# Template: skill-discovery/skill-discovery-detect-gap.j2 #}
 {# goal: Search the skill registry for templates matching a capability gap description, ranked by semantic relevance. #}
-{# KnowAct — Registry crate coverage gap detection #}
 {# hKask v0.36.0 — A Minimal Viable Container for UserPods #}
 
 [inference]

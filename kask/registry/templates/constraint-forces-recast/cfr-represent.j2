@@ -1,6 +1,5 @@
 {# goal: Represent the seed concept c as an axiom graph. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     seed_concept: object
@@ -10,8 +9,6 @@ contract:
     representation_complete: boolean
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-represent.j2 #}
-{# Produces: axiom_graph, representation_complete #}
 
 [inference]
 temperature = 0.2

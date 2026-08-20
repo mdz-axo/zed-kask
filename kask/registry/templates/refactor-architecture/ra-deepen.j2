@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     selected_candidate: object
@@ -15,10 +14,6 @@ contract:
     adr_proposals: array
 visibility: Public
 ---
-{# Template: refactor-architecture/arch-deepen.j2 #}
-{# Functional Role: KnowAct — Grill loop for deepening a selected candidate #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: deepened_module, seam_design, test_surface, glossary_updates, adr_proposals #}
 
 [inference]
 temperature = 0.2

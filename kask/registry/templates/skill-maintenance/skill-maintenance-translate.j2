@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     source_skill: string
@@ -10,9 +9,7 @@ contract:
     translation_summary: object
 visibility: Public
 ---
-{# Template: skill-maintenance/skill-maintenance-translate.j2 #}
 {# goal: Translate an intermediate skill representation into an hKask registry crate (manifest.yaml + .j2 templates). #}
-{# KnowAct — Forward translation: source skill → registry crate #}
 {# hKask v0.36.0 — A Minimal Viable Container for UserPods #}
 
 [inference]
@@ -133,7 +130,6 @@ vocabulary_terms: [term, ...]
 
 ```
 [inference]
-template_type: KnowAct | WordAct | FlowDef
 contract:
   input:
     <field>: <type>

@@ -1,6 +1,5 @@
 {# goal: Find the minimal-satisfiability projection — the mutant m = argmin Δ(c, m). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     axiom_graph: object
@@ -13,8 +12,6 @@ contract:
     projection_complete: boolean
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-project.j2 #}
-{# Produces: mutant, structural_delta, projection_complete #}
 
 [inference]
 temperature = 0.3

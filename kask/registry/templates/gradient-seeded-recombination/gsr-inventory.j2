@@ -1,6 +1,5 @@
 {# goal: Inventory the ontology namespaces in the registry, with per-ontology license check for external sources. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     ontology_registry: array
@@ -13,9 +12,6 @@ contract:
     inventory_complete: boolean
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-inventory.j2 #}
-{# Functional Role: KnowAct — inventory ontology namespaces #}
-{# Produces: namespaces, key_concepts, license_warnings, inventory_complete #}
 
 [inference]
 temperature = 0.2

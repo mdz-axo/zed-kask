@@ -1,6 +1,5 @@
 {# goal: Apply FINER criteria to evaluate and refine a broad research topic into a well-formed, valid research question. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     broad_topic: string
@@ -15,10 +14,6 @@ contract:
     most_concerning_dimension: string
 visibility: Public
 ---
-{# Template: hypothesis-framer/finer-evaluate.j2 #}
-{# Functional Role: KnowAct — FINER criteria evaluation and research question refinement #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: research_question, finer_scores, refinement_suggestions, overall_finer_rating, most_concerning_dimension #}
 
 [inference]
 temperature = 0.3

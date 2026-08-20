@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     operation: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Recover from missing configuration file errors by creating default configs. #}
-{# Template: heal/config_not_found.j2 #}
-{# KnowAct — Diagnose and recover from missing config file #}
 
 [inference]
 temperature = 0.1

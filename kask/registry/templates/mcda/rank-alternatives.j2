@@ -1,6 +1,5 @@
 {# goal: Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for strong-on-one-criterion cases. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     decision_question: string
@@ -15,10 +14,6 @@ contract:
     recommendation: string
 visibility: Public
 ---
-{# Template: mcda/rank-alternatives.j2 #}
-{# Functional Role: KnowAct — Alternative ranking with compensation masking detection #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: ranking, top_choice, compensation_warning, recommendation #}
 
 [inference]
 temperature = 0.2

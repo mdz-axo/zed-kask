@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     context_summary: string
@@ -16,10 +15,6 @@ contract:
     plan_escalation: array
 visibility: Public
 ---
-{# Template: task-breakdown/task-breakdown-decompose.j2 #}
-{# Functional Role: KnowAct — Decompose the target condition into component target conditions (DO) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: tasks, phases, checkpoints, slices #}
 {# v0.36.0: decomposes the target condition (not a spec) into component target #}
 {# conditions — each task is a sub-target with acceptance criteria framed as #}
 {# "what must be true for this sub-target to be achieved." #}

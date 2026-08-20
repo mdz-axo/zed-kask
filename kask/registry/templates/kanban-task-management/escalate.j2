@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -9,10 +8,6 @@ contract:
     escalations: array
 visibility: Public
 ---
-{# Template: kanban-task-management/escalate.j2 #}
-{# Functional Role: KnowAct — Prepare human-decision escalation records for unresolved task issues #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: escalations #}
 
 [inference]
 temperature = 0.1

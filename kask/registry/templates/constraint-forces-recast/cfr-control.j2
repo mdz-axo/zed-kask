@@ -1,6 +1,5 @@
 {# goal: Generate the relabel control — vocabulary swap without axiom application. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     axiom_graph: object
@@ -10,8 +9,6 @@ contract:
     relabel_delta: integer
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-control.j2 #}
-{# Produces: relabel, relabel_delta #}
 
 [inference]
 temperature = 0.2

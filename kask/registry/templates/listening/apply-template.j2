@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     transcript_chunks: array
@@ -11,10 +10,7 @@ contract:
     ignored_short_term: array
 visibility: Public
 ---
-{# Template: listening/apply-template.j2 #}
-{# Functional Role: KnowAct — Apply the v3 listening template to an earnings transcript #}
 {# Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b) #}
-{# Produces: per_section, horizon_summary, ignored_short_term #}
 {# #}
 {# No-fabrication design (process-embedded, not instruction-embedded): #}
 {# The transcript is pre-split into numbered chunks. The model's job is to #}

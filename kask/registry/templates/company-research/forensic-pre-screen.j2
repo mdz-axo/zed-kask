@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     ticker: string
@@ -13,7 +12,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: company-research/forensic-pre-screen.j2 #}
 {# goal: Agent 04 FORENSIC (pre-screen) — quick risk scan. BLOCK is a terminal early-exit gate. FORENSIC cannot be skipped (EFRA-AI invariant). #}
 
 [inference]

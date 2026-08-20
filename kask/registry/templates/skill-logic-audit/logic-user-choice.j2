@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target_path: string
@@ -15,10 +14,6 @@ contract:
 visibility: Public
 
 ---
-{# Template: skill-logic-audit/logic-user-choice.j2 #}
-{# Functional Role: KnowAct — Evaluate proposal and produce accept/reject/counter-proposal recommendation #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: user_choice, reason, next_action #}
 
 [inference]
 temperature = 0.1

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     ticker: string
@@ -17,11 +16,10 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: company-research/thesis-three-pillars.j2 #}
-{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis. KnowAct #}
+{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis #}
 {# (synthesizes, does not self-evaluate). The investment_grade / needs_work / #}
 {# incomplete verdict comes from the cross-skill goal-analysis step in the #}
-{# flowdef, NOT here — to avoid the LLM-improves-against-LLM-scored-target #}
+{# NOT here — to avoid the LLM-improves-against-LLM-scored-target #}
 {# trap per .rules. #}
 {# #}
 {# v0.36.0: THESIS now also consumes the rotated_board (from Falstaffian #}

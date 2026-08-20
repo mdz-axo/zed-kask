@@ -1,6 +1,5 @@
 {# goal: Apply PICO framework to structure the research question into Population, Intervention, Comparison, and Outcome elements. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     research_question: string
@@ -16,10 +15,6 @@ contract:
     pico_completeness: object
 visibility: Public
 ---
-{# Template: hypothesis-framer/pico-structure.j2 #}
-{# Functional Role: KnowAct — PICO framework application for research question structuring #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: population, intervention, comparison, outcome, structured_question, pico_completeness #}
 
 [inference]
 temperature = 0.2

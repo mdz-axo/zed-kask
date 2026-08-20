@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     bug_description: string
@@ -14,10 +13,6 @@ contract:
     can_reproduce: boolean
 visibility: Public
 ---
-{# Template: diagnose/diagnose-loop.j2 #}
-{# Functional Role: KnowAct — Build feedback loop, reproduce the bug #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: feedback_loop_strategy, loop_type, repro_command, repro_confidence, can_reproduce #}
 
 [inference]
 temperature = 0.2

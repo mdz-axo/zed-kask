@@ -1,6 +1,5 @@
 {# goal: Detect gradients between populated and unpopulated regions; classify by the 8-shape taxonomy. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     prior_graph: object
@@ -11,8 +10,6 @@ contract:
     fractal_recurrence_checked: boolean
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-detect.j2 #}
-{# Produces: gradients, fractal_recurrence_checked #}
 
 [inference]
 temperature = 0.3

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     loop_description: string
@@ -14,10 +13,6 @@ contract:
     remediation: string
 visibility: Public
 ---
-{# Template: pragmatic-cybernetics/cybernetics-analyze-loop.j2 #}
-{# Functional Role: KnowAct — Analyze a feedback loop on 5 properties #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: polarity, delay, gain, closure, fidelity, broken_loop_diagnosis, remediation #}
 
 [inference]
 temperature = 0.3

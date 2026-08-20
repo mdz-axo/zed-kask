@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     ticker: string
@@ -16,7 +15,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: company-research/intel-mosaic.j2 #}
 {# goal: Agent 02 INTEL (DEEPEN) — business context 8-step + information mosaic. Consumes research_search and web_search MCP tool outputs (bound via input_mapping). mosaic_clear=false = MNPI HALT terminal gate. #}
 
 [inference]
