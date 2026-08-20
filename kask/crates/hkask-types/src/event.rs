@@ -281,7 +281,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // Convergence: cascade outcomes
     "reg.skill.convergence",
     "reg.skill.convergence.converged",
-    "reg.skill.convergence.escalated",    // Provenance + profile enforcement (skill_executor / manifest executor)
+    "reg.skill.convergence.escalated", // Provenance + profile enforcement
     "reg.skill.provenance",
     "reg.skill.profile_enforcement",
     // Frontmatter: SKILL.md parse errors (F-02 fix)
@@ -322,7 +322,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Tool subsystems ──
     "reg.tool",
     "reg.tool.communication",
-    "reg.tool.companies",    "reg.tool.corpus",
+    "reg.tool.companies",
+    "reg.tool.corpus",
     "reg.tool.curator",
     "reg.tool.filesystem",
     "reg.tool.kanban",

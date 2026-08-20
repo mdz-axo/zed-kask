@@ -9660,23 +9660,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-templates"
-version = "0.35.0"
-dependencies = [
- "futures-util",
- "hkask-capability",
- "hkask-lisp",
- "hkask-types",
- "minijinja",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "hkask-tool-invoker"
 version = "0.35.0"
 dependencies = [
@@ -10956,7 +10939,6 @@ dependencies = [
  "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",
- "hkask-templates",
  "hkask-tool-invoker",
  "hkask-types",
  "http_client",

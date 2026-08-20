@@ -205,9 +205,6 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 "received ToolResult outcome for a non-tool-invoke request".into(),
             )),
-            InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
-                "received SkillResult outcome for a non-skill-execute request".into(),
-            )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 "received WorktreeThread outcome for a non-worktree-thread request".into(),
             )),
@@ -302,9 +299,6 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::ToolResult { .. } => Err(EmbeddingGenerationError::Connection(
                 "received ToolResult outcome for an embed request".into(),
-            )),
-            InferenceOutcome::SkillResult { .. } => Err(EmbeddingGenerationError::Connection(
-                "received SkillResult outcome for an embed request".into(),
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
                 "received WorktreeThread outcome for an embed request".into(),
@@ -406,9 +400,6 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 "received ToolResult outcome for a list_models request".into(),
-            )),
-            InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
-                "received SkillResult outcome for a list_models request".into(),
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 "received WorktreeThread outcome for a list_models request".into(),

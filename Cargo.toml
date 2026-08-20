@@ -277,7 +277,7 @@ members = [
     "kask/crates/hkask-regulation",
     "kask/crates/hkask-forecast",
     "kask/crates/hkask-lisp",
-    "kask/crates/hkask-templates",
+
     "kask/crates/hkask-memory",
     "kask/crates/hkask-mcp",
     "kask/crates/hkask-mcp-server",
@@ -883,7 +883,7 @@ hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
-hkask-templates = { path = "kask/crates/hkask-templates" }
+
 hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
