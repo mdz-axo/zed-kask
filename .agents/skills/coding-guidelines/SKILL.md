@@ -28,18 +28,18 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `anti-patterns.j2` | RenderAct | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone renderable template — no inference header or contract. |
-| `guidelines-assess.j2` | KnowAct | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
-| `guidelines-apply.j2` | KnowAct | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
-| `guidelines-verify.j2` | KnowAct | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
+| Template | Purpose |
+|----------|---------|
+| `anti-patterns.j2` |  | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone renderable template — no inference header or contract. |
+| `guidelines-assess.j2` |  | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
+| `guidelines-apply.j2` |  | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
+| `guidelines-verify.j2` |  | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- Visibility is Public across all KnowAct templates; the anti-patterns fragment has no standalone contract
+- Visibility is Public across all templates; the anti-patterns fragment has no standalone contract
 - Safety mode, when enabled, enforces no file system access, no network calls, no environment variable access, and strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
 - Preserve original prompt structure and formatting; handle missing variables gracefully

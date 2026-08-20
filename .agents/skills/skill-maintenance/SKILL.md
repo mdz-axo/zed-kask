@@ -21,7 +21,7 @@ A kask skill has two artifacts:
 ├── <phase>.j2            # Prompt templates (companion resources)
 ```
 
-No manifest.yaml, no template manifest, no cascade executor. The agent reads
+No manifest.yaml, no template manifest, no process executor. The agent reads
 the SKILL.md, follows its instructions, and calls tools (`lisp_eval`, MCP
 tools, `read_file`, `skill`) as directed.
 

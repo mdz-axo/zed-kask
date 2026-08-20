@@ -73,24 +73,24 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 1. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
 2. Always include a change log: summary, audit findings table by constraint force, grill verdict + ratings, mutations applied, deferred findings, residual risks.
-3. This step is a `render` action (no LLM call) — the change log is templated from structured data. The former LLM-call version was the single largest source of cascade failures (empty output → JSON parse error after 4 successful LLM calls).
+3. This step is a `render` action (no LLM call) — the change log is templated from structured data. The former LLM-call version was the single largest source of process failures (empty output → JSON parse error after 4 successful LLM calls).
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `enhance-classify.j2` | KnowAct | Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic- semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers so downstream phases have a signal to optimize against. Produces the routing decision that drives step 2. |
-| `enhance-rewrite.j2` | KnowAct | Inline audit + typed rewrite. Scans for unresolved placeholders, semantic fragility, and structural accretion, then applies type-specific rewrite moves based on the prompt_type from step 1. Folds the former separate audit step and 7 typed rewrite variants into a single LLM call. Produces the enhanced prompt, audit findings, and mutations applied. |
-| `enhance-verify.j2` | KnowAct | Decoupled critic. Runs grill-me self-challenge against the enhanced prompt across Recall -> Mechanism -> Rationale -> Edge Cases -> Synthesis. Decoupled from step 2 to prevent the self-confirming loop. Tier-scaled: 1 round (Recall+Mechanism) at medium, 3 escalating rounds at high. Skipped at low tier. Produces a Solid/Partial/Gap rating per area. |
-| `enhance-output.j2` | KnowAct | Format the final enhanced prompt per output_format (inline/file/both). inline (default): return the prompt in a fenced code block with a one-line summary of changes and the audit findings table. file: write the prompt to a path the user specifies (or a derived default). both: inline + file. Always include a change-log section. |
-| `enhance-output-render.j2` | KnowAct | Render-only variant of enhance-output for programmatic delivery without an LLM round-trip. Formats the enhanced prompt per output_format. |
-| `enhance-audit.j2` | KnowAct | Audit the input prompt through three lenses: pragmatic-semantics (classify claims by IS/OUGHT, epistemic mode, constraint force), pragmatic-cybernetics (feedback loop properties), and essentialist (deletion test + surface count). Not referenced by the current process manifest — the audit is folded into enhance-rewrite.j2. Retained for potential future re-decomposition. |
+| Template | Purpose |
+|----------|---------|
+| `enhance-classify.j2` |  | Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic- semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers so downstream phases have a signal to optimize against. Produces the routing decision that drives step 2. |
+| `enhance-rewrite.j2` |  | Inline audit + typed rewrite. Scans for unresolved placeholders, semantic fragility, and structural accretion, then applies type-specific rewrite moves based on the prompt_type from step 1. Folds the former separate audit step and 7 typed rewrite variants into a single LLM call. Produces the enhanced prompt, audit findings, and mutations applied. |
+| `enhance-verify.j2` |  | Decoupled critic. Runs grill-me self-challenge against the enhanced prompt across Recall -> Mechanism -> Rationale -> Edge Cases -> Synthesis. Decoupled from step 2 to prevent the self-confirming loop. Tier-scaled: 1 round (Recall+Mechanism) at medium, 3 escalating rounds at high. Skipped at low tier. Produces a Solid/Partial/Gap rating per area. |
+| `enhance-output.j2` |  | Format the final enhanced prompt per output_format (inline/file/both). inline (default): return the prompt in a fenced code block with a one-line summary of changes and the audit findings table. file: write the prompt to a path the user specifies (or a derived default). both: inline + file. Always include a change-log section. |
+| `enhance-output-render.j2` |  | Render-only variant of enhance-output for programmatic delivery without an LLM round-trip. Formats the enhanced prompt per output_format. |
+| `enhance-audit.j2` |  | Audit the input prompt through three lenses: pragmatic-semantics (classify claims by IS/OUGHT, epistemic mode, constraint force), pragmatic-cybernetics (feedback loop properties), and essentialist (deletion test + surface count). Not referenced by the current process manifest — the audit is folded into enhance-rewrite.j2. Retained for potential future re-decomposition. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` type with `Public` visibility.
+- All templates are prompt templates with `Public` visibility.
 - Default effort is `medium`; default output_format is `inline`.
 - Single-pass pipeline — no PDCA loop. `max_iterations: 1` prevents re-entry.
 - Verify step is decoupled from the rewrite step (self-improvement §9.1).

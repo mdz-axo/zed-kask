@@ -38,18 +38,18 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `diagnose-spec-anchor.j2` | KnowAct | Anchor a bug diagnosis to the actual code structure using a dual ontology: Dublin Core classifies the THING affected (entity type, identifier, source, subject domain derived from graph position) and PKO classifies the FLOW the bug occurs in (call chain as Procedure, each function as Step, bug as IssueOccurrence at a StepExecution). Uses codegraph_query/traverse/impact MCP tools. Phase 0 of the diagnosis pipeline. Replaces spec-anchoring — the bug is grounded in the real code graph, not a specification document. |
-| `diagnose-loop.j2` | KnowAct | Build a feedback loop for the bug. Evaluate repro strategies, select the fastest deterministic signal, and confirm the bug reproduces before hypothesising. |
-| `diagnose-instrument.j2` | KnowAct | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
-| `diagnose-fix.j2` | KnowAct | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
+| Template | Purpose |
+|----------|---------|
+| `diagnose-spec-anchor.j2` |  | Anchor a bug diagnosis to the actual code structure using a dual ontology: Dublin Core classifies the THING affected (entity type, identifier, source, subject domain derived from graph position) and PKO classifies the FLOW the bug occurs in (call chain as Procedure, each function as Step, bug as IssueOccurrence at a StepExecution). Uses codegraph_query/traverse/impact MCP tools. Phase 0 of the diagnosis pipeline. Replaces spec-anchoring — the bug is grounded in the real code graph, not a specification document. |
+| `diagnose-loop.j2` |  | Build a feedback loop for the bug. Evaluate repro strategies, select the fastest deterministic signal, and confirm the bug reproduces before hypothesising. |
+| `diagnose-instrument.j2` |  | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
+| `diagnose-fix.j2` |  | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` type with `Public` visibility
+- All templates are prompt templates with `Public` visibility
 - Step 3 (hypothesize) is delegated to falsifiability/falsifiability-hypothesize
 - Safety mode (when enabled): no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only

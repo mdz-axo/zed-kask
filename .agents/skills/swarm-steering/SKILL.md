@@ -25,7 +25,7 @@ the swarm-intelligence plan by calling `swarm_execute_plan_local`, which runs
 each delegation, evaluates results (when evaluators are provided), and returns
 the collected `LocalDelegateResult` array with `task_success` verdicts stamped.
 The Curator re-invokes swarm-intelligence with `delegate_results` set to that
-array — closing the feedback loop without a new FlowDef execution surface (the
+array — closing the feedback loop without a new skill execution surface (the
 Curator's normal tool-call turn IS the execution).
 
 ## Ontological anchors
@@ -98,7 +98,7 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
   highest-fidelity fault signal, so an agent that returns `ok: true` with the
   wrong output is now attributable. `provenance: llm_judged` is downgraded
   (Gap S3). **Residual:** for open tasks with no oracle, leave `task_success =
-  null` — the Go See loop (C2) is the only cover; the cascade cannot detect a
+  null` — the Go See loop (C2) is the only cover; the process cannot detect a
   healthy-but-wrong agent without a deterministic evaluator.
 - **Latency is now regulated.** `latency_ms` is still collected on every
   `LocalDelegateResult` (C4), and ORIENT now surfaces `latency_outliers` so
@@ -124,7 +124,7 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 - Template manifest: `kask/registry/templates/swarm-steering/manifest.yaml`
-- Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2` (KnowAct — produce the local-swarm steering directive: delegation sequence + delegate_results collection shape + re-invoke instruction)
+- Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2` (prompt step — produce the local-swarm steering directive: delegation sequence + delegate_results collection shape + re-invoke instruction)
 - Process manifest: `kask/registry/manifests/swarm-steering.yaml` (1 step: DIRECT, single-pass — `max_iterations: 1`)
 - Span namespace: `reg.skill.swarm-steering`
 - Pairs with `swarm-intelligence` (the planner); this skill is the actuator's
@@ -132,8 +132,8 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `swarm-steering-direct.j2` | KnowAct | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
+| Template | Purpose |
+|----------|---------|
+| `swarm-steering-direct.j2` |  | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.

@@ -54,9 +54,9 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `verify-cleared.j2` | WordAct | Summarize what was resolved, dismissed, and what remains pending. |
+| Template | Purpose |
+|----------|---------|
+| `verify-cleared.j2` |  | Summarize what was resolved, dismissed, and what remains pending. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -5,7 +5,7 @@ description: "Composable interaction grammar for hKask agents. Five improv modes
 
 # Improv
 
-Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector KnowAct evaluates conversation context and routes to the appropriate WordAct; convergence is evaluated by the model after each iteration.
+Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector step evaluates conversation context and routes to the appropriate mode; convergence is evaluated by the model after each iteration.
 
 ## When to Use
 
@@ -24,7 +24,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 ### Mode Selection (`improv-select`)
 1. Evaluate conversation context, current contribution, active mode, and prior contributions.
 2. Select the best-fit improv mode from {plussing, yes-and, yes-but, freestyling, riffing}.
-3. Do NOT apply the mode — routing to individual WordActs is handled by the manifest flow.
+3. Do NOT apply the mode — routing to individual modes is handled by the manifest flow.
 4. If `active_mode` is provided and still context-appropriate, keep it.
 5. Apply kata-specific overrides: Q4 → yes-but, Q5 → plussing, observation drill → plussing, five-questions drill → yes-and.
 6. Default to `plussing` when no rule fires.
@@ -68,14 +68,14 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `improv-select.j2` | KnowAct | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual WordActs is handled by the manifest flow. |
-| `improv-plussing.j2` | WordAct | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
-| `improv-yes-and.j2` | WordAct | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
-| `improv-yes-but.j2` | WordAct | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
-| `improv-freestyling.j2` | WordAct | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
-| `improv-riffing.j2` | WordAct | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
+| Template | Purpose |
+|----------|---------|
+| `improv-select.j2` |  | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual modes is handled by the manifest flow. |
+| `improv-plussing.j2` |  | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
+| `improv-yes-and.j2` |  | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
+| `improv-yes-but.j2` |  | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
+| `improv-freestyling.j2` |  | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
+| `improv-riffing.j2` |  | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

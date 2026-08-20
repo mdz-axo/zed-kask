@@ -36,13 +36,13 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `falsifiability-admit.j2` | KnowAct | Popper admissibility gate. For the claim or question under analysis, test whether a concrete observation could contradict it. Rule out unfalsifiable targets (tautologies, unfalsifiable OUGHTs, protected claims) with a recorded reason; admit only what survives. Classifies testability via the pragmatic-semantics IS/OUGHT and epistemic-mode axes. |
-| `falsifiability-hypothesize.j2` | KnowAct | Chamberlin multiple working hypotheses. Generate 3-7 candidate explanations for the admitted question with no early commitment. Each hypothesis must carry a falsifiable prediction in Platt form — if X, then observation Y under condition Z. Hypotheses with no possible falsifying observation are discarded at generation, not carried forward. |
-| `falsifiability-counterfactual.j2` | KnowAct | Pearl/Halpern counterfactual generation. For each surviving hypothesis, construct the minimal counterfactual — if the proposed cause had not occurred (do(not X)), would the effect still obtain? — and derive the concrete testable consequence that distinguishes the counterfactual world from the factual one. |
-| `falsifiability-discriminate.j2` | KnowAct | Platt discriminating-test design. Design tests whose outcome rules out at least one hypothesis — not one test per hypothesis. Map each test to the hypotheses it can falsify. Flag hypothesis pairs no available test can discriminate as irreducible and surface them for the user. |
-| `falsifiability-eliminate.j2` | KnowAct | Apply evidence and eliminate. Hypotheses whose falsifiable predictions fail are ruled out — hard elimination, not Bayesian down-weighting (that is superforecasting's concern). Survivors are corroborated, never confirmed. Record which test eliminated which hypothesis and the falsifying observation. |
+| Template | Purpose |
+|----------|---------|
+| `falsifiability-admit.j2` |  | Popper admissibility gate. For the claim or question under analysis, test whether a concrete observation could contradict it. Rule out unfalsifiable targets (tautologies, unfalsifiable OUGHTs, protected claims) with a recorded reason; admit only what survives. Classifies testability via the pragmatic-semantics IS/OUGHT and epistemic-mode axes. |
+| `falsifiability-hypothesize.j2` |  | Chamberlin multiple working hypotheses. Generate 3-7 candidate explanations for the admitted question with no early commitment. Each hypothesis must carry a falsifiable prediction in Platt form — if X, then observation Y under condition Z. Hypotheses with no possible falsifying observation are discarded at generation, not carried forward. |
+| `falsifiability-counterfactual.j2` |  | Pearl/Halpern counterfactual generation. For each surviving hypothesis, construct the minimal counterfactual — if the proposed cause had not occurred (do(not X)), would the effect still obtain? — and derive the concrete testable consequence that distinguishes the counterfactual world from the factual one. |
+| `falsifiability-discriminate.j2` |  | Platt discriminating-test design. Design tests whose outcome rules out at least one hypothesis — not one test per hypothesis. Map each test to the hypotheses it can falsify. Flag hypothesis pairs no available test can discriminate as irreducible and surface them for the user. |
+| `falsifiability-eliminate.j2` |  | Apply evidence and eliminate. Hypotheses whose falsifiable predictions fail are ruled out — hard elimination, not Bayesian down-weighting (that is superforecasting's concern). Survivors are corroborated, never confirmed. Record which test eliminated which hypothesis and the falsifying observation. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

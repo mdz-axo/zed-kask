@@ -99,11 +99,11 @@ escalation.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `idiomatic-rust-inquiry.j2` | KnowAct | Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed (extrinsic) or LLM-identified (intrinsic — lower confidence). |
-| `idiomatic-rust-design.j2` | KnowAct | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler- suggested vs LLM-originated. |
-| `idiomatic-rust-challenge.j2` | KnowAct | Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
+| Template | Purpose |
+|----------|---------|
+| `idiomatic-rust-inquiry.j2` |  | Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed (extrinsic) or LLM-identified (intrinsic — lower confidence). |
+| `idiomatic-rust-design.j2` |  | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler- suggested vs LLM-originated. |
+| `idiomatic-rust-challenge.j2` |  | Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -115,5 +115,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
 - The convergence check (step 5) is mandatory — the loop must not run until iteration or timeout exhaustion.
 - Step 4 uses `lisp_eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
-- Compiler grounding is preferred but not required — when LSP tools are unavailable (pure FlowDef execution), the skill falls back to intrinsic reasoning with reduced confidence.
+- Compiler grounding is preferred but not required — when LSP tools are unavailable (pure skill execution), the skill falls back to intrinsic reasoning with reduced confidence.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

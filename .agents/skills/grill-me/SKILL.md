@@ -48,11 +48,11 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `grill-me-round.j2` | KnowAct | Generate interrogation questions at the appropriate difficulty level, evaluate answers, and decide whether to escalate, hold, or re-probe. |
-| `grill-me-assess.j2` | KnowAct | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations. |
-| `grill-me-escalate.j2` | KnowAct | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio. |
+| Template | Purpose |
+|----------|---------|
+| `grill-me-round.j2` |  | Generate interrogation questions at the appropriate difficulty level, evaluate answers, and decide whether to escalate, hold, or re-probe. |
+| `grill-me-assess.j2` |  | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations. |
+| `grill-me-escalate.j2` |  | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

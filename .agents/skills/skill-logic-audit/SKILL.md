@@ -39,13 +39,13 @@ Present the proposal to the user and capture accept/reject/counter-proposal.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `logic-load-goal.j2` | WordAct | Parse the annotated goal: block from a .j2 or manifest.yaml file and return it as a normalized string. Verify that a goal exists and is non-empty. |
-| `logic-critique-template.j2` | KnowAct | Adversarial critique anchored to the extracted goal. For each flaw provide the location, claim, anchor to goal, severity, and suggested fix. |
-| `logic-critique-critique.j2` | KnowAct | Review a critique for soundness and goal-anchoring. Separate valid goal-anchored concerns from spurious ones. |
-| `logic-compose-proposal.j2` | KnowAct | Compose a concrete revised artifact and unified diff from the calibrated concerns. |
-| `logic-user-choice.j2` | KnowAct | Present the proposal to the user and capture accept, reject, or counter-proposal choice. |
+| Template | Purpose |
+|----------|---------|
+| `logic-load-goal.j2` |  | Parse the annotated goal: block from a .j2 or manifest.yaml file and return it as a normalized string. Verify that a goal exists and is non-empty. |
+| `logic-critique-template.j2` |  | Adversarial critique anchored to the extracted goal. For each flaw provide the location, claim, anchor to goal, severity, and suggested fix. |
+| `logic-critique-critique.j2` |  | Review a critique for soundness and goal-anchoring. Separate valid goal-anchored concerns from spurious ones. |
+| `logic-compose-proposal.j2` |  | Compose a concrete revised artifact and unified diff from the calibrated concerns. |
+| `logic-user-choice.j2` |  | Present the proposal to the user and capture accept, reject, or counter-proposal choice. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

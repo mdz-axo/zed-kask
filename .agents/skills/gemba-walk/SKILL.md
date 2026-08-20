@@ -9,7 +9,7 @@ description: "Human-in-the-loop guided review of the cybernetic regulation syste
 
 Human-in-the-loop guided review of the cybernetic regulation system. From Lean management, *gemba* (現場, "the actual place") is the practice of going to where value is created to observe and improve. In kask's digital context, the "actual place" is the running cybernetic regulation system. The observer is the human operator with the Curator as companion. The walk is a structured review session where the operator and Curator jointly inspect feedback signals, identify underperforming or drifting skills, and decide what refinement actions to take.
 
-The skill implements the Prepare and Present phases of the six-phase gemba loop (Sense → Prepare → Observe → Decide → Act → Verify). It is a single-pass briefing generator — not an interactive session. The operator asks follow-up questions in the regular agent conversation after the skill completes (the Observe phase happens outside the skill cascade).
+The skill implements the Prepare and Present phases of the six-phase gemba loop (Sense → Prepare → Observe → Decide → Act → Verify). It is a single-pass briefing generator — not an interactive session. The operator asks follow-up questions in the regular agent conversation after the skill completes (the Observe phase happens outside the skill process).
 
 ## When to Use
 
@@ -54,11 +54,11 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `synthesize-briefing.j2` | KnowAct | Structure the five signal channels (algedonic, escalations, memory, grounding trend, grounding coverage) into a coherent briefing with per-skill health classification (healthy / watch / intervene) and a grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps). |
-| `present-briefing.j2` | WordAct | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
-| `recommend-actions.j2` | KnowAct | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
+| Template | Purpose |
+|----------|---------|
+| `synthesize-briefing.j2` |  | Structure the five signal channels (algedonic, escalations, memory, grounding trend, grounding coverage) into a coherent briefing with per-skill health classification (healthy / watch / intervene) and a grounding health digest (clean_rate, coverage_rate, trend direction, top coverage gaps). |
+| `present-briefing.j2` |  | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
+| `recommend-actions.j2` |  | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -73,8 +73,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Design References
 
-- Microsoft "Continuous improvement with agentic AI: Conducting a virtual gemba walk" — 7-step workflow maps to the cascade steps.
-- Greenham "Gemba AI Framework" — TAPOIF lifecycle (Thought → Action → Pause → Observation → Inform → Follow-up) maps to the cascade.
+- Microsoft "Continuous improvement with agentic AI: Conducting a virtual gemba walk" — 7-step workflow maps to the process steps.
+- Greenham "Gemba AI Framework" — TAPOIF lifecycle (Thought → Action → Pause → Observation → Inform → Follow-up) maps to the process.
 - Meyer "The Gemba Was Always There" — flow kaizen, not point kaizen. The gemba walk makes the hidden flow visible.
 - GembaCore — two-plane architecture (WorkPlane + OrchestrationPlane) maps to kask's separation of skill execution from regulation.
 - C.H. Robinson "What Is Lean AI?" — start with a real problem, test solutions, integrate human oversight, measure results.

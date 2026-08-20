@@ -96,19 +96,19 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `ra-explore.j2` | KnowAct | Explore the codebase for architectural friction: shallow modules, tight coupling, missing locality, wide import surfaces, untested code. Apply the deletion test to suspected shallowness. |
-| `ra-candidates.j2` | KnowAct | Present deepening candidates with files, problem, solution, benefits (leverage and locality), and recommendation strength. Use hKask domain vocabulary. Ask user which to explore. |
-| `ra-deepen.j2` | KnowAct | Grill loop for a selected candidate: walk the design tree, define the deepened module shape, identify seams and adapters, confirm test surface. Update glossary and ADRs inline as decisions crystallize. |
-| `ra-route.j2` | KnowAct | Route a deepened architecture design to the appropriate follow-up action (proceed_to_refactor, need_more_data, defer_or_reject). |
-| `ra-audit.j2` | KnowAct | Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
-| `ra-strangle.j2` | KnowAct | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
-| `ra-verify.j2` | KnowAct | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
+| Template | Purpose |
+|----------|---------|
+| `ra-explore.j2` |  | Explore the codebase for architectural friction: shallow modules, tight coupling, missing locality, wide import surfaces, untested code. Apply the deletion test to suspected shallowness. |
+| `ra-candidates.j2` |  | Present deepening candidates with files, problem, solution, benefits (leverage and locality), and recommendation strength. Use hKask domain vocabulary. Ask user which to explore. |
+| `ra-deepen.j2` |  | Grill loop for a selected candidate: walk the design tree, define the deepened module shape, identify seams and adapters, confirm test surface. Update glossary and ADRs inline as decisions crystallize. |
+| `ra-route.j2` |  | Route a deepened architecture design to the appropriate follow-up action (proceed_to_refactor, need_more_data, defer_or_reject). |
+| `ra-audit.j2` |  | Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
+| `ra-strangle.j2` |  | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
+| `ra-verify.j2` |  | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` type with `Public` visibility.
+- All templates are prompt templates with `Public` visibility.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

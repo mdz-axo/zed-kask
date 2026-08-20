@@ -56,21 +56,21 @@ Brier. Evaluate convergence after each iteration.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `sequential-inquiry-grasp.j2` | KnowAct | Measure the agent's current understanding of the problem. Produces current_artifacts and current_procedure for gap computation. |
-| `sequential-inquiry-target.j2` | KnowAct | Declare the target understanding — what sufficient understanding looks like for this problem. Produces target_artifacts and target_procedure. |
-| `sequential-inquiry-predict.j2` | KnowAct | Predict which deep-dive delegation will close the gap and by how much. Carry a confidence for Brier scoring. |
-| `sequential-inquiry-engine.j2` | KnowAct | Core reasoning engine — advances the chain-of-thought with the predicted delegation. Generates, branches, revises, hypothesizes, and verifies. Re-measures the current condition after the experiment. |
-| `sequential-inquiry-delegate-hypothesis-framer.j2` | KnowAct | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem. |
-| `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff. |
-| `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
-| `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
+| Template | Purpose |
+|----------|---------|
+| `sequential-inquiry-grasp.j2` |  | Measure the agent's current understanding of the problem. Produces current_artifacts and current_procedure for gap computation. |
+| `sequential-inquiry-target.j2` |  | Declare the target understanding — what sufficient understanding looks like for this problem. Produces target_artifacts and target_procedure. |
+| `sequential-inquiry-predict.j2` |  | Predict which deep-dive delegation will close the gap and by how much. Carry a confidence for Brier scoring. |
+| `sequential-inquiry-engine.j2` |  | Core reasoning engine — advances the chain-of-thought with the predicted delegation. Generates, branches, revises, hypothesizes, and verifies. Re-measures the current condition after the experiment. |
+| `sequential-inquiry-delegate-hypothesis-framer.j2` |  | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem. |
+| `sequential-inquiry-delegate-mcda.j2` |  | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff. |
+| `sequential-inquiry-delegate-diagnose.j2` |  | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
+| `sequential-inquiry-delegate-falsifiability.j2` |  | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All flow templates are KnowAct type with Public visibility.
+- All flow templates are prompt templates with Public visibility.
 - Evaluate convergence after each full iteration using the criteria described above.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
