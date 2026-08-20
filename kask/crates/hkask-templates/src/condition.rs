@@ -186,9 +186,4 @@ fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, contex
     }
 }
 
-/// Parse a simple choice condition string like "composite < 0.15" or "findings == 0"
-/// or "score != 0". Returns `Some((field, operator, value))` or `None` if
-/// unparsable. Operators: `<=`, `>=`, `==`, `!=`, `<`, `>` (two-char checked
-/// before one-char to avoid prefix collisions). This matches the operator set
-/// supported by `parse_step_comparison` (used by `evaluate_step_condition`).
 

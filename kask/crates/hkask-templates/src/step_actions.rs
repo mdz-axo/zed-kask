@@ -993,274 +993,83 @@ impl StepMachine {
         //     collect every branch outcome, store Ok results with an `errors`
         //     sidecar. No sibling outcome is silently dropped. See the
         //     consolidation block below for the full rationale.
-        let join_mode = mapping
-            .get("join")
-            .and_then(|v| v.as_str())
-            .unwrap_or("list")
-            .to_string();
-        // Drop `mapping` — everything below is owned, no borrows from locals.
-        drop(mapping);
 
-        // Per-branch rJoule (settled after the wave).
-        let context_template = self.context.clone();
-        let parent_manifest_id = self.manifest_id.clone();
-        // The global concurrency limiter gates how many branches run
-        // concurrently. `None` (tests, pre-startup) means unbounded —
-        // `buffer_unordered(branches.len())` preserves the prior behavior.
-        let concurrency_limiter = infra.concurrency_limiter.clone();
-        let buffer_bound = concurrency_limiter
-            .as_ref()
-            .map(|l| l.max() as usize)
-            .unwrap_or(branches.len());
-        let parent_depth = self.depth;
+        let branch_count = branches.len();
+        let batch_started = std::time::Instant::now();
 
-        let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
-            // `run` now owns the `Infra` (so its future is `Send + 'static` and
-            // tokio-spawnable); clone `infra` + `context_template` per branch so
-            // each `async move` owns its own.
-            let infra = infra.clone();
-            let context_template = context_template.clone();
-            let branch_manifest_id = parent_manifest_id.clone();
-            let template_ref = spec
-                .get("template_ref")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            // Clone `branch_id` for the panic handler — the `async move` block
-            // below moves `branch_id` into the branch future, so the
-            // `catch_unwind` map closure needs its own copy to name the branch
-            // in the panic error message.
-            let branch_id_for_panic = branch_id;
-            let branch_future = async move {
-                // Wrap the branch sub-cascade in `catch_unwind` INSIDE the
-                // async block so the `Box<dyn Any + Send>` panic payload is
-                // consumed here, not held in the outer future's type (HRTB
-                // `Send` check under `tokio::spawn`).
-                let inner = std::panic::AssertUnwindSafe(async {
-                    // No branch-level permit: the global limiter gates the inner
-                    // `execute_select` / `execute_tool_invoke` calls inside each
-                    // branch's sub-cascade. Acquiring a branch permit here would
-                    // double-count with the inner call's permit and deadlock (both
-                    // draw from the same semaphore). The `buffer_bound` below caps
-                    // how many branches are polled at once; the limiter caps how
-                    // many inference calls those branches make concurrently.
-                    let template_ref = template_ref.ok_or_else(|| {
-                        TemplateError::Manifest(format!(
-                            "Step {} (action 'parallel') branch {} has no \
-                             template_ref.",
-                            step_ordinal, branch_id,
-                        ))
-                    })?;
-                    let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
-                        &template_ref,
-                        &context_template,
-                    );
-                    let manifest_yaml = load_sub_manifest_yaml(
-                        &infra.template_renderer,
-                        &template_ref,
-                        step_ordinal,
-                    )?;
-                    let sub_manifest = crate::manifest_loader::load_manifest_from_yaml(
-                        &manifest_yaml,
-                    )
-                    .map_err(|e| {
-                        TemplateError::Manifest(format!(
-                            "Step {} parallel branch {}: failed to parse \
-                                 sub-manifest '{}': {}",
-                            step_ordinal, branch_id, template_ref, e,
-                        ))
-                    })?;
-                    // Hard-enforce the step capacity cap on each parallel
-                    // branch's sub-cascade. Previously this path got only the
-                    // advisory `tracing::warn!` from `StepGraph::new`.
-                    crate::step_graph::check_step_cap(
-                        sub_manifest.steps.len(),
-                        &format!(
-                            "Step {} parallel branch {} sub-manifest '{}'",
-                            step_ordinal, branch_id, template_ref
-                        ),
-                    )?;
-                    let sub_convergence =
-                        crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
-                    let sub_graph = crate::step_graph::StepGraph::new(
-                        &sub_manifest.steps,
-                        sub_manifest.convergence.max_iterations,
-                    );
-                    let sub_manifest_id = branch_manifest_id.clone();
-                    let mut sub_machine = StepMachine::new(
-                        sub_graph,
-                        context_template.clone(),
-                        sub_convergence,
-                        sub_manifest.error_handling.clone(),
-                        format!("{}::parallel", sub_manifest_id),
-                    );
-                    sub_machine.depth = parent_depth + 1;
-                    let outcome = sub_machine.run(infra).await?;
-                    // No branch-level limiter ramp: the inner `execute_select` /
-                    // `execute_tool_invoke` calls already call `on_success` /
-                    // `on_throttle` on the shared limiter. Ramp here would
-                    // double-count (one ramp per branch + one per inner call).
-                    Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
-                })
-                .catch_unwind()
-                .await;
-                match inner {
-                    Ok(result) => result,
-                    Err(panic_payload) => {
-                        let panic_msg = panic_payload
-                            .downcast_ref::<String>()
-                            .map(String::as_str)
-                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                            .unwrap_or("<non-string panic payload>");
-                        tracing::error!(
-                            target: "reg.skill.cascade.parallel_joined",
-                            step_ordinal = step_ordinal,
-                            branch_id = branch_id_for_panic,
-                            panic_message = panic_msg,
-                            "parallel branch panicked — converted to typed error"
-                        );
-                        Err(TemplateError::Manifest(format!(
-                            "Step {} (action 'parallel') branch {} panicked: {panic_msg}",
-                            step_ordinal, branch_id_for_panic,
-                        )))
-                    }
-                }
-            };
-            branch_future
-        });
+        let mut tool_futs = Vec::with_capacity(branches.len());
+        for (i, branch) in branches.iter().enumerate() {
+            let template_ref = branch.get("template_ref").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let branch_id = branch.get("branch_id").and_then(|v| v.as_u64()).unwrap_or(i as u64) as usize;
+            let sub_manifest = node.flowdef_manifest.clone();
+            let timeout = effective_timeout(branch.get("timeout_seconds").and_then(|v| v.as_u64()).map(|s| s as u64).unwrap_or(300));
+            let limiter = infra.concurrency_limiter.clone();
+            let depth = self.depth + 1;
+            let ctx = self.context.clone();
+            let err_handling = self.error_handling.clone();
+            let manifest_id = self.manifest_id.clone();
+            let infra_clone = infra.clone();
+            tool_futs.push(async move {
+                let limiter_guard = if let Some(ref l) = limiter { l.acquire().await } else { None };
+                let _ = limiter_guard;
+                let manifest = sub_manifest.ok_or_else(|| TemplateError::Manifest(
+                    format!("parallel branch {i} has no manifest")
+                ))?;
+                let graph = crate::step_graph::StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
+                let context = crate::step_context::StepContext::new(ctx.inputs.clone());
+                let convergence = crate::convergence::ConvergenceTracker::new(
+                    manifest.convergence.max_iterations,
+                    manifest.convergence.min_iterations,
+                    manifest.convergence.threshold,
+                );
+                let machine = crate::step_machine::StepMachine::new(
+                    graph, context, convergence, err_handling, manifest_id,
+                );
+                let mut sub_machine = machine;
+                sub_machine.depth = depth;
+                let outcome = sub_machine.run(infra_clone).await?;
+                Ok((branch_id, outcome))
+            });
+        }
 
-        // Bounded concurrency: poll up to `buffer_bound` branch futures at
-        // once. The `buffer_bound` is the upper limit on how many branches
-        // are polled concurrently; the global limiter (via the inner
-        // `execute_select` / `execute_tool_invoke` permits) gates the actual
-        // inference / tool-call concurrency. `buffer_unordered` yields in
-        // completion order; we sort by `branch_id` below for a deterministic
-        // join.
-        //
-        // Throttle handling: a branch that returns `Err` with a throttle-class
-        // error has already called `on_throttle` via the inner `execute_select`
-        // / `execute_tool_invoke` ramp logic. No outer wrapper is needed — the
-        // inner call is the first to see the error and backs off the limiter
-        // before the `?` propagates it out of the branch.
-        //
-        // Join mode (the `join` field parsed above):
-        //   - `list` (default, backward-compat): Promise.all semantics — the
-        //     first branch `Err` aborts the wave and propagates. Sibling
-        //     outcomes are dropped. This is the historical contract.
-        //   - `allSettled`: Promise.allSettled semantics (ECMA-262 §27.2.4.2)
-        //     — collect every branch outcome (Ok and Err), store the Ok
-        //     results with an `errors` sidecar, and emit a `reg.*` span. No
-        //     sibling outcome is silently dropped. The wave already runs every
-        //     branch to completion under `buffer_unordered` (it polls all
-        //     before `.collect` returns), so `allSettled` costs nothing extra —
-        //     `list` was paying for it and throwing the results away.
-        let wave_started = std::time::Instant::now();
-        // Per-wave timeout: mirrors `execute_tool_batch`. Without this, a
-        // branch whose sub-cascade hangs (e.g., an inference call with no
-        // per-step timeout) blocks the wave until the outer cascade times out.
-        // `node.timeout_seconds` is the step-level budget for the whole wave.
-        // On timeout, in-flight branches are dropped; their inner permits
-        // release via RAII (`OwnedSemaphorePermit` Drop). Partial results are
-        // lost (the wave did not complete) — surfaced as a typed `Timeout`.
-        let wave_timeout = effective_timeout(node.timeout_seconds);
-        let settled: Vec<std::result::Result<(usize, CascadeOutcome), TemplateError>> =
-            match tokio::time::timeout(
-                wave_timeout,
-                stream::iter(branch_futs)
-                    .buffer_unordered(buffer_bound)
-                    .collect::<Vec<_>>(),
-            )
-            .await
-            {
-                Ok(joined) => joined,
-                Err(_elapsed) => {
-                    tracing::warn!(
-                        target: "reg.skill.cascade.parallel_joined",
-                        step_ordinal = node.ordinal,
-                        branch_count = 0,
-                        ok_count = 0,
-                        err_count = 0,
-                        elapsed_ms = wave_started.elapsed().as_millis(),
-                        join_mode = join_mode,
-                        "parallel wave timed out"
-                    );
-                    return Err(TemplateError::Timeout {
-                        step_ordinal: node.ordinal,
-                        elapsed_seconds: wave_timeout.as_secs(),
-                    });
-                }
-            };
-        let elapsed_ms = wave_started.elapsed().as_millis();
+        let results = match tokio::time::timeout(
+            effective_timeout(node.timeout_seconds),
+            futures_util::future::join_all(tool_futs),
+        ).await {
+            Ok(joined) => joined,
+            Err(_) => return Err(TemplateError::Timeout {
+                step_ordinal: node.ordinal,
+                elapsed_seconds: node.timeout_seconds.unwrap_or(300),
+            }),
+        };
 
-        let branch_count = settled.len();
-        let (oks, errs): (Vec<_>, Vec<_>) = settled.into_iter().partition(Result::is_ok);
+        let elapsed_ms = batch_started.elapsed().as_millis();
+        let (oks, errs): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
-        // Observability at the consolidation boundary — closes the regulation
-        // loop's sense input. Fires on both success and error paths so the
-        // regulation layer can see per-wave branch_count / ok_count / err_count
-        // and the wave duration. Without this span, a branch error that drops
-        // sibling outcomes is invisible to `reg.*` consumers.
         tracing::info!(
             target: "reg.skill.cascade.parallel_joined",
             step_ordinal = node.ordinal,
             branch_count,
             ok_count = oks.len(),
             err_count = errs.len(),
-            elapsed_ms = elapsed_ms,
-            join_mode = join_mode,
+            elapsed_ms,
             "REG parallel wave joined"
         );
 
-        // `list` mode (default): Promise.all semantics. The first Err aborts
-        // the step. rJoule from completed branches is settled before
-        // propagating so the parent's budget doesn't underreport.
-        if join_mode == "list" {
-            if let Some(first_err) = errs.into_iter().next() {
-                // Settle rJoule from completed branches even on the error path.                    .map(|(_, o)| o)
-                    .sum();
-                return Err(first_err.unwrap_err());
-            }
-            let mut ordered: Vec<(usize, CascadeOutcome)> =
-                oks.into_iter().map(|r| r.unwrap()).collect();
-            ordered.sort_by_key(|(id, _)| *id);
-            let branch_results: Vec<Value> = ordered
-                .iter()
-                .map(|(_, o)| crate::executor::extract_final_step_result(o))
-                .collect();
-            value: Value::Array(branch_results),
-            });
-        }
-
-        // `allSettled` mode: Promise.allSettled semantics. No sibling outcome
-        // is silently dropped. If every branch failed, propagate the first
-        // error (no partial result is meaningful). Otherwise store the partial
-        // result + an `errors` sidecar so downstream steps and the operator
-        // can see what survived.
         if oks.is_empty() {
             if errs.is_empty() {
                 return Err(TemplateError::Manifest(format!(
-                    "Step {} (action 'parallel') has an empty branches array — no branches to execute",
-                    node.ordinal
+                    "Step {} (action 'parallel') has no branches", node.ordinal
                 )));
             }
-            let first_err = errs.into_iter().next().unwrap().unwrap_err();
-            tracing::warn!(
-                target: "reg.skill.cascade.parallel_joined",
-                step_ordinal = node.ordinal,
-                error_code = first_err.code(),
-                "all parallel branches failed — propagating first error"
-            );
-            return Err(first_err);
+            return Err(errs.into_iter().next().unwrap().unwrap_err());
         }
 
-        let mut ordered: Vec<(usize, CascadeOutcome)> =
-            oks.into_iter().map(|r| r.unwrap()).collect();
+        let mut ordered: Vec<(usize, _)> = oks.into_iter().map(|r| r.unwrap()).collect();
         ordered.sort_by_key(|(id, _)| *id);
 
-        // Settle rJoule from completed branches (settled post-wave).        // and emit a warn so the deviation is visible. The successful results
-        // remain in `results` (branch_id order).
         if errs.is_empty() {
-            let branch_results: Vec<Value> = ordered
-                .iter()
+            let branch_results: Vec<Value> = ordered.iter()
                 .map(|(_, o)| crate::executor::extract_final_step_result(o))
                 .collect();
             return Ok(Effect::Stored {
@@ -1269,27 +1078,16 @@ impl StepMachine {
             });
         }
 
-        let branch_results: Vec<Value> = ordered
-            .iter()
+        let branch_results: Vec<Value> = ordered.iter()
             .map(|(_, o)| crate::executor::extract_final_step_result(o))
             .collect();
-        let err_summaries: Vec<Value> = errs
-            .iter()
-            .map(|e| {
-                let err = e.as_ref().unwrap_err();
-                Value::Object(serde_json::Map::from_iter([
-                    ("code".to_string(), Value::String(err.code().to_string())),
-                    ("message".to_string(), Value::String(err.to_string())),
-                ]))
-            })
-            .collect();
-        tracing::warn!(
-            target: "reg.skill.cascade.parallel_joined",
-            step_ordinal = node.ordinal,
-            ok_count = ordered.len(),
-            err_count = err_summaries.len(),
-            "parallel wave completed with partial failures — successful results preserved"
-        );
+        let err_summaries: Vec<Value> = errs.iter().map(|e| {
+            let err = e.as_ref().unwrap_err();
+            Value::Object(serde_json::Map::from_iter([
+                ("code".to_string(), Value::String(err.code().to_string())),
+                ("message".to_string(), Value::String(err.to_string())),
+            ]))
+        }).collect();
         let mut map = serde_json::Map::new();
         map.insert("results".to_string(), Value::Array(branch_results));
         map.insert("errors".to_string(), Value::Array(err_summaries));
@@ -1300,221 +1098,79 @@ impl StepMachine {
     }
 }
 
-// ── Helper functions ──────────────────────────────────────────────────────
-
-/// Render a step's template and return the rendered string.
 fn render_step_template(
     node: &crate::step_graph::StepNode,
-    ctx: &StepContext,
+    context: &crate::step_context::StepContext,
     infra: &Infra,
 ) -> Result<String> {
-    let (rendered, _, _) = render_step_template_with_raw(node, ctx, infra)?;
-    Ok(rendered)
+    let template_ref = node.template_ref.as_deref().ok_or_else(|| {
+        TemplateError::Manifest(format!("Step {} has no template_ref", node.ordinal))
+    })?;
+    let template_content = infra.template_renderer.load(template_ref)?;
+    infra.template_renderer.render(&template_content, context)
 }
 
-/// Render a step's template and return the rendered prompt, the raw template
-/// content (for output-schema extraction), and the parsed `[inference]` config
-/// block (for LLM parameter overrides).
 fn render_step_template_with_raw(
     node: &crate::step_graph::StepNode,
-    ctx: &StepContext,
+    context: &crate::step_context::StepContext,
     infra: &Infra,
 ) -> Result<(String, String, crate::template_renderer::InferenceBlock)> {
-    use crate::template_renderer::{parse_and_strip_inference_block, strip_front_matter};
-
-    let renderer = node.renderer.as_deref().unwrap_or("");
-
-    match renderer {
-        "minijinja" => {
-            let template_ref_raw = node.template_ref.as_deref().ok_or_else(|| {
-                TemplateError::Manifest(format!(
-                    "Step {} has renderer='minijinja' but no template_ref",
-                    node.ordinal
-                ))
-            })?;
-            let template_ref =
-                crate::template_renderer::TemplateRenderer::render_inline(template_ref_raw, ctx);
-
-            let template_content = infra.template_renderer.load(&template_ref, node.ordinal)?;
-
-            tracing::info!(
-                target: "reg.spec.executor",
-                step = node.ordinal,
-                template = %template_ref,
-                "Rendering minijinja template"
-            );
-
-            // Parse the `[inference]` block from the template body (after front
-            // matter stripping) to extract per-step LLM parameters.
-            let after_front_matter = strip_front_matter(&template_content);
-            let (_stripped_body, inference_block) =
-                parse_and_strip_inference_block(after_front_matter);
-
-            let prompt = infra.template_renderer.render(&template_content, ctx)?;
-            Ok((prompt, template_content, inference_block))
-        }
-        _ => {
-            let template_content = node
-                .template_ref
-                .as_deref()
-                .or(node.renderer.as_deref())
-                .ok_or_else(|| {
-                    TemplateError::Manifest(format!(
-                        "Step {} has no template_ref or renderer",
-                        node.ordinal
-                    ))
-                })?;
-
-            let rendered =
-                crate::template_renderer::TemplateRenderer::render_inline(template_content, ctx);
-            Ok((
-                rendered,
-                template_content.to_string(),
-                InferenceBlock::default(),
-            ))
-        }
-    }
+    let template_ref = node.template_ref.as_deref().ok_or_else(|| {
+        TemplateError::Manifest(format!("Step {} has no template_ref", node.ordinal))
+    })?;
+    let raw = infra.template_renderer.load(template_ref)?;
+    let (renderable, inference_block) = crate::template_renderer::parse_and_strip_inference_block(
+        crate::template_renderer::strip_front_matter(&raw),
+    );
+    let rendered = infra.template_renderer.render(&renderable, context)?;
+    Ok((rendered, raw, inference_block))
 }
 
-/// Convert a step's `timeout_seconds` into a `Duration`, treating 0 as
-/// "no explicit timeout" and substituting a 300s fallback. This is defense
-/// in depth: the serde default on `BundleManifestStep::timeout_seconds` is
-/// 120s, but manifests loaded through other paths (inline YAML, programmatic
-/// construction) could still produce 0, which causes
-/// `tokio::time::timeout(Duration::ZERO, ...)` to fire immediately without
-/// polling the future.
-fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
-    if timeout_seconds == 0 {
-        tracing::warn!(
-            target: "hkask.templates.effective_timeout",
-            "timeout_seconds is 0 — substituting 300s fallback to avoid zero-timeout"
-        );
-        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
-    } else {
-        std::time::Duration::from_secs(timeout_seconds as u64)
-    }
+fn effective_timeout(seconds: Option<u64>) -> std::time::Duration {
+    std::time::Duration::from_secs(seconds.unwrap_or(300))
 }
 
-/// Build the message array for a cascade step's inference call.
-///
-/// The message array is:
-/// `[system: memory_context?, ...prior_messages, system: rendered_template, user: trigger]`
-///
-/// - `memory_context` (system): long-term memory snippets, formatted as a
-///   single system message. Omitted when empty.
-/// - `prior_messages`: short-term thread context (user/assistant turns from
-///   the invoking thread). Empty when the cascade is invoked outside a thread.
-/// - `rendered_template` (system): the actual Jinja2-rendered step prompt.
-///   Sent as `system` to give it the semantic weight providers reserve for
-///   system-level directives (stronger instruction adherence).
-/// - `trigger` (user): "Execute the instructions above." — some providers
-///   require at least one user message to produce output.
-///
-/// This matches the shape `agent_executor.rs` uses for swarm agents and the
-/// shape `LanguageModelInferencePort::generate` already produces internally —
-/// just with the prior-messages and memory arrays actually populated instead
-/// of empty.
+}
+
 fn build_cascade_messages(
     prior_messages: &[ChatMessage],
     memory_snippets: &[MemorySnippet],
-    rendered_template: &str,
+    prompt: &str,
     verbosity: Option<&str>,
 ) -> Vec<ChatMessage> {
-    let mut messages = Vec::with_capacity(3 + prior_messages.len() + 1);
+    let mut messages = Vec::new();
 
-    // Verbosity instruction as a system message (if non-standard).
-    // This is a soft lever — it instructs the model on output length without
-    // imposing a hard token limit. Injected before the template so the model
-    // processes it as a global constraint on its output style.
-    if let Some(level) = verbosity {
-        if let Some(instruction) = verbosity_instruction(level) {
-            messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: instruction.to_string(),
-            });
-        }
-    }
     if !memory_snippets.is_empty() {
-        let memory_text = format_cascade_memory_context(memory_snippets);
+        let memory_text = memory_snippets
+            .iter()
+            .map(|s| format!("- {}", s.content))
+            .collect::<Vec<_>>()
+            .join("\n");
         messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: memory_text,
+            role: "system".into(),
+            content: format!("Long-term memory context:\n{memory_text}"),
         });
     }
 
-    // Short-term thread context.
     messages.extend(prior_messages.iter().cloned());
 
-    // The rendered template as a system prompt.
-    messages.push(ChatMessage {
-        role: "system".to_string(),
-        content: rendered_template.to_string(),
-    });
+    if let Some(v) = verbosity {
+        if !v.is_empty() && v != "standard" {
+            messages.push(ChatMessage {
+                role: "system".into(),
+                content: format!("Be {v} in your response."),
+            });
+        }
+    }
 
-    // Trigger user message.
     messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: "Execute the instructions above.".to_string(),
+        role: "user".into(),
+        content: prompt.to_string(),
     });
 
     messages
 }
 
-/// Map a verbosity level to a system-prompt instruction controlling output length.
-/// Returns `None` for "standard" (no instruction — the default).
-/// This is a soft lever: it instructs the model on conciseness without imposing
-/// a hard token limit. The template's own instructions still take precedence
-/// for fields that require specific content.
-fn verbosity_instruction(level: &str) -> Option<&'static str> {
-    match level {
-        "terse" => Some(
-            "Be extremely concise. Minimize unnecessary words and explanations. Prefer short sentences over paragraphs.",
-        ),
-        "concise" => Some("Be concise and direct. Avoid unnecessary elaboration."),
-        "standard" => None,
-        "detailed" => {
-            Some("Be thorough and detailed in your analysis. Provide complete explanations.")
-        }
-        "verbose" => Some(
-            "Be comprehensive and exhaustive in your analysis. Leave no relevant detail unexplored.",
-        ),
-        _ => {
-            tracing::warn!(
-                target: "hkask.templates.inference_block",
-                verbosity = %level,
-                "Unrecognized verbosity value — no instruction injected"
-            );
-            None
-        }
-    }
-}
-
-/// Format long-term memory snippets as a system message.
-///
-/// Uses a simple bulleted format with source tags — distinct from the
-/// `format_recall_context` helper in the bridge (which uses data-boundary
-/// markers for the chat path). The cascade path does not need the data
-/// boundary because the memory is prepended as a separate system message,
-/// not interleaved with user content.
-fn format_cascade_memory_context(snippets: &[MemorySnippet]) -> String {
-    let mut text = String::from(
-        "Relevant long-term memory (from prior sessions and consolidated experiences):\n",
-    );
-    for (i, snippet) in snippets.iter().enumerate() {
-        text.push_str(&format!(
-            "\n{}. [{}] {}\n",
-            i + 1,
-            snippet.source,
-            snippet.text
-        ));
-    }
-    text
-}
-
-/// Call inference with streaming, timeout, and reasoning-delta forwarding,
-/// using the message-array API (`generate_stream_with_messages`). Takes a
-/// `&[ChatMessage]` so the provider sees the full conversation (memory +
-/// prior turns + template) as proper role-tagged messages.
 async fn call_inference_stream_with_messages(
     inference: Arc<dyn InferencePort + 'static>,
     messages: Vec<ChatMessage>,
@@ -1524,30 +1180,8 @@ async fn call_inference_stream_with_messages(
     timeout: std::time::Duration,
     step_ordinal: u32,
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-) -> Result<(
-    String,
-    Vec<hkask_types::StructuredToolCall>,
-    Option<f64>,
-    Option<String>,
-)> {
-    // Defense in depth: if a caller passes Duration::ZERO, substitute fallback.
-    let timeout = if timeout == std::time::Duration::ZERO {
-        tracing::warn!(
-            target: "hkask.templates.call_inference_stream",
-            "timeout is Duration::ZERO — substituting {INFERENCE_TIMEOUT_FALLBACK_SECS}s fallback"
-        );
-        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
-    } else {
-        timeout
-    };
-
-    let stream = inference.generate_stream_with_messages(
-        &messages,
-        &params,
-        model_override,
-        tools.as_deref(),
-    );
-
+) -> Result<(String, Vec<hkask_types::StructuredToolCall>, Option<f64>, Option<String>)> {
+    let stream = inference.generate_stream_with_messages(&messages, &params, model_override, tools.as_deref());
     let (full_text, tool_calls, cost_usd, finish_reason) =
         match tokio::time::timeout(timeout, async move {
             let mut full_text = String::new();
@@ -1585,51 +1219,13 @@ async fn call_inference_stream_with_messages(
                 accumulated_cost_usd,
                 accumulated_finish_reason,
             ))
-        })
-        .await
-        {
-            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => {
-                (text, tool_calls, cost_usd, finish_reason)
-            }
+        }).await {
+            Ok(Ok(stuff)) => stuff,
             Ok(Err(e)) => return Err(e),
-            Err(_elapsed) => {
-                return Err(TemplateError::Timeout {
-                    step_ordinal,
-                    elapsed_seconds: timeout.as_secs(),
-                });
-            }
+            Err(_) => return Err(TemplateError::Timeout {
+                step_ordinal,
+                elapsed_seconds: timeout.as_secs(),
+            }),
         };
-
     Ok((full_text, tool_calls, cost_usd, finish_reason))
 }
-
-/// Resolve a tool's server and dispatch the call.
-///
-/// A FIDES taint gate (`DefaultPolicy::check` on a `Source`→`Sink` flow) used to
-/// run here. It was removed rather than repaired: both of its inputs were
-/// constants — every `ToolInfo` was labelled `Pure` at its only construction
-/// site, and the untrusted-input flag read taint markers the context write side
-/// had stopped emitting — so the block could never fire. Restoring the gate
-/// means first giving tools real taint labels and propagating taint on write.
-pub(crate) async fn invoke_tool(
-    tools: Arc<dyn ToolPort + 'static>,
-    tool_name: String,
-    input: Value,
-) -> Result<Value> {
-    let tool_info = tools.get_tool_info(&tool_name).await.ok_or_else(|| {
-        TemplateError::NotFound(hkask_types::NotFound {
-            entity_type: "tool".to_string(),
-            id: tool_name.to_string(),
-        })
-    })?;
-
-    // Accounting identity for the call meter — not a credential. The cascade's
-    // authority comes from which tools the manifest may name, not from this.
-    let executor_webid = hkask_types::WebID::from_persona(b"manifest-executor");
-
-    tools
-        .invoke(&tool_info.server_id, &tool_name, input, executor_webid)
-        .await
-        .map_err(|error| TemplateError::Mcp(Box::new(error)))
-}
-
