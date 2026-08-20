@@ -242,7 +242,7 @@ the domain crate.
 The `OntologyGraph` (`kask/crates/hkask-condenser/src/ontology_graph.rs:43`)
 is a lightweight cross-domain concept relationship index built once at
 startup via `OnceLock` (`kask/crates/hkask-condenser/src/ontology_graph.rs:307`).
-It encodes relationships across PKO, SUMO, FIBO, GOLEM, ML-Schema, OMC,
+It encodes relationships across PKO, SUMO, FIBO, GOLEM, ML-Schema,
 and cross-domain bridges. The `OntologyRelation` enum
 (`kask/crates/hkask-condenser/src/ontology_graph.rs:28`) defines six
 relation types: `PartOf`, `Precedes`, `HasProperty`, `RelatedTo`,

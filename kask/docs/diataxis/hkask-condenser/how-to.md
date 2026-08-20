@@ -110,7 +110,7 @@ to `select_ontology_anchor`
 (`kask/crates/hkask-bridge-ontology/src/axis.rs:220`). It maps a tool name
 to an `OntologyAnchor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:133`)
 — `Core`, `DualAxis` (PKO/DC+BIBO), or `DomainSupplement` (FIBO, ESO, GOLEM,
-ML-Schema, OMC, SDMX, SUMO). You do not set the anchor directly; you
+ML-Schema, SDMX, SUMO). You do not set the anchor directly; you
 influence it by naming tools with a domain-signaling prefix
 (`company_fundamentals`, `memory_recall`, `generate_image`, `training_run`).
 

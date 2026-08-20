@@ -9,7 +9,7 @@ no HTTP, no async.
 | Module | Role |
 |--------|------|
 | `algorithms` | Three compression algorithms (`rtk_style`, `word_rank`, `flashrank`) with domain-aware scoring |
-| `ontology_graph` | Cross-domain concept relationship index (FIBO, SUMO, GOLEM, ML-Schema, OMC, PKO, DC+BIBO) |
+| `ontology_graph` | Cross-domain concept relationship index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO) |
 | `types` | `OntologyAnchor`, `Profile`, `ContextCategory`, `CompressedOutput`, health signals |
 | `engine` | `CondenserEngine` — compression dispatch and profile management |
 | `inference` | Prompt formatting and token estimation for LLM thread summarization |
@@ -61,7 +61,6 @@ are needed.
 | `memory_*`, `episodic_*`, `semantic_*` | Domain supplement | SUMO |
 | `replica_*`, `author_*` | Domain supplement | GOLEM |
 | `training_*`, `adapter_*`, `sweep_*` | Domain supplement | ML-Schema |
-| `generate_*`, `video_*`, `image_*`, `gallery_*` | Domain supplement | OMC |
 | `kanban_*`, `task_*`, `spec_*`, `research_*`, `skill_*` | Dual-axis (PKO) | — |
 | `file_*`, `web_*`, `registry_*`, `wallet_*` | Dual-axis (DC+BIBO) | — |
 | Everything else | Core (5W1H) | — |

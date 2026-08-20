@@ -63,7 +63,6 @@ multiple ontologies:
 | FIBO | Financial/business | competitive advantage, ROIC, margin of safety |
 | ESO | Epistemic/scientific | hypothesis, evidence, falsification |
 | PKO | Procedural | procedure, analysis, evaluation, feedback loop |
-| OMC | Media creation | scene, sequence, creative work |
 | Dublin Core | Bibliographic | bibo:Book, bibo:Article |
 
 Output: `tagged_ontology.jsonl` with `ontology_tags` field per chunk.
@@ -110,7 +109,6 @@ server.
 | `hkask_bridge_ontology::golem` | Narrative/literary | 16 predicates (hasCharacter, illustrates, metaphorFor, ...) |
 | `hkask_bridge_ontology::fibo` | Financial/business | union of the former companies + corpus subsets (competitiveAdvantage, returnOnCapital, ROIC, DCF, ...) |
 | `hkask_bridge_ontology::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
-| `hkask_bridge_ontology::omc` | Media creation | scene, sequence, creative work, asset, version |
 | `hkask_bridge_ontology::mlschema` | ML training | model, run, data, hyperparameter, evaluation |
 | `hkask_bridge_ontology::dc_bibo` | Dublin Core + BIBO + CiTO | title, creator, subject, identifier, Article, Document, cites, supports |
 | `hkask_bridge_ontology::pko` | Procedural Knowledge | procedure, step, step_execution, verification |

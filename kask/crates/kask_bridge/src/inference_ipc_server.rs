@@ -400,7 +400,6 @@ impl InferenceIpcServer {
                     Ok((stream, _)) => {
                         let port = port.clone();
                         let emb_port = emb_port.clone();
-                        let media = media.clone();
                         let tools = tools.clone();
                         let skill_exec = skill_exec.clone();
                         let list_models_tx = list_models_tx.clone();
@@ -410,7 +409,6 @@ impl InferenceIpcServer {
                                 stream,
                                 port,
                                 emb_port,
-                                media,
                                 tools,
                                 skill_exec,
                                 list_models_tx,

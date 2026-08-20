@@ -3,7 +3,7 @@ name = "hkask-bridge-ontology"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, ESO, GOLEM, OMC, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic."
+description = "Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, ESO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic."
 
 [lib]
 path = "src/hkask_bridge_ontology.rs"

@@ -102,7 +102,7 @@ The `derive_ontology_anchor` function
 (`kask/crates/hkask-condenser/src/algorithms.rs:559`) maps a tool name to
 an `OntologyAnchor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:133`).
 This anchor connects compression to the dual-axis ontology (PKO +
-DC+BIBO) plus domain supplements (FIBO, ESO, GOLEM, ML-Schema, OMC, SDMX,
+DC+BIBO) plus domain supplements (FIBO, ESO, GOLEM, ML-Schema, SDMX,
 SUMO). The anchor provides the keywords that `domain_saliency`
 (`kask/crates/hkask-condenser/src/algorithms.rs:231`) uses to score lines.
 

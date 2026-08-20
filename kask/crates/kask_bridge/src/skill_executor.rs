@@ -130,6 +130,8 @@ pub struct BridgeManifestExecutor {
     /// (`reg.skill.<id>.outcome`). When `None`, skill outcomes are not
     /// persisted to the regulation system (tests, pre-login).
     regulation_ledger: Option<Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>>,
+}
+
 impl BridgeManifestExecutor {
     /// Construct a new bridge manifest executor with a real ToolPort (D3 wired).
     ///
@@ -436,10 +438,8 @@ impl BridgeManifestExecutor {
                 "HKASK_QA_MODEL",
                 hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL,
             ),
-            (
-            ),
-            (
-            ),
+            (),
+            (),
             (
                 "vision_model",
                 "HKASK_MEDIA_VISION_MODEL",
@@ -867,7 +867,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // (K5) `extract_final_step_result` selects `last_result_step`'s
         // value (deterministic — the machine tracks it, O(1)).
 
-        Ok(value_to_string(&grounded_value, &result.context))
+        Ok(final_result_as_string(&result))
     }
 }
 

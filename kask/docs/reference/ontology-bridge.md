@@ -118,24 +118,6 @@ Canonical predicate URIs for narrative concepts.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 
-### `omc` — MovieLabs Ontology for Media Creation (media domain)
-
-Canonical concept URIs for media-production workflows.
-
-| Constant | URI |
-|----------|-----|
-| `CREATIVE_WORK` | `omc:CreativeWork` |
-| `SCENE` | `omc:Scene` |
-| `SHOT` | `omc:Shot` |
-| `SEQUENCE` | `omc:Sequence` |
-| `ASSET` | `omc:Asset` |
-| `VERSION` | `omc:Version` |
-
-Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs`
-
-**Helpers:**
-- `explain_tool_for(omc: &str) -> &'static str` — the "I" pattern dispatch: maps an OMC concept to the explain tool (`omc:Scene`/`omc:Asset` → `gallery_analyze`; others → `describe_image`).
-
 ### `mlschema` — ML-Schema (ML training domain)
 
 Canonical concept URIs for machine-learning experiments.
@@ -196,7 +178,7 @@ The core of the system: maps a domain hint to its axis anchoring.
 | Type | Description |
 |------|-------------|
 | `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework |
-| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Omc` — which domain supplement (6 supplements; SUMO is the universal fallback) |
+| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Sdmx` — which domain supplement (SUMO is the universal fallback) |
 | `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier ontology tier |
 
 **Functions:**
@@ -218,7 +200,6 @@ The core of the system: maps a domain hint to its axis anchoring.
 | `finance`, `company`, `stock`, `portfolio`, `dcf`, `prediction-markets` | FIBO | DC | FIBO |
 | `science`, `research`, `hypothesis`, `evidence` | ESO | DC | ESO |
 | `narrative`, `corpus`, `persona`, `author` | GOLEM | DC | GOLEM |
-| `media`, `image`, `video`, `generate`, `face` | OMC | DC | OMC |
 | `training`, `ml`, `adapter`, `lora` | ML-Schema | DC | ML-Schema |
 | `memory`, `cognitive`, `episodic` | SUMO | DC | SUMO |
 | `kanban`, `task`, `spec`, `skill`, `curator` | (PKO) | DC | PKO |
@@ -229,8 +210,8 @@ The core of the system: maps a domain hint to its axis anchoring.
 ## Unified ontology tag shape
 
 Every MCP server emits a single top-level `"ontology"` key in each tool output
-JSON, carrying a concept URI string (e.g. `"omc:CreativeWork"`,
-`"pko:Step"`, `"fibo:Portfolio"`, `"dcterms:Dataset"`). Every widget parses
+JSON, carrying a concept URI string (e.g. `"pko:Step"`,
+`"fibo:Portfolio"`, `"dcterms:Dataset"`). Every widget parses
 an `ontology: Option<String>` field on its block body struct. This is the
 unified contract — one key name, one value shape, across all servers and
 widgets.
@@ -240,7 +221,6 @@ widgets.
 | companies | `"ontology"` | `"fibo:Portfolio"` |
 | scenarios | `"ontology"` | `"pko:Procedure"` or `"dcterms:Dataset"` |
 | kata-kanban | `"ontology"` | `"pko:Step"` |
-| media | `"ontology"` | `"omc:CreativeWork"` |
 
 The companies server also emits a `"fibo": {...}` map for per-field display
 metadata — that's a separate concern (display vocabulary, not dispatch
@@ -256,16 +236,12 @@ reimplementing their own ontology-specific dispatch.
 
 | Concept prefix | Explain tool |
 |---|---|
-| `omc:Scene` / `omc:Asset` | `gallery_analyze` |
-| `omc:*` (other) | `describe_image` |
 | `fibo:*` | `research_search` |
 | `pko:*` | `kanban_task_list` |
 | `dcterms:*` / `dublin-core` | `research_search` |
 | empty / unknown | `research_search` (general fallback) |
 
-The media widget's "Explain" affordance is the first implementation: the
-OMC concept in the block body drives which explain tool the widget
-dispatches. The portfolio widget's "Explain" uses provenance-based dispatch
+The portfolio widget's "Explain" uses provenance-based dispatch
 (server → tool) which is already context-appropriate; the ontology tag is
 in the compose-back body for agent correlation.
 

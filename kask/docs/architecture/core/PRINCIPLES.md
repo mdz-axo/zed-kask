@@ -102,7 +102,7 @@ The 5W1H core is grounded in Ontology Design Pattern (ODP) methodology as descri
 
 Every artifact in hKask has both a state identity and a process identity — it is simultaneously a noun AND a verb. This is the Planck constant at the architectural level: you cannot reduce one axis to the other. And per Heisenberg, the more precisely you measure state (DC typing), the less you can know about process position (PKO flow), and vice versa. You are always sampling, never arriving at truth. The bridges are sampling instruments, not truth claims.
 
-**Every MCP server uses BOTH axes.** Domain-specific bridges (FIBO, GOLEM, SUMO, ML-Schema, OMC) are layered on top where DC+BIBO's state axis isn't specific enough for a domain. They are NOT alternatives to the dual-axis core — they supplement it.
+**Every MCP server uses BOTH axes.** Domain-specific bridges (FIBO, GOLEM, SUMO, ML-Schema) are layered on top where DC+BIBO's state axis isn't specific enough for a domain. They are NOT alternatives to the dual-axis core — they supplement it.
 
 | MCP Server | Process Axis | State Axis | Domain Bridge |
 |---|---|---|---|
@@ -112,7 +112,6 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **corpus** | PKO | DC+BIBO | GOLEM (narrative structure, for the replica sub-system) |
 | **curator** | PKO | DC+BIBO | — (the curator IS the 5W1H core applied as Socratic inquiry) |
 | **kata-kanban** | PKO | DC+BIBO | — |
-| **media** | PKO | DC+BIBO | OMC (media creation) |
 | **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
 | **swarm** | PKO | DC+BIBO | Onto4MAT (multi-agent teaming; Reynolds/Kennedy-Eberhart/Dorigo swarm-intelligence substrate) |
@@ -122,9 +121,9 @@ Every artifact in hKask has both a state identity and a process identity — it 
 > **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`kask/registry/` manifests + `hkask-templates`/`ManifestExecutor`); memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The servers above plus `portfolio` (added 2026-08-12 — provider-agnostic, no ontology mapping) are the surviving set on disk (13 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. (Corrected 2026-07-29: the prior reference to `crates/hkask-skills` was stale — that crate does not exist; the skill registry lives at `kask/registry/`.)
 
 **Bridge locations (v0.33.0 — single shared crate):**
-- Universal axes (DC+BIBO+CiTO state, PKO process) and all domain supplements (FIBO, ESO, GOLEM, OMC, ML-Schema) live in the single shared crate `crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.
+- Universal axes (DC+BIBO+CiTO state, PKO process) and all domain supplements (FIBO, ESO, GOLEM, ML-Schema) live in the single shared crate `crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.
 - Architectural invariant (user directive 2026-08-05): ontologies are domain maps; MCP servers are functional-area maps; these are orthogonal. No ontology vocabulary lives inside an MCP server. Every server that does tagging depends on `hkask-bridge-ontology`.
-- The former `crates/hkask-bridge-dublincore/` was absorbed into `hkask-bridge-ontology` (rename, not a wrapper — the single-crate design avoids pass-through re-exports). The former server-local bridge modules (`companies/fibo.rs`, `kask/crates/hkask-bridge-ontology/src/{fibo,eso,golem}.rs`, `media/omc.rs`, `training/mlschema.rs`) were deleted; their vocabulary moved to the shared crate, and only server-specific dispatch helpers (e.g. `fmp_field_to_fibo`, `tool_to_omc`) remain in the servers.
+- The former `crates/hkask-bridge-dublincore/` was absorbed into `hkask-bridge-ontology` (rename, not a wrapper — the single-crate design avoids pass-through re-exports). The former server-local bridge modules (`companies/fibo.rs`, `kask/crates/hkask-bridge-ontology/src/{fibo,eso,golem}.rs`, `training/mlschema.rs`) were deleted; their vocabulary moved to the shared crate, and only server-specific dispatch helpers (e.g. `fmp_field_to_fibo`) remain in the servers. The `omc.rs` module (media domain) was deleted 2026-08-20 with the media MCP server.
 - The former condenser-local `OntologyNamespace`/`OntologyAxis`/`OntologyAnchor`/`derive_ontology_anchor` moved to the shared crate's `axis` module; the condenser re-exports them. `derive_ontology_anchor`'s substring-on-tool-names classifier was replaced by `select_ontology_anchor(domain)`, which centralizes the domain-selection logic in one place.
 
 #### P6 — Space for Per-User Data Directories
@@ -154,8 +153,8 @@ System claims must be grounded in traceable, provenance-aware representations.
 4. **No reasoners, no OWL parsing, no graph databases** — bridges are thin vocabulary layers, not ontology engines.
 
 **Bridge hierarchy (v0.33.0 — single shared crate):**
-- **Universal anchors + domain supplements:** `crates/hkask-bridge-ontology/` — the single shared vocabulary crate. Owns DC+BIBO+CiTO (state axis), PKO (process axis), and all domain supplements (FIBO, ESO, GOLEM, OMC, ML-Schema) as submodules. Also owns the domain-selection logic (`axis` module: `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`). Every server that does tagging depends on this crate.
-- **Server-specific dispatch:** Servers keep only their own dispatch helpers (mapping their tool names or provider field names to the shared vocabulary) — e.g. `fmp_field_to_fibo` in companies, `tool_to_omc` in media. These are the server's business, not the ontology's.
+- **Universal anchors + domain supplements:** `crates/hkask-bridge-ontology/` — the single shared vocabulary crate. Owns DC+BIBO+CiTO (state axis), PKO (process axis), and all domain supplements (FIBO, ESO, GOLEM, ML-Schema) as submodules. Also owns the domain-selection logic (`axis` module: `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`). Every server that does tagging depends on this crate.
+- **Server-specific dispatch:** Servers keep only their own dispatch helpers (mapping their tool names or provider field names to the shared vocabulary) — e.g. `fmp_field_to_fibo` in companies. These are the server's business, not the ontology's.
 
 Bridges use the STAR extraction pattern (seed terms + direct logical entailments, no intermediate hierarchy) from Norouzi et al. (2025). Each bridge module is typically ≤150 lines.
 
