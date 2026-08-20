@@ -725,7 +725,7 @@ fn main() {
         // shared across skill cascades, corpus OCR, MCP tool calls). Runtime
         // changes to `max_concurrency` / `concurrency_step` do not take effect
         // until restart (the `OnceLock` is set once) — matches the existing
-        // `set_manifest_executor` pattern.
+        // the concurrency limiter pattern (set once at startup).
         kask_bridge::set_global_concurrency_limiter(
             kask_settings_for_mcp.general.max_concurrency,
             kask_settings_for_mcp.general.concurrency_step,
@@ -763,6 +763,21 @@ fn main() {
                 hkask_types::agent_paths::SKILLS_DIR,
             ));
         agent_skills::set_global_skills_dir_override(Some(kask_skills_dir));
+
+        // zed-kask: Wire the kask registry templates directory for the
+        // `render_template` tool. In dev (CWD = repo root), use the live
+        // source tree at `kask/registry/templates/` so edits take effect
+        // without recompilation. In production, use the seeded copy under
+        // `{kask_data_dir}/skills/registry/templates/`.
+        let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
+        let template_base_path = if dev_templates_dir.is_dir() {
+            dev_templates_dir
+        } else {
+            hkask_types::agent_paths::resolve_under_data_dir(
+                std::path::Path::new("skills/registry/templates"),
+            )
+        };
+        agent::set_template_base_path(template_base_path);
 
         // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
@@ -2335,7 +2350,7 @@ fn main() {
 
         // zed-kask: D1 — Model-dependent manifest executor wiring.
         //
-        // This task wires the `BridgeManifestExecutor` (and thus the skill
+        // This task wires the edit-prediction port (D24), which needs the
         // cascade) as soon as `LanguageModelRegistry::default_model()` returns
         // `Some`, independent of Zed user login. The model registry is
         // populated from settings.json (`agent.default_model`), not from
@@ -2348,7 +2363,7 @@ fn main() {
         // (`DefaultModelChanged`, `ProviderStateChanged`, `AddedProvider`,
         // `ProvidersChanged`) and fires the wiring on the first event where
         // `default_model()` returns `Some`. An `AtomicBool` ensures it fires
-        // only once — `set_manifest_executor` is `OnceLock`-based and a
+        // only once — the edit-prediction port uses an AtomicBool guard.
         // second call would warn and be dropped.
         //
         // The registry path resolution (dev source vs seeded) is duplicated
@@ -2550,7 +2565,7 @@ fn main() {
         //
         // zed-kask: D1/D3/D6/D8 — F20: deferred task (user-dependent hooks:
         // memory_port, thread_condenser, tool_invoker, context_injector,
-        // curator_context_injector) + model-dependent task (manifest_executor).
+        // curator_context_injector) + model-dependent task (edit_prediction_port).
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -2950,11 +2965,11 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
 /// and injects it into the edit-prediction store via
 /// `edit_prediction::open_ai_compatible::set_kask_completion_port`.
 ///
-/// Called from the same model-dependent task as `try_wire_manifest_executor`
+/// Called from the same model-dependent task as the edit-prediction port wiring
 /// — fires once the registry has a model. `Mutex`-based hook (re-settable),
-/// so unlike `set_manifest_executor` (OnceLock) there is no need for an
-/// `AtomicBool` guard, but we use one anyway to avoid redundant
-/// `resolve_model_names` + HTTP-client construction on every registry event.
+/// so there is no need for an `AtomicBool` guard, but we use one anyway to
+/// avoid redundant `resolve_model_names` + HTTP-client construction on every
+/// registry event.
 async fn try_wire_edit_prediction_port(
     wired: &std::sync::atomic::AtomicBool,
     registry: &gpui::Entity<language_model::LanguageModelRegistry>,
@@ -3246,17 +3261,9 @@ struct PanelToolInvoker {
     tokio_handle: tokio::runtime::Handle,
 }
 
-/// `SkillExecPort` backed by the agent crate's global manifest executor.
-///
-// zed-kask: D1/D8 — F27: skill_executor + tool_invoke IPC (inference IPC server).
-/// Wired into the inference IPC server so MCP server child processes (e.g.
-/// `hkask-mcp-swarm`'s local delegate) can run an agent's declared skills.
-// zed-kask: D1/D8 — F28: skill executor resolution (resolves at call time).
-/// Resolves the executor at call time (it is wired in the deferred
-/// post-login task, after the IPC server starts) — the same resolver
-/// `WorktreeSpawner` impl for `InferenceIpcServer` — creates a worktree-backed
-/// agent thread via `AgentPanelSiblingHost::create_sibling_thread`. Holds a
-/// `WeakEntity<AgentPanel>` + `AnyWindowHandle` (both `Send + Sync`) so it can
+// zed-kask: D23 — WorktreeSpawner impl for InferenceIpcServer.
+/// Creates a worktree-backed agent thread via `AgentPanelSiblingHost::create_sibling_thread`.
+/// Holds a `WeakEntity<AgentPanel>` + `AnyWindowHandle` (both `Send + Sync`) so it can
 /// be `Arc`-cloned into the GPUI-side task. The `spawn` method runs inside the
 /// GPUI task (which has `&mut AsyncApp`) and calls `create_sibling_thread` with
 /// `use_new_worktree: true`.

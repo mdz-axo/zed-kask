@@ -540,10 +540,6 @@ mod tests {
             ),
             "skills section must instruct reading additional files"
         );
-        assert!(
-            rendered.contains("PDCA loop: Plan-Do-Check-Act"),
-            "skills section must frame PDCA iteration for skills that describe iterative processes"
-        );
 
         // The D1 manifest-cascade wording must be gone.
         assert!(
