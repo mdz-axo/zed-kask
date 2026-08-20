@@ -71,9 +71,9 @@ Return a JSON object:
 
 Use `ready_for_review` only when all acceptance criteria have supporting evidence. Use an empty `blockers` array when no blocker exists.
 
-## MCP Tool Calls (Agent Action — Post-Cascade)
+## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The cascade produces the execution report; the agent then records results on the task:
+These instructions are for the agent running the skill, not for the template's LLM. The process produces the execution report; the agent then records results on the task:
 
 1. Call `kanban_task_comment` with the `task_id` and `body` set to the `progress_note`. This appends the progress update to the task's comment thread for the coordinator to read.
 2. For each entry in `deliverables`, call `kanban_task_add_deliverable` with the `task_id` and `path` set to the deliverable `location`. This records the work output link on the task.

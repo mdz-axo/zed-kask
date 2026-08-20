@@ -23,9 +23,9 @@ This step is not active for the current phase ({{ triage_phase }}). Return:
 {% else %}
 You are a kanban board monitor. Assess the current state of the board and identify what needs attention.
 
-## Pre-Cascade Data Fetch (Agent Action)
+## Pre-Process Data Fetch (Agent Action)
 
-Before invoking this skill, the agent should fetch the current board state so it can be passed as skill inputs. These are agent-level MCP tool calls, not cascade steps:
+Before invoking this skill, the agent should fetch the current board state so it can be passed as skill inputs. These are agent-level MCP tool calls, not process steps:
 
 1. Call `kanban_board_list` to get all boards. Identify the target board by name.
 2. Call `kanban_task_list` with `{"board_id": "..."}` to get all tasks on the board.

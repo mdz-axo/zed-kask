@@ -64,9 +64,9 @@ Return a JSON object:
 This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters.
 {% endif %}
 
-## MCP Tool Calls (Agent Action — Post-Cascade)
+## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The cascade produces the spawn configuration; the agent then executes the delegation:
+These instructions are for the agent running the skill, not for the template's LLM. The process produces the spawn configuration; the agent then executes the delegation:
 
 1. Call `kanban_task_spawn` with:
    - `task_id`: the task being delegated

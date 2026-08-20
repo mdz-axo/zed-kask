@@ -40,17 +40,15 @@ Validate **all skills** in the registry directory.
 
 | ID | Check | Pass Criteria |
 |----|-------|---------------|
-| R1 | manifest.yaml exists | FlowDef manifest present at `registry/manifests/<name>.yaml` AND crate manifest present at `registry/templates/<name>/manifest.yaml` |
+| R1 | manifest.yaml exists | Process manifest present at `registry/manifests/<name>.yaml` AND crate manifest present at `registry/templates/<name>/manifest.yaml` |
 | R2 | Crate metadata valid | `crate.name`, `crate.version`, `crate.description` all present |
 | R3 | Templates list non-empty | At least one entry in `templates` array |
-| R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |
-| R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef, RenderAct} |
+| R4 | Template entry valid | Each entry has `id`, `path`, `description` |
 | R6 | Contract valid | Each .j2 has `contract.input` and `contract.output` with typed fields |
 | R7 | (removed) | energy_cap was removed — per-step compute budget is no longer tracked; timeout is the sole kill switch |
 | R8 | Visibility valid | Each .j2 `visibility` in {Private, Public, Shared} |
 | R9 | .j2 file exists | Each template entry's `path` resolves to an actual .j2 file |
 | R10 | [inference] frontmatter valid | Each .j2 starts with `[inference]` block |
-| R11 | template_type valid | All templates declare a valid `template_type` (KnowAct, WordAct, FlowDef, RenderAct) |
 | R12 | Jinja2 body present | Each .j2 has template body after `---` separator |
 
 ### SKILL.md Companion Checks (secondary)
@@ -77,18 +75,18 @@ Validate **all skills** in the registry directory.
 
 ### Process Manifest Compliance Checks (registry/manifests/*.yaml)
 
-These checks verify that every FlowDef process manifest is compliant with the
-ManifestExecutor's canonical action set and budget requirements. The executor
-dispatches only canonical actions; non-canonical actions cause runtime errors.
+These checks verify that every process manifest is compliant with the
+canonical action set and budget requirements. The model dispatches
+only canonical actions; non-canonical actions cause runtime errors.
 
 | ID | Check | Pass Criteria | Severity |
 |----|-------|---------------|----------|
-| E1 | Action compliance | Every step's `action` is one of: `select`, `populate`, `compute`, `execute`, `feedback`, `validate`, `retrieve`, `render`, `flowdef`, `loop`, `choice`, `abort`, `escalate`. No `evaluate`, `run_command`, `classify`, `mcp_tool`, `check`, `call`, `emit`, `recall`, `record`, or other non-canonical actions. | Critical |
+| E1 | Action compliance | Every step's `action` is one of: `select`, `populate`, `compute`, `execute`, `feedback`, `validate`, `retrieve`, `render`, `loop`, `choice`, `abort`, `escalate`. No `evaluate`, `run_command`, `classify`, `mcp_tool`, `check`, `call`, `emit`, `recall`, `record`, or other non-canonical actions. | Critical |
 | E2 | rJoule block present | Manifest has an `rjoule:` block. If any step uses `action: select` (inference), `rjoule.cap` must be > 0. Cap proportional to inference calls: 1-2 for simple skills, 3-5 for multi-step, 5+ for media generation. | Critical |
 | E3 | Convergence block | For `category: skill` manifests: `convergence:` block with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` ("abort", "escalate", or "proceed"). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`. Legacy fields `threshold` and `convergence_field` are deprecated but tolerated. | Critical |
 | E4 | Category valid | `manifest.category` is one of: `skill`, `qa-script`, `runtime-config`, `daemon-process`, `pipeline`. Only `skill` manifests are agent-invokable. | Critical |
 | E5 | Template ref resolvable | Every `template_ref` (that is not a runtime-resolved `{% raw %}{{...}}{% endraw %}` or `{% raw %}${...}{% endraw %}` expression) resolves to an embedded `.j2` or `.yaml` file in `registry/templates/`. | Critical |
-| E6 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest (FlowDef recursion) must have an `rjoule` block in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
+| E6 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest must have an `rjoule` block in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
 | E7 | Step description | Every step has a non-empty `description` field. | Critical |
 | E8 | Ordinal sequence | Step ordinals are sequential starting from 1 (or 0 for pre-processing steps). | Medium |
 | E9 | Ledger span namespace | `ledger.span_namespace` is present and equals `reg.skill.<manifest.id>` (the literal string `reg.skill.` + the manifest's `id`). The abolished `spans:` list MUST NOT be present in the `ledger:` block. | Critical |
@@ -113,27 +111,26 @@ tokens, time, or produce inconsistent outputs.
 | T3 | No concrete example values in JSON schemas | JSON output schemas should use type placeholders (e.g., `"(description)"`, `"(mechanism)"`), not concrete analysis content as example values (e.g., full sentences, specific company names, industry-specific examples). Concrete examples waste tokens, risk the LLM partially copying example content, and are domain-specific where the template should be domain-general. | Low |
 | T4 | No repeated paragraphs | No paragraph (60+ characters) should appear more than once in the same template. Repeated paragraphs indicate the same concept is explained in multiple sections — consolidate to a single explanation. Common pattern: a "theory/basis" section and a "protocol/steps" section that re-explain the same concepts. | Low |
 
-### Canonical Action Semantics (Pattern A type system)
+### Canonical Action Semantics
 
-| Action | Pattern A Type | Description |
-|--------|---------------|-------------|
-| `select` | KnowAct | Render `.j2` template + inference + parse JSON response |
-| `populate` | WordAct | Render `.j2` template without inference (deterministic text) |
-| `compute` | Deterministic | Invoke a `hkask_forecast::*` math primitive via `compute_ref` |
-| `execute` | MCP Tool | Invoke an MCP tool (requires `mcp:` field) |
-| `feedback` | MCP Tool | Emit Regulation feedback via MCP tool |
-| `validate` | MCP Tool | Validate a contract or condition via MCP tool |
-| `retrieve` | MCP Tool | Retrieve data via MCP tool (e.g., semantic search) |
-| `render` | RenderAct | Render `.j2` or `.yaml` without inference (reference content, macros) |
-| `flowdef` | FlowDef | Recursively execute a `.yaml` sub-manifest as a nested cascade |
-| `loop` | Control Flow | Re-enter cascade from a target ordinal |
-| `choice` | Control Flow | Evaluate condition and branch to a target ordinal |
-| `abort` | Control Flow | Exit with success (converged) |
-| `escalate` | Control Flow | Exit with error (blocked) |
+| Action | Description |
+|--------|-------------|
+| `select` | Render `.j2` template + inference + parse JSON response |
+| `populate` | Render `.j2` template without inference (deterministic text) |
+| `compute` | Invoke a `hkask_forecast::*` math primitive via `compute_ref` |
+| `execute` | Invoke an MCP tool (requires `mcp:` field) |
+| `feedback` | Emit Regulation feedback via MCP tool |
+| `validate` | Validate a contract or condition via MCP tool |
+| `retrieve` | Retrieve data via MCP tool (e.g., semantic search) |
+| `render` | Render `.j2` or `.yaml` without inference (reference content, macros) |
+| `loop` | Re-enter process from a target ordinal |
+| `choice` | Evaluate condition and branch to a target ordinal |
+| `abort` | Exit with success (converged) |
+| `escalate` | Exit with error (blocked) |
 
 ## Severity Levels
 
-- **Critical**: Registry missing, invalid template_type
+- **Critical**: Registry missing
 - **High**: Orphan SKILL.md, contract invalidity
 - **Medium**: Drift, name mismatch, vocabulary gaps
 - **Info**: Missing SKILL.md, description brevity
