@@ -2,7 +2,7 @@
 title: "Forecasting and Scenarios"
 audience: [architects, developers, operators]
 last_updated: 2026-08-04
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]
@@ -14,7 +14,7 @@ The scenarios and companies MCP servers run as builtin context servers (child
 processes over stdio) inside zed-kask (D1–D3).
 
 **Diataxis type:** Explanation
-**Status:** Active (v0.35.0)
+**Status:** Active (v0.36.0)
 **Related:** `registry/templates/superforecasting/README.md` (skill pipeline), `crates/hkask-forecast/README.md` (library), `mcp-servers/hkask-mcp-scenarios/README.md` (tool reference)
 
 ## Why this document exists

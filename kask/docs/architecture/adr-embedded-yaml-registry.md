@@ -2,7 +2,7 @@
 title: "ADR: Build-time embedded YAML/Jinja2 registry — amended to disk-first seed model"
 audience: [architects, developers, agents]
 last_updated: 2026-08-05
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, lifecycle, trust]

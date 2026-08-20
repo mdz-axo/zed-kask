@@ -2,7 +2,7 @@
 title: "Skill Invocation — Cascade and Final-Result Extraction Flow"
 audience: [architects, developers, agents]
 last_updated: 2026-08-15
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Skill System"
 mds_categories: [composition, lifecycle]

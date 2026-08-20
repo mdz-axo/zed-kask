@@ -2,22 +2,24 @@
 
 # Agent Operating Guide — hKask
 
-**hKask** (ℏKask) — A Rust framework for running agent skills as PDCA loops via a manifest executor. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.
+**hKask** (ℏKask) — A Rust framework for agent skills using upstream Zed's body-injection model plus `lisp_eval` and `render_template` tools for deterministic computation and Jinja2 template rendering. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.
 
 ---
 
 ## Skill Authoring Model (read this before creating skills)
 
-In this repo, a skill is **not** a `SKILL.md` file. A skill is a PDCA loop executed by the kask manifest executor, defined by a registry crate (`kask/registry/manifests/<name>.yaml` + `kask/registry/templates/<name>/*.j2`). The `SKILL.md` under `.agents/skills/<name>/` is a **generated companion**, not the source of truth.
+In this repo, a skill **is** a `SKILL.md` file — the upstream Zed model. The `SKILL.md` body contains the full methodology. The model reads it via the `skill` tool and follows the instructions. No manifest executor, no YAML cascade.
 
-- **Creating a skill** → activate `create-skill` (overrides Zed's built-in, which assumes `SKILL.md` is the skill — that model does not apply here).
+Two additional tools support skill composition:
+- **`lisp_eval`** — sandboxed Lisp interpreter for deterministic computation (convergence signals, invariant checks, scoring). The SKILL.md body tells the model when to call it.
+- **`render_template`** — renders Jinja2 templates from `kask/registry/templates/` with context variables. The SKILL.md body tells the model when to call it for structured prompt scaffolding.
+
+- **Creating a skill** → activate `create-skill`.
 - **Validating / editing / installing / translating / pruning** → activate `skill-maintenance`.
-- **Auditing template logic against stated goals** → activate `skill-logic-audit`.
+- **Auditing skill logic against stated goals** → activate `skill-logic-audit`.
 - **Detecting capability gaps** → activate `skill-discovery`.
 
-Never author `SKILL.md` directly. Build the registry crate first, then derive the companion.
-
-For the current skill catalog (published manifests), see `kask/registry/manifests/`. Installed skill companions live in `.agents/skills/`. `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities (see `kask/docs/explanation/skills-and-composition.md`).
+For the current skill catalog, see `.agents/skills/`. Jinja2 templates live in `kask/registry/templates/`. `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities.
 
 ---
 
@@ -35,12 +37,13 @@ For the current skill catalog (published manifests), see `kask/registry/manifest
 
 ## MCP Servers
 
-hKask ships **13 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls — capability-match gate + gas — runs in-process; the servers themselves are child processes.)
+hKask ships **10 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
-- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training.
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training.
+- **Removed servers:** codegraph, condenser, media — eliminated in the skill system migration. Their tool surface is no longer available.
 - **Catalog + per-tool contracts:** `kask/docs/reference/mcp-servers/README.md` (server catalog) + `kask/docs/qa/per-tool-contracts.md` (per-tool input struct, output shape, LLM I/O boundary).
-- **Capability-match gate:** `McpRuntime::invoke` (token + gas) + per-agent `mcp_tools` allowlist (D3/D8). Tool responses are `{"content": ...}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
+- **Capability-match gate:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8). Tool responses are `{"content": ...}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
 
 ---
@@ -64,7 +67,7 @@ hKask ships **13 MCP servers** launched by zed's `context_server` as child proce
 ### Ensemble / Coaching (Multi-agent interaction)
 - `kata-coaching`, `kata-improvement`, `improv` — Toyota Kata dialogues.
 
-For the current skill catalog, see `kask/registry/manifests/`.
+For the current skill catalog, see `.agents/skills/`.
 
 ---
 
@@ -109,7 +112,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 
 - Rust only. Python is **not** an acceptable dependency (ad-hoc exploration OK, delete before commit).
 - Preferred: `bash` under `scripts/`, Rust binaries, `build.rs`.
-- Generated artifacts: remove one-off files; keep `docs/generated/` and skill `manifest.yaml`.
+- Generated artifacts: remove one-off files; keep `docs/generated/`.
 
 ---
 

@@ -65,12 +65,12 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 ## Skill system
 
-* Skill invocation = `skill` tool call, not `read_file(SKILL.md)`. The manifest encodes the methodology.
-* Skill cascade context must carry `{{ task }}` — without it, templates run blind.
-* `ManifestExecutor` final-result extraction uses `last_result_step` (O(1)). Reuse `extract_final_step_result`, don't re-implement.
+* Skills execute via **upstream Zed body injection**: `SkillTool::run` reads the `SKILL.md` body from disk and injects it via `render_skill_envelope`. The model reads the body and follows the instructions. No manifest executor, no step machine.
+* `lisp_eval` tool — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring).
+* `render_template` tool — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter (`---`-delimited header). Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.
+* PDCA loops are **model-coordinated**, not machine-enforced. The SKILL.md body describes convergence criteria; the model self-iterates using `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding.
 * `LazyToolRouter` filters MCP tools only — built-in Zed tools must bypass the router.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
-* `thinking_budget` in template `[inference]` blocks must be `"full"`/`"on"` or `"off"`/`"none"` only. The parser at `step_actions.rs:260-278` does not recognize `"minimal"`, `"low"`, `"medium"`, `"standard"`, or `"high"` — these silently fall back to thinking-ON (the opposite of the author's intent for low-thinking steps). Wasted thinking tokens on low-budget steps cause the same empty-output failure as the Falstaffian bug.
 
 ## Settings and constants
 
@@ -89,18 +89,18 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Missing credentials must surface as `McpToolError::permission_denied` with the env var named in the message, not as `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback. Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed error → map to `permission_denied` at the tool boundary. See `hkask-mcp-swarm/src/abw_client.rs:require_auth` for the reference implementation. A missing credential is an authorization failure, not a transient unavailability or a bad argument. Silent fallbacks (empty results, in-memory DB, skipped env injection) are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down."
 * The canonical `HKASK_DB_PASSPHRASE` resolution helper is `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)` — a 2-tier chain (ctx.credentials → resolve_credential which does env → keychain). All MCP servers that consume `HKASK_DB_PASSPHRASE` must use this helper, not inline re-implementations. See `hkask-mcp-kata-kanban` for the reference pattern.
 * `write_credential` / `delete_credential` for `kask://credentials/...` URLs must call `nudge_mcp_servers(cx)` after the keychain write — without it the running server keeps the old key until next launch. The nudge re-writes `kask.mcp.load_default` to itself to fire the `SettingsStore` observer → `sync_kask_mcp_runtime_servers` → env diff → restart. Only `kask://credentials/...` URLs need it; inference-provider `api_url` writes go through zed's provider registry reload.
-* `hkask_templates::ExitKind` is re-exported at the crate root (`pub use step_graph::ExitKind` in `hkask_templates.rs:38`). Downstream crates must match on `hkask_templates::ExitKind`, not `hkask_templates::step_graph::ExitKind` — the submodule path is not part of the stable surface and a future module rename would silently break callers that import the long path.
+
 
 ## Dead code patterns
 
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. This generalizes to: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line. If no enforcement point exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
-* `Manifest `ocap:` is declared config, not a security gate. The real gates are `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) and per-agent `mcp_tools` allowlist. Token expiry is NOT enforced. Don't re-add `ocap:` blocks or `OcapConfig` without wiring into the runtime gate.
+
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
 
 ## Other traps
 
-* `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused the condenser to use the wrong model.
+* `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused inference calls to use the wrong model.
 * `LanguageModelProvider` registry subscriptions must filter self-events to avoid unbounded warn storms.
 * Ontology tag field-drop: a widget that doesn't parse an `ontology` field silently drops it — add an S4 sensor test asserting the widget parses the field.
 * `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — run `check-desktop-no-collision.sh` before committing.

@@ -2,7 +2,7 @@
 title: "Companies MCP Server — User Guide"
 audience: [analysts, developers, agents]
 last_updated: 2026-08-05
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, lifecycle]

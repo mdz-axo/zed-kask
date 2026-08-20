@@ -18,7 +18,7 @@ visibility: Public
 {# Functional Role: KnowAct — Score the plan against seven weighted criteria (CHECK) #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: scores, weighted_total, refinement_directives, red_flags #}
-{# v0.35.0: adds target_condition_coverage criterion (do the tasks collectively #}
+{# v0.36.0: adds target_condition_coverage criterion (do the tasks collectively #}
 {# achieve the target condition?) and re-weights the seven criteria. #}
 
 [inference]
@@ -62,7 +62,7 @@ Use it to check project-specific conventions, not just generic criteria. For exa
 {% endif %}
 
 {% if target_condition %}
-## Target Condition (v0.35.0 — coverage anchor)
+## Target Condition (v0.36.0 — coverage anchor)
 
 The target condition is the goal, end state, or outcome the plan must achieve. Use
 it to score the `target_condition_coverage` criterion: do the tasks collectively
@@ -85,7 +85,7 @@ achieve this target? Does every task trace to this target?
 
 The weighted_total is the sum of (score x weight) across all seven criteria, in [0,1].
 
-### Target Condition Coverage (v0.35.0)
+### Target Condition Coverage (v0.36.0)
 
 This criterion checks whether the decomposed tasks collectively achieve the target
 condition described in the context summary. Ask:

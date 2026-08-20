@@ -1,5 +1,5 @@
 # Swarm-algorithm tuning palette for the swarm-intelligence skill
-# hKask v0.35.0
+# hKask v0.36.0
 #
 # Maps classical swarm-intelligence algorithms (PSO, ACO, Reynolds boids) onto
 # ABW's hire/fire/delegate vocabulary. Redundancy moves fire duplicates via

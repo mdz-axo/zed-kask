@@ -2,7 +2,7 @@
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
 last_updated: 2026-08-01
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -370,7 +370,7 @@ Documents spanning multiple categories list all applicable categories in the met
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
 last_updated: 2026-08-01
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]

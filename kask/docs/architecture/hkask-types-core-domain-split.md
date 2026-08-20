@@ -2,7 +2,7 @@
 title: "ADR: Split hkask-types into core primitives and domain types"
 audience: [architects, developers, agents]
 last_updated: 2026-08-05
-version: "0.35.0"
+version: "0.36.0"
 status: "Draft"
 domain: "architecture"
 mds_categories: [composition, lifecycle]

@@ -38,7 +38,7 @@ use hkask_types::inference_ipc::{
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, InferenceStreamChunk, ToolDispatchPort,
+    InferenceResult, ToolDispatchPort,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
