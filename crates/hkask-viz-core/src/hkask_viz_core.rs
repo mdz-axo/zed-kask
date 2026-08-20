@@ -8,16 +8,14 @@
 //! inspecting the body and returns `Some(element)` to intercept the block or
 //! `None` to fall through to the default code-block renderer.
 //!
-//! This crate composes the kask viz widgets (media + the four `viz`-tagged
-//! widgets: graph, kanban, portfolio, scenarios) into one such callback, so
+//! This crate composes the kask viz widgets (the `viz`-tagged widgets:
+//! graph, kanban, portfolio, scenarios, swarm) into one such callback, so
 //! `agent_ui::render_agent_markdown` registers a single renderer that
-//! dispatches across all viz block types. The four `viz`-tagged widgets share
+//! dispatches across all viz block types. The widgets share
 //! an identical create-and-cache pattern (guard → parse → discriminator check
 //! → construct → wrap); [`VizWidget`] captures that pattern once and a
-//! registry of factory pointers drives [`block_renderer`]. The media widget
-//! is intentionally *not* a `VizWidget`: it discriminates on a `kind` field
-//! (not `viz`), needs a [`Window`] on construction, and loads async state, so
-//! it keeps its own arm. Adding a new `viz`-tagged widget means implementing
+//! registry of factory pointers drives [`block_renderer`]. Adding a new
+//! `viz`-tagged widget means implementing
 //! `VizWidget` for its view type and appending one entry to [`viz_factories`];
 //! the upstream D18 field/builder/dispatch in `markdown` stays unchanged — the
 //! divergence surface does not widen.
@@ -34,7 +32,7 @@
 //! cached entity is cloned (cheap — `Arc` handle) and returned as an element.
 //! The cache holds **strong** references, so the entity survives across renders
 //! even when the element tree is rebuilt and drops its clone. On a cache miss,
-//! a new entity is created (via the media factory or a registered `VizWidget`)
+//! a new entity is created (via a registered `VizWidget`)
 //! and inserted.
 //!
 //! Cache eviction: max 32 entries. When full, the oldest entry (by insertion
@@ -73,15 +71,10 @@ pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyEl
 /// A viz widget that self-selects on a JSON `viz` discriminator field and is
 /// cached across renders.
 ///
-/// The four non-media viz widgets (graph, kanban, portfolio, scenarios) share
+/// The viz widgets (graph, kanban, portfolio, scenarios, swarm) share
 /// an identical create-and-cache pattern that differs only in the parsed block
 /// type, the `viz` tag value, the log prefix, and the view constructor. This
 /// trait captures that pattern once; [`try_create`] drives it generically.
-///
-/// The media widget is intentionally excluded — it discriminates on a `kind`
-/// field (not `viz`), needs a [`Window`] on construction, and loads async
-/// state, so it does not fit the trait and keeps its own arm in
-/// [`block_renderer`].
 ///
 /// The trait is implemented here (in `hkask-viz-core`) rather than in the
 /// widget crates because the dependency direction is one-way: `hkask-viz-core`
@@ -97,7 +90,7 @@ pub trait VizWidget: Render + Sized {
     /// Prefix for malformed-block log warnings (e.g. `"hkask-graph-widget"`).
     const LOG_PREFIX: &'static str;
 
-    /// Parse the block body. Tolerant: media- and foreign-shaped JSON must parse
+    /// Parse the block body. Tolerant: foreign-shaped JSON must parse
     /// without error (defaulting to an empty `viz`) so it is rejected by the
     /// [`VIZ_TAG`](Self::VIZ_TAG) check rather than logged as malformed.
     fn parse_body(body: &str) -> anyhow::Result<Self::Block>;
@@ -230,14 +223,13 @@ fn try_create<T: VizWidget>(body: &str, cx: &mut App) -> Option<CachedWidget> {
     }
 }
 
-/// A registered `viz`-discriminated widget factory. Media is handled
-/// separately in [`block_renderer`]; these cover the four `VizWidget` types.
+/// A registered `viz`-discriminated widget factory.
 type VizFactory = fn(&str, &mut App) -> Option<CachedWidget>;
 
 /// The ordered registry of `viz`-discriminated widget factories. Order
 /// matters only for bodies whose `viz` tag could match more than one widget;
-/// the four tags (`event_tree`, `kanban`, `portfolio`, `scenarios`) are
-/// disjoint, so order is arbitrary.
+/// the tags (`event_tree`, `kanban`, `portfolio`, `scenarios`,
+/// `swarm_delegate_results`) are disjoint, so order is arbitrary.
 fn viz_factories() -> &'static [VizFactory] {
     &[
         try_create::<GraphWidget>,
@@ -298,34 +290,21 @@ fn cache_key(body: &str) -> u64 {
 
 /// Build the composed D18 block renderer with entity caching.
 ///
-/// Tries the media renderer first (it self-selects on a JSON body with a
-/// `kind` field and needs a [`Window`]), then iterates the registered
-/// `viz`-discriminated widgets ([`viz_factories`]). Returns `None` for bodies
-/// claimed by none, so the default code-block renderer handles them. Ordering
-/// is intentional: media bodies (`{"kind": ...}`) are claimed by the media
-/// renderer before any `viz` widget sees them.
+/// Iterates the registered `viz`-discriminated widgets ([`viz_factories`]).
+/// Returns `None` for bodies claimed by none, so the default code-block
+/// renderer handles them.
 ///
-/// On a cache hit, the cached widget entity is reused — preserving audio/video
-/// playback position, graph pan/zoom/evidence state, and avoiding redundant
-/// file I/O across re-renders.
+/// On a cache hit, the cached widget entity is reused — preserving graph
+/// pan/zoom/evidence state and avoiding redundant work across re-renders.
 pub fn block_renderer() -> BlockRenderer {
     let factories = viz_factories();
-    Box::new(move |body, window, cx| {
+    Box::new(move |body, _window, cx| {
         let key = cache_key(body);
 
         // Cache hit — reuse the cached entity.
         let cached_element =
             VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
         if let Some(element) = cached_element {
-            return Some(element);
-        }
-
-        // Cache miss — try media first (discriminates on `kind`, needs `Window`),
-        // then the registered viz widgets (discriminate on `viz`).
-        if let Some(entity) = hkask_media_widget::create_media_widget(body, window, cx) {
-            let cached = CachedWidget::new(entity);
-            let element = cached.render();
-            VIZ_CACHE.with(|cache| cache.borrow_mut().insert(key, cached));
             return Some(element);
         }
 
@@ -353,7 +332,7 @@ mod tests {
 
     // Pins that the registry covers exactly the five `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
-    // one factory). The media widget is deliberately outside the registry.
+    // one factory).
     #[test]
     fn viz_factories_cover_five_widgets() {
         assert_eq!(viz_factories().len(), 5);

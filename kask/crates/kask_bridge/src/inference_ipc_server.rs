@@ -641,27 +641,6 @@ async fn dispatch(
             }
         }
     }
-    // which holds the registered `MediaProvider` backends. Unlike `ListModels`, the
-    // be called directly from the tokio task.
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "media router not configured on the zed side \
-                        — the IPC server was started without a media router. \
-                        This indicates a startup wiring bug."
-                        .to_string(),
-                },
-            };
-        };
-        let op = params.media_op.as_deref().unwrap_or("");
-        let result = dispatch_media(media, op, &params).await;
-        return match result {
-            Ok(value) => InferenceOutcome::Media { media: value },
-            Err(error) => InferenceOutcome::Error {
-                error: InferenceErrorPayload::from(error),
-            },
-        };
-    }
 
     // Tool dispatch requests route to the `McpRuntime` (as `ToolPort`) on the
     // zed side. The child MCP server (e.g. the swarm server's local delegate
@@ -894,59 +873,5 @@ async fn dispatch(
         Err(error) => InferenceOutcome::Error {
             error: InferenceErrorPayload::from(error),
         },
-    }
-}
-///
-/// `op` selects the backend method. The `InferenceParams` media_* fields
-/// carry the op-specific arguments; only the fields relevant to each op
-/// are read.
-async fn dispatch_media(
-    op: &str,
-    params: &hkask_types::inference_ipc::InferenceParams,
-) -> Result<serde_json::Value, InferenceError> {
-    match op {
-            let prompt = params.media_prompt.as_deref().unwrap_or("");
-            media
-                .await
-        }
-        "image_to_image" => {
-            let image_url = params.media_image_url.as_deref().unwrap_or("");
-            let prompt = params.media_prompt.as_deref().unwrap_or("");
-            media
-                .image_to_image(image_url, prompt, params.media_strength)
-                .await
-        }
-        "remove_background" => {
-            let image_url = params.media_image_url.as_deref().unwrap_or("");
-            media.remove_background(image_url).await
-        }
-        "upscale" => {
-            let image_url = params.media_image_url.as_deref().unwrap_or("");
-            media.upscale(image_url, params.media_scale).await
-        }
-            let prompt = params.media_prompt.as_deref().unwrap_or("");
-        }
-        "image_to_video" => {
-            let image_url = params.media_image_url.as_deref().unwrap_or("");
-            media
-                .image_to_video(
-                    image_url,
-                    params.media_prompt.as_deref(),
-                    params.media_duration,
-                )
-                .await
-        }
-            let text = params.media_text.as_deref().unwrap_or("");
-            let voice = params.media_voice.as_deref().unwrap_or("Rachel");
-        }
-        "transcribe" => {
-            let audio_url = params.media_audio_url.as_deref().unwrap_or("");
-            media
-                .transcribe(audio_url, params.media_language.as_deref())
-                .await
-        }
-        other => Err(InferenceError::Connection(format!(
-            "unknown media op: {other}"
-        ))),
     }
 }

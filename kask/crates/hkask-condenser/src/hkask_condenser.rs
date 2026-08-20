@@ -19,14 +19,14 @@
 //!     an ontology anchor using graph proximity — reusable by communication gates
 //!     and other callers independent of the compression pipeline.
 //! - **`ontology_graph`** — A lightweight cross-domain concept relationship
-//!   index (FIBO, SUMO, GOLEM, ML-Schema, OMC, PKO, DC+BIBO). Built once
+//!   index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO). Built once
 //!   at startup via `OnceLock`, zero dependencies, no reasoners. Used as a
 //!   saliency multiplier — lines containing concepts adjacent to the anchor
 //!   concept (e.g., "market_capitalization" when anchored to a FIBO corporation)
 //!   receive bonus scores.
 //! - **`types`** — Domain types: `OntologyAnchor` (3-tier classification),
 //!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Fibo/Golem/Sumo/
-//!   MlSchema/Omc), compression profiles, health signals.
+//!   MlSchema), compression profiles, health signals.
 //! - **`engine`** — `CondenserEngine` owns profile state and compression
 //!   dispatch. Selects an algorithm per compression via the static
 //!   `default_for()` mapping. Derives ontology anchors from tool names

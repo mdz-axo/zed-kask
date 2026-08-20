@@ -1,7 +1,7 @@
 //! Dual-axis domain-selection logic (P5.4 / P8.1).
 //!
 //! The two universal axes — state (Dublin Core) and process (PKO) — are
-//! always available. Domain supplements (FIBO, ESO, GOLEM, OMC, ML-Schema)
+//! always available. Domain supplements (FIBO, ESO, GOLEM, ML-Schema)
 //! layer on top where the universal axes aren't specific enough for a domain.
 //!
 //! The invariant (user directive 2026-08-05): one axis is always Dublin Core
@@ -56,8 +56,6 @@ pub enum OntologyNamespace {
     /// SDMX (Statistical Data and Metadata eXchange) — statistical data
     /// from FRED, DBnomics, World Bank, IMF, OECD, ECB, INSEE.
     Sdmx,
-    /// MovieLabs Ontology for Media Creation — media production.
-    Omc,
     /// SUMO (Suggested Upper Merged Ontology) — the universal upper ontology
     /// and fallback for domains that don't map to a specific supplement.
     /// Provides foundational categories (Entity, Process, Object, Agent).
@@ -73,7 +71,6 @@ impl OntologyNamespace {
             OntologyNamespace::Golem => dc_bibo::TEXT,
             OntologyNamespace::MlSchema => dc_bibo::DATASET,
             OntologyNamespace::Sdmx => dc_bibo::DATASET,
-            OntologyNamespace::Omc => dc_bibo::COLLECTION,
             OntologyNamespace::Sumo => dc_bibo::TEXT,
         }
     }
@@ -86,7 +83,6 @@ impl OntologyNamespace {
             OntologyNamespace::Golem => pko::PROCEDURE,
             OntologyNamespace::MlSchema => pko::PROCEDURE,
             OntologyNamespace::Sdmx => pko::PROCEDURE,
-            OntologyNamespace::Omc => pko::PROCEDURE_EXECUTION,
             OntologyNamespace::Sumo => pko::PROCEDURE,
         }
     }
@@ -101,7 +97,6 @@ impl std::str::FromStr for OntologyNamespace {
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
             "sdmx" => Ok(OntologyNamespace::Sdmx),
-            "omc" => Ok(OntologyNamespace::Omc),
             "sumo" => Ok(OntologyNamespace::Sumo),
             _ => Err(format!("Unknown ontology namespace: {s}")),
         }
@@ -116,7 +111,6 @@ impl std::fmt::Display for OntologyNamespace {
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
             OntologyNamespace::Sdmx => write!(f, "sdmx"),
-            OntologyNamespace::Omc => write!(f, "omc"),
             OntologyNamespace::Sumo => write!(f, "sumo"),
         }
     }
@@ -138,7 +132,7 @@ pub enum OntologyAnchor {
     /// Process axis (PKO) or state axis (DC+BIBO) — dual-axis framework (P5.4).
     /// `concept` is the canonical concept URI, e.g. "pko:StepExecution" or "bibo:Article".
     DualAxis { axis: OntologyAxis, concept: String },
-    /// Domain supplement — FIBO, ESO, GOLEM, ML-Schema, OMC, or SUMO (P8.1).
+    /// Domain supplement — FIBO, ESO, GOLEM, ML-Schema, or SUMO (P8.1).
     /// Layered on top of the dual-axis core for domain-specific precision.
     /// SUMO is the universal fallback for domains without a specific supplement.
     DomainSupplement {
@@ -177,7 +171,6 @@ impl OntologyAnchor {
                 OntologyNamespace::Eso => 1.0,
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
-                OntologyNamespace::Omc => 1.0,
                 OntologyNamespace::Sdmx => 1.1,
                 OntologyNamespace::Sumo => 1.0,
             },
@@ -313,28 +306,9 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::DATASET.to_string(),
         };
     }
-    // Media creation → OMC.
-    if [
-        "media", "image", "video", "audio", "gallery", "generate", "face",
-    ]
-    .iter()
-    .any(|kw| matches_kw(kw))
-    {
-        return OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Omc,
-            concept: dc_bibo::COLLECTION.to_string(),
-        };
-    }
     // Process workflows → PKO dual-axis.
     if [
-        "kanban",
-        "board",
-        "task",
-        "spec",
-        "skill",
-        "docproc",
-        "curator",
-        "kata",
+        "kanban", "board", "task", "spec", "skill", "docproc", "curator", "kata",
     ]
     .iter()
     .any(|kw| matches_kw(kw))

@@ -271,13 +271,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             let reason = if !chunk_namespaces.contains(&pred_ns)
                                 && matches!(
                                     pred_ns.as_str(),
-                                    "golem"
-                                        | "eso"
-                                        | "fibo"
-                                        | "pko"
-                                        | "epistemic"
-                                        | "omc"
-                                        | "other"
+                                    "golem" | "eso" | "fibo" | "pko" | "epistemic" | "other"
                                 ) {
                                 format!(
                                     "abstract namespace '{}' not in chunk ontology tags {:?} — confidence capped at 0.5",

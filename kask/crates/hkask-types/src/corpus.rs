@@ -118,7 +118,7 @@ pub struct ChunkOntology {
 ///
 /// Design: open-world ontology tagging.
 /// - 5W1H dimensions and Dublin Core are structural (every chunk has them)
-/// - Domain-specific ontologies (FIBO, GOLEM, OMC, PKO, etc.) are stored in
+/// - Domain-specific ontologies (FIBO, GOLEM, PKO, etc.) are stored in
 ///   `ontology_tags` — a flexible map keyed by namespace. Adding a new
 ///   ontology doesn't require changing this struct.
 /// - `concepts` is a convenience cache = union of all ontology_tags values.
@@ -171,7 +171,7 @@ pub struct TaggedChunk {
     // ── Flexible ontology tags (open-world) ──────────────────────────────
     /// Domain-specific ontology concepts, keyed by namespace.
     /// Examples:
-    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"], "omc": ["scene"], "pko": ["analysis"]}
+    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"], "pko": ["analysis"]}
     ///
     /// Adding a new ontology is just a new key — no struct change needed.
     /// The tagging LLM determines which ontologies are relevant per passage.

@@ -728,17 +728,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_ontology_omc_for_media_tools() {
-        assert_eq!(
-            derive_ontology_anchor("generate_image"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Omc,
-                concept: dc_bibo::COLLECTION.to_string()
-            }
-        );
-    }
-
-    #[test]
     fn derive_ontology_sumo_for_unknown_tools() {
         // Unknown tools route to SUMO (the universal fallback), not Core.
         assert_eq!(
@@ -1059,35 +1048,6 @@ mod tests {
         let has_financial =
             result.contains("revenue") || result.contains("P/E") || result.contains("market cap");
         assert!(has_financial, "financial content not preserved: {result}");
-    }
-
-    /// Verify the condenser classifies media-tool names as OMC (MovieLabs
-    /// Ontology for Media Creation). The media MCP server now emits OMC concept
-    /// tags in its `display_hint` blocks (see `hkask-mcp-media/src/omc.rs`),
-    /// and the condenser's `derive_ontology_anchor` must classify the same
-    /// media-tool name prefixes into `OntologyNamespace::Omc` so the condenser
-    /// and the widget agree on the ontology namespace.
-    #[test]
-    fn derive_ontology_anchor_classifies_media_tools_as_omc() {
-        for tool in [
-            "generate_image",
-            "generate_video",
-            "video_clip",
-            "image_to_video",
-            "gallery_search",
-            "gallery_find_similar",
-            "face_register",
-        ] {
-            let anchor = derive_ontology_anchor(tool);
-            assert_eq!(
-                anchor,
-                OntologyAnchor::DomainSupplement {
-                    namespace: OntologyNamespace::Omc,
-                    concept: dc_bibo::COLLECTION.to_string()
-                },
-                "media tool '{tool}' must classify as OMC"
-            );
-        }
     }
 
     // ── Property-based tests (Wave 2) ─────────────────────────────────────

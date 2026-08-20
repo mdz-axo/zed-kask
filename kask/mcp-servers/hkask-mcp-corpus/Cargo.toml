@@ -6,6 +6,7 @@ license.workspace = true
 description = "Unified corpus MCP server — gather, process, and output: document conversion, OCR, chunking, tagging, embedding, QA generation, training data, style replicas, and prose composition"
 
 [dependencies]
+tempfile.workspace = true
 # Shared infrastructure
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true

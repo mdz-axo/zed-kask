@@ -1515,8 +1515,8 @@ pub struct MarkdownElement {
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     // zed-kask: D18 — media block renderer. If registered, called for every
     // fenced code block. Returns Some(div) to intercept the block (e.g. for
-    // ```media blocks), or None to fall through to the default renderer.
-    // The actual renderer implementation lives in crates/hkask-media-widget.
+    // viz blocks), or None to fall through to the default renderer.
+    // The actual renderer implementation lives in crates/hkask-viz-core.
     media_block_renderer: Option<MediaBlockRendererFn>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,

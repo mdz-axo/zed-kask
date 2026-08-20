@@ -482,7 +482,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                 Ok(TrainingServer::new(
                     ctx.webid,
-                    Arc::new(hkask_verification::VerificationStore::open()),
                     store,
                     host,
                     host_config.host,

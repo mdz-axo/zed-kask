@@ -724,7 +724,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             Ok(CorpusServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
                 ocr_model,
                 inference_port,
                 ocr_thresholds,

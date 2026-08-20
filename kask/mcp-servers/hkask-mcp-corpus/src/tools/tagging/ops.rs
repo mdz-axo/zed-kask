@@ -48,7 +48,7 @@ struct OntologyTags {
     /// Dublin Core subject keywords.
     #[serde(default)]
     dc_subject: Vec<String>,
-    /// Flexible ontology tags keyed by namespace (e.g., "fibo", "golem", "omc", "pko", "other").
+    /// Flexible ontology tags keyed by namespace (e.g., "fibo", "golem", "pko", "other").
     #[serde(default)]
     ontology_tags: std::collections::HashMap<String, Vec<String>>,
     /// Expertise level — deserialized via `ExpertiseLevel`'s custom serde,

@@ -625,7 +625,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             Ok(PortfolioServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
                 PortfolioStore::new(ctx.webid)?,
             ))
         },
