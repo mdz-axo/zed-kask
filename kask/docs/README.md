@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-08-20
-version: "0.37.0"
+version: "0.38.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -57,7 +57,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document                                                                                   | Description                                                                   |
 | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition, and the five composition principles (determinism frontier, persistence-grounded learning, failure surfacing, lisp scaffold, co-evolution loop).                                       |
-| [`explanation/skill-mcp-integration.md`](explanation/skill-mcp-integration.md)           | How flowdef steps invoke MCP tools natively via `action: execute` — the two invocation patterns, the action dispatch table, and the three co-evolution feedback loops. |
+| [`explanation/skill-mcp-integration.md`](explanation/skill-mcp-integration.md)           | How skills invoke MCP tools via the agent's tool-use loop — the model-coordinated invocation pattern and the three co-evolution feedback loops. |
 | [`explanation/memory-system.md`](explanation/memory-system.md)                             | **Memory system** — why vector + relational, the entity_ref bug, decay model. |
 | [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.                              |
 | [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md)             | Scenario forecasting, ν-event semantics, Companies server.                    |

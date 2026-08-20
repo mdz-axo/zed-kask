@@ -63,7 +63,6 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 | Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | **The authority gate for delegated dispatch.** Refuses any `server/tool` outside the child-declared allowlist, before dispatch |
 | Per-agent `mcp_tools` allowlist | `hkask-mcp-swarm/src/agent_executor.rs:238,340` | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
-| FIDES `Source`→`Sink` runtime policy check | ~~`hkask-templates/src/step_actions.rs` `invoke_tool`~~ (crate deleted, commit 5f4cf5f10d) | **Absent by decision (RR-0053)** — Defense Layer 5 (information-flow control) is not implemented. The former check lived in the deleted `hkask-templates` crate; both its inputs were constants (every tool labelled `Pure`, untrusted-input flag read markers the write path had stopped emitting), so it could not deny. Treat every tool path as taint-unaware. See PRINCIPLES.md P4.2 |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager`, charged in `McpRuntime::invoke` | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
 > **Removed 2026-08-12 — `McpRuntime::invoke` is NOT an authorization gate.**
@@ -205,7 +204,7 @@ Within boundaries, hKask is maximally generative. This is not a ban on constrain
 
 ### Settings Exposure
 
-Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. After the in-process pivot, the user-facing inference settings surface is zed's `KaskSettings` (D9a), which configures the `LanguageModelInferencePort` in `kask_bridge` over zed's `LanguageModelRegistry`. Whatever providers the user has configured in zed (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) are the providers hKask uses. The old `InferenceRouter` with 9 hard-coded providers is gone; it survives only as an MCP-server-internal detail of `hkask-inference` and is not exposed to in-process surfaces. (The former `GuardedInferencePort` wrapper was removed 2026-08-10 when the `hkask-guard` crate was deleted.)
+Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. After the in-process pivot, the user-facing inference settings surface is zed's `KaskSettings` (D9a), which configures the `LanguageModelInferencePort` in `kask_bridge` over zed's `LanguageModelRegistry`. Whatever providers the user has configured in zed (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) are the providers hKask uses. The old `InferenceRouter` with 9 hard-coded providers is gone; it survives only as an MCP-server-internal detail of `hkask-inference` and is not exposed to in-process surfaces.
 
 ### No Privileged Engineer Access
 

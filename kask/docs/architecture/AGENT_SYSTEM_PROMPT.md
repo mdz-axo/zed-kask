@@ -196,16 +196,10 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 - **zed-kask** `:46-47`: copy the ` ```media ` block from a `display_hint` /
   `display_hints` tool-result field verbatim into the reply.
 - **Upstream** has neither bullet.
-- **Why load-bearing (historical):** the former
-  `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:44-51` built the hint
-  body as pure JSON (`kind`, `src`, `ontology`, `provenance`) with **no
-  self-describing instruction**. The `hkask-mcp-media` MCP server was deleted
-  (commit `26215d845e`); no surviving MCP server emits `display_hint` /
-  `display_hints` fields. The media block *renderer* survives in
+- **Why load-bearing:** the media block *renderer* lives in
   `hkask_viz_core::block_renderer()` (wired at
   `crates/agent_ui/src/conversation_view.rs:3516`), so the prompt bullets
-  remain live for any future tool that emits the ` ```media ` fenced block.
-  This was evaluated for deletion and rejected on that evidence.
+  remain live for any tool that emits the ` ```media ` fenced block.
 
 ### 5.5 `## Agent Skills` — body injection (D1)
 
@@ -225,9 +219,8 @@ Upstream's step 4 instructs precisely the behaviour zed-kask's `:250` prohibits.
 disclosure*: only `name` and `description` are preloaded into the system prompt, and
 the `SKILL.md` body loads only when judged relevant[^anthropic-skills]. zed-kask
 keeps the catalog-in-prompt half and injects the body via the `skill` tool when the
-model invokes it. The prior manifest-cascade model (`ManifestExecutor`, `StepMachine`,
-FlowDef) was deleted (commit `5f4cf5f10d`); skill execution is now upstream-Zed body
-injection via `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`).
+model invokes it. Skill execution is upstream-Zed body injection via `SkillTool::run`
+(`crates/agent/src/tools/skill_tool.rs:266`).
 
 **The cost of being one step ahead** is that the model's trained prior — every
 other major agent system loads skill bodies as prose — actively pushes against the

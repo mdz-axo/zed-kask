@@ -2,7 +2,7 @@
 title: "Swarm Server Class Diagram"
 audience: [architects, developers]
 last_updated: 2026-08-20
-version: "1.0.3"
+version: "1.0.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -13,22 +13,12 @@ mds_categories: [domain, composition, trust]
 The `hkask-mcp-swarm` server (`SwarmServer`) exposes 52 tools (27 ABW + 25
 local) — both sets always registered; `kask.swarm.mode` selects the substrate,
 not the surface — pinned by
-`tool_surface_is_exactly_52_registered_tools` (`hkask_mcp_swarm.rs`). `SwarmServer` composes five collaborators:
+`tool_surface_is_exactly_52_registered_tools` (`hkask_mcp_swarm.rs`). `SwarmServer` composes four collaborators:
 the ABW REST client, the consent store (real-time spend gate with TTL), the
-local agent registry, the lazily-initialized local runtime, and the central
-verification store (grounding ledger). The spend gate
+local agent registry, and the lazily-initialized local runtime. The spend gate
 consumes consent grants before any debit; the local runtime owns the
 debit-before-return invariant (it debits the ledger, then `AgentExecutor`
 returns the result so a failed delegation still costs credits).
-
-> **Note (2026-08-20):** The `hkask-verification` crate (which provided
-> `VerificationStore`, `enforce_grounding`, and `enforce_and_stamp`) was
-> deleted (commit `9e9c41ef3c`). The "central verification store (grounding
-> ledger)" collaborator and the `enforce_and_stamp()` grounding enforcement
-> step documented above are no longer wired. The `AgentExecutor`,
-> `ConsentStore`, `LocalSwarmRuntime`, and `A2A` collaborators survive. The
-> `AgentExecutor.skill_exec: SkillExecPort` field is also stale — the
-> `SkillExecPort` trait is dead code pending removal (see `DIVERGENCE.md` D1).
 
 The A2A layer
 wraps the existing `delegate` in protocol-compliant types over the in-process
