@@ -65,7 +65,7 @@ No prior review — this is a first pass. Scope from scratch.
 ## Step 1 — Compute the real diff (do not estimate)
 
 Run real git commands (the agent executes these between template calls; in a
-pure FlowDef invocation, the orchestrator provides the diff output):
+pure skill invocation, the orchestrator provides the diff output):
 
 ```
 git --no-pager diff {{ diff_base }}...HEAD --stat

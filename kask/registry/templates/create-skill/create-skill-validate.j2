@@ -43,16 +43,16 @@ from the canonical validator, promote it there in a separate change.
 ## Step 1 — Registry Checks (R1-R12)
 
 Validate:
-- R1: manifest.yaml exists — FlowDef manifest at `registry/manifests/<name>.yaml` AND crate manifest at `registry/templates/<name>/manifest.yaml`.
+- R1: manifest.yaml exists — process manifest at `registry/manifests/<name>.yaml` AND crate manifest at `registry/templates/<name>/manifest.yaml`.
 - R2: Crate metadata valid — `crate.name`, `crate.version`, `crate.description` all present.
 - R3: Templates list non-empty — at least one entry in the `templates` array.
 - R4: Template entry valid — each entry has `id`, `path`, `type`, `description`.
-- R5: template_type valid — each .j2 `template_type` in {WordAct, KnowAct, FlowDef}.
+- R5: template_type valid — each .j2 `template_type` in {WordAct, KnowAct, FlowDef} (deprecated — act types no longer enforced).
 - R6: Contract valid — each .j2 has `contract.input` and `contract.output` with typed fields.
 - R8: Visibility valid — each .j2 `visibility` in {Private, Public, Shared}.
 - R9: .j2 file exists — each template entry's `path` resolves to an actual .j2 file.
 - R10: [inference] frontmatter valid — each .j2 starts with an `[inference]` block.
-- R11: template_type valid — all templates declare a valid `template_type` (KnowAct, WordAct, FlowDef, RenderAct).
+- R11: template_type valid — all templates declare a valid `template_type` (KnowAct, WordAct, FlowDef, RenderAct) (deprecated — act types no longer enforced).
 - R12: Jinja2 body present — each .j2 has a template body after the `---` separator.
 
 ## Step 2 — Companion Checks (Z1-Z8)
@@ -82,12 +82,12 @@ template delegates to it). Keep the two enumerations in sync — same ID,
 same meaning — or fix suggestions will reference the wrong check.
 
 Validate:
-- E1: Action compliance — every step's `action` is canonical (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). No non-canonical actions.
+- E1: Action compliance — every step's `action` is canonical (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). No non-canonical actions. (Note: `flowdef` action is deprecated.)
 - E2: rJoule block present — `rjoule:` block; `rjoule.cap` > 0 if any step uses `action: select` (inference).
 - E3: Convergence block — for `category: skill`: `convergence:` with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` (abort or escalate). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`.
 - E4: Category valid — `manifest.category` is one of: skill, qa-script, runtime-config, daemon-process, pipeline.
 - E5: Template ref resolvable — every `template_ref` resolves to an embedded `.j2` or `.yaml` in `registry/templates/`.
-- E8: Sub-manifest budgets — any `template_ref` to a `.yaml` sub-manifest (FlowDef recursion) has `rjoule` block.
+- E8: Sub-manifest budgets — any `template_ref` to a `.yaml` sub-manifest (deprecated FlowDef recursion) has `rjoule` block.
 - E9: Step description — every step has a non-empty `description` field.
 - E10: Ordinal sequence — step ordinals are sequential starting from 1 (or 0 for pre-processing steps).
 - E11: Ledger span namespace — `ledger.span_namespace` present and equals `reg.skill.<manifest.id>`; no abolished `spans:` list.

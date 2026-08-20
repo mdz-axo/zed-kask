@@ -126,7 +126,6 @@ property `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads
 
 - [Skill ↔ MCP ↔ Lisp Architecture](./architecture-skill-mcp-lisp-seam.md) — the three-surface seam
 - [MCP Runtime Invoke — Metering and Dispatch Flow](./flowchart-mcp-runtime-invoke.md) — the metering detail
-- [Skill Invocation Flowchart](./flowchart-skill-invocation.md) — the `execute` step's caller path
 - [Credential Resolution ERD](./erd-credential-resolution.md) — the credential chain that feeds `McpRuntime`
 
 <!-- DIAGRAM_ALIGNMENT

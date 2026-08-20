@@ -58,7 +58,7 @@ The user has provided edits or constraints to incorporate:
 1. Make the minimal set of changes that resolves the valid concerns while preserving the goal.
 2. Keep the `[inference]` frontmatter structure intact if revising a `.j2` file.
 3. Do not introduce new vocabulary terms unless they are in `crates/hkask-templates/src/vocabulary.rs` `KNOWN_TERMS`.
-4. If the target is a `FlowDef`, ensure it calls constituent templates by id rather than duplicating their logic.
+4. If the target is a process manifest, ensure it calls constituent templates by id rather than duplicating their logic.
 5. Prefer explicit, typed contracts over prose where possible.
 6. If `user_counter_proposal` is present, merge it unless it conflicts with the goal.
 

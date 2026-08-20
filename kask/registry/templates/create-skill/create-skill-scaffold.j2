@@ -47,7 +47,7 @@ templates:
   - id: <skill_name>/<phase-1>
     name: "<phase description>"
     path: <phase-1>.j2
-    type: KnowAct
+    # type: KnowAct  # DEPRECATED — act types removed; no longer used
     description: >
       <phase description>
     generates_spans:
@@ -56,11 +56,11 @@ templates:
     # (e.g. reg.bughunt.oracle), NOT the ledger namespace. The ledger
     # span_namespace (reg.skill.<id>) lives in the process manifest below.
   # ... one entry per phase ...
-  # Reference documents (RenderAct type) if any:
+  # Reference documents (deprecated RenderAct type) if any:
   - id: <skill_name>/<reference-name>
     name: "Reference: <description>"
     path: <reference-name>.yaml
-    type: RenderAct
+    # type: RenderAct  # DEPRECATED — act types removed; no longer used
     description: >
       <reference description>
 ```
@@ -143,7 +143,7 @@ Produce a JSON object with: <output fields>.
 {% endraw %}
 ```
 
-For reference documents (RenderAct), generate .yaml files (no [inference] frontmatter).
+For reference documents (deprecated RenderAct type), generate .yaml files (no [inference] frontmatter).
 
 ## Step 3 — Generate Process Manifest
 
@@ -164,7 +164,7 @@ manifest:
   name: <Skill Name>
   description: >
     <full description>
-  functional_role: flowdef
+  # functional_role: flowdef  # DEPRECATED — flowdef terminology removed
   version: 0.36.0
   editor: curator-or-human-admin
   visibility: Public

@@ -40,13 +40,13 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 
 ## Translation Rules
 
-1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct), description.
+1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct — deprecated), description.
 2. **Templates** — Produce one `.j2` file per classified step:
-   - Cognitive steps → KnowAct `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
-   - Workflow steps → WordAct (transformation) or FlowDef (dispatch/routing) `.j2` with same structure.
-   - Reference content → RenderAct `.j2` or `.yaml` (no inference).
+   - Cognitive steps → KnowAct (deprecated) `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
+   - Workflow steps → WordAct (deprecated, transformation) or FlowDef (deprecated, dispatch/routing) `.j2` with same structure.
+   - Reference content → RenderAct (deprecated) `.j2` or `.yaml` (no inference).
    - Guardrails → Encoded as `visibility` and constraints in `.j2` body.
-3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` FlowDef cascade with:
+3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` process manifest with:
    - `manifest.category: skill` (or `pipeline`/`runtime-config` for non-agent infrastructure)
    - `convergence:` block (threshold 0.05-0.30, max_iterations, min_iterations, convergence_field, on_not_reached)
    - `rjoule:` block (cap proportional to inference calls, alert_threshold, hard_limit)
@@ -56,20 +56,20 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 5. **Consent model** — hKask uses capability matching. User-confirmation gates → `.j2` contract visibility.
 6. **Observability** — Map to Regulation span references in `.j2` body.
 7. **Domain references** — Substitute using the domain substitution table.
-8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct. visibility MUST be Private/Public/Shared. 
+8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct (deprecated). visibility MUST be Private/Public/Shared. 
 
 ### Source Action → Canonical Action Mapping
 
 | Source Action | Canonical Action | Notes |
 |---------------|-----------------|-------|
 | `call`, `invoke`, `execute_tool` | `execute` | MCP tool invocation (requires `mcp:` field) |
-| `classify`, `infer`, `generate`, `select_tool` | `select` | KnowAct: render `.j2` + inference + JSON parse |
-| `render_template`, `format`, `compose` | `populate` | WordAct: render `.j2` without inference |
+| `classify`, `infer`, `generate`, `select_tool` | `select` | render `.j2` + inference + JSON parse |
+| `render_template`, `format`, `compose` | `populate` | render `.j2` without inference |
 | `validate_contract`, `check`, `verify` | `validate` | MCP tool validation |
 | `emit`, `record`, `log` | `feedback` | MCP tool Regulation feedback |
 | `recall`, `retrieve`, `search`, `extract` | `retrieve` | MCP tool data retrieval |
-| `index`, `register` | `populate` | WordAct: deterministic registration |
-| `evaluate` (deprecated) | `select` or `flowdef` | Use `select` for KnowAct, `flowdef` for recursion |
+| `index`, `register` | `populate` | deterministic registration |
+| `evaluate` (deprecated) | `select` or `flowdef` | Use `select` for inference, `flowdef` for recursion (deprecated) |
 | `run_command` | `execute` | Map shell commands to MCP tool dispatch |
 | `mcp_tool` | `execute` | Direct MCP tool invocation |
 | `centroid`, `coordinate`, `curator_escalation` | `feedback` or `escalate` | Map to feedback or escalate control flow |
@@ -78,8 +78,8 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 
 | Skill complexity | Step count | rjoule.cap |
 |-----------------|-----------|---------|------------|
-| Simple KnowAct | 1-3 | 1-2 |
-| Multi-step FlowDef | 4-7 | 3-5 |
+| Simple (1-2 templates) | 1-3 | 1-2 |
+| Multi-step process | 4-7 | 3-5 |
 | Media generation | 5+ | 5+ |
 | Infrastructure (no inference) | any | 0 |
 
@@ -121,7 +121,7 @@ crate:
 templates:
   - id: <skill-name>/<template-id>
     path: <template-id>.j2
-    type: KnowAct | WordAct | FlowDef
+    type: KnowAct | WordAct | FlowDef  # deprecated — act types no longer used
     description: <one-line>
 vocabulary_terms: [term, ...]
 ```
@@ -190,11 +190,11 @@ Respond with a JSON object:
 ## Constraints
 
 - The primary deliverable is the registry crate (manifest.yaml + .j2 templates) plus the process manifest (registry/manifests/<name>.yaml). SKILL.md is derived from them.
-- `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct — never Cognition, Prompt, or Process.
+- `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct (deprecated) — never Cognition, Prompt, or Process.
 - `visibility` must be Private, Public, or Shared.
-- `template_type` must be one of KnowAct, WordAct, FlowDef, RenderAct.
+- `template_type` must be one of KnowAct, WordAct, FlowDef, RenderAct (deprecated).
 - `contract.input` and `contract.output` must be structured JSON types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).
+- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). (Note: `flowdef` action is deprecated.)
 - The process manifest must have a `rjoule:` block with `cap > 0` if any step uses inference.
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select`.
 - The process manifest must have a `convergence:` block (for `category: skill`).

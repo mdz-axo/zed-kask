@@ -66,13 +66,13 @@ Set up for later error analysis:
 - When should this be evaluated?
 
 ### Regulation Integration
-The flow engine automatically emits Regulation spans during WordAct execution:
+The flow engine automatically emits Regulation spans during template execution:
 - hkask.template.select (pipeline/template selection — engine-managed)
 - hkask.template.render (template execution — engine-managed)
 - hkask.template.outcome (forecast recorded — engine-managed)
 
-These spans are declared at the FlowDef level (reg.emit_spans: true) and
-require no explicit reg_spans declaration on this WordAct step.
+These spans are declared at the skill level (reg.emit_spans: true) and
+require no explicit reg_spans declaration on this step.
 
 ## Output
 
