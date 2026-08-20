@@ -639,7 +639,6 @@ mod tests {
         let filtered = filter_config_env_for_server("curator", &config_env);
         assert!(filtered.contains_key("HKASK_SMTP_USERNAME"));
         assert!(filtered.contains_key("HKASK_MXROUTE_SERVER"));
-        assert!();
     }
 
     // Unknown server IDs fail closed: no config env is injected.
@@ -732,7 +731,6 @@ mod tests {
             !filtered.contains_key("HKASK_SMTP_USERNAME"),
             "swarm server must not receive curator email config"
         );
-        assert!();
     }
 
     // The under-granting direction: every env var the swarm server actually
