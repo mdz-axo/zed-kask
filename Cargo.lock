@@ -17,22 +17,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ab_glyph"
-version = "0.2.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
-dependencies = [
- "ab_glyph_rasterizer",
- "owned_ttf_parser",
-]
-
-[[package]]
-name = "ab_glyph_rasterizer"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
-
-[[package]]
 name = "accesskit"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7753,17 +7737,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geo-types"
-version = "0.7.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94776032c45f950d30a13af6113c2ad5625316c9abfbccee4dd5a6695f8fe0f5"
-dependencies = [
- "approx 0.5.1",
- "num-traits",
- "serde",
-]
-
-[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9324,33 +9297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-mcp-codegraph"
-version = "0.35.0"
-dependencies = [
- "blake3",
- "hkask-bridge-ontology",
- "hkask-inference",
- "hkask-mcp-server",
- "hkask-test-harness",
- "hkask-types",
- "hkask-verification",
- "proptest",
- "rmcp",
- "rusqlite",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "sqlite-vec",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tree-sitter",
- "tree-sitter-rust",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "hkask-mcp-companies"
 version = "0.35.0"
 dependencies = [
@@ -9378,29 +9324,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zed-reqwest",
-]
-
-[[package]]
-name = "hkask-mcp-condenser"
-version = "0.35.0"
-dependencies = [
- "anyhow",
- "hkask-bridge-ontology",
- "hkask-condenser",
- "hkask-inference",
- "hkask-mcp-server",
- "hkask-memory",
- "hkask-storage",
- "hkask-test-harness",
- "hkask-types",
- "hkask-verification",
- "proptest",
- "rmcp",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -9487,36 +9410,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "hkask-mcp-media"
-version = "0.35.0"
-dependencies = [
- "ab_glyph",
- "base64 0.22.1",
- "hkask-bridge-ontology",
- "hkask-inference",
- "hkask-mcp-server",
- "hkask-storage",
- "hkask-templates",
- "hkask-types",
- "hkask-verification",
- "image",
- "minijinja",
- "nom-exif",
- "rmcp",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -10832,16 +10725,6 @@ name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
-
-[[package]]
-name = "iso6709parse"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5090db9c6a716d1f4eeb729957e889e9c28156061c825cbccd44950cf0f3c66"
-dependencies = [
- "geo-types",
- "nom 7.1.3",
-]
 
 [[package]]
 name = "itertools"
@@ -13471,21 +13354,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nom-exif"
-version = "3.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7626860345adaf20c0d82b185ec8fc6285707c9fad9b4299c5ffa1581f6b009"
-dependencies = [
- "bytes 1.11.1",
- "chrono",
- "iso6709parse",
- "nom 8.0.0",
- "regex",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
 name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14624,15 +14492,6 @@ name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
-
-[[package]]
-name = "owned_ttf_parser"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
-dependencies = [
- "ttf-parser",
-]
 
 [[package]]
 name = "p256"

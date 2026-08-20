@@ -307,11 +307,8 @@ members = [
     "kask/mcp-servers/hkask-mcp-scenarios",
     "kask/mcp-servers/hkask-mcp-prediction-markets",
     "kask/mcp-servers/hkask-mcp-research",
-    "kask/mcp-servers/hkask-mcp-codegraph",
-    "kask/mcp-servers/hkask-mcp-condenser",
     "kask/mcp-servers/hkask-mcp-curator",
     "kask/mcp-servers/hkask-mcp-kata-kanban",
-    "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
     "kask/mcp-servers/hkask-mcp-portfolio",
@@ -914,11 +911,8 @@ hkask-services-core = { path = "kask/crates/hkask-services-core" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-scenarios = { path = "kask/mcp-servers/hkask-mcp-scenarios" }
 hkask-mcp-research = { path = "kask/mcp-servers/hkask-mcp-research" }
-hkask-mcp-codegraph = { path = "kask/mcp-servers/hkask-mcp-codegraph" }
-hkask-mcp-condenser = { path = "kask/mcp-servers/hkask-mcp-condenser" }
 hkask-mcp-curator = { path = "kask/mcp-servers/hkask-mcp-curator" }
 hkask-mcp-kata-kanban = { path = "kask/mcp-servers/hkask-mcp-kata-kanban" }
-hkask-mcp-media = { path = "kask/mcp-servers/hkask-mcp-media" }
 hkask-mcp-training = { path = "kask/mcp-servers/hkask-mcp-training" }
 hkask-mcp-companies = { path = "kask/mcp-servers/hkask-mcp-companies" }
 hkask-mcp-corpus = { path = "kask/mcp-servers/hkask-mcp-corpus" }
