@@ -35,11 +35,11 @@ use hkask_types::inference_ipc::{
     INFERENCE_SOCKET_ENV, InferenceMethod, InferenceOutcome, InferenceParams, InferenceRequest,
     InferenceResponse,
 };
+use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, InferenceStreamChunk, SkillExecPort, ToolDispatchPort,
+    InferenceResult, InferenceStreamChunk, ToolDispatchPort,
 };
-use hkask_types::template::LLMParameters;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
@@ -503,84 +503,6 @@ impl InferenceIpcClient {
         }
     }
 
-    /// Execute an hKask skill cascade on the zed side via the IPC bridge.
-    ///
-    /// `name` is the skill id (e.g. "grill-me"), `task` the text the cascade
-    /// acts on. The zed process runs the skill through its global
-    /// `ManifestExecutor` (call-cap/OCAP enforcement on that side). Returns the
-    /// cascade's final output text.
-    pub async fn execute_skill(&self, name: &str, task: &str) -> Result<String, InferenceError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::SkillExecute,
-            params: InferenceParams {
-                skill_name: Some(name.to_string()),
-                skill_task: Some(task.to_string()),
-                ..Default::default()
-            },
-        };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
-
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
-            }
-        };
-
-        let Some(line) = line else {
-            *guard = None;
-            return Err(InferenceError::Connection(
-                "IPC socket closed by server".into(),
-            ));
-        };
-
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
-            }
-        };
-
-        if response.id != id {
-            *guard = None;
-            return Err(InferenceError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            )));
-        }
-
-        match response.outcome {
-            InferenceOutcome::SkillResult { result } => Ok(result),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            other => Err(InferenceError::Connection(format!(
-                "received non-skill-execute outcome for a skill-execute request: {other:?}"
-            ))),
-        }
-    }
-
     /// Create a sibling agent thread in a new git worktree workspace on the
     /// zed side. The thread runs in an isolated worktree (separate from the
     /// user's working tree). Used by `kanban_task_spawn` to isolate spawned
@@ -784,7 +706,6 @@ impl InferencePort for InferenceIpcClient {
                 .collect())
         })
     }
-
 }
 
 impl ToolDispatchPort for InferenceIpcClient {
@@ -801,24 +722,6 @@ impl ToolDispatchPort for InferenceIpcClient {
         let tool = tool.to_string();
         let allowed = allowed.to_vec();
         Box::pin(async move { self.invoke_tool(&server, &tool, args, &allowed).await })
-    }
-}
-
-impl SkillExecPort for InferenceIpcClient {
-    fn execute_skill<'a>(
-        &'a self,
-        name: &'a str,
-        task: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<String, hkask_types::SkillExecError>> + Send + 'a>,
-    > {
-        let name = name.to_string();
-        let task = task.to_string();
-        Box::pin(async move {
-            self.execute_skill(&name, &task)
-                .await
-                .map_err(hkask_types::SkillExecError::from)
-        })
     }
 }
 

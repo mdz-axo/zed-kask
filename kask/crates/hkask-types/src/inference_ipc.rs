@@ -81,14 +81,11 @@ pub enum InferenceMethod {
     Embed,
     /// List available models from zed's `LanguageModelRegistry`.
     /// The result is returned as `InferenceOutcome::ModelList`.
-    ListModels,    /// Invoke a governed MCP tool on the zed side (`ToolDispatchPort`).
+    ListModels,
+    /// Invoke a governed MCP tool on the zed side (`ToolDispatchPort`).
     /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
     /// The result is returned as `InferenceOutcome::ToolResult`.
     ToolInvoke,
-    /// Execute an hKask skill cascade on the zed side (`SkillExecPort`).
-    /// Uses `skill_name`, `skill_task` from `InferenceParams`. The result is
-    /// returned as `InferenceOutcome::SkillResult`.
-    SkillExecute,
     /// Create a sibling agent thread in a new git worktree workspace. Uses
     /// `worktree_prompt`, `worktree_title`, `worktree_name`, `worktree_base_ref`
     /// from `InferenceParams`. The result is returned as
@@ -148,11 +145,6 @@ pub struct InferenceParams {
     /// protocol violation, never an implicit grant-all.
     #[serde(default)]
     pub tool_allowlist: Option<Vec<String>>,
-    // ── Skill execution fields (for `InferenceMethod::SkillExecute`) ──
-    /// Skill id to execute (e.g. "grill-me").
-    pub skill_name: Option<String>,
-    /// Task text the skill cascade acts on.
-    pub skill_task: Option<String>,
     // ── Worktree thread fields (for `InferenceMethod::CreateWorktreeThread`) ──
     /// The initial prompt for the new agent thread.
     #[serde(default)]
@@ -212,19 +204,9 @@ pub enum InferenceOutcome {
         #[serde(rename = "tool_result")]
         result: serde_json::Value,
     },
-    /// Skill execution result from `InferenceMethod::SkillExecute`.
-    /// The value is the cascade's final output text. The key is
-    /// `skill_result` (distinct from `result`/`tool_result` for the same
-    /// untagged-enum reason).
-    SkillResult {
-        #[serde(rename = "skill_result")]
-        result: String,
-    },
     /// Worktree thread creation result from
     /// `InferenceMethod::CreateWorktreeThread`. The value is the new
-    /// thread's id + worktree path. The key is `worktree_thread` (distinct
-    /// from `result`/`tool_result`/`skill_result` for the untagged-enum
-    /// reason).
+    /// thread's id + worktree path.
     WorktreeThread {
         #[serde(rename = "worktree_thread")]
         thread: WorktreeThreadInfo,

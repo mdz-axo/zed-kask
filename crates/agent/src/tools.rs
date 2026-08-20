@@ -148,10 +148,10 @@ pub use list_directory_tool::*;
 pub use move_path_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
-pub use render_template_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+pub use template_render_tool::*;
 
 pub use terminal_tool::*;
 pub use tool_permissions::*;
@@ -276,6 +276,7 @@ tools! {
     RenameTool,
     SkillTool,
     SpawnAgentTool,
+    TemplateRenderTool,
     TerminalTool,
     WebSearchTool,
     WriteFileTool,
