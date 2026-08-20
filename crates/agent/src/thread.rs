@@ -2506,6 +2506,7 @@ impl Thread {
         ));
         self.add_tool(WebSearchTool);
         self.add_tool(LispEvalTool);
+        self.add_tool(TemplateRenderTool::new(self.project.read(cx).fs().clone()));
 
         self.add_tool(AskUserTool);
 

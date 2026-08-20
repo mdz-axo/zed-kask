@@ -40,10 +40,6 @@
 //!   delegate) so a delegated agent can call MCP tools that live in the parent
 //!   process. The zed side mints the OCAP panel token — the child never holds
 //!   token material.
-//! - `skill_execute` — run an hKask skill cascade on the zed side
-//!   (`SkillExecPort`, backed by the global `ManifestExecutor`); used by MCP
-//!   servers so a delegated agent's declared `skills` execute with the
-//!   executor's own enforcement.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.

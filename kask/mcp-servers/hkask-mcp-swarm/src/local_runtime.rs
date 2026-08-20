@@ -63,7 +63,6 @@ impl LazyLocalSwarmRuntime {
             })
             .await
     }
-
 }
 
 /// The initialized local swarm runtime — ledger + agent executor.
@@ -122,13 +121,12 @@ impl LocalSwarmRuntime {
         // runtime construction seam, mirroring the other kask MCP servers.
         let inference = hkask_inference::resolve_inference_port().await;
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
-        let skill_exec = hkask_inference::resolve_skill_exec_port().await;
-        // Resolve the skill-corpus directory for `AgentExecutor`'s Slice-6
+        // Resolve the skill-corpus directory for `AgentExecutor`'s
         // skill-awareness (None = skill-blind). Passed from
         // `LazyLocalSwarmRuntime`, which reads `HKASK_SKILLS_DIR` in
         // `SwarmConfig::from_env`.
         let skills_dir = skills_dir.map(std::path::PathBuf::from);
-        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, skills_dir);
+        let executor = AgentExecutor::new(inference, tool_dispatch, skills_dir);
 
         // Ensure the operator account exists.
         let operator_account = "operator".to_string();
@@ -461,7 +459,6 @@ impl LocalSwarmRuntime {
             envelope: None,
         })
     }
-
 }
 /// Rung 4 (Binding): does the request match any declared `accepts` label?
 ///

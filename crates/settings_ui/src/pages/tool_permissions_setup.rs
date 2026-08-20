@@ -1437,6 +1437,9 @@ mod tests {
             // Deterministic sandboxed computation — no I/O, no network, no
             // side effects. No permission checks needed.
             "lisp_eval",
+            // Reads a template file and renders it with Jinja2 — no side effects
+            // beyond reading a file the agent already has read access to.
+            "template_render",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();
