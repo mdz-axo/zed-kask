@@ -38,7 +38,7 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 
 | Template | Purpose |
 |----------|---------|
-| `caveman-compress.j2` |  | Compress a draft response into caveman mode: drop articles, filler, pleasantries, hedging. Preserve all technical substance. Insert clarity exceptions for security and irreversible actions. |
+| `caveman-compress.j2` | Compress a draft response into caveman mode: drop articles, filler, pleasantries, hedging. Preserve all technical substance. Insert clarity exceptions for security and irreversible actions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

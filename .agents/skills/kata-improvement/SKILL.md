@@ -62,14 +62,14 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 | Template | Purpose |
 |----------|---------|
-| `beginner-selector.j2` |  | Select appropriate starter drill based on practice history and automaticity. If no history, start with Observation Drill. If automaticity is low in a specific drill, target that drill. If 7+ days since last practice, restart with Observation Drill. |
-| `beginner-five-questions.j2` |  | Five Questions Drill — exercise asking the 5 coaching questions in order on a trivial process (making toast, brewing coffee). |
-| `beginner-pdca-cycle.j2` |  | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable process. |
-| `beginner-observation-drill.j2` |  | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
-| `improvement-step1-direction.j2` |  | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
-| `improvement-step2-current.j2` |  | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
-| `improvement-step3-target.j2` |  | Step 3 of the Improvement Kata — establish a measurable, time-bounded next target condition. |
-| `improvement-step4-experiment.j2` |  | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
+| `beginner-selector.j2` | Select appropriate starter drill based on practice history and automaticity. If no history, start with Observation Drill. If automaticity is low in a specific drill, target that drill. If 7+ days since last practice, restart with Observation Drill. |
+| `beginner-five-questions.j2` | Five Questions Drill — exercise asking the 5 coaching questions in order on a trivial process (making toast, brewing coffee). |
+| `beginner-pdca-cycle.j2` | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable process. |
+| `beginner-observation-drill.j2` | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
+| `improvement-step1-direction.j2` | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
+| `improvement-step2-current.j2` | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
+| `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable, time-bounded next target condition. |
+| `improvement-step4-experiment.j2` | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

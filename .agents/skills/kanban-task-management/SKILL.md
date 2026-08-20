@@ -74,19 +74,19 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 
 | Template | Purpose |
 |----------|---------|
-| `triage.j2` |  | Triage step. Examines available inputs (project_description, task_to_delegate, board_id) and determines which phase to run: decompose, delegate, or operate. |
-| `gather-context.j2` |  | Extract structured project context: project name, goals, constraints, resources, and target task size. Phase: decompose. |
-| `decompose-tasks.j2` |  | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
-| `review-tasks.j2` |  | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
-| `populate-board.j2` |  | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
-| `configure-spawn.j2` |  | Configure spawn parameters: delegation level, skills, memory scope, rJoule budget, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
-| `execute-task.j2` |  | Execute a delegated task within its approved configuration. Includes post-step instructions for the agent to call kanban_task_comment and kanban_task_add_deliverable. Phase: delegate. |
-| `monitor-board.j2` |  | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
-| `coordinate-agents.j2` |  | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
-| `track-deliverables.j2` |  | Assess deliverables for completeness. Includes post-step instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
-| `move-tasks.j2` |  | Recommend status transitions based on evidence. Includes post-step instructions for the agent to call kanban_task_move. Phase: operate. |
-| `verify-completion.j2` |  | Evaluate deliverables against acceptance criteria. Includes post-step instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. |
-| `escalate.j2` |  | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
+| `triage.j2` | Triage step. Examines available inputs (project_description, task_to_delegate, board_id) and determines which phase to run: decompose, delegate, or operate. |
+| `gather-context.j2` | Extract structured project context: project name, goals, constraints, resources, and target task size. Phase: decompose. |
+| `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
+| `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
+| `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
+| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope, rJoule budget, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
+| `execute-task.j2` | Execute a delegated task within its approved configuration. Includes post-step instructions for the agent to call kanban_task_comment and kanban_task_add_deliverable. Phase: delegate. |
+| `monitor-board.j2` | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
+| `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
+| `track-deliverables.j2` | Assess deliverables for completeness. Includes post-step instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
+| `move-tasks.j2` | Recommend status transitions based on evidence. Includes post-step instructions for the agent to call kanban_task_move. Phase: operate. |
+| `verify-completion.j2` | Evaluate deliverables against acceptance criteria. Includes post-step instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. |
+| `escalate.j2` | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

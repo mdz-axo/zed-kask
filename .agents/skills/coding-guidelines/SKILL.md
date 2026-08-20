@@ -30,10 +30,10 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 | Template | Purpose |
 |----------|---------|
-| `anti-patterns.j2` |  | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone renderable template — no inference header or contract. |
-| `guidelines-assess.j2` |  | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
-| `guidelines-apply.j2` |  | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
-| `guidelines-verify.j2` |  | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
+| `anti-patterns.j2` | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone renderable template — no inference header or contract. |
+| `guidelines-assess.j2` | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
+| `guidelines-apply.j2` | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
+| `guidelines-verify.j2` | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -70,12 +70,12 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 
 | Template | Purpose |
 |----------|---------|
-| `improv-select.j2` |  | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual modes is handled by the manifest flow. |
-| `improv-plussing.j2` |  | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
-| `improv-yes-and.j2` |  | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
-| `improv-yes-but.j2` |  | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
-| `improv-freestyling.j2` |  | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
-| `improv-riffing.j2` |  | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
+| `improv-select.j2` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual modes is handled by the manifest flow. |
+| `improv-plussing.j2` | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
+| `improv-yes-and.j2` | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
+| `improv-yes-but.j2` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
+| `improv-freestyling.j2` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
+| `improv-riffing.j2` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

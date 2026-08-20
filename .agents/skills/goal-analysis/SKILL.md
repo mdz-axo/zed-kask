@@ -73,12 +73,12 @@ Goal specification and verification. Extracts structured goals from user intent,
 
 | Template | Purpose |
 |----------|---------|
-| `create.j2` |  | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
-| `judge.j2` |  | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
-| `judge_command.j2` |  | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
-| `judge_simple.j2` |  | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
-| `goal-activate.j2` |  | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |
-| `goal-resolve.j2` |  | Resolve a goal as completed or blocked. Produces a final resolution record with the verdict, confidence, and reason. |
+| `create.j2` | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
+| `judge.j2` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
+| `judge_command.j2` | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
+| `judge_simple.j2` | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
+| `goal-activate.j2` | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |
+| `goal-resolve.j2` | Resolve a goal as completed or blocked. Produces a final resolution record with the verdict, confidence, and reason. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

@@ -40,9 +40,8 @@ markers (3.6%) → **mapped re-application**.
 Extract every kask-wiring functional unit from the fork's file. A *functional
 unit* is a contiguous block that implements one kask capability (e.g., "wire the
 cybernetics loop", "register kask MCP servers"). Use `graph-audit` code mode
-(via `hkask-mcp-codegraph` MCP server) when available; otherwise extract
-manually via `git diff upstream/main HEAD -- <file>` + `grep` for section
-headers and kask symbols.
+when available; otherwise extract manually via `git diff upstream/main HEAD --
+<file>` + `grep` for section headers and kask symbols.
 
 Output: a numbered list of functional units (F1, F2, …) with line ranges and
 one-sentence purpose. See §4 for the `main.rs` inventory (28 units).

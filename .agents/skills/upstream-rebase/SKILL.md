@@ -126,12 +126,12 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 
 | Template | Purpose |
 |----------|---------|
-| `assess.j2` |  | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
-| `map.j2` |  | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
-| `decide.j2` |  | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
-| `execute.j2` |  | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
-| `document.j2` |  | Update DIVERGENCE.md and produce the final report. |
-| `document.j2` |  | Update DIVERGENCE.md and produce the final report. |
+| `assess.j2` | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
+| `map.j2` | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
+| `decide.j2` | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
+| `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
+| `document.j2` | Update DIVERGENCE.md and produce the final report. |
+| `document.j2` | Update DIVERGENCE.md and produce the final report. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
