@@ -1284,6 +1284,64 @@ Do the thing.
         assert!(!skill.disable_model_invocation);
     }
 
+    // zed-kask: D34 — skill step verification frontmatter parsing.
+    #[test]
+    fn test_parse_skill_frontmatter_steps() {
+        let content = r#"---
+name: verified-skill
+description: A skill with declared steps.
+steps:
+  - id: sense
+    tools:
+      - curator_escalations
+      - curator_algedonic_log
+  - id: synthesize
+    tools:
+      - render_template
+  - id: converge
+    tools:
+      - lisp_eval
+---
+
+Body.
+"#;
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/verified-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("skill with steps frontmatter must parse");
+        assert_eq!(skill.steps.len(), 3);
+        assert_eq!(skill.steps[0].id, "sense");
+        assert_eq!(
+            skill.steps[0].tools,
+            vec!["curator_escalations", "curator_algedonic_log"]
+        );
+        assert_eq!(skill.steps[1].id, "synthesize");
+        assert_eq!(skill.steps[1].tools, vec!["render_template"]);
+        assert_eq!(skill.steps[2].id, "converge");
+        assert_eq!(skill.steps[2].tools, vec!["lisp_eval"]);
+    }
+
+    // zed-kask: D34 — skills without `steps:` default to empty vec (NoDeclaration).
+    #[test]
+    fn test_parse_skill_frontmatter_no_steps_defaults_empty() {
+        let content = r#"---
+name: simple-skill
+description: A skill without steps.
+---
+
+Body.
+"#;
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/simple-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("skill without steps must parse");
+        assert!(skill.steps.is_empty(), "steps should default to empty vec");
+    }
+
     #[test]
     fn test_parse_skill_file_content_returns_body() {
         let content = r#"---

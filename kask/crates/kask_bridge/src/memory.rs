@@ -1435,30 +1435,27 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         record: agent::ThreadTurnRecord,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
         let inner = self.inner.clone();
-        // Capture user-message non-emptiness before `record` is moved into the
-        // TurnRecord below. The reask correlator (T7b) emits a
-        // `reg.widget.reask` Regulation span when a user-message turn follows a
-        // turn that rendered a provenance-carrying widget. The return is pure
-        // telemetry (a test seam, not a production consumer) — discarded here;
-        // the leaf unit tests assert the bool.
         let user_message = !record.user_input.trim().is_empty();
         hkask_tool_invoker::correlate_reask(user_message);
-        // Emit a skill step verification span when a skill was invoked. This
-        // is the trust verdict the consumer of the skill output reads —
-        // `Verified` means all declared steps executed; `Incomplete` lists
-        // the missing steps. Emitted as a `reg.curation.skill_verification`
-        // span so it is queryable via `reg_query` and visible to the
-        // curator's regulation loop.
+        // Skill step verification: emit a reg span AND store the report as
+        // an episodic h_mem in the curator's memory so the curator can
+        // recall it via `curator_memory_recall` (entity:
+        // `skill_verification:<skill_name>`) to detect systematically
+        // incomplete skills. This closes the trust loop: skill runs →
+        // verdict produced → stored in curator memory → curator recalls
+        // pattern → issues CuratorDirective to fix the skill.
         if let Some(ref report) = record.skill_step_report {
             let verdict_str = match &report.verdict {
-                agent::skill_step_tracker::SkillVerificationVerdict::Verified => "verified",
+                agent::skill_step_tracker::SkillVerificationVerdict::Verified => {
+                    "verified".to_string()
+                }
                 agent::skill_step_tracker::SkillVerificationVerdict::Incomplete {
                     missing_steps,
                 } => {
                     format!("incomplete: missing {:?}", missing_steps)
                 }
                 agent::skill_step_tracker::SkillVerificationVerdict::NoDeclaration => {
-                    "no_declaration"
+                    "no_declaration".to_string()
                 }
             };
             hkask_types::regulation::RegulationSpan::Curation.emit("skill_verification");
@@ -1469,6 +1466,27 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                 tool_calls = ?report.tool_call_sequence,
                 "Skill step verification"
             );
+            // Store the report in the curator's sovereign memory so the
+            // curator can recall it and detect patterns of incomplete
+            // skill execution.
+            let entity = format!("skill_verification:{}", report.skill_name);
+            let report_value = serde_json::json!({
+                "skill_name": report.skill_name,
+                "verdict": verdict_str,
+                "tool_calls": report.tool_call_sequence,
+            });
+            let h_mem =
+                hkask_storage::HMem::new(&entity, "verified", report_value, inner.curator_webid);
+            if let Some(curator_store) = inner.curator_store.get() {
+                if let Err(e) = curator_store.store(h_mem) {
+                    tracing::warn!(
+                        target: "reg.curation",
+                        skill = %report.skill_name,
+                        error = %e,
+                        "Failed to store skill verification report in curator memory"
+                    );
+                }
+            }
         }
         Box::pin(async move {
             inner

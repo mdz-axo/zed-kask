@@ -189,3 +189,133 @@ pub fn register_skill_steps(skill_name: String, steps: Vec<DeclaredStep>) {
 fn lookup_skill_steps(skill_name: &str) -> Option<Vec<DeclaredStep>> {
     registry().lock().ok()?.get(skill_name).cloned()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(id: &str, tools: &[&str]) -> DeclaredStep {
+        DeclaredStep {
+            id: id.to_string(),
+            tools: tools.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_skill_step_tracker_verifies_all_steps_present() {
+        register_skill_steps(
+            "test-verified".to_string(),
+            vec![
+                step("sense", &["curator_escalations", "curator_algedonic_log"]),
+                step("synthesize", &["render_template"]),
+                step("converge", &["lisp_eval"]),
+            ],
+        );
+        let mut tracker = SkillStepTracker::new();
+        tracker.activate("test-verified".to_string());
+        tracker.record("curator_escalations");
+        tracker.record("curator_algedonic_log");
+        tracker.record("render_template");
+        tracker.record("lisp_eval");
+        let report = tracker.finalize().expect("report should be produced");
+        assert_eq!(report.skill_name, "test-verified");
+        assert!(matches!(report.verdict, SkillVerificationVerdict::Verified));
+        assert_eq!(report.tool_call_sequence.len(), 4);
+    }
+
+    #[test]
+    fn test_skill_step_tracker_reports_incomplete() {
+        register_skill_steps(
+            "test-incomplete".to_string(),
+            vec![
+                step("sense", &["curator_escalations", "curator_algedonic_log"]),
+                step("synthesize", &["render_template"]),
+                step("converge", &["lisp_eval"]),
+            ],
+        );
+        let mut tracker = SkillStepTracker::new();
+        tracker.activate("test-incomplete".to_string());
+        // Skip curator_algedonic_log and lisp_eval entirely
+        tracker.record("curator_escalations");
+        tracker.record("render_template");
+        let report = tracker.finalize().expect("report should be produced");
+        match &report.verdict {
+            SkillVerificationVerdict::Incomplete { missing_steps } => {
+                assert!(
+                    missing_steps.contains(&"sense".to_string()),
+                    "sense should be missing because curator_algedonic_log was not called"
+                );
+                assert!(
+                    missing_steps.contains(&"converge".to_string()),
+                    "converge should be missing because lisp_eval was not called"
+                );
+                assert!(
+                    !missing_steps.contains(&"synthesize".to_string()),
+                    "synthesize should not be missing"
+                );
+            }
+            other => panic!("expected Incomplete, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_skill_step_tracker_no_declaration() {
+        let mut tracker = SkillStepTracker::new();
+        tracker.activate("skill-with-no-steps".to_string());
+        tracker.record("curator_escalations");
+        tracker.record("render_template");
+        let report = tracker.finalize().expect("report should be produced");
+        assert!(matches!(
+            report.verdict,
+            SkillVerificationVerdict::NoDeclaration
+        ));
+        assert_eq!(report.tool_call_sequence.len(), 2);
+    }
+
+    #[test]
+    fn test_skill_step_tracker_inactive_returns_none() {
+        let mut tracker = SkillStepTracker::new();
+        // No activation — normal conversation turn
+        tracker.record("grep");
+        tracker.record("read_file");
+        assert!(
+            tracker.finalize().is_none(),
+            "finalize without activation should return None"
+        );
+    }
+
+    #[test]
+    fn test_skill_step_tracker_finalize_resets_to_dormant() {
+        register_skill_steps("test-reset".to_string(), vec![step("one", &["grep"])]);
+        let mut tracker = SkillStepTracker::new();
+        tracker.activate("test-reset".to_string());
+        tracker.record("grep");
+        let _ = tracker.finalize();
+        // After finalize, tracker should be dormant — second finalize returns None
+        assert!(
+            tracker.finalize().is_none(),
+            "second finalize after reset should return None"
+        );
+        assert!(!tracker.is_active());
+    }
+
+    #[test]
+    fn test_skill_step_tracker_step_with_no_tools_always_verified() {
+        // A step with empty tools list is always considered executed
+        register_skill_steps(
+            "test-empty-tools".to_string(),
+            vec![
+                step("action", &["grep"]),
+                step("reasoning", &[]), // no tool dependency
+            ],
+        );
+        let mut tracker = SkillStepTracker::new();
+        tracker.activate("test-empty-tools".to_string());
+        tracker.record("grep");
+        let report = tracker.finalize().expect("report");
+        assert!(
+            matches!(report.verdict, SkillVerificationVerdict::Verified),
+            "step with no tools should always be verified"
+        );
+    }
+}

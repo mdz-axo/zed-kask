@@ -188,3 +188,64 @@ fn strip_frontmatter(content: &str) -> String {
         content.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_frontmatter_removes_yaml_header() {
+        let input = "---\ntemplate_type: KnowAct\ncontract:\n  input: {}\n---\nHello {{ name }}!";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "Hello {{ name }}!");
+    }
+
+    #[test]
+    fn test_strip_frontmatter_preserves_content_without_header() {
+        let input = "Hello {{ name }}!";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "Hello {{ name }}!");
+    }
+
+    #[test]
+    fn test_strip_frontmatter_handles_empty_body() {
+        let input = "---\nfoo: bar\n---\n";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_resolve_template_path_rejects_traversal() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let result = resolve_template_path(&base, "../../etc/passwd");
+        assert!(result.is_none(), "path traversal must be rejected");
+    }
+
+    #[test]
+    fn test_resolve_template_path_accepts_valid_ref() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let result = resolve_template_path(&base, "essentialist/essentialist-flow.j2");
+        assert!(result.is_some(), "valid template ref must resolve");
+    }
+
+    #[test]
+    fn test_read_template_file_finds_j2() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let result = read_template_file(&base, "essentialist/essentialist-flow");
+        assert!(
+            result.is_ok(),
+            "should find .j2 file with extension-less ref"
+        );
+        let content = result.expect("checked is_ok above");
+        assert!(content.contains("---"), "template should have frontmatter");
+    }
+}
