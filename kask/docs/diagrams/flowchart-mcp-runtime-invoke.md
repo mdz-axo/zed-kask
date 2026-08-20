@@ -57,7 +57,7 @@ flowchart TD
 
 ## Related
 
-- [hKask Capability Class Diagram](./class-hkask-tool-port.md) — the type system
+- [hKask Tool Port Class Diagram](./class-hkask-tool-port.md) — the type system
 - [Architecture Principles](../architecture/core/PRINCIPLES.md) — P4 Clear Boundaries
 - [MDS](../architecture/core/MDS.md) — Trust category
 
