@@ -1958,8 +1958,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn call_inference_stream_threads_finish_reason_length() {
-        // zed-kask: D25 — `call_inference_stream` must return the chunk's
+    async fn call_inference_stream_with_messages_threads_finish_reason_length() {
+        // zed-kask: D25 — `call_inference_stream_with_messages` must return the chunk's
         // finish_reason so `execute_select` can detect truncation
         // (finish_reason "length") and refuse to parse partial output as JSON.
         use hkask_types::{InferenceError, InferenceResult, InferenceUsage};
@@ -2034,8 +2034,8 @@ mod tests {
     }
 
     // zed-kask: D25 — pinning test for the execute_select truncation refusal.
-    // The stream-level test above (call_inference_stream_threads_finish_reason_length)
-    // only asserts that finish_reason is threaded out of call_inference_stream.
+    // The stream-level test above (call_inference_stream_with_messages_threads_finish_reason_length)
+    // only asserts that finish_reason is threaded out of call_inference_stream_with_messages.
     // This test exercises the full execute_select path: when finish_reason is
     // "length" AND output_schema is set AND no structured tool call was emitted,
     // execute_select must return Err containing "truncated at token limit" — not
@@ -3374,6 +3374,65 @@ steps:
 
         let msg = result
             .expect_err("must hit depth guard, not hang")
+            .to_string();
+        assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
+    }
+
+    /// Discriminates `execute_parallel`'s depth increment from `execute_flowdef`'s.
+    /// A 2-level parallel-only manifest (no `flowdef` in any sub-cascade) must
+    /// still hit the matryoshka guard. Without the `parent_depth + 1` line in
+    /// `execute_parallel`, this test hangs (each parallel branch resets depth
+    /// to 0, so the guard never fires).
+    #[tokio::test]
+    async fn execute_parallel_depth_increment_independent_of_flowdef() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let limiter = Arc::new(ConcurrencyLimiter::new(1, 1));
+        let tmp = std::env::temp_dir().join(format!(
+            "hkask-matryoshka-parallel-only-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Self-referencing parallel manifest — no flowdef anywhere.
+        let self_ref_yaml = r#"
+manifest:
+  id: parallel-only-self-ref
+  category: skill
+convergence:
+  max_iterations: 1
+steps:
+  - ordinal: 1
+    action: parallel
+    description: "parallel-only self-ref"
+    input_mapping:
+      branches:
+        - template_ref: parallel-only-self-ref
+      join: allSettled
+"#;
+        std::fs::write(tmp.join("parallel-only-self-ref.yaml"), self_ref_yaml).unwrap();
+
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(NoopToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        )
+        .with_concurrency_limiter(limiter)
+        .with_template_base_path(tmp.clone());
+
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(self_ref_yaml).expect("parse");
+        let result = executor
+            .execute_manifest_into(manifest, std::collections::HashMap::new())
+            .await;
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let msg = result
+            .expect_err("parallel-only self-ref must hit depth guard")
             .to_string();
         assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
     }
