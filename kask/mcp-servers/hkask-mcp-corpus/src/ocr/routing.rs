@@ -127,7 +127,7 @@ mod tests {
             value: 0.20,
             tier: ComplexityTier::Complex,
         };
-        // Default model (olmOCR-2 on DeepInfra)
+        // Default model (olmOCR-2 on RunPod)
         let mut state = SamplingState::new(0.10);
         let backends = route_page(score, &mut state, None, None);
         assert_eq!(

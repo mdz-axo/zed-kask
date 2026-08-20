@@ -13,7 +13,7 @@
 classifier:
   name: convergence-evaluator
   model: ""
-  provider: deepinfra
+  provider: openrouter
   concurrency: 10
   timeout_secs: 30
 

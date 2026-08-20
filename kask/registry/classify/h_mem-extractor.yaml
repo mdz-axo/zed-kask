@@ -13,7 +13,7 @@
 # Rationale: Martin et al. (arXiv:2603.29878) evaluated LLMs for RDF triple
 # extraction and found Few-Shot learning is the dominant strategy:
 #   Llama 99.35% | Qwen 99.22% | NuExtract 98.47% | Gemma 94.81%
-# Qwen3-235B-A22B-Instruct pricing on DeepInfra: ~$0.07/$0.10 per 1M tokens.
+# Qwen3-235B-A22B-Instruct pricing reference: ~$0.07/$0.10 per 1M tokens.
 #
 # Extracts structured semantic data from each passage:
 #   topic, concepts, entities, relationships, primary_dimension, quality_flags
@@ -24,7 +24,7 @@
 classifier:
   name: triple-extractor
   model: ""
-  provider: deepinfra
+  provider: openrouter
   concurrency: 150
   timeout_secs: 30
 

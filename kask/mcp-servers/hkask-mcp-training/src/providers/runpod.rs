@@ -558,7 +558,7 @@ pub fn generate_install_script(
     script.push_str("mkdir -p \"$HF_HOME\" \"$PIP_CACHE_DIR\" \"$TMPDIR\" /workspace/outputs\n\n");
 
     // Step 1: Install harness packages.
-    // On pre-built images (e.g. DeepInfra's di-cont-ubuntu-torch), the harness
+    // On pre-built images, the harness
     // may already be installed with a GPU-specific PyTorch build. Reinstalling
     // via pip can overwrite the custom PyTorch with a standard build that lacks
     // Blackwell (B200) kernel support. So we check first and skip if present.

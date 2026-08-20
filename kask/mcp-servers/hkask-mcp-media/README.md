@@ -1,6 +1,6 @@
 # hkask-mcp-media
 
-Media generation MCP server — image, video, audio, and 3D generation via AtlasCloud and DeepInfra.
+Media generation MCP server — image, video, audio, and 3D generation via the configured media providers.
 
 ## Tools (36)
 
@@ -20,12 +20,12 @@ Media generation MCP server — image, video, audio, and 3D generation via Atlas
 | `face_list` | List all registered faces in the face registry. Optionally filter by status: valid, rejected, or pending |
 | `face_remove` | Remove a face from the registry by its ID |
 | `gallery_timeline` | Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade |
-| `image_remove_background` | Remove background from a gallery image. Delegates to DeepInfra Bria RMBG 2.0 |
-| `image_apply_style` | Apply style transfer to a gallery image. Delegates to AtlasCloud |
+| `image_remove_background` | Remove background from a gallery image. Delegates to the configured background-removal provider |
+| `image_apply_style` | Apply style transfer to a gallery image. Delegates to the configured style-transfer provider |
 | `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms, similar_to_index, or image_indices |
 | `video_clip` | Trim a video to specified start/end times using local ffmpeg |
 | `video_to_gif` | Convert a video segment to GIF format using local ffmpeg |
-| `image_to_video` | Animate a gallery image into a short video clip. Delegates to AtlasCloud |
+| `image_to_video` | Animate a gallery image into a short video clip. Delegates to the configured video-generation provider |
 | `video_add_caption` | Add text caption overlay to a video using local ffmpeg |
 | `video_remix` | Generate a video remix: clip, add caption, convert to GIF |
 | `video_from_images` | Create a video or GIF from a sequence of gallery images using ffmpeg |
@@ -45,14 +45,14 @@ Media generation MCP server — image, video, audio, and 3D generation via Atlas
 
 ## Configuration
 
-This server reads `ATLASCLOUD_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY` directly (that is read by the zed process).
+This server routes media generation through the inference IPC bridge to the zed process's `MediaRouter`. Vision-LLM calls (describe, analyze, face validation) also route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY` directly (that is read by the zed process).
 
 | Variable | Default | Description |
 |---|---|---|
-| `HKASK_MEDIA_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | Text-to-speech (Kokoro-82B) |
-| `HKASK_MEDIA_STT_MODEL` | `DeepInfra/whisper-large-v3` | Speech-to-text (Whisper Large v3) |
+| `HKASK_MEDIA_TTS_MODEL` | `ollama/kokoro` | Text-to-speech (Kokoro) |
+| `HKASK_MEDIA_STT_MODEL` | `ollama/whisper-large-v3` | Speech-to-text (Whisper Large v3) |
 | `HKASK_MEDIA_VISION_MODEL` | `KC/qwen/qwen3-vl-235b-a22b-instruct` | Vision model (Qwen3-VL, Apache 2.0) |
-| `HKASK_MEDIA_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | Image generation (FLUX-2-klein-4B) |
+| `HKASK_MEDIA_IMAGE_GEN_MODEL` | _(unset)_ | Image generation model override |
 | `HKASK_MEDIA_RJOULE_CAP` | _(unset)_ | Total rJoule (USD) budget ceiling for the server process. Unset or `0` = no budget enforcement. 1 rJoule = $1 USD. |
 | `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` | `0.8` | Fraction of `HKASK_MEDIA_RJOULE_CAP` at which budget warnings fire (0.0–1.0) |
 | `HKASK_MEDIA_RJOULE_PER_IMAGE` | `0.05` | Estimated rJoule cost per generated image (used by the pre-charge gate) |
@@ -60,7 +60,7 @@ This server reads `ATLASCLOUD_API_KEY` and `DEEPINFRA_API_KEY` for media generat
 | `HKASK_MEDIA_RJOULE_PER_UPSCALE` | `0.02` | Estimated rJoule cost per upscale unit (scales with `scale^2`) |
 | `HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND` | `1.0` | Estimated rJoule cost per second of generated video |
 
-All models are open-weight. Provider prefixes (`DI/`, `OR/`, `KC/`, etc.) route to the appropriate inference backend.
+All models are open-weight. Provider prefixes (`OR/`, `KC/`, etc.) route to the appropriate inference backend.
 
 ## Budget governance
 
@@ -69,7 +69,6 @@ When `HKASK_MEDIA_RJOULE_CAP` is set, the four billable generation tools (`gener
 ## Quick Start
 
 ```bash
-export ATLASCLOUD_API_KEY="your-atlascloud-key"
 # The server starts automatically with kask
 the zed-kask editor
 # Or standalone:

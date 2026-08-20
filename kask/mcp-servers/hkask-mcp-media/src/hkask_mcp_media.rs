@@ -283,8 +283,7 @@ impl MediaServer {
             McpToolError::permission_denied(
                 "No vision-capable provider configured. Vision LLMs route through zed's \
                  LanguageModelRegistry via the inference IPC bridge — enable a vision \
-                 model in the kask inference provider settings. The media server process \
-                 itself only reads FALAI_API_KEY / DEEPINFRA_API_KEY for generation.",
+                 model in the kask inference provider settings.",
             )
         })
     }
@@ -292,7 +291,7 @@ impl MediaServer {
     /// Embed a single text via the inference port's `embed` method.
     ///
     /// Resolves the embedding model from `HKASK_EMBEDDING_MODEL` (default
-    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and returns the first (only)
+    /// `ollama/nomic-embed-text`) and returns the first (only)
     /// embedding vector. Used by gallery similarity search.
     async fn embed_text(&self, text: &str) -> Result<Vec<f32>, McpToolError> {
         let model = hkask_inference::model_constants::embedding_model();
@@ -1017,7 +1016,7 @@ impl MediaServer {
     }
 
     /// Resolve the best available vision model with fallback chain.
-    /// Tries: DeepInfra → OpenRouter.
+    /// Tries: OpenRouter.
     /// Returns (model_name, label) or None if no vision provider is configured.
     async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
         let models = match self.vision_port.list_vision_models().await {
@@ -1034,16 +1033,10 @@ impl MediaServer {
 
         for model in &models {
             // Check the provider prefix in the model name (case-insensitive —
-            // the IPC bridge returns zed provider ids like "deepinfra" (a
+            // the IPC bridge returns zed provider ids like "openrouter" (a
             // standalone MediaRouter is media-only and returns no chat models).
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
             match prefix.to_ascii_lowercase().as_str() {
-                "deepinfra" => {
-                    return Some((
-                        "DeepInfra/meta-llama/Llama-3.2-11B-Vision-Instruct",
-                        "llama-3.2-vision",
-                    ));
-                }
                 "openrouter" => {
                     return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
                 }
@@ -1117,7 +1110,7 @@ impl MediaServer {
     ) -> (u32, Vec<String>) {
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
-            None => return (0, vec!["No vision model available — configure a vision-capable provider (DeepInfra, OpenRouter, or fal.ai)".to_string()]),
+            None => return (0, vec!["No vision model available — configure a vision-capable provider (OpenRouter, or fal.ai)".to_string()]),
         };
         let mut analyzed = 0u32;
         let mut errors = Vec::new();
@@ -1652,8 +1645,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             ))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
-            "DEEPINFRA_API_KEY",
-            "DeepInfra API key for vision LLMs and media generation",
+            "OPENROUTER_API_KEY",
+            "OpenRouter API key for vision LLMs",
         )],
     )
     .await

@@ -2,7 +2,7 @@
 //!
 //! Sends page images as base64-encoded PNG to vision-capable LLMs
 //! through the inference router. Supports provider-prefixed model names
-//! (DeepInfra/, FW/, ollama/) for backend routing.
+//! (RunPod/, FW/, ollama/) for backend routing.
 //!
 //! Includes a circuit breaker for rate-limit resilience: after N consecutive
 //! 429 responses, all LLM requests pause for a cooldown period.
@@ -131,7 +131,7 @@ fn now_unix() -> i64 {
 ///
 /// Encodes page images as base64 PNG and dispatches to vision-capable
 /// models via `generate_vision`. Supports all inference backends
-/// (DeepInfra, OpenRouter) through provider-prefixed model names.
+/// (RunPod, OpenRouter) through provider-prefixed model names.
 ///
 /// The router is constructed once and shared across all concurrent
 /// OCR tasks via `Arc<dyn InferencePort>`.

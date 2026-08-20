@@ -162,7 +162,7 @@ impl RealMemoryPort {
         // a mismatch causes `DimensionMismatch` errors on every store call,
         // silently disabling embedding-based recall. The caller resolves
         // this from `kask_settings.corpus.embedding_dim` (default 1024,
-        // matching `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
+        // matching `ollama/nomic-embed-text`).
         //
         // A dim of 0 is a footgun: `unwrap_or(1024)` only fires for `None`,
         // not for `Some(0)`, and `KaskCorpusSettings` deriving `Default`
@@ -182,7 +182,7 @@ impl RealMemoryPort {
                  clamping to 1024 to avoid a zero-dimensional store panic. \
                  Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
                  to match the embedding model's output (default 1024 for \
-                 DeepInfra/Qwen/Qwen3-Embedding-0.6B)."
+                 ollama/nomic-embed-text)."
             );
         } else if embedding_dim != 1024 {
             tracing::info!(

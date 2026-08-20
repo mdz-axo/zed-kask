@@ -24,7 +24,7 @@
 //! The `condenser_thread_summary` tool uses the centralized `InferencePort`
 //! (hkask-inference router) for LLM-powered summarization. No standalone
 //! HTTP client or inference URL configuration is needed — the router handles
-//! provider dispatch (DeepInfra, OpenRouter) automatically.
+//! provider dispatch (OpenRouter) automatically.
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

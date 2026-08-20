@@ -34,7 +34,7 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AdapterSource {
     /// Adapter hosted on Hugging Face Hub (public, private, or gated).
-    /// All inference providers (DeepInfra, Runpod) can pull from HF Hub.
+    /// All inference providers (OpenRouter, Runpod) can pull from HF Hub.
     HuggingFace {
         /// Repository path (e.g. "mdz-axo/solidity-audit-v3")
         repo: String,

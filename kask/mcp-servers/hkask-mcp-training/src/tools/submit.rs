@@ -449,7 +449,7 @@ mod tests {
     }
 
     /// Build a `TrainingServer` with `job_store = None` (the in-memory fallback
-    /// when `HKASK_DB_PASSPHRASE` is unset). Uses `DeepInfra` host_id so the
+    /// when `HKASK_DB_PASSPHRASE` is unset). Uses `Nebius` host_id so the
     /// Runpod-only HuggingFace artifact publish step is skipped — the
     /// `job_store.is_none()` guard is reachable without HF credentials.
     fn server_without_job_store(cache_dir: std::path::PathBuf) -> TrainingServer {
@@ -463,7 +463,7 @@ mod tests {
             std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             None, // store: Option<MemoryStore> — unused by training_submit
             Box::new(UnreachedHost),
-            TrainingHostId::DeepInfra,
+            TrainingHostId::Nebius,
             crate::providers::TrainingHarnessId::Axolotl,
             Mutex::new(DatasetPipeline::new(cache_dir)),
             Arc::new(adapter_store),

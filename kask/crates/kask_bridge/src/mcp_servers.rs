@@ -52,18 +52,18 @@ pub struct BuiltinMcpServer {
 /// Order is stable and meaningful — the kask panel uses index-based selection.
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
-        // DEEPINFRA/OPENROUTER keys are NOT read directly by this server — its own
+        // The OPENROUTER key is NOT read directly by this server — its own
         // doc (hkask_mcp_codegraph.rs:466) says credentials come from zed's
-        // LanguageModelRegistry over the IPC bridge. They are reachable only on
+        // LanguageModelRegistry over the IPC bridge. It is reachable only on
         // the degraded no-socket fallback, where `resolve_inference_port` builds a
-        // MediaRouter from `InferenceConfig::from_env`, which does read them.
+        // MediaRouter from `InferenceConfig::from_env`, which does read it.
         // Retained deliberately so embeddings still work when the inference socket
         // is unavailable; reviewed 2026-08-12 (RR-0061). If the fallback is ever
-        // removed, drop these two entries in the same change.
+        // removed, drop this entry in the same change.
         id: "codegraph",
         binary: "hkask-mcp-codegraph",
         description: "Codegraph — code structure query and traversal",
-        credentials: Some(&["DEEPINFRA_API_KEY", "OPENROUTER_API_KEY"]),
+        credentials: Some(&["OPENROUTER_API_KEY"]),
         config_env: Some(&[
             "HKASK_CODEGRAPH_DB",
             "HKASK_EMBEDDING_DIM",
@@ -352,7 +352,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-training",
         description: "Training — LoRA training configuration and audit",
         credentials: Some(&[
-            "DEEPINFRA_API_KEY",
             "RUNPOD_API_KEY",
             "RUNPOD_TEMPLATE_ID",
             "NEBIUS_PROJECT_ID",
@@ -382,9 +381,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "RUNPOD_DOCKER_IMAGE",
             "RUNPOD_DOCKER_ARGS",
             "HKASK_PODS_FILE",
-            // DeepInfra operator overrides — read by providers/mod.rs.
-            "DEEPINFRA_GPU_CONFIG",
-            "DEEPINFRA_CONTAINER_IMAGE",
             // Nebius operator overrides — read by providers/mod.rs and nebius.rs.
             "NEBIUS_GPU_PLATFORM",
             "NEBIUS_GPU_PRESET",
@@ -465,7 +461,7 @@ pub fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
 /// (backward-compatible behavior for unaudited servers).
 ///
 /// This limits the blast radius of a compromised MCP server — a server that
-/// only needs `DEEPINFRA_API_KEY` won't receive `HKASK_SMTP_PASSWORD`.
+/// only needs `OPENROUTER_API_KEY` won't receive `HKASK_SMTP_PASSWORD`.
 #[must_use]
 pub fn filter_credentials_for_server(
     server_id: &str,
@@ -839,7 +835,7 @@ mod tests {
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_SMTP_PASSWORD",
-            "DEEPINFRA_API_KEY",
+            "OPENROUTER_API_KEY",
         ]
         .iter()
         .map(|env| (env.to_string(), "url".to_string()))
@@ -855,8 +851,8 @@ mod tests {
             "curator should NOT receive HKASK_EODHD_API_KEY"
         );
         assert!(
-            !env_vars.contains(&"DEEPINFRA_API_KEY"),
-            "curator should NOT receive DEEPINFRA_API_KEY"
+            !env_vars.contains(&"OPENROUTER_API_KEY"),
+            "curator should NOT receive OPENROUTER_API_KEY"
         );
     }
 
@@ -864,7 +860,6 @@ mod tests {
     #[test]
     fn codegraph_credentials_do_not_include_smtp_password() {
         let all_credentials: Vec<(String, String)> = [
-            "DEEPINFRA_API_KEY",
             "OPENROUTER_API_KEY",
             "HKASK_SMTP_PASSWORD",
             "HKASK_EODHD_API_KEY",
@@ -874,7 +869,6 @@ mod tests {
         .collect();
         let filtered = filter_credentials_for_server("codegraph", &all_credentials);
         let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(env_vars.contains(&"DEEPINFRA_API_KEY"));
         assert!(env_vars.contains(&"OPENROUTER_API_KEY"));
         assert!(
             !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
@@ -975,7 +969,6 @@ mod tests {
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_SMTP_PASSWORD",
-            "DEEPINFRA_API_KEY",
             "OPENROUTER_API_KEY",
         ]
         .iter()
@@ -1197,7 +1190,7 @@ mod tests {
     }
 
     /// fal.ai is deprecated for the corpus server (the OCR docres path was
-    /// removed; TTS/STT/image-gen defaults now route to DeepInfra). The corpus
+    /// removed). The corpus
     /// server no longer reads `FALAI_API_KEY` or `HKASK_USE_FAL_DOCRES`. Pin
     /// the removal so a future re-add is caught (`.rules` "tests must pin
     /// deliberate deviations").
@@ -1239,14 +1232,14 @@ mod tests {
         // Direct reads: HKASK_CODEGRAPH_DB, HKASK_EMBEDDING_DIM.
         // HKASK_EMBEDDING_MODEL is read by the shared hkask-inference model
         // constants, not by this crate directly.
-        // DEEPINFRA/OPENROUTER keys have NO direct read site — they are reachable
+        // The OPENROUTER key has NO direct read site — it is reachable
         // only through `resolve_inference_port`'s no-socket fallback
         // (`InferenceConfig::from_env`). Retained deliberately; see the registry
         // comment. This test pins that decision so the grant cannot silently grow.
         assert_eq!(
             s.credentials.unwrap().to_vec(),
-            vec!["DEEPINFRA_API_KEY", "OPENROUTER_API_KEY"],
-            "codegraph credentials allowlist drifted — these two are justified ONLY \
+            vec!["OPENROUTER_API_KEY"],
+            "codegraph credentials allowlist drifted — this one is justified ONLY \
              by the degraded no-socket inference fallback; adding more secrets to a \
              code-indexing process needs a read site"
         );
@@ -1332,12 +1325,12 @@ mod tests {
     #[test]
     fn training_allowlist_matches_actual_reads() {
         let s = server_by_id("training");
-        // Read sites include DEEPINFRA_API_KEY, HF_TOKEN, NEBIUS_PROJECT_ID,
+        // Read sites include HF_TOKEN, NEBIUS_PROJECT_ID,
         // NEBIUS_SUBNET_ID, RUNPOD_* and HKASK_DB_PASSPHRASE. This is the largest
         // secret grant in the registry, so pin that every granted secret has a
         // read site.
         let creds = s.credentials.unwrap();
-        for key in ["DEEPINFRA_API_KEY", "HF_TOKEN"] {
+        for key in ["HF_TOKEN"] {
             assert!(
                 creds.contains(&key),
                 "training reads {key} but it is not allowlisted"
@@ -1471,7 +1464,7 @@ mod tests {
         full_config.insert("HKASK_CODEGRAPH_DB".to_string(), "/graph.db".to_string());
         full_config.insert("HKASK_RSS_DB".to_string(), "/rss.db".to_string());
         // A credential-shaped key that lives in `credentials`, not `config_env`.
-        let credential_keys = ["HKASK_SMTP_PASSWORD", "DEEPINFRA_API_KEY"];
+        let credential_keys = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"];
 
         for server in BUILT_IN_MCP_SERVERS {
             // Simulate `build_mcp_server_env`'s filter sequence:

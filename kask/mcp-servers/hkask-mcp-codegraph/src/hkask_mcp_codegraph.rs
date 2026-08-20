@@ -171,7 +171,7 @@ fn default_limit() -> u64 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EmbedIndexRequest {
     /// Optional: override the embedding model (default: `HKASK_EMBEDDING_MODEL`
-    /// or `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
+    /// or `ollama/nomic-embed-text`).
     #[serde(default)]
     model: Option<String>,
     /// Batch size for embedding API calls. Default: 32.
@@ -614,7 +614,7 @@ impl CodeGraphServer {
     /// and stores the resulting vectors in the `symbols_vec` sqlite-vec table
     /// for semantic similarity search.
     ///
-    /// Uses `HKASK_EMBEDDING_MODEL` (default: `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and
+    /// Uses `HKASK_EMBEDDING_MODEL` (default: `ollama/nomic-embed-text`) and
     /// `HKASK_EMBEDDING_DIM` (default: 1024). Credentials are resolved from
     /// zed's `LanguageModelRegistry` — no env-var API keys needed.
     #[tool(

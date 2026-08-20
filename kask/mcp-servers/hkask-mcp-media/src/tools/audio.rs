@@ -36,7 +36,7 @@ impl MediaServer {
                     .generate_with_model(
                         &prompt,
                         &params,
-                        Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
+                        Some("OpenRouter/meta-llama/Llama-3.3-70B-Instruct"),
                         None,
                     )
                     .await

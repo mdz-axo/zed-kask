@@ -16,7 +16,7 @@
 classifier:
   name: triple-extractor-literary
   model: ""
-  provider: deepinfra
+  provider: openrouter
   concurrency: 150
   timeout_secs: 30
 

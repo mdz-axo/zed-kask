@@ -16,7 +16,7 @@ Part of hKask's code intelligence layer. Indexes the current workspace on first 
 | `codegraph_structure` | Get project overview: top symbols ranked by PageRank | — |
 | `codegraph_stats` | Get index statistics with optional health and meta breakdown | — |
 | `codegraph_reindex` | Force full re-index of the workspace | — |
-| `codegraph_index_embeddings` | Generate embeddings for all symbols via inference router | `DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY` |
+| `codegraph_index_embeddings` | Generate embeddings for all symbols via inference router | `OPENROUTER_API_KEY` |
 
 ## Context Budgets
 
@@ -41,8 +41,8 @@ Part of hKask's code intelligence layer. Indexes the current workspace on first 
 | Env Variable | Description | Default |
 |-------------|-------------|---------|
 | `HKASK_CODEGRAPH_DB` | SQLite database path for persistent index | In-memory (re-index on each start) |
-| `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` | Inference API key for embedding generation | Embeddings disabled without these |
-| `HKASK_EMBEDDING_MODEL` | Embedding model for symbol vectorization | `DI/Qwen/Qwen3-Embedding-0.6B` |
+| `OPENROUTER_API_KEY` | Inference API key for embedding generation | Embeddings disabled without these |
+| `HKASK_EMBEDDING_MODEL` | Embedding model for symbol vectorization | `ollama/nomic-embed-text` |
 
 ## Request Types
 
@@ -70,7 +70,7 @@ hkask-mcp-codegraph
 HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
 
 # With embedding support
-DEEPINFRA_API_KEY=your-key HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
+OPENROUTER_API_KEY=your-key HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
 ```
 
 ## Dependencies

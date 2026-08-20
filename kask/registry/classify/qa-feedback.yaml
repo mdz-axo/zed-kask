@@ -10,7 +10,7 @@
 classifier:
   name: qa-feedback
   model: ""
-  provider: deepinfra
+  provider: openrouter
   concurrency: 5
   timeout_secs: 30
 
