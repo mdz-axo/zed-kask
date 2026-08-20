@@ -1845,13 +1845,11 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_read_file_refuses_global_skill_catalog_entry(cx: &mut TestAppContext) {
+    async fn test_read_file_allows_global_skill_catalog_entry(cx: &mut TestAppContext) {
         init_test(cx);
 
-        // End-to-end: the tool itself must refuse, not merely the helper. The
-        // global-skills fast path resolves before project-path machinery, so it
-        // needs its own coverage — a gate wired into only one of the two call
-        // sites would leave the bypass open.
+        // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
+        // the body from disk and injects it; `read_file` can also read it.
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!({})).await;
 
@@ -1884,16 +1882,11 @@ mod test {
             })
             .await;
 
-        let error = result.expect_err("reading a SKILL.md catalog entry must be refused");
-        let message = format!("{error:?}");
+        let content = result.expect("reading a SKILL.md must succeed (body injection restored)");
+        let text = format!("{content:?}");
         assert!(
-            message.contains("Refused") && message.contains("my-skill"),
-            "refusal must name the skill so the model can invoke it: {message}"
-        );
-        // The gate is pointless if the refusal echoes the content it withholds.
-        assert!(
-            !message.contains("SENTINEL_SKILL_BODY_TEXT"),
-            "the refusal must not leak the SKILL.md body it is gating: {message}"
+            text.contains("SENTINEL_SKILL_BODY_TEXT"),
+            "read_file must return the SKILL.md body content: {text}"
         );
     }
 

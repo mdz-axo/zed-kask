@@ -31,8 +31,8 @@ templates:
       namespace id, its axioms, its term signature, and its key concepts. When
       external sources are configured (OBO Foundry, OntoBee, BioPortal), fetch
       and parse the registry YAML / OWL, checking per-ontology license before
-      caching. The project's default registry is the 6 domain-supplement
-      namespaces (FIBO, ESO, GOLEM, ML-Schema, OMC, SUMO) + 2 universal axes
+      caching. The project's default registry is the 5 domain-supplement
+      namespaces (FIBO, ESO, GOLEM, ML-Schema, SUMO) + 2 universal axes
       (PKO, DC+BIBO) + 5W1H core.
 
   - id: gradient-seeded-recombination/gsr-prior

@@ -438,17 +438,10 @@ impl BridgeManifestExecutor {
                 "HKASK_QA_MODEL",
                 hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL,
             ),
-            (),
-            (),
             (
                 "vision_model",
                 "HKASK_MEDIA_VISION_MODEL",
                 hkask_inference::model_constants::DEFAULT_VISION_MODEL,
-            ),
-            (
-                "image_gen_model",
-                "HKASK_MEDIA_IMAGE_GEN_MODEL",
-                hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL,
             ),
         ];
         for (key, env_var, default) in ENV_DEFAULTS {

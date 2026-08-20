@@ -75,7 +75,6 @@ based on the skill's domain:
 | **PKO** (Procedural Knowledge Ontology, Carriero et al. 2025) | Industrial processes, procedures, workflows | The skill models a procedure with specification/execution separation |
 | **Dublin Core** | Metadata, documentation, cataloging | The skill produces or manages metadata artifacts |
 | **GOLEM** (Graphs and Ontologies for Literary Evolution Models, Pianzola et al. 2024) | Narrative, fiction, storytelling | The skill models narrative structure, characters, events, settings |
-| **MovieLabs OMC** (Ontology for Media Creation, MovieLabs 2021-2025) | Media production workflows | The skill models media creation pipelines (capture → post → distribution) |
 | **ESO** (Event and Implied Situation Ontology, Segers et al. 2015) | Event structures, scientific inquiry | The skill models events with pre/post situations and entity roles |
 | **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain (e.g., spin glass theory for gradient-hunter, Beizer taxonomy for bug-hunt, Ren et al. for self-improvement) |
 
@@ -145,7 +144,7 @@ which is exactly what we want to avoid.
    - **Entity types**: what are the domain's objects, events, roles,
      situations?
    - **Existing ontologies**: is there a PKO, Dublin Core, GOLEM,
-     MovieLabs OMC, ESO, or domain-specific ontology that formalizes
+     ESO, or domain-specific ontology that formalizes
      this domain?
 2. Record the ontological anchors: for each anchor, cite the source
    (author, year, paper/standard) and describe how it shapes the skill.

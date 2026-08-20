@@ -32,18 +32,12 @@ classDiagram
         +insert(key, widget)
     }
     class CachedWidget {
-        <<enum>>
-        Media
-        Graph
-        Kanban
-        Portfolio
-        Scenarios
+        <<erased closure>>
         +render() AnyElement
     }
     class cache_key {
         +cache_key(body) u64
     }
-    class create_media_widget
     class create_graph_widget
     class create_kanban_widget
     class create_portfolio_widget
@@ -51,22 +45,20 @@ classDiagram
 
     block_renderer ..> VizCache : thread-local LRU max 32
     block_renderer ..> cache_key
-    block_renderer ..> create_media_widget : tries first
     block_renderer ..> create_graph_widget
     block_renderer ..> create_kanban_widget
     block_renderer ..> create_portfolio_widget
     block_renderer ..> create_scenarios_widget
     VizCache o-- CachedWidget : holds strong refs
-    CachedWidget ..> MediaWidget
     CachedWidget ..> GraphWidget
     CachedWidget ..> KanbanWidget
     CachedWidget ..> PortfolioWidget
     CachedWidget ..> ScenariosWidget
 ```
 
-**Selection order** (intentional): media first (claims bodies with a `kind`
-field), then graph (`viz: "event_tree"`), kanban (`viz: "kanban"`), portfolio
-(`viz: "portfolio"`), scenarios (`viz: "scenarios"`). A body claimed by none
+**Selection order** (intentional): graph (`viz: "event_tree"`), kanban
+(`viz: "kanban"`), portfolio (`viz: "portfolio"`), scenarios
+(`viz: "scenarios"`). A body claimed by none
 returns `None` and falls through to the default code-block renderer.
 
 **Wiring seam:** `crates/agent_ui/src/conversation_view.rs` —
@@ -77,6 +69,6 @@ The upstream D18 field/builder/dispatch in `markdown` stay unchanged (see
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
 verified_date: 2026-08-04
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs; crates/hkask-media-widget/src/media_widget.rs; crates/hkask-graph-widget/src/view.rs; crates/hkask-kanban-widget/src/view.rs; crates/hkask-portfolio-widget/src/view.rs; crates/hkask-scenarios-widget/src/view.rs; crates/agent_ui/src/conversation_view.rs
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs; crates/hkask-graph-widget/src/view.rs; crates/hkask-kanban-widget/src/view.rs; crates/hkask-portfolio-widget/src/view.rs; crates/hkask-scenarios-widget/src/view.rs; crates/agent_ui/src/conversation_view.rs
 status: VERIFIED
 -->

@@ -467,6 +467,8 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
         ("Cline", "https://api.cline.bot/api/v1"),
         ("KiloCode", "https://api.kilo.ai/api/gateway"),
         ("OpenRouter", "https://openrouter.ai/api/v1"),
+        ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
+        ("AtlasCloud", "https://api.atlascloud.ai/v1"),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);
