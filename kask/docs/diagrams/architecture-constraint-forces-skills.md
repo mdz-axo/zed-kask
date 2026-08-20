@@ -45,7 +45,6 @@ graph TD
         GHUNT["gradient-hunter\n(8-shape taxonomy)"]
         GPA["gpa-evolution\n(Pareto frontier)"]
         PCYB["pragmatic-cybernetics\n(variety engineering)"]
-        GRAPH["graph-audit\n(topology extraction)"]
         META["metacognition\n(perspective rotation)"]
     end
 

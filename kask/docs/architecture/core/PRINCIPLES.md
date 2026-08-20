@@ -183,7 +183,7 @@ Every skill emits six semantic spans, one per PDCA phase, mapped to the cybernet
 | `reg.skill.<id>.convergence` | Check | Are we done? |
 | `reg.skill.<id>.write` | Act | Commit artifact |
 
-These six spans are the same for every skill, regardless of domain. The typed enum `SkillFeedbackSpan` (`kask/crates/hkask-regulation/src/skill_span.rs`) encodes them. Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated) via the manifest's `telemetry_namespace` field. The `spans:` list in manifest `ledger` blocks is abolished — it was ambiguous and unused by the executor. CI gate: `kask/scripts/check-skill-span-namespace.sh`.
+These six spans are the same for every skill, regardless of domain. The typed enum `SkillFeedbackSpan` (`kask/crates/hkask-regulation/src/skill_span.rs`) encodes them. Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated). CI gate: `kask/scripts/check-skill-span-namespace.sh`.
 
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|

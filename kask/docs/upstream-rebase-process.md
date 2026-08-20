@@ -39,9 +39,8 @@ markers (3.6%) → **mapped re-application**.
 
 Extract every kask-wiring functional unit from the fork's file. A *functional
 unit* is a contiguous block that implements one kask capability (e.g., "wire the
-cybernetics loop", "register kask MCP servers"). Use `graph-audit` code mode
-when available; otherwise extract manually via `git diff upstream/main HEAD --
-<file>` + `grep` for section headers and kask symbols.
+cybernetics loop", "register kask MCP servers"). Use `grep` and
+`git diff upstream/main HEAD -- <file>` to extract section headers and kask symbols.
 
 Output: a numbered list of functional units (F1, F2, …) with line ranges and
 one-sentence purpose. See §4 for the `main.rs` inventory (28 units).
@@ -369,8 +368,7 @@ A skill that encodes this process for reuse. Sketch:
 - **Purpose:** Manage upstream Zed rebases for zed-kask: decide strategy per
   D-seam file (merge vs. mapped re-application), execute the chosen strategy,
   pin every deviation with a test, update DIVERGENCE.md.
-- **Composes:** `graph-audit` (dual mode — code-graph extraction + semantic
-  classification), `essentialist` (deletion test for cruft detection),
+- **Composes:** `essentialist` (deletion test for cruft detection),
   `coding-guidelines` (surgical re-application), `task-breakdown` (slice the
   re-application into vertical tasks).
 - **Phases:** Assess (per-file strategy decision) → Map (functional inventory

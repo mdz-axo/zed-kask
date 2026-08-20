@@ -1,7 +1,7 @@
 ---
 name: refactor-architecture
 core: true
-description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, graph-audit, deep-module, essentialist."
+description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, deep-module, essentialist."
 ---
 
 # Refactor Architecture
@@ -15,7 +15,7 @@ End-to-end architecture refactoring skill. Merges the discovery phase (formerly 
 5. **Strangle** — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
 6. **Verify** — Verify surgical completeness: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, surface adapter thinness.
 
-Includes the migration-strategy phase (folded from the standalone `strangler-fig` skill). Composes `tdd`, `coding-guidelines`, `pragmatic-semantics`, `graph-audit` (code mode, context-expansion), `deep-module`, `essentialist`, and `pragmatic-cybernetics` as methodological guidance.
+Includes the migration-strategy phase (folded from the standalone `strangler-fig` skill). Composes `tdd`, `coding-guidelines`, `pragmatic-semantics`, `deep-module`, `essentialist`, and `pragmatic-cybernetics` as methodological guidance.
 
 ## When to Use
 

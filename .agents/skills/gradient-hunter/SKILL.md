@@ -66,7 +66,7 @@ Composite of two sub-metrics (weighted 0.5/0.5):
 
 | Skill | Role | When Invoked |
 |-------|------|-------------|
-| `graph-audit` (code mode) | Field topology extraction | Map phase — when hunting topology gradients (orphan nodes, missing edges, disconnected components) |
+| `grep + manual code analysis | Field topology extraction | Map phase — when hunting topology gradients (orphan nodes, missing edges, disconnected components) |
 | `pragmatic-cybernetics` | Prior modeling | Prior phase — when no sibling or convention prior is available; models expected field via variety engineering |
 | `falsifiability` | Counterfactual discrimination | Hypothesize phase — when discriminating between reason hypotheses |
 | `metacognition` | Prior perspective rotation | Hypothesize phase — different priors surface different gradients; if a gradient disappears under a different prior, it was a prior artifact |
@@ -77,7 +77,7 @@ Composite of two sub-metrics (weighted 0.5/0.5):
 2. **Map with matching granularity** — granularity mismatch produces false gradients.
 3. **Detect with fractal check** — the fractal recurrence check is mandatory, not optional.
 4. **Hypothesize with multiple reasons** — at least 2-3 hypotheses per gradient from different reason classes. Do not collapse to the first match.
-5. **Delegate when needed** — topology gradients → `graph-audit`; no sibling/convention prior → `pragmatic-cybernetics`; non-obvious discrimination → `falsifiability`; prior may be wrong → `metacognition`.
+5. **Delegate when needed** — topology gradients → `grep` + manual analysis; no sibling/convention prior → `pragmatic-cybernetics`; non-obvious discrimination → `falsifiability`; prior may be wrong → `metacognition`.
 6. **Report with feedback** — emit `lessons_learned` and `pattern_signatures` for the next iteration.
 7. **Converge honestly** — false precision is worse than honest uncertainty.
 
@@ -98,7 +98,7 @@ Key non-obvious rules the taxonomy encodes:
 | Template | Purpose |
 |----------|---------|
 | `gradient-prior.j2` | Build a prior model of the expected field. Without a prior, you can only detect absences, not gradients. The prior comes from one of three sources in order of preference: sibling prior (a populated region structurally similar to the target), convention prior (a documented convention like a .rules trap), or principle prior (a design principle). Records source, scope, and confidence. Delegates to pragmatic-cybernetics for variety engineering when no sibling or convention prior is available. |
-| `gradient-map.j2` | Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to graph-audit (code mode) for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). |
+| `gradient-map.j2` | Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to grep + manual code analysis for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). |
 | `gradient-detect.j2` | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence (does this shape appear at other scales or in other domains?), populated side, desert side, magnitude. The fractal recurrence check is mandatory — a shape that recurs at multiple scales/domains is the system's characteristic pattern. References gradient-shapes.yaml for the shape taxonomy. |
 | `gradient-hypothesize.j2` | For each gradient, generate multiple hypotheses for why it exists. Use the seven-class reason taxonomy: intentional boundary (MCAR), explainable gap (MAR), forgotten wire (MNAR), stale refactor (MNAR drift), scope creep (MNAR missing abstraction), metastable trap (spin glass non-ergodic), broken allosteric coupling (ensemble redistribution). Delegates to falsifiability for counterfactual hypothesis discrimination ("if this desert were intentional, what else would be true?") and to metacognition for prior perspective rotation (different priors surface different gradients). |
 | `gradient-report.j2` | Compile detected gradients into a structured report. Each gradient entry includes location, shape, ontology anchor, scale, domain, fractal recurrence, prior, populated side, desert side, magnitude, reason hypotheses, recommended reason, and action. Prioritizes by reason class (broken allosteric coupling > metastable trap > MNAR > MAR > MCAR), then fractal recurrence, then magnitude, then populated-side criticality. Emits lessons_learned and pattern_signatures for the next iteration's prior (feedback loop closure). |

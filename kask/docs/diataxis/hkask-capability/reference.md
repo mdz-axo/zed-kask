@@ -143,13 +143,13 @@ pub struct ToolInfo {
 }
 ```
 
-`server_id` is how the manifest executor's `invoke_tool` resolves which server
+`server_id` is how the MCP runtime's tool dispatch resolves which server
 to dispatch to.
 
 ## `SYSTEM_MAX_RECURSION` structural bound
 
-`SYSTEM_MAX_RECURSION` (7) is the shared bound for cascade depth and subgoal
-nesting, consulted by the manifest executor and the registry bootstrap. It is a
+`SYSTEM_MAX_RECURSION` (7) is the shared bound for recursion depth and subgoal
+nesting, consulted by the MCP runtime and the registry bootstrap. It is a
 runaway-recursion breaker, not an authorization limit — the same distinction
 the call meter draws.
 

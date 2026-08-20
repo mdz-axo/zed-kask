@@ -19,7 +19,7 @@ canonical source for composition guidance (field definitions, ABW/Local
 considerations, composition principles). It is shared with the
 swarm-intelligence skill's template set. This skill makes it invocable as a
 standalone process from the MCP server (`swarm_ai_assist`) via the
-`SkillExecPort` path.
+agent tool path.
 
 ## When to Use
 
@@ -46,7 +46,7 @@ inputs and the surface/mode/action selectors. The template encodes:
   completions; validate returns a JSON verdict (valid, issues, suggestions).
 
 The form fields are serialized as a JSON object string and passed as the `task`
-through the `SkillExecPort::execute_skill` seam. `AgentSkillExec` (zed side)
+through the `MCP tool dispatch` seam. The agent tool system (zed side)
 detects JSON-object tasks and merges their fields into the process context as
 top-level template variables.
 

@@ -238,7 +238,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
   skill (its own process manifest renders the same template).
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
-  `hkask-templates/src/compute.rs`)
+  the swarm compute primitives)
 - MCP tool surface (52 tools — both sets always registered in either mode;
   `kask.swarm.mode` selects the substrate, not the surface; pinned by
   `tool_surface_is_exactly_52_registered_tools`):

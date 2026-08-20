@@ -6,7 +6,7 @@ description: "Run peer-level skills concurrently and merge their outputs into a 
 
 # Skill Bundler
 
-Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out happens in Rust (`BridgeManifestExecutor::compose_and_execute_bundle`); this skill's manifest handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop — the bundler dispatches each skill in parallel, collects results (allSettled — partial results OK if a skill errors), and synthesizes them.
+Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out dispatches each skill via the `skill` tool; this skill handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop . the bundler dispatches each skill in parallel, collects results (allSettled . partial results OK if a skill errors), and synthesizes them.
 
 ## When to Use
 

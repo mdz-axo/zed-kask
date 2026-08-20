@@ -18,6 +18,7 @@ hkask-mcp-server.workspace = true
 hkask-bridge-ontology.workspace = true
 hkask-types.workspace = true
 hkask-ledger.workspace = true
+hkask-event-store.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true
 hkask-memory.workspace = true

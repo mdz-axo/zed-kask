@@ -41,7 +41,7 @@ failure are worth stating precisely, because the shape recurs:
 - `DelegationToken::is_valid_for` was field-wise equality: `resource == resource
   && resource_id == resource_id && action == action`.
 - All three production mint sites — the panel tool invoker, the inference IPC
-  `tool_invoke` dispatch, and the manifest executor's `invoke_tool` step —
+  `tool_invoke` dispatch, and the MCP runtime's tool dispatch —
   derived the token's `resource_id` from the same `tool` value they then passed
   to `invoke`.
 - So the gate compared a caller-supplied value against itself. It returned true
@@ -115,15 +115,15 @@ precisely or to authorize. It is deliberately **fail-open** on an agent with no
 registered ceiling: such an agent is auto-registered at
 `DEFAULT_RUNAWAY_CALL_CEILING` and the wiring gap is logged. The prior
 fail-closed behavior demonstrated why: `main.rs` seeded a ceiling only for the
-`swarm-panel` persona while the IPC dispatch used `kask-panel` and the cascade
-used `manifest-executor`, so every delegated tool call was refused for a wiring
+`swarm-panel` persona while the IPC dispatch used `kask-panel` and the MCP
+runtime used `manifest-executor`, so every delegated tool call was refused for a wiring
 omission that had nothing to do with authority.
 
 ## The taint gate failed the same way, and was deleted too
 
 A second removal (RR-0053) took the FIDES taint machinery: `ToolTaint`,
-`can_flow_to`, the `ToolInfo.taint` field, and the `DefaultPolicy` check in the
-manifest executor's `invoke_tool` that consumed them. It is worth recording
+`can_flow_to`, the `ToolInfo.taint` field, and the `DefaultPolicy` check in
+the MCP runtime's tool dispatch that consumed them. It is worth recording
 next to the capability gate, because the shape is the same one again — a check
 that runs and cannot decide:
 

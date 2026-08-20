@@ -74,7 +74,6 @@ classDiagram
     class AgentExecutor {
         -inference: InferencePort
         -tool_dispatch: ToolDispatchPort
-        -skill_exec: SkillExecPort
         +run(card,task) RawDelegateResult
         MAX_TOOL_ROUNDS 4
         MAX_SKILLS_PER_DELEGATION 3

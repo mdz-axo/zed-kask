@@ -9154,6 +9154,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-event-store"
+version = "0.36.0"
+dependencies = [
+ "chrono",
+ "hkask-storage",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "hkask-forecast"
 version = "0.36.0"
 dependencies = [
@@ -9488,6 +9499,7 @@ dependencies = [
  "a2a-lf",
  "chrono",
  "hkask-bridge-ontology",
+ "hkask-event-store",
  "hkask-inference",
  "hkask-ledger",
  "hkask-mcp-server",
