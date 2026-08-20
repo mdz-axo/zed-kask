@@ -108,7 +108,7 @@ The swarm system (`hkask-mcp-swarm` + `crates/swarm_panel` + the `swarm-intellig
 | DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md`   | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator (52 tools: 27 ABW + 25 local)                                   | `hkask_mcp_swarm.rs` (`tool_surface_is_exactly_52_registered_tools`), `swarm_panel.rs`                 | ✅ VERIFIED 2026-08-16                                                            |
 | DIAG-DIA-SWARM-002 | flowchart | `diagrams/flowchart-swarm-pdca-cascade.md`   | swarm-intelligence 10-step PDCA cascade with deterministic compute steps                                                                                   | `swarm-intelligence/SKILL.md`                                                                          | ✅ VERIFIED                                                                       |
 | DIAG-DIA-SWARM-003 | sequence  | `diagrams/sequence-swarm-steering-loop.md`   | Steering loop — advisory vs steering execution, delegate_results feedback                                                                                  | `swarm-steering/SKILL.md`                                                                              | ✅ VERIFIED                                                                       |
-| DIAG-DIA-SWARM-006 | class     | `diagrams/class-swarm-server.md`             | SwarmServer collaborators — AbwClient, ConsentStore, spend_gate module (crate-private authorize/complete fns), runtime, executor, A2A, LocalDelegateResult, VerificationStore | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-16 (guard field removed from AgentExecutor; tool count 52; VerificationStore added) |
+| DIAG-DIA-SWARM-006 | class     | `diagrams/class-swarm-server.md`             | SwarmServer collaborators — AbwClient, ConsentStore, spend_gate module (crate-private authorize/complete fns), runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-20 (VerificationStore removed with hkask-verification; guard field removed from AgentExecutor; tool count 52) |
 | DIAG-DIA-SWARM-007 | state     | `diagrams/state-swarm-panel-modes.md`        | SwarmPanel PanelMode states (Browse/Author/Compose/Steer) + backend toggle                                                                                 | `swarm_panel.rs`                                                                                       | ✅ VERIFIED 2026-08-03                                                            |
 | DIAG-DIA-SWARM-008 | flowchart | `diagrams/flowchart-swarm-feedback-loops.md` | Four feedback loops with 5-property health + algedonic override + C4 latency deficit                                                                       | `swarm-intelligence/SKILL.md`, `consent.rs`, `swarm_panel.rs`                                          | ✅ VERIFIED 2026-08-03                                                            |
 
@@ -121,6 +121,7 @@ These live under `docs/plans/` and `docs/research/` and were not previously trac
 | DIAG-PLAN-SWARM-A | flowchart | `plans/cybernetic-swarm-plan.md` §3   | Three desiderata × hKask dependency hierarchy (D1 Reliability → D2 Lifelong → D3 Self-Improvement) | `plans/cybernetic-swarm-plan.md`                               | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-PLAN-SWARM-B | flowchart | `plans/cybernetic-swarm-plan.md` §8   | Implementation sequencing — C0/C2/C1/C4/C5 step dependency                                         | `plans/cybernetic-swarm-plan.md`                               | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-PLAN-SWARM-C | flowchart | `plans/cybernetic-swarm-plan.md` §9.1 | Complete cybernetic swarm map (revision 2 — fusion removed, deterministic judge)                   | `plans/cybernetic-swarm-plan.md`                               | ✅ SURVIVES 2026-08-03 (path confirmed) |
+
 Removed 2026-08-05 with their parent plans (all deleted): DIAG-PLAN-SIGN-A, DIAG-PLAN-SIGN-B (`plans/kask-skill-signing-and-trust.md`), DIAG-PLAN-MEDIA (`plans/media-system-refactor.md`), DIAG-PLAN-WIKI (`plans/semantic-memory-wiki.md`). Recoverable via git history.
 
 ## 14. Viz Widgets (D18) — class diagrams
@@ -154,14 +155,14 @@ The `docs/diataxis/` set carries one diagram per artifact across 9 crates (`hkas
 
 | Location                                                                                                             | Count   |
 | -------------------------------------------------------------------------------------------------------------------- | ------- |
-| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 6 viz widgets + 2 kanban state + 4 skill/MCP/credential seam diagrams) | 21      |
+| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 5 viz widgets + 2 kanban state + 3 skill/MCP/credential seam diagrams) | 19      |
 | `docs/explanation/` (cognition-and-replica, training-and-adapters, skills-and-composition)                           | ~12     |
 | `docs/reference/mcp-servers/` (README, companies, scenarios, swarm)                                       | 4       |
 | `docs/reference/regulation-spans.md`                                                                                 | 1       |
 | `docs/architecture/` (MDS ×4, DOCUMENTATION_STANDARDS ×1)                                                            | 5       |
 | `docs/plans/` (cybernetic-swarm ×3)                                                           | 3       |
 | `docs/diataxis/` (9 crates × ~4)                                                                                    | ~36     |
-| **Total surviving**                                                                                                  | **~83** |
+| **Total surviving**                                                                                                  | **~81** |
 
 **Removed from this registry (2026-08-03):** all "PARENT DELETED" / "removed — host status report" entries (~26 diagrams whose parents were deleted in the 2026-07-24 cleanup). Recoverable via git history.
 

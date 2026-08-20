@@ -2,7 +2,7 @@
 title: "Swarm MCP Server Architecture"
 audience: [architects, developers]
 last_updated: 2026-08-20
-version: "1.0.3"
+version: "1.0.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]
@@ -48,18 +48,9 @@ flowchart TD
     SI -->|emitted_calls plan| SS
     SS -->|steering directive| CURATOR
     CURATOR -->|swarm_delegate_local| SWARM
-    SWARM -->|Rung 3 Grounding<br/>Rung 4 Binding| SWARM
     SWARM -->|LocalDelegateResult<br/>bind_matched| CURATOR
     CURATOR -->|delegate_results feedback| SI
 ```
-
-> **Note (2026-08-20):** The `hkask-verification` crate (which provided
-> `enforce_grounding` and the `VerificationStore` grounding ledger) was
-> deleted (commit `9e9c41ef3c`). The "Rung 3 Grounding" step in the diagram
-> above documents the prior grounding enforcement flow; with the crate
-> deleted, the grounding check and the curator feedback loop's
-> `GroundingSensor` are no longer wired. The `check_bind` Rung 4 binding
-> check lives in `hkask-mcp-swarm/src/local_runtime.rs` and survives.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001

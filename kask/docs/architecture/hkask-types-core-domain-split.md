@@ -72,7 +72,7 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 
 **Internalize into single-consumer MCP server (no external edge):** `document` + `corpus` -> `hkask-mcp-corpus`.
 
-**Stay core (foundational):** ~~`template` (`LLMParameters`/`TemplateFile`)~~ — `LLMParameters` is a foundational config primitive (11 consumers), not a domain type — stays core regardless.
+**Stay core (foundational):** `LLMParameters`/`TemplateFile` — `LLMParameters` is a foundational config primitive (11 consumers), not a domain type — stays core regardless.
 
 **Dead code (deleted since):** `server_config` is not root-re-exported, has zero module-path imports, and no test/doc references.
 
