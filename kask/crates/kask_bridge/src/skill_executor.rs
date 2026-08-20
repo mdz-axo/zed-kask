@@ -55,22 +55,6 @@ pub trait ProfileResolver: Send + Sync {
     fn is_tool_enabled(&self, tool_name: &str) -> bool;
 }
 
-/// Result of a single golden-output fixture validation. Returned by
-/// `BridgeManifestExecutor::validate_golden_outputs`.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct GoldenOutputResult {
-    /// Index of the fixture in the manifest's `golden_outputs` list.
-    pub fixture_index: usize,
-    /// Whether the skill's output matched the expected output exactly.
-    pub passed: bool,
-    /// The actual output from the skill cascade (`None` if execution failed).
-    pub actual: Option<String>,
-    /// The expected output from the fixture.
-    pub expected: String,
-    /// Error message if the skill failed to execute or the output didn't match.
-    pub error: Option<String>,
-}
-
 /// A `ProfileResolver` backed by a snapshot of a profile's `terminal` tool state,
 /// read once at wiring time (in `main.rs`'s deferred post-login task).
 ///

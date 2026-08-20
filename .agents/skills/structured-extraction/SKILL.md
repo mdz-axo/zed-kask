@@ -57,8 +57,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `extract-relations.j2`: Public.
 - `identify-entities.j2`: Public.
 - `map-to-schema.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

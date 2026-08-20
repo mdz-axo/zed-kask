@@ -62,10 +62,9 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `coaching-q1-target.j2`: Public.
 - `coaching-q2-actual.j2`: Public.
 - `coaching-q3-obstacles.j2`: Public.
 - `coaching-q4-experiment.j2`: Public.
 - `coaching-q5-learn.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

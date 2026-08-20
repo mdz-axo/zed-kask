@@ -91,6 +91,5 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 
 ## Constraints
 
-- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - Process manifest: `kask/registry/manifests/kanban-task-management.yaml`
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

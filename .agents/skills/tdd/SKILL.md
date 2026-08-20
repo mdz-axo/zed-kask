@@ -128,7 +128,6 @@ Test-driven development with red-green-refactor loop, codegraph-anchored testing
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `tdd-plan.j2`: Public. Planning only — do not write code in this phase.
 - `tdd-tracer.j2`: Public. Contract-first ordering: Contract → Test → Implementation. Test through public interface only. Minimal implementation — no speculative features. Selects `oracle_type` (hardcoded/reference/invariant) driving step 3.
 - `tdd-strengthen.j2`: Public. Dispatches to proptest ONLY for property-shaped contracts (reference/invariant oracle). Skips cleanly for hardcoded. Standalone execution mode (TDD can run tests). A proptest fail is RED — routes back to tracer or plan via the manifest's `branching` field (enforced by the ManifestExecutor — `BundleManifestStep.branching` is evaluated after `select`/`execute` steps, jumping to the target ordinal based on the `routing` field in the step result).
@@ -136,7 +135,7 @@ Test-driven development with red-green-refactor loop, codegraph-anchored testing
 - `tdd-verify.j2`: Public. Uses `./scripts/test --trace` (not bare `cargo test`) so runs are visible to harness-optimize. Emit `reg.contract.violated` spans for missing/malformed contracts. Reject vacuous `expect:` fields. A proptest `fail` verdict forces `all_tests_pass: false`.
 - `tdd-gap-check.j2`: Public. Every requirement in exactly one of: covered, gaps, deferrals. P0 gaps MUST recommend tracer-bullet. Consumes bug-hunt findings + surviving mutants as additional gap sources when provided.
 - `tdd-explore.j2`: Public. Dispatches to bug-hunt ONLY when coverage is thin OR slice touches Trust (P0). Findings must cite file:line (no-fiction). P0/P1 new gaps route to replan via the manifest's `branching` field (enforced by the ManifestExecutor); P2 may defer.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Relationship to Other Skills
 

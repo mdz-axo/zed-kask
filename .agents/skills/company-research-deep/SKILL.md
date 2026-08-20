@@ -135,7 +135,6 @@ All MCP tool calls are native `action: execute` steps (deterministic, governed, 
 
 ## Constraints
 
-- rJoule cap: 12 per invocation. Maximum 3 iterations.
 - The registry crate (`kask/registry/templates/company-research/`) is the canonical source of truth. This SKILL.md is a derived companion.
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.
 - No `unwrap_or(0)` on regulation signals. Missing THESIS verdict surfaces as 1.0 (worst case), not silently converged.

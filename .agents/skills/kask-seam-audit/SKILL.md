@@ -84,7 +84,6 @@ Final: report
 - `lisp.eval` gates are authoritative between phases; `condition:` branches
   reference real `step_N_result` keys, not LLM self-assessment.
 - `ledger.span_namespace` is `reg.skill.kask-seam-audit` (CI-enforced).
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 
 ## Example invocation
 
@@ -96,5 +95,4 @@ prior_rules:
   - { prior: "propagate_taint_for_binding", artifact: "propagate_taint_for_binding", expected: "live" }
 ```
 
-Registry is authoritative — when this SKILL.md disagrees with the registry
-templates, the registry wins.
+This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

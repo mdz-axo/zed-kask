@@ -53,7 +53,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 3. Verify dependency direction: dependencies are acyclic and point toward stability.
 4. Assess caller benefit: callers genuinely benefit from the abstraction (not pass-through).
 5. Check that depth-improvement recommendations are specific and actionable.
-6. The convergence signal is the public-interface item count (`step_3_result.public_interface | length`). Convergence is detected deterministically via the Cauchy criterion: the executor tracks this signal across iterations and exits when the iterates have stopped moving (within `cauchy_epsilon` over `cauchy_window` iterations, minimum 2 iterations). No `re_entry_target` field is emitted — the `loop` step fixes `loop_target: 1` (re-enter at assess) and the Cauchy tracker decides when to stop. When the design step is skipped (DELETE/MERGE recommendation), `step_3_result` is undefined and the signal defaults to 0, which is stable — Cauchy fires after `min_iterations`.
+6. The convergence signal is the public-interface item count (`step_3_result.public_interface | length`). Track this signal across iterations and evaluate convergence: the iterates have stopped moving when the signal is stable across iterations (minimum 2 iterations). Re-enter at assess after each iteration; stop when the signal has stabilized. When the design step is skipped (DELETE/MERGE recommendation), `step_3_result` is undefined and the signal defaults to 0, which is stable — convergence is reached after the minimum iteration count.
 
 ## Registry Templates
 
@@ -65,7 +65,6 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility.
 - Templates use KnowAct with Public visibility.
 - Count public items mechanically — do not guess. Estimate behavior conservatively, erring toward undercounting.
@@ -77,7 +76,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
+- Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
 - Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
 - Handle missing variables gracefully (leave as-is or use default if specified).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

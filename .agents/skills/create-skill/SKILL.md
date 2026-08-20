@@ -1,16 +1,67 @@
 ---
 name: create-skill
 core: true
-description: "Create a new kask skill as a complete registry crate: manifest.yaml + .j2 templates + process manifest + SKILL.md companion. Overrides the built-in Zed create-skill, which only produces SKILL.md files."
+description: "Create a new kask skill: SKILL.md process instructions + .j2 prompt templates. The SKILL.md is the process surface the agent reads and follows; templates are readable resources for prompt structure. No manifest.yaml — the agent is the executor."
 ---
 
-# Create Skill (kask-native)
+# Create Skill
 
-Create a new kask skill as a complete registry crate, grounded in the
-skill's specific domain. This skill overrides the built-in Zed
-`create-skill`, which only produces SKILL.md files — insufficient for
-kask, where the SKILL.md is a discovery-only catalog entry and the actual
-implementation lives in the registry (`kask/registry/`).
+Create a new kask skill as a SKILL.md process document with companion .j2
+prompt templates. The agent reads the SKILL.md, follows its instructions,
+and calls tools (`lisp_eval`, MCP tools, `read_file`, `skill`, etc.) as
+directed. No manifest cascade — the agent IS the executor.
+
+## The new skill model
+
+A kask skill has two artifacts:
+
+```
+.agents/skills/<name>/
+├── SKILL.md              # Process instructions the agent reads and follows
+├── <phase>.j2            # Jinja2 prompt templates (readable resources)
+```
+
+### SKILL.md — the process surface
+
+The SKILL.md is the primary artifact. The `skill` tool reads its body and
+returns it to the agent as instructions. The agent then follows those
+instructions, calling tools at each step.
+
+The SKILL.md contains:
+
+1. **Frontmatter**: `name`, `description`, `core` (optional). No `visibility`.
+2. **When to Use / When NOT to Use**: triggers and anti-triggers.
+3. **Instructions**: numbered steps the agent follows. Each step says what
+   tool to call, what inputs to provide, and what to do with the result.
+4. **Constraints**: guardrails, budgets, rules.
+
+### .j2 templates — prompt resources
+
+Templates are `.j2` files in the skill directory. The agent reads them via
+`read_file` when the SKILL.md instructs it to use a template for a reasoning
+step. The template defines:
+
+- The prompt structure (system prompt, output schema)
+- Jinja2 variables that the agent fills from prior step results
+- The expected JSON output shape
+
+The agent reads the template, understands the expected output format, and
+produces the analysis following the template's guidance. The template is a
+*resource* — the agent uses it as a prompt specification, not as code to
+execute.
+
+### What's gone
+
+- **`kask/registry/manifests/<name>.yaml`** — no manifest cascade. The agent
+  follows SKILL.md instructions directly.
+- **`kask/registry/templates/<name>/manifest.yaml`** — no template manifest.
+  Templates are just files in the skill directory.
+- **`action: execute`, `action: select`, `action: compute`, `action: loop`** —
+  no step machine. The agent calls tools when the SKILL.md tells it to.
+- **`compute_ref: lisp.eval`** — use the `lisp_eval` agent tool instead.
+- **`convergence_signal`, `cauchy_epsilon`, `max_iterations`** — the agent
+  decides when to loop based on the SKILL.md's convergence criteria. Use
+  `lisp_eval` to compute convergence signals deterministically.
 
 ## Core principle: idiosyncratic, not generalized
 
@@ -18,12 +69,9 @@ Each skill is customized and idiosyncratic to its domain. The skill's
 PDCA shape emerges from its ontological anchors — the academic and
 industry processes that define how the domain works. A gradient-hunter
 follows Prior → Map → Detect → Hypothesize → Report → Convergence because
-that's what gradient analysis IS (wombling, RDD, Rubin, persistent
-homology, spin glasses, allostery). A bug-hunt follows Charter → Probe →
-Oracle → Taxonomize → Report → Convergence because that's what
-exploratory testing IS (Hendrickson, Bach, Weinberg, Beizer). A
-self-improvement skill follows a nested PDCA + outer Kata because that's
-what self-induced update IS (Ren et al. 2026, Toyota Improvement Kata).
+that's what gradient analysis IS. A bug-hunt follows Charter → Probe →
+Oracle → Taxonomize → Report → Convergence because that's what exploratory
+testing IS.
 
 **Do not generalize the shape.** Copying the bug-hunt pattern for a
 non-bug-hunt skill produces a hollow skill — the shape without the
@@ -32,31 +80,13 @@ shape emerge.
 
 ## When to Use
 
-- You need to create a new kask skill from a natural-language description
-- You need to scaffold the full registry crate structure with ontological grounding
-- You need to override the built-in `create-skill` with kask-native registry semantics
+- You need to create a new kask skill from a natural-language description.
+- You need to scaffold the SKILL.md + template structure with ontological
+  grounding.
 
 Do NOT use for:
-- Creating a simple SKILL.md-only skill (use the built-in `create-skill` — but note this produces a registry-incomplete skill)
-- Validating an existing skill (use `skill-maintenance-validate`)
-- Auditing skill health (use `skill-maintenance-audit`)
-
-## The kask skill structure
-
-Every kask skill has artifacts in four locations:
-
-```
-1. .agents/skills/<name>/SKILL.md                    # Catalog entry (discovery)
-2. kask/registry/templates/<name>/manifest.yaml      # Template manifest
-3. kask/registry/templates/<name>/*.j2               # Jinja2 templates
-4. kask/registry/manifests/<name>.yaml               # Process manifest (FlowDef)
-```
-
-The SKILL.md is the *interface* — Zed's discovery machinery parses its
-frontmatter (name + description) to surface it in the slash-command catalog
-and the model's `<available_skills>` list. The *implementation* (the YAML
-manifest in `kask/registry/manifests/`) is the process manifest that the
-ManifestExecutor dispatches.
+- Validating an existing skill (use `skill-maintenance`).
+- Auditing skill health (use `skill-maintenance`).
 
 ## Ontological anchoring
 
@@ -67,92 +97,61 @@ skill's artifacts.
 
 ### Ontology reference set
 
-The create-skill process selects from (and extends) this ontology set
-based on the skill's domain:
-
 | Ontology | Domain | Use when |
 |---|---|---|
-| **PKO** (Procedural Knowledge Ontology, Carriero et al. 2025) | Industrial processes, procedures, workflows | The skill models a procedure with specification/execution separation |
-| **Dublin Core** | Metadata, documentation, cataloging | The skill produces or manages metadata artifacts |
-| **GOLEM** (Graphs and Ontologies for Literary Evolution Models, Pianzola et al. 2024) | Narrative, fiction, storytelling | The skill models narrative structure, characters, events, settings |
-| **ESO** (Event and Implied Situation Ontology, Segers et al. 2015) | Event structures, scientific inquiry | The skill models events with pre/post situations and entity roles |
-| **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain (e.g., spin glass theory for gradient-hunter, Beizer taxonomy for bug-hunt, Ren et al. for self-improvement) |
-
-The ontology selection is not exhaustive — the research phase may find
-additional ontologies. The point is that the skill's artifacts should be
-annotated with the ontology terms that define its domain's process.
+| **PKO** (Procedural Knowledge Ontology) | Industrial processes, procedures | The skill models a procedure with specification/execution separation |
+| **Dublin Core** | Metadata, documentation | The skill produces or manages metadata artifacts |
+| **GOLEM** | Narrative, fiction, storytelling | The skill models narrative structure |
+| **ESO** (Event and Implied Situation Ontology) | Event structures, scientific inquiry | The skill models events with pre/post situations |
+| **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain |
 
 ### How ontological anchoring shapes the skill
 
 1. **PDCA shape**: the ontology's process structure implies the skill's
-   phase structure. PKO's specification/execution separation implies a
-   Plan → Execute → Verify shape. ESO's pre/post situations imply a
-   Before → Event → After shape. The gradient-hunter's eight gradient
-   ontologies imply a Prior → Map → Detect → Hypothesize shape.
-2. **Template contracts**: the ontology's entity types become the
-   template contract's input/output types. PKO's Procedure, Step,
-   StepExecution become contract fields. ESO's Event, Situation, Role
-   become contract fields.
-3. **Span namespaces**: the ontology's concepts become span names. There are
-   two distinct namespaces — do not conflate them:
-   - `ledger.span_namespace` (process manifest): MUST be `reg.skill.<manifest.id>`
-     (CI-enforced by `scripts/check-skill-span-namespace.sh`; the `spans:` list is
-     abolished). E.g. `reg.skill.bug-hunt`.
-   - per-template `generates_spans` (template manifest + .j2): the ontology-derived
-     short name, e.g. `reg.gradient.detect` follows the gradient ontology,
-     `reg.bughunt.oracle` follows the Weinberg oracle concept. These are NOT gated
-     by the CI script and may use a shortened form distinct from `manifest.id`.
+   phase structure. The SKILL.md's Instructions section follows this shape.
+2. **Template contracts**: the ontology's entity types become the template's
+   output fields. PKO's Procedure, Step, StepExecution become JSON fields.
+3. **Tool selection**: the ontology's process determines which tools the
+   SKILL.md instructs the agent to call at each phase.
 4. **Convergence criteria**: the ontology's quality criteria become the
-   convergence metric. PKO's execution completeness becomes a coverage
-   metric. The gradient-hunter's fractal recurrence becomes a
-   stabilization metric.
+   `lisp_eval` convergence check the SKILL.md instructs the agent to run.
 
 ## PDCA Loop
 
-The create-skill process itself follows a PDCA loop, but the shape is
-specific to skill creation:
+The create-skill process itself follows a PDCA loop:
 
 ```
-Plan:   Phase 1 — Research     → Find academic/industry ontological anchors for the skill's domain
-Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape (emergent from anchors), delegates, ontology
-Do:     Phase 3 — Scaffold    → Generate manifest.yaml + .j2 templates + process manifest + SKILL.md
-Check:  Phase 4 — Validate    → Run skill-maintenance-validate against R1-R12, Z1-Z8, X1-X4, E1-E11
-Check:  Phase 5 — Converge     → Check validation passed; if not, re-enter at Research with fixes
-Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1 with the failure report
+Plan:   Phase 1 — Research     → Find academic/industry ontological anchors
+Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape, delegates
+Do:     Phase 3 — Scaffold    → Generate SKILL.md + .j2 templates
+Check:  Phase 4 — Validate    → Run skill-maintenance validation
+Check:  Phase 5 — Converge     → Check validation passed; if not, re-enter
+Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
 ```
-
-The research phase is first because the anchors determine everything else.
-Without research, the describe phase would default to a generic shape —
-which is exactly what we want to avoid.
 
 ## Composed Skills
 
 | Skill | Role | When Invoked |
 |-------|------|-------------|
-| `skill-maintenance` | Scaffolding + validation | Phase 3 (scaffold via `skill-maintenance-build`) and Phase 4 (validate via `skill-maintenance-validate`) |
+| `skill-maintenance` | Validation | Phase 4 (validate) |
 
 ## Instructions
 
 ### Phase 1 — Research (find ontological anchors)
 
 1. Search the academic and industry literature for the skill's domain.
-   Use web search and academic search tools to find:
+   Use `web_search` and academic search tools to find:
    - **Process ontologies**: how does the domain's process work? What
      are the canonical phases, steps, or stages?
    - **Quality criteria**: how does the domain measure success? What
      are the convergence criteria?
-   - **Entity types**: what are the domain's objects, events, roles,
-     situations?
-   - **Existing ontologies**: is there a PKO, Dublin Core, GOLEM,
-     ESO, or domain-specific ontology that formalizes
-     this domain?
+   - **Entity types**: what are the domain's objects, events, roles?
+   - **Existing ontologies**: is there a PKO, Dublin Core, GOLEM, ESO,
+     or domain-specific ontology that formalizes this domain?
 2. Record the ontological anchors: for each anchor, cite the source
    (author, year, paper/standard) and describe how it shapes the skill.
-3. Select the ontology reference set: which ontologies will annotate the
-   skill's artifacts?
-4. Derive the PDCA shape from the anchors: what phases does the skill
-   need? The shape emerges from the domain's process, not from a
-   generic template.
+3. Select the ontology reference set.
+4. Derive the PDCA shape from the anchors.
 
 ### Phase 2 — Describe (capture specification)
 
@@ -160,178 +159,142 @@ which is exactly what we want to avoid.
    description, informed by the research phase.
 2. Choose a name: lowercase, hyphenated, 2-40 characters, verb-noun or
    noun-noun, no reserved prefixes.
-3. Specify the PDCA phases — these are the phases that emerged from the
-   research phase, not a generic template. Each phase is grounded in an
-   ontological anchor.
-4. Identify which skills this skill will compose (delegates).
-5. Identify the per-template span namespace (`reg.<skill_name>.<phase>`,
-   ontology-derived). The ledger `span_namespace` is deterministic — always
-   `reg.skill.<manifest.id>` — and is injected by the scaffold phase; do not
-   "choose" it.
-6. Identify the ontology annotations for each artifact.
+3. Specify the PDCA phases — these emerge from the research phase, not
+   from a generic template. Each phase is grounded in an ontological anchor.
+4. Identify which skills this skill will compose (delegates via `skill` tool).
+5. Identify which MCP tools the skill will call (e.g., `curator_memory_recall`,
+   `curator_consult`, `kanban_task_list`, `stock_quote`, `web_search`).
+6. Identify which agent tools the skill will call (e.g., `lisp_eval` for
+   deterministic computation, `read_file` for template loading).
 
-### Phase 3 — Scaffold (delegate to skill-maintenance-build)
+### Phase 3 — Scaffold (generate SKILL.md + templates)
 
-Delegate to `skill-maintenance-build` to generate the full registry crate:
+Generate the skill artifacts:
 
-1. **Template manifest** with ontology-annotated template entries
-2. **.j2 templates** with contracts whose types come from the ontology
-3. **Process manifest** with the idiosyncratic PDCA shape (not a generic
-   template), rjoule/convergence blocks, OCAP capabilities
-4. **SKILL.md companion** with ontology references in the description
-   and constraints
+1. **SKILL.md** with:
+   - Frontmatter: `name`, `description`
+   - "When to Use" / "When NOT to Use" sections
+   - "Instructions" section with numbered steps. Each step specifies:
+     - What tool to call (`lisp_eval`, MCP tool, `read_file`, `skill`)
+     - What inputs to provide (form, env, query, template path, etc.)
+     - What to do with the result (feed to next step, check convergence)
+   - "Constraints" section with guardrails and rules
+   - Template references: "Read `analyze.j2` for the expected output format"
 
-### Visual artifact surfacing (Phase 3 gate)
+2. **.j2 templates** with:
+   - A comment header describing the template's purpose and phase
+   - Jinja2 variables for context injection (`{{ task }}`, `{{ step_1_result }}`)
+   - The prompt structure (what the agent should analyze/synthesize)
+   - The expected JSON output shape (as a comment or schema description)
+   - No `[inference]` frontmatter — templates are resources, not executed code
 
-If the skill produces a visual artifact (Mermaid diagram, chart, map, or any
-renderable output) in an intermediate `select` step, the process manifest **must
-include a final `render` step** that surfaces the artifact as the cascade's
-final output. Without it, the artifact stays buried in an intermediate
-`step_N_result` and `extract_final_step_result` picks a later step (compute/loop)
-that has no diagram — the user never sees the visualization.
+### How to write SKILL.md instructions that use tools
 
-The pattern:
+Each instruction step should be concrete and tool-oriented:
 
-1. An intermediate `select` step generates the visual artifact source (e.g.,
-   `map_diagram` containing `quadrantChart ...`, or `mermaid_source` containing
-   `sankey-beta ...`).
-2. A final `render` step (RenderAct, `action: render`) takes the artifact source
-   via `input_mapping` and wraps it in a fenced ```mermaid block as a markdown
-   string. This step is deterministic (no LLM call, `timeout_seconds: 10`).
-3. The `loop` step comes **after** the render step. The render step's ordinal
-   must be the highest among steps that produce a `step_N_result` (the `loop`
-   action does not produce one), so `extract_final_step_result` picks it.
-4. The render template is a pure Jinja2 file (no `[inference]` frontmatter) — the
-   `render` action calls `render_minijinja` on the full file content, so
-   frontmatter would appear in the output.
+```
+### Phase 3 — Analyze
 
-Detection criteria — add a render step if **any** of these are true:
-- A template's `contract.output` includes a field whose description says "mermaid",
-  "diagram", "chart", "graph", "visual", or "plot".
-- A template instructs the model to "generate a Mermaid ... chart/diagram".
-- The skill's SKILL.md description mentions "renders natively in Zed", "visual",
-  "diagram", or "chart".
+1. Call `read_file` to load the analysis template:
+   path: `.agents/skills/my-skill/analyze.j2`
 
-Skills that do NOT produce visual artifacts (pure reasoning, extraction, audit,
-code review, etc.) do not need a render step.
+2. Following the template's output schema, analyze the research from
+   step 2. Produce a JSON object with the fields specified in the template.
 
-### Composition principles for optimal skill design (Phase 3 gate)
+3. Call `lisp_eval` to check structural invariants:
+   form: "(let ((results (assoc \"findings\" step_3_result))) (length results))"
+   env: { "step_3_result": <your analysis output> }
+   If the result is 0, return to step 2 and produce more findings.
 
-Five principles discovered through the co-evolution of skills and MCP tools.
-Apply these when designing the PDCA shape and step sequence:
+4. Call `curator_consult` to check prior analyses:
+   query: "prior {{ skill_name }} analyses for {{ target }}"
+   Thread the relevant memories into your next analysis step.
+```
 
-#### 1. The Determinism Frontier
+### Convergence pattern
 
-Every skill has a boundary between deterministic steps (output fully
-determined by inputs) and probabilistic steps (LLM exercises judgment).
-Push as much work as possible to the deterministic side.
+Instead of `action: loop` with `convergence_signal`, the SKILL.md describes
+when to loop in natural language, backed by `lisp_eval` for deterministic
+checks:
 
-- **`execute`** for MCP tool calls whose inputs are fully determined by prior
-  step outputs (financial data, codegraph queries, calibration reads).
-- **`compute`** (lisp.eval) for math, invariant checks, convergence signals.
-- **`select`** only for steps that require LLM judgment (synthesis, reasoning,
-  classification, prediction).
+```
+### Convergence
 
-The test: "Could a deterministic function produce this output from these
-inputs?" If yes, it should be `execute` or `compute`, not `select`.
+After each analysis iteration, call `lisp_eval` to compute the convergence
+signal:
+  form: "(+ (assoc \"confirmed\" step_N_result) (assoc \"potential\" step_N_result))"
+  env: { "step_N_result": <latest analysis output> }
 
-Example: `company-research-flash` has 15 `execute` steps (deterministic
-financial data + valuation tools) and 9 `select` steps (LLM synthesis).
-The financial data is deterministic; the analysis is judgment.
+If the signal is 0 (no open findings), the analysis is complete — proceed
+to the report. If the signal decreased by less than 20% from the prior
+iteration, stop and report what you have (diminishing returns).
+```
 
-#### 2. Persistence-Grounded Learning
+### Composition pattern
 
-Every skill that produces forecasts, analyses, or recommendations should
-read its own prior outputs from MCP persistence before the cascade starts.
-This closes the feedback loop: the skill's current invocation is informed
-by its past performance.
+Instead of `template_ref` to another skill's manifest, the SKILL.md
+instructs the agent to call the `skill` tool:
 
-The pattern: `execute` step at ordinal 0 → read prior runs → thread into
-the first `select` step's `input_mapping`.
+```
+### Phase 4 — Delegate validation
 
-Examples:
-- `superforecasting` reads `scenario_calibration` (Brier score history)
-- `metacognition` reads `scenario_calibration` (overconfidence bias)
-- `kata-improvement` reads `kanban_board_list` + `kanban_task_list` (prior PDCA cycles)
-- `company-research-flash` reads `forecast_list` (prior price targets)
-- `swarm-intelligence` reads `swarm_get_swarm` / `swarm_get_local_swarm` (prior swarm state)
+Call the `skill` tool:
+  name: "skill-maintenance"
+  task: "validate skill {{ skill_name }} against the SKILL.md quality checks"
+```
 
-#### 3. Failure Surfacing
+### Persistence-grounded learning pattern
 
-Every `execute` step must declare `on_failure: { action: report, resume: "..." }`.
-The `report` action calls `curator_report_skill_use_issue` before escalating
-— the Curator receives the skill name, tool name, step ordinal, and error.
-The `resume` text must explain what was lost and how to proceed without the
-failed tool's output.
+Instead of an `execute` step at ordinal 0 that reads prior outputs, the
+SKILL.md instructs the agent to call an MCP tool:
 
-This is the enforcement point for the `.rules` trap: "Opt-in features that
-fail must log the failure classification, not collapse to `None` via `.ok()?`."
-Without `on_failure: report`, a failed `execute` step silently propagates as
-`TemplateError` and the operator sees `ExitKind::Escalated` with no context.
+```
+### Phase 0 — Prior context
 
-#### 4. The Lisp Scaffold Pattern
+Before starting, call `curator_memory_recall`:
+  entity: "{{ target }}"
+  This retrieves prior analyses of this target. Thread relevant
+  findings into your initial analysis.
+```
 
-When an LLM step produces structured output with invariant properties (count,
-completeness, diversity, mutual exclusivity), follow it with a `lisp.eval`
-`compute` step that checks those invariants deterministically. The Lisp step's
-output (defect list or gap score) feeds the convergence signal.
+### Failure surfacing pattern
 
-Pattern: LLM generates → Lisp checks → LLM repairs (on next iteration).
+Instead of `on_failure: { action: report }`, the SKILL.md instructs the
+agent to call `curator_report_skill_use_issue`:
 
-Examples:
-- `diagnose` step 4: Lisp checks hypothesis count (3-7), completeness
-  (prediction + falsifier), diversity (≥2 likelihoods), mutual exclusivity
-- `metacognition` steps 5-8: Lisp computes object gap, process gap,
-  hypotenuse, Brier score
-- `graph-audit` steps 19/21/22: Lisp computes convergence from quality
-  findings / blockers count
+```
+If any MCP tool call fails, call `curator_report_skill_use_issue` with:
+  skill_name: "my-skill", tool_name: <failed tool>, error: <error message>
+Then continue with the best available information — do not abort.
+```
 
-The Lisp form is the deterministic scaffold; the LLM is the probabilistic
-reasoner. The scaffold checks what the LLM cannot reliably self-evaluate.
+### Phase 4 — Validate (delegate to skill-maintenance)
 
-#### 5. The Co-Evolution Loop
-
-Skills and MCP tools evolve together. Skills reveal MCP tool design issues
-(missing inputs, confusing schemas) via `on_failure: report`. The Curator
-reads skill-use reports and issues `EvolveMcpToolSchema` directives. MCP
-tools gain new capabilities that skills should adopt via `execute` steps.
-
-When designing a new skill, check whether existing MCP tools provide
-capabilities the skill should adopt natively (via `execute` steps) rather
-than agent-mediated tool calls. The `skill-mcp-integration.md` reference
-doc lists the two invocation patterns and when to use each.
-
-### Phase 4 — Validate (delegate to skill-maintenance-validate)
-
-Delegate to `skill-maintenance-validate` to check the scaffolded crate
-against R1-R12, Z1-Z8, X1-X4, E1-E16.
+Call the `skill` tool:
+  name: "skill-maintenance"
+  task: "validate skill {{ skill_name }}"
 
 ### Phase 5 — Converge
 
 Check that validation passed. If validation failed, identify the specific
-failures and re-enter at Phase 1 (Research) with the failure report as
-prior context — the failures may indicate that the ontological anchors
-were insufficient or the PDCA shape didn't emerge correctly from them.
-
-## Registry Templates
-
-| Template | Type | Purpose |
-|----------|------|---------|
-| `create-skill-research.j2` | KnowAct | Search academic/industry literature for the skill's domain. Find ontological anchors (process ontologies, quality criteria, entity types). Derive the PDCA shape from the anchors. |
-| `create-skill-describe.j2` | KnowAct | Capture the skill's purpose from the user's natural-language description. Choose a name (lowercase, hyphenated, 2-40 chars verb-noun or noun-noun, no reserved prefixes). Identify the PDCA phases the skill will have (most follow the bug-hunt pattern: a phased pipeline with feedback loop closure). Identify which skills this skill will compose (delegates). Identify the per-template span namespace (reg.<skill_name>.<phase>, ontology-derived); the ledger span_namespace is deterministic (reg.skill.<manifest.id>) and injected by the scaffold phase. |
-| `create-skill-scaffold.j2` | KnowAct | Generate the full registry crate structure. Delegates to skill-maintenance-build for the mechanical scaffolding. Produces: (1) template manifest (kask/registry/templates/<name>/manifest.yaml) with crate metadata and template entries; (2) .j2 templates with [inference] frontmatter (template_type, contract visibility, generates_spans); (3) process manifest (kask/registry/manifests/<name>.yaml) with canonical actions gas/rjoule/convergence blocks, capability declarations; (4) SKILL.md companion (.agents/skills/<name>/SKILL.md) derived from the registry crate. |
-| `create-skill-validate.j2` | KnowAct | Validate the scaffolded crate against all check categories. Delegates to skill-maintenance-validate (its check catalog is authoritative — this template mirrors it). Checks: R1-R12 (registry: manifest exists, crate metadata, templates non-empty, template entry valid, template_type, contract, visibility, .j2 exists, [inference] frontmatter, jinja2 body); Z1-Z8 (companion: SKILL.md exists, frontmatter, name matches directory, description present, no Magna Carta violations, headless, no deprecated markers, derived from registry); X1-X4 (cross-artifact: registry exists, no orphan SKILL.md, no drift, bidirectional name match); E1-E11 (executor compliance: canonical actions, gas block + cap adequate, rjoule block, convergence block, category valid, template_refs resolvable, sub-manifest budgets, step description, ordinal sequence, ledger.span_namespace == reg.skill.<manifest.id> with no abolished spans: list). Produces fix suggestions for any failures. |
+failures and re-enter at Phase 1 with the failure report as prior context.
 
 ## Constraints
 
-- All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
-- **The skill's PDCA shape must emerge from its ontological anchors, not from a generic template.** The research phase is mandatory — no skill is scaffolded without ontological grounding.
-- **Each skill is idiosyncratic.** Do not generalize the shape across skills. A gradient-hunter is not a bug-hunt is not a self-improvement cycle.
-- The skill name must be lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, no reserved prefixes.
-- The process manifest must use only canonical actions.
-- The convergence block is mandatory for `category: skill` manifests. Use `convergence_mode: "cauchy"` with `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
-- The rjoule block is mandatory. rjoule.cap must be > 0 if any step uses `action: select`. The gas system is deprecated — do not add `gas:` blocks. Every step declares `timeout_seconds` as the runaway cutoff.
-- The SKILL.md description must be ≤1024 bytes.
-- **`lisp.eval` is available for custom deterministic compute steps.** When a skill needs a convergence formula, scoring function, or data transformation that doesn't fit the built-in `compute_ref`s (`kata.convergence_check`, `kata.object_gap`, etc.), use `compute_ref: lisp.eval` with an inline Lisp form. No Rust change needed — the manifest is the unit of authorship. See the manifest's comment block for an example. Security: gated to `category: skill` manifests only. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions (e.g., `score_a * 0.6 + score_b * 0.4`), prefix for complex nested logic with `let`, `if`, and `assoc`.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- The SKILL.md is the process surface — the agent reads it and follows it.
+  Write instructions as imperative steps the agent can execute.
+- .j2 templates are readable resources, not executed code. They define
+  prompt structure and expected output shape.
+- Use `lisp_eval` for all deterministic computation (counting, scoring,
+  invariant checks, convergence signals).
+- Use MCP tools directly for data retrieval, persistence, and actions.
+- Use the `skill` tool to compose with other skills.
+- The `read_file` tool refuses to serve SKILL.md files to the model (D1
+  enforcement) — the `skill` tool is the only path to skill content. This
+  means SKILL.md instructions are delivered to the agent via the `skill`
+  tool's envelope, not via `read_file`.
+- Name must be lowercase, hyphenated, 2-40 characters, verb-noun or
+  noun-noun, no reserved prefixes.
+- Core skills (`core: true` in frontmatter) are always-on, re-seeded on
+  every startup, and cannot be shadowed by project-local skills of the
+  same name. Only names in `CORE_SKILL_NAMES` may declare `core: true`.

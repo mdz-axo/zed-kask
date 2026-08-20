@@ -70,7 +70,7 @@ Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorp
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
 Do:    Phase 5  — ACT              → Emit gated swarm_hire / swarm_delegate / swarm_delegate_local
 Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
-Check: Phase 7  — CONVERGE (check)  → Cauchy criterion on d (deterministic, no LLM judgment)
+Check: Phase 7  — CONVERGE (check)  → evaluate d (swarm-state distance)
 Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
 Check: Phase 9  — CONVERGE (monitor)→ Second-order monitor: reasoning-loop + sensor-truth-divergence + Go See cadence (C1/C2)
 Act:   Phase 10 — LOOP              → Re-enter SENSE with prior_iteration + threaded accumulators if not converged
@@ -80,9 +80,9 @@ The shape is cybernetic (sense → orient → decide → filter → act → chec
 not the gradient-hunter's Prior→Map→Detect→Hypothesize→Report (spatial-gradient
 analysis) or the bug-hunt's Charter→Probe→Oracle→Taxonomize→Report
 (exploratory testing). The shape emerges from the domain: a swarm is a
-feedback loop, so the skill is a feedback loop. The deterministic compute steps
-(FILTER, CONVERGE) enforce the cybernetic plan's guards without an LLM — an
-LLM template cannot reliably maintain a running set/sum across LOOP iterations.
+feedback loop, so the skill is a feedback loop. Maintain the cybernetic
+plan's guards (FILTER, CONVERGE) across iterations — track running sets/sums
+consistently in your reasoning across loop iterations.
 
 ## Target condition (measurable)
 
@@ -96,9 +96,9 @@ A swarm is well-composed for a task when three conditions hold simultaneously:
    `estimated_credits` reconciled against `/api/wallet/transactions` and
    every `curator_involved` dispatch's `data_shared` acknowledged.
 
-## Convergence criterion (deterministic)
+## Convergence criterion
 
-Cauchy criterion on the swarm-state distance
+Stability criterion on the swarm-state distance
 `d = sqrt( (1 - variety_coverage)² + max(0, diversity_floor - diversity)² + (1 - loop_closure)² )`.
 When the caller supplies a deterministic `task_success` verdict (component C0),
 `d` gains a fourth axis `(1 - s)²` (s = task_success.score, or pass→1.0 /
@@ -114,10 +114,9 @@ convergence invariant).
 
 ## Cybernetic Swarm Plan components
 
-The skill integrates the Cybernetic Swarm Plan's deterministic components
-(C0–C8). The accumulators and guards are `compute` primitives (no LLM) — an
-LLM template cannot reliably maintain a running set/sum across LOOP
-iterations, so the enforcement points live in the deterministic math layer.
+The skill integrates the Cybernetic Swarm Plan's components (C0-C8).
+Maintain accumulators and guards across iterations in your reasoning — running
+sets/sums must be tracked consistently across loop iterations.
 
 | Component                           | What                                                                                                                                                                                                            | Enforcement point                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -203,7 +202,7 @@ found structural gaps; the two High-severity ones are now mitigated in the
 registry + code (2026-08-03), with one residual:
 
 - **Loop B fidelity — MITIGATED.** C5/C6 fault attribution now reads a
-  per-delegation `task_success` (deterministic verdict the executor stamps on
+  per-delegation `task_success` (deterministic verdict stamped on
   each `LocalDelegateResult`) as its highest-fidelity signal, with the binary
   `tool_calls[].ok` as a fallback. `LocalDelegateResult` carries an optional
   `task_success: Option<TaskSuccessVerdict>`; `llm_judged` provenance is
@@ -226,8 +225,7 @@ Full per-property evidence and the VSM/Ashby analysis are in the audit.
 
 ## Registry
 
-Registry is authoritative — when this SKILL.md disagrees with registry
-templates, the registry wins. rJoule cap: 3 per invocation; maximum 10 iterations.
+This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 - Template manifest: `kask/registry/templates/swarm-intelligence/manifest.yaml`
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`

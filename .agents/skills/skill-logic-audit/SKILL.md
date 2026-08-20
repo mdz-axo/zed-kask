@@ -49,10 +49,9 @@ Present the proposal to the user and capture accept/reject/counter-proposal.
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `logic-load-goal.j2`: Operates on .j2 templates and .yaml manifests ONLY. SKILL.md files are NOT valid audit targets.
 - `logic-critique-template.j2`: Be adversarial but grounded. Reject purely stylistic complaints that do not affect logical efficiency or correctness.
 - `logic-critique-critique.j2`: A concern is valid only if it explicitly links a concrete template defect to the goal.
 - `logic-compose-proposal.j2`: Make the minimal set of changes that resolves the valid concerns while preserving the goal.
 - `logic-user-choice.j2`: The allowed choices are accept, reject, or counter-proposal.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

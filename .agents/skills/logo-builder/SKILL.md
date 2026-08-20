@@ -54,7 +54,7 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 6. Repeat the critique and refine cycles for the specified number of rounds.
 7. Remove the background from the final selected logo to produce a transparent PNG.
 
-### logo-presentation (legacy — registered in crate as `../media/logo-presentation.yaml`, not invoked by the process manifest cascade)
+### logo-presentation (legacy — registered in crate as `../media/logo-presentation.yaml`, not invoked by the skill execution)
 
 1. Remove the background from the final logo to produce a transparent PNG.
 2. Generate a monochrome variant (pure black on white) for single-color applications, maintaining the exact same design without color or gradients.
@@ -74,10 +74,9 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 ## Constraints
 
-- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - `../media/logo-discovery.yaml`: Public.
 - `../media/logo-discovery-map.j2`: Public.
 - `../media/logo-formal-prompt.j2`: Public.
 - `../media/logo-iterative-refine.yaml`: Public.
 - `../media/logo-presentation.yaml`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

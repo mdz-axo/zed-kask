@@ -142,7 +142,6 @@ The cascade also runs deterministic compute steps between the LLM steps: a `lisp
 - Every `// zed-kask:` deviation preserved or introduced must have a corresponding test.
 - The re-application order must be a topological sort of the dependency DAG (no use-before-def).
 - Prefer surgical marking + pinning over full re-application when the fork's file already compiles and is correctly ordered (essentialist G1: identical end state, lower risk).
-- rJoule cap: 5 per invocation. Maximum 10 iterations.
 
 ## Merge & rebase protocol
 

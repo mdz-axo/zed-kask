@@ -57,5 +57,4 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 ## Constraints
 
 - All templates are `KnowAct` with `Public` visibility; they emit `reg.ui_layout.*` spans.
-- rJoule cap: 1 per invocation. Maximum 5 iterations.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

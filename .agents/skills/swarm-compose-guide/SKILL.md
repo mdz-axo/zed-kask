@@ -58,7 +58,6 @@ top-level template variables.
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - Read-only authoring aid — no ledger debit, no consent, no ABW calls.
 - The template uses the local `InferencePort` (one-shot LLM generate) in both
   modes; the `mode` field only tailors the guidance text.
@@ -66,5 +65,4 @@ top-level template variables.
   single-responsibility output). The caveman skill is a conceptual dependency
   for conciseness but is NOT run as a post-process step — it would corrupt the
   JSON suggestions object.
-- Registry is authoritative — when this SKILL.md disagrees with registry
-  templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

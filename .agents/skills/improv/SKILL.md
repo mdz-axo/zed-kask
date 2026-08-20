@@ -5,7 +5,7 @@ description: "Composable interaction grammar for hKask agents. Five improv modes
 
 # Improv
 
-Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector KnowAct evaluates conversation context and routes to the appropriate WordAct; convergence is detected deterministically via the Cauchy criterion.
+Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector KnowAct evaluates conversation context and routes to the appropriate WordAct; convergence is evaluated by the model after each iteration.
 
 ## When to Use
 
@@ -17,7 +17,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - Dual-presence chat, ensemble sessions, and kata coaching loops where constructive-by-default posture is required
 - When an agent is in a low-confidence regime (confidence < 0.5) and needs non-obvious paths to higher certainty — **Riffing** for divergent exploration of tangents that may surface higher-confidence findings, **Plussing** for constructive extraction of agreeable components from uncertain output
 - When standard evidence-gathering has plateaued and a perspective-shift (not more data) is the path forward — improv modes reframe rather than accumulate
-- After mode selection and application, convergence is detected deterministically via the Cauchy criterion
+- After mode selection and application, evaluate whether convergence has been reached
 
 ## Instructions
 
@@ -79,12 +79,11 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - **Visibility:** All templates are `Public`.
 - **Never explicitly negate** (Plussing, and governing principle in selector). Criticism is deletion-by-omission.
 - **Yes And extension must be additive, not substitutive** — the accepted base remains intact and visible.
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."
 - **Freestyling is time-bounded** with round-robin turns and no single owner.
 - **Riffing must resolve** — return to group, spawn a thread, or complete within a declared step limit.
-- **Convergence** is detected deterministically via the Cauchy criterion. `max_iterations: 10`, `min_iterations: 2`.
-- **Registry is authoritative** — when this SKILL.md disagrees with registry templates, the registry wins (P5.1).
+- **Convergence:** evaluate after each full iteration. Converged when stable across 3 iterations. Maximum 10 iterations; minimum 2 iterations before declaring convergence.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

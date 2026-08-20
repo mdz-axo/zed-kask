@@ -13,7 +13,7 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 - A draft response needs to be compressed into caveman mode to reduce token usage while preserving all technical substance
 - You want to evaluate whether a caveman-compressed output has converged (sufficiently compressed while preserving clarity constraints)
 - Caveman mode has been triggered and is active for the current response cycle
-- After compression, convergence is detected deterministically via the Cauchy criterion to decide if further compression passes are required
+- After compression, evaluate whether further compression passes are required based on whether the output has stabilized
 - Auto-clarity exceptions apply: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, or the user asks to clarify / repeats a question
 
 ## Instructions
@@ -42,11 +42,10 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Both templates run at `visibility: Public`
 - All technical substance must survive compression — no loss of meaning permitted.
 - Code blocks, error messages, and URLs are sacred and must not be modified.
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only.
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

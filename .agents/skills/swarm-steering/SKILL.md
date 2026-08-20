@@ -10,7 +10,7 @@ Codify the local-swarm execute-and-feed-back loop for the Kask Curator (or a
 human in the loop): take a swarm-intelligence plan, produce the
 `swarm_execute_plan_local` delegation sequence (with optional deterministic
 evaluators), the `delegate_results` collection shape, and the re-invoke
-instruction — so the executor calls one tool that runs the plan, evaluates
+instruction — so you call one tool that runs the plan, evaluate
 results, and returns the collected array, activating C5 (fault attribution)
 and C6 (reconfigure) in the next swarm-intelligence iteration.
 
@@ -79,7 +79,7 @@ Regulator's "model the system you control."
 `cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
 `executed_skills[]` (each `{skill, ok, error?}`), `task_success` (optional
 deterministic verdict stamped by the tool when an evaluator was provided).
-The `swarm_execute_plan_local` tool returns the array directly; the executor
+The `swarm_execute_plan_local` tool returns the array directly; you
 feeds it back as `delegate_results` on the next swarm-intelligence invocation.
 ORIENT attributes fault from `delegate_results[].task_success.pass` (highest
 fidelity, when present) and `delegate_results[].tool_calls[].ok` /
@@ -92,7 +92,7 @@ The directive this skill produces closes the C5/C6 feedback loop. The loop's
 fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 [Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)):
 
-- **Graded fidelity (was binary).** The directive now instructs the executor to
+- **Graded fidelity (was binary).** The directive now instructs you to
   stamp a deterministic `task_success` per `LocalDelegateResult` (the
   `task_success: Option<TaskSuccessVerdict>` field). ORIENT's C5 reads it as the
   highest-fidelity fault signal, so an agent that returns `ok: true` with the
@@ -117,17 +117,15 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 
 | Skill                | Role                                                     | When Invoked                                                                     |
 | -------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `swarm-intelligence` | upstream planner — produces the plan this skill executes | the executor runs swarm-intelligence first, then this skill on its emitted_calls |
+| `swarm-intelligence` | upstream planner — produces the plan this skill executes | run swarm-intelligence first, then this skill on its emitted_calls |
 
 ## Registry
 
-Registry is authoritative — when this SKILL.md disagrees with registry
-templates, the registry wins.
+This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 - Template manifest: `kask/registry/templates/swarm-steering/manifest.yaml`
 - Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2` (KnowAct — produce the local-swarm steering directive: delegation sequence + delegate_results collection shape + re-invoke instruction)
 - Process manifest: `kask/registry/manifests/swarm-steering.yaml` (1 step: DIRECT, single-pass — `max_iterations: 1`)
-- rJoule cap: 3 per invocation
 - Span namespace: `reg.skill.swarm-steering`
 - Pairs with `swarm-intelligence` (the planner); this skill is the actuator's
   instructions (Cybernetic Swarm Plan `steering_mode`).

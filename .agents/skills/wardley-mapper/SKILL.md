@@ -79,11 +79,10 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `inventory-components.j2`: Public.
 - `classify-evolution.j2`: Public.
 - `map-value-chain.j2`: Public.
 - `identify-movement.j2`: Public.
 - `synthesize-recommendations.j2`: Public.
 - `present-map.j2`: Public. RenderAct (no inference) — surfaces the diagram as the cascade's final output.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

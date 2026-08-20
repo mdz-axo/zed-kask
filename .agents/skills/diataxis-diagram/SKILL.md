@@ -45,7 +45,6 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - All templates are `visibility: Public` — no restricted spans generated
 - Zed rendering constraints: no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR` for narrow sidebar rendering
 - Labels must be ≤ 40 characters; state names ≤ 30 characters
@@ -55,5 +54,5 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 - Maximum 3 iterations before forced convergence exit
 - Convergence threshold: 0.15 weighted total across six Diataxis criteria
 - All diagrams must include at least one cross-link to related documentation
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - **Visual artifact surfacing** — the `present-diagram.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{file_path, file_content}` object.

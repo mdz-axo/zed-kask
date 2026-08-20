@@ -34,9 +34,8 @@ Run peer-level skills concurrently and merge their outputs into a single unified
 
 - `bundler-merge.j2`: Public.
 - Single-pass merge — no PDCA loop. `convergence_mode: ""` with `max_iterations: 1` runs the merge exactly once.
-- rJoule cap: 5 per invocation. Maximum 1 iterations.
 - Do not invent findings that no skill produced.
 - Do not omit a skill from the summaries — every skill gets a summary, even if it errored.
 - The merged report must reference each skill by name at least once.
 - Keep the merged report under 2000 words.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

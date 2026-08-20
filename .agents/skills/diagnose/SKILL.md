@@ -47,7 +47,6 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility
 - Step 3 (hypothesize) is delegated to falsifiability/falsifiability-hypothesize
 - Safety mode (when enabled): no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
@@ -59,4 +58,4 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 - All `[DIAG-xxxx]` instrumentation tags must be removed before declaring done
 - The commit/PR message must state the confirmed hypothesis
 - Do not fabricate codegraph entities — derive from actual `codegraph_query` results or note the graph is unavailable
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

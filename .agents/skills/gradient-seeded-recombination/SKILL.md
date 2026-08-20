@@ -35,7 +35,7 @@ Do:     Phase 4 — Detect       → Classify gradients by 8-shape taxonomy + fr
 Check:  Phase 5 — Hypothesize  → Generate reason hypotheses (7-class taxonomy)
 Check:  Phase 6 — Prioritize   → Rank sites by reason class > fractal recurrence > magnitude
 Act:    Phase 7 — Select seeds → Pick most-central concept per high-priority site
-Check:  Phase 8 — Converge     → Cauchy criterion on gradient map stability
+Check:  Phase 8 — Converge     → evaluate gradient map stability
 Act:    Phase 9 — Loop         → If not converged, re-enter at Phase 2 with refined prior
 ```
 
@@ -65,8 +65,7 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- rJoule cap: 2 per invocation. Maximum 3 iterations.
 - The prior must be explicit before gradient detection.
 - The fractal recurrence check is mandatory.
 - Per-ontology license check is a Guardrail — do not assume blanket CC-BY (OBO Foundry licenses span CC-BY 4.0, CC-BY 3.0, CC0, Apache 2.0, GPL-3.0, Artistic-2.0).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

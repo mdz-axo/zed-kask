@@ -221,12 +221,11 @@ given query, because they can disagree:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.
 - **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 execute step (curator_memory_recall at ordinal 0 for persistence-grounded learning), 2 compute steps (lisp.eval for structural manifest analysis and convergence check), 5 select steps (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on_failure: report on all execute and compute steps. It is above floor on all five composition principles.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## References
 

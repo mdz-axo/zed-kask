@@ -53,7 +53,6 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Visibility: Public — this skill's templates are shared across agents.
 - The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist").
 - The G1→G2→G3 order is FIXED. G1 (Exist) must come first.
@@ -65,4 +64,4 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 - Zero-delta detection must be exact: same surviving items, same structure, same interfaces as previous round.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -43,7 +43,6 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 
 ## Constraints
 
-- rJoule cap: 6 per invocation. Maximum 10 iterations.
 - All templates have `visibility: Public`
 - Only `artifact_type: "prompt"` is implemented in v1 — `"manifest"` and `"template"` paths return empty results with explanatory notes
 - Minimum 2 iterations before convergence is allowed (iteration 1 always returns metric = 1.0)
@@ -52,4 +51,4 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 - Each variant must test exactly one hypothesis with a clear "if I change X, then Y will improve because Z" statement
 - Pareto dominance requires strict improvement on at least one objective while being at least as good on all others
 - Frontier pruning uses crowding distance to maintain diversity when frontier exceeds `frontier_size`
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

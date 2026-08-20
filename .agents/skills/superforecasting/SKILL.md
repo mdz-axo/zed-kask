@@ -170,7 +170,6 @@ preserving the forecast probability (alignment invariant).
 
 ## Constraints
 
-- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - `stage_0_triage.j2`: Public.
 - `stage_1_fermi_decompose.j2`: Public.
 - `stage_2_outside_view.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before cascade invocation, parallel to `market_context`.)
@@ -179,4 +178,4 @@ preserving the forecast probability (alignment invariant).
 - `stage_5_synthesis.j2`: Public.
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
