@@ -50,16 +50,24 @@ fn extract_lisp_form(manifest: &hkask_templates::BundleManifest, ordinal: u32) -
 }
 
 /// The manifest declares a lisp.eval compute step at ordinal 2 whose form
-/// carries the top-level listp guard.
+/// guards EVERY hop of the nested lookup via the recursive `walk` helper
+/// (data-as-program: the path is a list, the walker checks `listp` per hop).
+/// A top-level-only guard would still crash on a string at a deeper level
+/// if the form ever grows; the walker makes that impossible by construction.
 #[test]
-fn essentialist_convergence_step_has_listp_guard() {
+fn essentialist_convergence_step_guards_every_hop() {
     let manifest = load_named_manifest("essentialist");
     let form = extract_lisp_form(&manifest, 2);
     assert!(
-        form.contains("(not (listp step_1_result))"),
-        "the form must guard against non-object step_1_result before assoc — \
-         without it the cascade fails with 'type error: expected list, got \
-         string' when the step-1 LLM output is not a JSON object"
+        form.contains("(listp data)"),
+        "the walker must type-check each hop before assoc — without it the \
+         cascade fails with 'type error: expected list, got string' when any \
+         level of step_1_result is not a JSON object"
+    );
+    assert!(
+        form.contains("walk (cdr keys)"),
+        "the walker must recurse on the remaining path — a non-recursive form \
+         cannot express the 3-level elimination_report path"
     );
 }
 

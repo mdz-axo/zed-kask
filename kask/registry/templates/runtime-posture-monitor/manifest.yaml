@@ -2,7 +2,6 @@
 crate:
   name: runtime-posture-monitor
   version: "0.35.0"
-  visibility: public
   description: >
     Runtime security posture monitoring skill for hKask. Observes runtime
     telemetry (reg.* canonical spans, reg.outcome events) to detect runtime

@@ -15,6 +15,10 @@
 //!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, assoc, append,
 //!     string=, concat, abs, sqrt, eq, member
 //!
+//! `assoc` is defensive: a non-list alist argument returns nil instead of
+//! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
+//! and ~50 registry call sites rely on graceful degradation).
+//!
 //! # Infix Operator Notation
 //!
 //! Binary operators can be written infix: `a + b` is equivalent to `(+ a b)`.
@@ -1091,12 +1095,26 @@ fn listp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispE
 /// with `key` in the association list, or nil if not found. JSON objects
 /// are converted to association lists at the `from_json` boundary, so this
 /// is the primary way to access JSON object fields from Lisp.
+///
+/// Defensive-access contract: a NON-LIST `alist` (string, number, boolean)
+/// returns nil rather than erroring. This is deliberate. The manifest fleet
+/// has ~50 lisp.eval call sites that pass `step_N_result` (an LLM step's
+/// output) directly to `assoc`, and LLM steps emit prose / markdown-wrapped
+/// JSON that parses as a JSON string at the env boundary. Erroring with
+/// "type error: expected list, got string" crashed whole cascades (the
+/// essentialist and idiomatic-lisp outages); nil flows into the forms'
+/// existing `is_null` guards, which read it as the documented stable-0
+/// default. Explicit `listp` guards in manifests remain valid — they document
+/// intent — but are no longer load-bearing.
 fn assoc_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("assoc expects 2 args".into()));
     }
     let key = &args[0];
-    let alist = as_list(&args[1])?;
+    let alist = match as_list(&args[1]) {
+        Ok(alist) => alist,
+        Err(_) => return Ok(LispValue::Nil),
+    };
     for pair in alist.to_vec() {
         if let LispValue::List(pair_list) = &pair {
             let pair_items = pair_list.to_vec();
@@ -1424,6 +1442,51 @@ mod tests {
         assert_eq!(
             eval_sandboxed("(assoc \"score\" step_1_result)", &env).unwrap(),
             json!(0.85)
+        );
+    }
+
+    // ── Defensive-access contract for `assoc` ────────────────────────────────
+    //
+    // The manifest fleet passes LLM step outputs (`step_N_result`) directly
+    // to `assoc`, and LLM steps emit prose/markdown that parses as a JSON
+    // string. Before the fix, `assoc` errored with "type error: expected
+    // list, got string" and crashed whole cascades (the essentialist and
+    // idiomatic-lisp outages). Non-list input now returns nil, which flows
+    // into the forms' `is_null` guards as the documented stable default.
+
+    #[test]
+    fn test_assoc_returns_nil_for_string_alist() {
+        // The exact essentialist outage: step_1_result is prose.
+        let env = json!({"step_1_result": "## Elimination Report\nprose..."});
+        assert_eq!(
+            eval_sandboxed("(assoc \"elimination_report\" step_1_result)", &env).unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn test_assoc_returns_nil_for_scalar_alist() {
+        for scalar in [json!(42.0), json!(true), json!(7)] {
+            let env = json!({"step_1_result": scalar});
+            assert_eq!(
+                eval_sandboxed("(assoc \"key\" step_1_result)", &env).unwrap(),
+                Value::Null,
+                "scalar alist must read as no-association-found"
+            );
+        }
+    }
+
+    #[test]
+    fn test_assoc_still_finds_keys_in_proper_alists() {
+        // The defensive change must not alter the happy path.
+        let env = json!({"step_1_result": {"nested": {"items_removed": 7}}});
+        assert_eq!(
+            eval_sandboxed(
+                "(assoc \"items_removed\" (assoc \"nested\" step_1_result))",
+                &env
+            )
+            .unwrap(),
+            json!(7)
         );
     }
 

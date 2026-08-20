@@ -26,7 +26,9 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::tools::skill_tool::{CascadeProgress, SkillManifestExecutor};
+use crate::tools::skill_tool::{
+    CascadeProgress, MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT, SkillManifestExecutor,
+};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Input for the pipeline tool.
@@ -158,10 +160,10 @@ impl AgentTool for PipelineTool {
 
             let executor =
                 (self.manifest_executor_resolver)().ok_or_else(|| PipelineToolOutput::Error {
-                    error: "Pipeline manifest executor not configured. \
-                            The hKask bridge must be wired before pipeline manifests \
-                            can be executed."
-                        .to_string(),
+                    error: format!(
+                        "Pipeline manifest executor not configured. \
+                         {MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT}"
+                    ),
                 })?;
 
             let progress: Option<CascadeProgress> = Some(event_stream.thinking_sender());

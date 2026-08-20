@@ -2,7 +2,6 @@
 crate:
   name: supply-chain-sentinel
   version: "0.35.0"
-  visibility: public
   description: >
     Dependency and software supply chain audit skill for hKask. Probes
     dependency manifests (Cargo.toml, lockfiles), registry sources, and

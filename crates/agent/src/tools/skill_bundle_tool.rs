@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     AgentTool, BundleExecutionResult, ToolCallEventStream, ToolInput,
-    tools::skill_tool::SkillManifestExecutor,
+    tools::skill_tool::{MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT, SkillManifestExecutor},
 };
 
 /// Execute a bundle of multiple peer-level skills concurrently. Each skill
@@ -181,10 +181,10 @@ impl AgentTool for SkillBundleTool {
             // as SkillTool — closes the session-creation race).
             let Some(executor) = (self.manifest_executor_resolver)() else {
                 return Err(SkillBundleToolOutput::Error {
-                    error: "Skill manifest executor not configured. The skill_bundle tool \
-                            requires the hKask ManifestExecutor to be wired (this happens in \
-                            the deferred post-login task). Try again in a moment."
-                        .to_string(),
+                    error: format!(
+                        "Skill manifest executor not configured. \
+                         {MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT}"
+                    ),
                 });
             };
 

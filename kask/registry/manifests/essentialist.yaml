@@ -71,24 +71,25 @@ steps:
       stable reading that lets Cauchy fire after min_iterations.
     timeout_seconds: 10
     input_mapping:
-      # Guards against the step-1 LLM output not being a JSON object:
-      # `assoc` errors with "type error: expected list, got string" when
-      # `step_1_result` is a scalar/string (markdown-wrapped JSON, prose, or
-      # an error envelope), which failed the whole cascade. The `listp` guard
-      # returns the stable 0 reading instead — same contract as the nested
-      # `is_null` guards below (see company-research-deep / upstream-rebase
-      # for the established pattern).
+      # Idiomatic refinement (McCarthy/Sussman data-as-program): the lookup
+      # path is DATA and one recursive walker guards every hop — replaces the
+      # former 4-level is_null/let pyramid that repeated the same "0 on
+      # missing" pattern per level and crashed with "type error: expected
+      # list, got string" when step_1_result was not a JSON object (LLM
+      # prose / markdown-wrapped output / error envelope). Non-list at any
+      # hop → nil → stable 0 reading, same contract as before (see
+      # essentialist_manifest_test.rs for the pinned cases).
       form: >
-        (if (not (listp step_1_result))
-            0
-            (let ((report (assoc "elimination_report" step_1_result)))
-              (if (is_null report)
-                  0
-                  (let ((score (assoc "essentialism_score" report)))
-                    (if (is_null score)
-                        0
-                        (let ((removed (assoc "items_removed" score)))
-                          (if (is_null removed) 0 removed)))))))
+        (begin
+          (define walk
+            (lambda (keys data)
+              (if (is_null keys)
+                  data
+                  (if (listp data)
+                      (walk (cdr keys) (assoc (car keys) data))
+                      nil))))
+          (let ((removed (walk (list "elimination_report" "essentialism_score" "items_removed") step_1_result)))
+            (if (is_null removed) 0 removed)))
       env:
         step_1_result: "{{ step_1_result | default({}) }}"
 

@@ -1308,6 +1308,60 @@ description: A test skill for visibility defaults
         assert_eq!(skill.visibility, SkillVisibility::Private);
     }
 
+    // zed-kask: A skill declaring `core: true` with a non-reserved name must
+    // be refused at load time. This closes the backdoor where a marketplace-
+    // installed or hand-edited skill claims core status to gain sovereignty
+    // (never overwritten on seed) and hidden edit/delete/visibility controls.
+    // The symmetric case (a non-core skill bearing a core *name*) is already
+    // refused by `is_reserved_skill_name`; this pins the status side.
+    #[test]
+    fn test_parse_refuses_core_true_on_non_reserved_name() {
+        let content = r"---
+name: my-impostor-skill
+description: A skill falsely claiming core status.
+core: true
+---
+
+Body.
+";
+        let result = parse_skill_frontmatter(
+            Path::new("/skills/my-impostor-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        assert!(
+            result.is_err(),
+            "a non-core skill declaring `core: true` must be refused at load time"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("not a registered core skill"),
+            "error should name the violation; got: {message}"
+        );
+    }
+
+    // zed-kask: A skill declaring `core: true` with a reserved (core) name
+    // parses successfully — legitimate core skills carry `core: true`. This
+    // pins that the enforcement does not reject the shipped core skills.
+    #[test]
+    fn test_parse_accepts_core_true_on_reserved_name() {
+        let content = r"---
+name: create-skill
+description: The canonical core skill authoring tool.
+core: true
+---
+
+Body.
+";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/create-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("a core skill with `core: true` and a reserved name must parse");
+        assert!(skill.core, "core flag must be preserved");
+    }
+
     #[test]
     fn test_parse_valid_skill() {
         let content = r#"---

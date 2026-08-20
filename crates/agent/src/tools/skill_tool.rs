@@ -242,7 +242,9 @@ impl AgentTool for RecordSkillFeedbackTool {
                 })?;
 
             let executor = (resolver)().ok_or_else(|| RecordSkillFeedbackOutput::Error {
-                error: "Skill manifest executor not configured.".to_string(),
+                error: format!(
+                    "Skill manifest executor not configured. {MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT}"
+                ),
             })?;
 
             executor
@@ -330,7 +332,9 @@ impl AgentTool for ValidateGoldenOutputsTool {
                 })?;
 
             let executor = (resolver)().ok_or_else(|| ValidateGoldenOutputsOutput::Error {
-                error: "Skill manifest executor not configured.".to_string(),
+                error: format!(
+                    "Skill manifest executor not configured. {MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT}"
+                ),
             })?;
 
             executor
@@ -429,6 +433,16 @@ impl From<RecordSkillFeedbackOutput> for LanguageModelToolResultContent {
 /// thread-build time), so the model can invoke skills that were added to the
 /// project after the thread was created.
 pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
+
+// zed-kask: shared remediation hint for the "manifest executor not configured"
+// error. The executor is wired in the deferred post-login task (`main.rs`), so
+// a session created before wiring picks it up on a later invocation. The hint
+// is shared across the four tools that resolve the executor at invocation time
+// (`SkillTool`, `PipelineTool`, `SkillBundleTool`, `RecordSkillFeedbackTool`,
+// `ValidateGoldenOutputsTool`) so the remediation text does not drift between
+// them. Pinned by `test_manifest_executor_not_configured_hint_is_stable`.
+pub(crate) const MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT: &str = "The hKask ManifestExecutor is wired in the deferred post-login task. \
+     Try again in a moment.";
 
 // Cascade-memory settings fallbacks. These MUST stay in sync with
 // `KaskMemorySettings::default()` in `kask/crates/kask_bridge/src/settings.rs`.
@@ -1135,6 +1149,24 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::path::Path;
+
+    // zed-kask: pin the shared "manifest executor not configured" remediation
+    // hint. Four tools (`SkillTool`, `PipelineTool`, `SkillBundleTool`,
+    // `RecordSkillFeedbackTool`, `ValidateGoldenOutputsTool`) reference this
+    // const so the remediation text does not drift between them. If the hint
+    // changes, the error messages change in lockstep — this test makes a
+    // silent drift a compile failure.
+    #[test]
+    fn test_manifest_executor_not_configured_hint_is_stable() {
+        assert!(
+            MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT.contains("deferred post-login task"),
+            "hint must name the deferred post-login task as the remediation"
+        );
+        assert!(
+            MANIFEST_EXECUTOR_NOT_CONFIGURED_HINT.contains("Try again in a moment"),
+            "hint must carry the retry instruction"
+        );
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
