@@ -94,9 +94,7 @@ enabled:[^openai-compatible-settings]
 
 | Field | Default | Env var auto-enable check |
 |-------|---------|---------------------------|
-| `deepinfra_enabled` | `false` | `DEEPINFRA_API_KEY` set |
 | `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
-| `atlascloud_enabled` | `false` | `ATLASCLOUD_API_KEY` set |
 
 fal.ai is not an inference provider here — it is not OpenAI-compatible
 (`/v1/chat/completions` returns 404; `/v1/models` uses `Authorization: Key`).
@@ -211,10 +209,10 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `tts_model` | `String` | `""` | TTS model override (e.g., `"DeepInfra/hexgrad/Kokoro-82M"`) |
-| `stt_model` | `String` | `""` | STT model override (e.g., `"DeepInfra/whisper-large-v3"`) |
+| `tts_model` | `String` | `""` | TTS model override (e.g., `"ollama/kokoro"`) |
+| `stt_model` | `String` | `""` | STT model override (e.g., `"ollama/whisper-large-v3"`) |
 | `vision_model` | `String` | `""` | Vision model override |
-| `image_gen_model` | `String` | `""` | Image generation model override (e.g., `"DeepInfra/black-forest-labs/FLUX-2-klein-4b"`) |
+| `image_gen_model` | `String` | `""` | Image generation model override |
 
 ## Scenarios (`KaskScenariosSettings`)
 
@@ -257,7 +255,7 @@ dependency.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `host` | `String` | `""` | `"deepinfra"`, `"nebius"`, or `"runpod"`; empty = auto-detect from API keys |
+| `host` | `String` | `""` | `"nebius"` or `"runpod"`; empty = auto-detect from API keys |
 | `cache_dir` | `String` | `""` | Dataset pipeline cache; empty = agent adapters directory |
 
 ## Models (`KaskModelsSettings`)
@@ -270,14 +268,12 @@ constants, which are `const` references to the single source of truth in
 | Field | Type | Default | Effective fallback |
 |-------|------|---------|-------------------|
 | `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:35) |
-| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` (model_constants.rs:26) |
+| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"ollama/nomic-embed-text"` (model_constants.rs:26) |
 | `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:23) |
 
 `model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`,
-env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"DeepInfra/hexgrad/Kokoro-82M"`),
-`DEFAULT_STT_MODEL` (`"DeepInfra/whisper-large-v3"`), `DEFAULT_VISION_MODEL`
-(`"OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`
-(`"DeepInfra/black-forest-labs/FLUX-2-klein-4b"`). Every constant has an env-var accessor (e.g.
+env `HKASK_OCR_MODEL`) and `DEFAULT_VISION_MODEL`
+(`"OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct"`). Every constant has an env-var accessor (e.g.
 `classifier_model()` reads `HKASK_CLASSIFIER_MODEL` first) so operators can
 override without recompiling.
 
@@ -429,9 +425,7 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 
 | Env Var | Service |
 |---------|--------|
-| `DEEPINFRA_API_KEY` | DeepInfra |
 | `OPENROUTER_API_KEY` | OpenRouter |
-| `ATLASCLOUD_API_KEY` | AtlasCloud |
 
 `FALAI_API_KEY` is listed under Data Services (fal.ai is a media platform,
 not an OpenAI-compatible chat endpoint).

@@ -1,5 +1,5 @@
 # Media Derivation — Style Transfer FlowDef
-# Routes to fal.ai Flux dev img2img or DeepInfra Qwen Image Edit.
+# Routes to fal.ai Flux dev img2img.
 
 template_type: FlowDef
 name: media_apply_style

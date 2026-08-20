@@ -1,5 +1,5 @@
 # Media Derivation — Background Removal FlowDef
-# Routes to DeepInfra Bria RMBG 2.0 or fal.ai Birefnet.
+# Routes to fal.ai Birefnet.
 
 template_type: FlowDef
 name: media_remove_background

@@ -30,7 +30,7 @@ sequenceDiagram
     participant CuratorStore as curator MemoryStore<br/>(curator.db)
     participant Tokio as tokio runtime
     participant EmbedPort as LanguageModelEmbeddingPort
-    participant EmbedProvider as Embedding API<br/>(DeepInfra/Qwen3)
+    participant EmbedProvider as Embedding API<br/>(ollama/nomic-embed-text)
 
     Thread->>+Bridge: ingest_turn(TurnRecord)
     Bridge->>+Real: ingest_turn(record)

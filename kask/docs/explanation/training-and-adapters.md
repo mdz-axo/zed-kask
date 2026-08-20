@@ -535,14 +535,6 @@ classDiagram
         +graphql_query(query, vars) Result~Value~
     }
 
-    class DeepInfraHost {
-        -api_key: String
-        -gpu_config: String
-        -container_image: String
-        -ssh_public_key: String
-        -client: reqwest::Client
-        -containers: Arc~Mutex~HashMap~~
-    }
 
     class NebiusHost {
         -project_id: String
@@ -621,7 +613,6 @@ classDiagram
     class TrainingHostId {
         <<enumeration>>
         Runpod
-        DeepInfra
         Nebius
     }
 
@@ -633,13 +624,11 @@ classDiagram
     }
 
     TrainingHost <|.. RunpodHost : implements
-    TrainingHost <|.. DeepInfraHost : implements
     TrainingHost <|.. NebiusHost : implements
     HarnessAdapter <|.. AxolotlHarness : implements
     HarnessAdapter <|.. TrlHarness : implements
     HarnessAdapter <|.. LudwigHarness : implements
     RunpodHost o-- HarnessAdapter : composes
-    DeepInfraHost ..> HarnessAdapter : uses via install script
     NebiusHost ..> HarnessAdapter : uses via install script
     TrainingHost ..> PodStatus : returns
     TrainingJob *-- TrainingParams : contains
@@ -652,7 +641,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-006
 verified_date: 2026-07-23
-verified_against: kask/mcp-servers/hkask-mcp-training/src/providers/{types,runpod,deepinfra,nebius,harness,trl_harness}.rs
+verified_against: kask/mcp-servers/hkask-mcp-training/src/providers/{types,runpod,nebius,harness,trl_harness}.rs
 status: VERIFIED
 -->
 
@@ -660,11 +649,11 @@ status: VERIFIED
 
 The following architectural seams define the training server's design:[^ousterhout-training]
 
-- `TrainingHost` is the seam for compute backends — three providers (Runpod, DeepInfra, Nebius) implement it
+- `TrainingHost` is the seam for compute backends — two providers (Runpod, Nebius) implement it
 - `PodStatus` is the rich status type — every pod returns SSH command, IP, uptime, GPU type, and failure reason
 - `HarnessAdapter` is the seam for training tooling — renders config in the harness native format (YAML for Axolotl/Ludwig, Python for TRL)
-- `RunpodHost` composes a `HarnessAdapter` directly; DeepInfra and Nebius use the shared `generate_install_script()` which calls the harness adapter
-- `TrainingHostId` auto-detects from env vars: DeepInfra (DEEPINFRA_API_KEY), then Nebius (NEBIUS_PROJECT_ID), then Runpod (fallback)
+- `RunpodHost` composes a `HarnessAdapter` directly; Nebius uses the shared `generate_install_script()` which calls the harness adapter
+- `TrainingHostId` auto-detects from env vars: Nebius (NEBIUS_PROJECT_ID), then Runpod (fallback)
 - `TrainingParams` is a deep struct: it contains all hyperparameters as nested sub-structs, giving callers a single entry point
 - `LoraParams` defaults: r=16, alpha=32, dropout=0, 7 target modules (all attention + MLP projections)
 - `TrainingParams` defaults: LR=1e-4, 3 epochs, batch_size=4

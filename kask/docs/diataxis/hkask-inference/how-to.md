@@ -21,7 +21,6 @@ There are two shapes:
 - **Media provider** (image/video/speech/transcription, served by
   `MediaRouter`): all of the chat-provider steps **plus** a backend struct
   that implements `MediaProvider`, registered in `MediaRouter::new`.
-  DeepInfra / AtlasCloud are this shape.
 
 ## Source citations
 
@@ -75,7 +74,7 @@ status: VERIFIED
 
 Add a new variant to the `ProviderId` enum in `config.rs:33`. Include a
 `#[serde(rename = "XX")]` attribute with a two-letter serialization code
-(e.g. `"DI"` for DeepInfra, `"OR"` for OpenRouter, `"OM"` for Ollama). This
+(e.g. `"OR"` for OpenRouter, `"OM"` for Ollama). This
 code is the serde tag, *not* the model-name prefix — the prefix is registered
 separately in Step 2.
 
@@ -83,14 +82,14 @@ separately in Step 2.
 
 Add an entry to the `PREFIXES` const in `ProviderId::parse_from_model`
 (`config.rs:64`). The prefix is the full provider name followed by `/`
-(e.g. `"DeepInfra/"`, `"OpenRouter/"`, `"ollama/"`). This is what the router
+(e.g. `"OpenRouter/"`, `"ollama/"`). This is what the router
 matches against model-name strings. An empty remainder after stripping the
 prefix returns `None` (`config.rs:72`).
 
 ### Step 3: Add the `as_str` match arm
 
 Add a match arm to `ProviderId::as_str` (`config.rs:124`) returning the full
-provider name (e.g. `"DeepInfra"`, `"RunPod"`, `"OpenRouter"`, `"ollama"`).
+provider name (e.g. `"RunPod"`, `"OpenRouter"`, `"ollama"`).
 This is used by `prefix_model` (`config.rs:114`) to construct canonical
 prefixed names of the form `"{prefix}/{model}"`.
 
@@ -98,7 +97,7 @@ prefixed names of the form `"{prefix}/{model}"`.
 
 Add a match arm to `ProviderId::from_prefix_segment` (`config.rs:97`)
 classifying the prefix segment case-insensitively, including short aliases
-(e.g. `"deepinfra" | "di"`, `"openrouter" | "or"`). Unrecognized segments
+(e.g. `"openrouter" | "or"`). Unrecognized segments
 fall back to `OpenRouter` (`config.rs:103`). Centralizing the alias table
 here keeps provider knowledge in one place.
 
@@ -117,9 +116,9 @@ comment, `config.rs:252-260`).
 ### Step 6 (media providers only): Create the backend struct
 
 Create a new file `src/<provider>_backend.rs` with a struct holding the base
-URL, API key, and a shared `Arc<reqwest::Client>`. Follow the pattern in
-`deepinfra_backend.rs` (`DeepInfraBackend::new` returns `Err` when the API key
-is empty). Add inherent `generate` / `generate_with_messages` / vision
+URL, API key, and a shared `Arc<reqwest::Client>`. The constructor should
+return `Err` when the API key is empty. Add inherent `generate` /
+`generate_with_messages` / vision
 methods that call the shared `openai_compat::openai_compatible_generate[_messages]`
 helper for direct OpenAI-compatible chat (the standalone path; zed-kask chat
 routes through the IPC bridge instead).
@@ -136,11 +135,9 @@ supporting provider with fallback.
 
 Register the backend in `MediaRouter::new` (`media_router.rs:64`): push it to
 the `providers` vec only when `Backend::new` returns `Ok` (API key present),
-following the existing `match Backend::new(&config, client) { Ok(b) =>
-providers.push(Arc::new(b)), Err(_) => warn }` pattern
-(`media_router.rs:77-91`). Registry order encodes the preference policy
-(preferred provider first; DeepInfra is registered before AtlasCloud so it is
-preferred for the three shared ops with AtlasCloud as the runtime fallback).
+following the `match Backend::new(&config, client) { Ok(b) =>
+providers.push(Arc::new(b)), Err(_) => warn }` pattern. Registry order encodes
+the preference policy (preferred provider first).
 
 ### Step 9: Add an `INFERENCE_PROVIDERS` descriptor
 
@@ -172,7 +169,7 @@ assertion for the new variant. The existing tests in `config.rs:374-553`
 `parse_empty_model_returns_none`, `parse_too_short_returns_none`,
 `parse_unknown_prefix_returns_none`, `prefix_model_format`,
 `parse_provider_code_all_codes`,
-`parse_provider_code_unknown_defaults_to_deepinfra`,
+`parse_provider_code_unknown_defaults_to_openrouter`,
 `resolve_api_key_primary_env`, `resolve_api_key_empty_when_missing`,
 `resolve_api_key_no_keychain_fallback`,
 `from_prefix_segment_classifies_aliases_case_insensitively`) are the

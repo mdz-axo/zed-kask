@@ -85,7 +85,6 @@ paths; user-facing inference goes through zed's `LanguageModelRegistry` via
 classDiagram
     class ProviderId {
         <<enumeration>>
-        DeepInfra
         Runpod
         OpenRouter
         Ollama
@@ -96,14 +95,10 @@ classDiagram
     }
     class InferenceConfig {
         +default_provider: ProviderId
-        +deepinfra_base_url: String
-        +deepinfra_api_key: String
         +openrouter_base_url: String
         +openrouter_api_key: String
         +ollama_base_url: String
         +ollama_api_key: String
-        +atlascloud_base_url: String
-        +atlascloud_api_key: String
         +timeout_secs: u64
         +pool_max_idle: usize
         +default_model: String
@@ -165,8 +160,6 @@ classDiagram
     ProviderConfig --> InferenceConfig : composes
     MediaRouter --> ProviderRegistry : owns
     ProviderRegistry --> MediaProvider : dispatches
-    MediaProvider <|.. DeepInfraBackend : implements
-    MediaProvider <|.. AtlasCloudBackend : implements
     RouterModelEntry --> ProviderId : provider
 ```
 
@@ -180,18 +173,18 @@ status: VERIFIED
 ## `ProviderId`
 
 The `ProviderId` enum (`config.rs:33`) identifies the inference provider. The
-four variants are `DeepInfra`, `Runpod`, `OpenRouter`, and `Ollama`. Each
+three variants are `Runpod`, `OpenRouter`, and `Ollama`. Each
 variant carries a `#[serde(rename = "XX")]` two-letter serialization tag
-(`"DI"`, `"RP"`, `"OR"`, `"OM"`). The model-name prefix is registered
+(`"RP"`, `"OR"`, `"OM"`). The model-name prefix is registered
 separately in the `PREFIXES` const of `parse_from_model` (`config.rs:64`):
-`"DeepInfra/"`, `"RunPod/"`, `"OpenRouter/"`, `"ollama/"`.
+`"RunPod/"`, `"OpenRouter/"`, `"ollama/"`.
 
 `parse_from_model` (`config.rs:61`) does strict case-sensitive full-prefix
 stripping and returns `Some((provider, stripped_model))` on a match, or `None`
 for unrecognized or missing prefix (empty remainder after stripping also
 returns `None`, `config.rs:72`). `from_prefix_segment` (`config.rs:97`) is the
 lenient counterpart: it classifies an already-split segment case-insensitively
-and accepts short aliases (`"di"`, `"or"`, `"rp"`, `"om"`); unrecognized
+and accepts short aliases (`"or"`, `"rp"`, `"om"`); unrecognized
 segments fall back to `OpenRouter` (`config.rs:103`). `prefix_model`
 (`config.rs:114`) constructs `"{as_str}/{model}"`. `as_str` (`config.rs:124`)
 returns the full provider name used as the model-string prefix.
@@ -199,10 +192,10 @@ returns the full provider name used as the model-string prefix.
 ## `InferenceConfig`
 
 The `InferenceConfig` struct (`config.rs:140`) holds the base URLs and API
-keys for DeepInfra, OpenRouter, Ollama, and AtlasCloud, plus the
+keys for OpenRouter and Ollama, plus the
 `default_provider` field, `timeout_secs`, `pool_max_idle`, and
 `default_model`. The `Default` impl (`config.rs:164`) sets
-`default_provider` to `DeepInfra`, the cloud base URLs to their public
+`default_provider` to `OpenRouter`, the cloud base URLs to their public
 endpoints, `ollama_base_url` to `http://localhost:11434`, `timeout_secs` to
 120, `pool_max_idle` to 5, and `default_model` to
 `DEFAULT_FALLBACK_MODEL` (`"OpenRouter/z-ai/glm-5.2"`).
@@ -210,7 +203,7 @@ endpoints, `ollama_base_url` to `http://localhost:11434`, `timeout_secs` to
 `from_env` (`config.rs:191`) resolves each provider via
 `ProviderConfig::from_env` (`config.rs:354`), which sanitizes the prefix to
 uppercase (removing spaces and dots) and reads `{PREFIX}_BASE_URL` and
-`{PREFIX}_API_KEY`. AtlasCloud is resolved inline (`config.rs:196-198`).
+`{PREFIX}_API_KEY`.
 `default_provider` comes from `resolve_default_provider` (`config.rs:279`),
 which reads `HKASK_DEFAULT_PROVIDER` and parses it via `parse_provider_code`
 (`config.rs:289`). `timeout_secs` and `pool_max_idle` are parsed via
@@ -238,9 +231,9 @@ The `MediaProvider` trait (`provider.rs:82`) is `Send + Sync` so providers can
 live in an `Arc<dyn MediaProvider>` behind the registry. It has three methods:
 `id()` (stable provider id for logging/audit), `supports(op)` (whether this
 provider can serve `op`), and `execute(op, params)` (run the op with the
-unified `MediaGenerateParams`). Two implementations exist
-(`DeepInfraBackend`, `AtlasCloudBackend`), so the trait is not speculative
-generality.
+unified `MediaGenerateParams`). No implementations are currently registered
+(the former media backends were removed); the trait + registry remain the
+generic dispatch infrastructure for providers added in the future.
 
 ## `ProviderRegistry`
 
@@ -261,13 +254,12 @@ naming the failed provider; if all fail it returns the last error.
 ## `MediaRouter`
 
 The `MediaRouter` struct (`media_router.rs:45`) wraps a `ProviderRegistry`.
-`MediaRouter::new` (`media_router.rs:64`) builds a shared `reqwest::Client`
-from `InferenceConfig::build_client`, then constructs `DeepInfraBackend` first
-and `AtlasCloudBackend` second, pushing each to the `providers` vec only when
-`Backend::new` returns `Ok` (API key present). A failed construction emits a
-`reg.inference` warn and the backend is not registered. If no providers are
-configured, a single warn names both required env vars
-(`DEEPINFRA_API_KEY` and/or `ATLASCLOUD_API_KEY`, `media_router.rs:94-100`).
+`MediaRouter::new` (`media_router.rs:64`) builds the registry from the
+providers registered in its body — currently none, so the registry is empty
+and every media op returns the clear "no provider configured for media op"
+error until a backend is registered again. If no providers are
+configured, a single warn names the cause
+(`media_router.rs:94-100`).
 
 The `InferencePort` impl for `MediaRouter` (`media_router.rs:245`) returns the
 `BRIDGE_ERROR` constant (`media_router.rs:242`) for `generate`,
@@ -350,13 +342,10 @@ override; the constants are compile-time defaults, env vars take precedence.
 | Constant | Value | Env override |
 |----------|-------|--------------|
 | `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_CLASSIFIER_MODEL` |
-| `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
+| `DEFAULT_EMBEDDING_MODEL` | `ollama/nomic-embed-text` | `HKASK_EMBEDDING_MODEL` |
 | `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
 | `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |
-| `DEFAULT_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | — |
-| `DEFAULT_STT_MODEL` | `DeepInfra/whisper-large-v3` | — |
 | `DEFAULT_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | — |
-| `DEFAULT_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | — |
 
 The accessor functions `classifier_model()` (`model_constants.rs:57`),
 `embedding_model()` (`model_constants.rs:62`), and `ocr_model()`

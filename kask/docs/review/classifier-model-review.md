@@ -99,7 +99,7 @@ Rationale:
   This is a **revisit trigger, not current fact** — it does not enter the ranking or the price
   column, which reflect GLM-5.2's current published prices.
 - **Throughput is optimizable over time** via provider pinning (GLM-5.2 has 33 providers on
-  OpenRouter; pinning a fast one such as DeepInfra cuts time-to-first-token without changing the
+  OpenRouter; pinning a fast one cuts time-to-first-token without changing the
   model). This is a follow-up, not part of the switch.
 
 The rank leader (`seed-2-1-turbo`) was not chosen; the operator weighed GLM-family familiarity and

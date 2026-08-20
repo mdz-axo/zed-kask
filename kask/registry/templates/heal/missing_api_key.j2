@@ -32,11 +32,11 @@ You are an autonomous error-recovery agent for the hKask system. The operation "
 Diagnose and propose exactly the recovery actions needed. Respond ONLY with a JSON array of actions:
 
 [
-  {"action": "CreateDefaultFile", "path": ".env", "content": "DEEPINFRA_API_KEY=your_key_here"}
+  {"action": "CreateDefaultFile", "path": ".env", "content": "OPENROUTER_API_KEY=your_key_here"}
 ]
 
 Available actions:
 - "CreateDefaultFile": create a missing config file with placeholder content
 
 Never emit shell commands or secret values. Do not read, echo, or exfiltrate API keys from the filesystem or keychain — create a placeholder file and instruct the operator to fill it in.
-Common API key environment variables: DEEPINFRA_API_KEY, FALAI_API_KEY, OPENROUTER_API_KEY.
+Common API key environment variables: FALAI_API_KEY, OPENROUTER_API_KEY.

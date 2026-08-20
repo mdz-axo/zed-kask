@@ -165,7 +165,11 @@ impl ManifestExecutor {
         let graph = StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
         let context = StepContext::new(initial_context);
         let budget = BudgetTracker::new(&manifest.rjoule);
-        let convergence = ConvergenceTracker::new(&manifest.convergence);
+        let convergence = ConvergenceTracker::new(
+            manifest.convergence.max_iterations,
+            manifest.convergence.min_iterations,
+            manifest.convergence.threshold,
+        );
 
         let infra = Infra {
             inference: self.inference.clone(),

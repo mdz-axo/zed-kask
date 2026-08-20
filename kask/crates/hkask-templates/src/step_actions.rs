@@ -140,9 +140,13 @@ impl StepMachine {
             }
         }
 
-        // Read convergence signal BEFORE re-entering (the loop step's
-        // convergence_signal binding is now in the legacy map).
-        self.context.read_convergence_signal();
+        // Copy convergence signal from protocol to inputs so the
+        // convergence tracker can find it.
+        if let Some(v) = self.context.protocol.get("convergence_signal") {
+            self.context
+                .inputs
+                .insert("convergence_signal".to_string(), v.clone());
+        }
 
         let step_id = self
             .graph

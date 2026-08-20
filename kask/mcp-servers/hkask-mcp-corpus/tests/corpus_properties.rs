@@ -33,7 +33,6 @@ use serde_json::{Value as JsonValue, json};
 /// arms, so a bug in one is unlikely to appear identically in the other — the
 /// independence that makes a reference oracle worth anything.
 const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
-    (&["deepinfra", "di"], "DI"),
     (&["runpod", "rp"], "RP"),
     (&["openrouter", "or"], "OR"),
     (&["ollama", "om"], "OM"),
@@ -41,12 +40,11 @@ const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[&str] = &["DI", "RP", "OR", "OM"];
+const ALL_PROVIDER_IDS: &[&str] = &["RP", "OR", "OM"];
 
-/// All four `ProviderId` variants — for `prop::sample::select` when generating
+/// All three `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.
-const ALL_PROVIDERS: [ProviderId; 4] = [
-    ProviderId::DeepInfra,
+const ALL_PROVIDERS: [ProviderId; 3] = [
     ProviderId::Runpod,
     ProviderId::OpenRouter,
     ProviderId::Ollama,
@@ -77,12 +75,6 @@ fn reference_model_info_from_entry(input: &JsonValue) -> JsonValue {
 /// the fallback are hit while still exercising pathological names.
 fn arb_prefixed_name() -> BoxedStrategy<String> {
     let prefix = prop_oneof![
-        Just("deepinfra".to_string()),
-        Just("DI".to_string()),
-        Just("Di".to_string()),
-        Just("fal".to_string()),
-        Just("fa".to_string()),
-        Just("fal.ai".to_string()),
         Just("runpod".to_string()),
         Just("rp".to_string()),
         Just("openrouter".to_string()),
