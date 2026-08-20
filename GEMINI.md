@@ -519,7 +519,7 @@ Each `BuiltinMcpServer` in `kask_bridge::mcp_servers` has two allowlists:
 from `mcp_env()`). `KaskMcpDescriptor::command()` and the `McpRuntime` launch
 path both call `filter_credentials_for_server` and
 `filter_config_env_for_server` to filter env vars before injecting them into
-the child process. A server that only needs `DEEPINFRA_API_KEY` must not
+the child process. A server that only needs `OPENROUTER_API_KEY` must not
 receive `HKASK_SMTP_PASSWORD` (credential leak) or `HKASK_SMTP_USERNAME`
 (config leak) — a compromised MCP server process has access to every env var
 in its process. New servers must use `Some(&[])` (no credentials/config) for

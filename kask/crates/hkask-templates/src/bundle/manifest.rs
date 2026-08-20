@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
-    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig, RjouleConfig,
+    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig, 
 };
 use hkask_types::SkillPolarity;
 
@@ -297,8 +297,7 @@ pub struct BundleManifest {
     pub complementarities: Vec<BundleComplementarity>,
     pub steps: Vec<BundleManifestStep>,
     pub convergence: ConvergenceConfig,
-    pub rjoule: RjouleConfig,
-    pub error_handling: ErrorHandlingConfig,
+    pub     pub error_handling: ErrorHandlingConfig,
     pub ledger: BundleLedgerConfig,
     pub audit: BundleAuditConfig,
     #[serde(default)]
@@ -595,7 +594,6 @@ convergence:
   max_iterations: 1
   min_iterations: 1
   on_not_reached: abort
-rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
@@ -638,7 +636,6 @@ convergence:
   max_iterations: 1
   min_iterations: 1
   on_not_reached: abort
-rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true

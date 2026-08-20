@@ -8,7 +8,6 @@
 //! Inference (L1) has been extracted to `hkask-inference`.
 //! Template types: Prompt (WordAct), Process (FlowDef), Cognition (KnowAct).
 
-pub mod budget;
 pub mod bundle;
 pub mod compute;
 pub mod condition;

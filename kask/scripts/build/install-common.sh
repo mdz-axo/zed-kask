@@ -418,7 +418,7 @@ add_to_path() {
 #
 # The child process inherits the zed-kask process env (which loads
 # ~/.config/zed-kask/.env at startup for API keys), so `env` is left empty —
-# the servers read DEEPINFRA_API_KEY, HKASK_* etc. from their inherited env.
+# the servers read OPENROUTER_API_KEY, HKASK_* etc. from their inherited env.
 #
 # Idempotent: re-running updates the command paths without duplicating entries.
 # Preserves any user-added context_servers entries that aren't kask built-ins.

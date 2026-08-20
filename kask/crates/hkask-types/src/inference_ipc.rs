@@ -253,9 +253,9 @@ pub enum InferenceOutcome {
 /// server's `ModelInfo` needs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelListEntry {
-    /// Full model name with provider prefix (e.g. "deepinfra/qwen/qwen3-embedding-0.6b").
+    /// Full model name with provider prefix (e.g. "openrouter/qwen/qwen3-embedding-0.6b").
     pub name: String,
-    /// Provider id (e.g. "deepinfra", "openrouter").
+    /// Provider id (e.g. "openrouter", "ollama").
     pub provider: String,
     /// Whether the model supports vision/multimodal input.
     pub supports_vision: bool,

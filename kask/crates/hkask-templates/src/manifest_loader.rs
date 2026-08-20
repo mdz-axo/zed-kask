@@ -10,7 +10,6 @@ use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
     BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig, BundleManifest,
     BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig, ManifestCategory,
-    RjouleConfig,
 };
 use serde::Deserialize;
 use tracing::info;
@@ -47,7 +46,6 @@ struct ManifestFile {
     #[serde(default)]
     convergence: Option<ConvergenceConfig>,
     #[serde(default)]
-    rjoule: Option<RjouleConfig>,
     #[serde(default)]
     error_handling: Option<ErrorHandlingConfig>,
     #[serde(default)]
@@ -109,7 +107,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         complementarities: file.complementarities,
         steps: file.steps,
         convergence: file.convergence.unwrap_or_default(),
-        rjoule: file.rjoule.unwrap_or_default(),
         error_handling: file.error_handling.unwrap_or_default(),
         ledger: file.ledger.unwrap_or_default(),
         audit: file.audit.unwrap_or_default(),
