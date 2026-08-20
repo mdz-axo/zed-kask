@@ -479,6 +479,11 @@ pub struct CreateLocalAgentRequest {
     /// Optional output contract for the agent's structured output.
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
+    /// Per-card declared evaluators (the evaluator contract). When present,
+    /// every `swarm_delegate_local` call to this agent runs them against the
+    /// response and stamps a deterministic `task_success` verdict.
+    #[serde(default)]
+    pub evaluators: Option<Vec<crate::local_registry::DeclaredEvaluator>>,
 }
 
 /// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).

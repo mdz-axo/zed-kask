@@ -299,6 +299,7 @@ impl TrainingServer {
             + Self::status_router()
             + Self::cancel_router()
             + Self::validate_router()
+            + Self::rollout_bridge_router()
     }
 
     /// Map a tool name to its ML-Schema ontology concept URI. The concept
