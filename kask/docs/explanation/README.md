@@ -1,8 +1,8 @@
 ---
 title: "Explanation — Architecture and Design Decisions"
 audience: [architects, developers]
-last_updated: 2026-08-05
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -12,13 +12,13 @@ mds_categories: [domain, curation]
 
 Background, context, and reasoning for hKask's design as it runs in-process inside zed-kask. "This design exists because…"
 
-hKask is compiled into zed-kask as a set of native crates, plus 13 MCP servers launched as child processes over stdio; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, tool dispatch, skills, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D28).
+hKask is compiled into zed-kask as a set of native crates, plus 10 MCP servers launched as child processes over stdio; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, tool dispatch, skills, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D28).
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
 | [Tool dispatch](../diataxis/hkask-capability/explanation.md) | The `ToolPort` dispatch seam: `McpRuntime::invoke` meters and dispatches but does **not** authorize (the per-call capability gate was removed 2026-08-12 as vacuous, RR-0056); the runaway-loop call breaker; the FIDES taint labels removed the same day for the same reason (RR-0053, Layer 5 now absent by decision); and the three allowlist boundaries where tool authority is actually enforced. | Core |
 | [Cognition and Replica](cognition-and-replica.md) | Scenario forecasting (Schwartz + Tetlock + Chermack pipeline), ν-event semantics (ObservableSpan, RegulationRecord, CANONICAL_NAMESPACES, decay-weighted replay), Companies MCP server (44 tools, DCF valuation, forecast feedback, portfolio ledger). | Core |
-| [Skills and Composition](skills-and-composition.md) | Skill anatomy (two-zone model), manifest authoring, the `BridgeManifestExecutor` (D1) execution path, skill bundles, and how MCP servers register as builtins inside the editor (child processes over stdio). | Core |
+| [Skills and Composition](skills-and-composition.md) | Skill anatomy (two-zone model), the upstream-Zed body-injection execution path (`SkillTool::run` → `render_skill_envelope`, D1), skill bundles, and how MCP servers register as builtins inside the editor (child processes over stdio). | Core |
 | [Companies MCP Server](companies-mcp.md) | How-to procedures for company valuation, forecasting, and portfolio analysis against the companies MCP server (child process over stdio). | Domain supplement |
 | [Forecasting and Scenarios](forecasting-and-scenarios.md) | Three-layer forecasting architecture and the scenario planning pipeline. | Domain supplement |
 | [Ontology-Anchored Embedding](ontology-anchored-embedding.md) | Embedding model selection, ontological anchoring, and the QA pipeline. | Domain supplement |

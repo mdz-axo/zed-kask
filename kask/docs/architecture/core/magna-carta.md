@@ -1,8 +1,8 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-08-04
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.36.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -63,7 +63,7 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 | Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | **The authority gate for delegated dispatch.** Refuses any `server/tool` outside the child-declared allowlist, before dispatch |
 | Per-agent `mcp_tools` allowlist | `hkask-mcp-swarm/src/agent_executor.rs:238,340` | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
-| FIDES `Source`→`Sink` runtime policy check | `hkask-templates/src/step_actions.rs` `invoke_tool` | Live information-flow gate (`Block`/`RequireHuman`/`Log`), RR-0053 |
+| FIDES `Source`→`Sink` runtime policy check | ~~`hkask-templates/src/step_actions.rs` `invoke_tool`~~ (crate deleted, commit 5f4cf5f10d) | **Absent by decision (RR-0053)** — Defense Layer 5 (information-flow control) is not implemented. The former check lived in the deleted `hkask-templates` crate; both its inputs were constants (every tool labelled `Pure`, untrusted-input flag read markers the write path had stopped emitting), so it could not deny. Treat every tool path as taint-unaware. See PRINCIPLES.md P4.2 |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager`, charged in `McpRuntime::invoke` | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
 > **Removed 2026-08-12 — `McpRuntime::invoke` is NOT an authorization gate.**

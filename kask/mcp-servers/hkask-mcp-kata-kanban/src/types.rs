@@ -302,7 +302,7 @@ pub struct TaskReopenResponse {
 // ── Contract proposals ──────────────────────────────────────────────────────
 
 /// A proposal template for a contract missing its user-facing `expect:` annotation.
-/// Agents use this to compose and submit contract grounding proposals.
+/// Agents use this to compose and submit contract `expect:` annotation proposals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractProposeExpect {
     pub board_id: String,

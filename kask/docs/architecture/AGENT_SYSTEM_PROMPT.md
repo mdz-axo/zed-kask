@@ -1,7 +1,7 @@
 ---
 title: "Agent System Prompt — Structure and Divergence from Upstream Zed"
 audience: [architects, developers, agents]
-last_updated: 2026-08-12
+last_updated: 2026-08-20
 version: "1.0.0"
 status: "Active"
 domain: "architecture"
@@ -202,26 +202,27 @@ fenced tag. The prompt must disambiguate the two, not deny either.
   the field, so removing these bullets breaks inline media rendering. This was
   evaluated for deletion and rejected on that evidence.
 
-### 5.5 `## Agent Skills` — semantic inversion (D1)
+### 5.5 `## Agent Skills` — body injection (D1)
 
 This is the largest behavioural divergence in the prompt.
 
 | | Upstream | zed-kask |
 |---|---|---|
-| What `skill` returns | "the full instructions" (`upstream:223`) | the executed cascade's **result** (`:228`) |
-| Model's job | "Follow the instructions in the Skill" (`upstream:244`) | invoke and act on the output (`:253`) |
-| `SKILL.md` body | read it; `read_file` referenced files (`upstream:245`) | **never** read it; `read_file` refuses (`:250`) |
+| What `skill` returns | "the full instructions" (`upstream:223`) | the SKILL.md body, injected via `render_skill_envelope` (`:228`) |
+| Model's job | "Follow the instructions in the Skill" (`upstream:244`) | read the injected body and follow it (`:253`) |
+| `SKILL.md` body | read it; `read_file` referenced files (`upstream:245`) | **never** read it via `read_file`; `read_file` refuses (`:250`) |
 
 Upstream's step 4 instructs precisely the behaviour zed-kask's `:250` prohibits.
-`SKILL.md` in zed-kask is a discovery-only catalog entry; execution lives in a
-`manifest.yaml` cascade.
+`SKILL.md` in zed-kask is a discovery-only catalog entry; the body is injected via
+`render_skill_envelope` when the `skill` tool is invoked — not read via `read_file`.
 
-**This is not a deviation from the state of the art — it is one step past it.**
-Anthropic's Agent Skills use *progressive disclosure*: only `name` and
-`description` are preloaded into the system prompt, and the `SKILL.md` body loads
-only when judged relevant[^anthropic-skills]. zed-kask keeps the catalog-in-prompt
-half and replaces the body-loading half with manifest execution, so the body is
-never loaded into context at all.
+**This is the progressive disclosure pattern.** Anthropic's Agent Skills use *progressive
+disclosure*: only `name` and `description` are preloaded into the system prompt, and
+the `SKILL.md` body loads only when judged relevant[^anthropic-skills]. zed-kask
+keeps the catalog-in-prompt half and injects the body via the `skill` tool when the
+model invokes it. The prior manifest-cascade model (`ManifestExecutor`, `StepMachine`,
+FlowDef) was deleted (commit `5f4cf5f10d`); skill execution is now upstream-Zed body
+injection via `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`).
 
 **The cost of being one step ahead** is that the model's trained prior — every
 other major agent system loads skill bodies as prose — actively pushes against the
@@ -249,12 +250,12 @@ or "keep" — it is "install the gate, then delete."** This mirrors the finding 
 runtime permission enforcement belongs outside the model's instructions, and that
 vendors are explicit about where such enforcement does *not* apply[^augment-permissions].
 
-`:251` retains the no-manifest fallback. It is unreachable for shipped skills —
-the registry is 64 manifests ↔ 64 `SKILL.md` dirs, 1:1 and test-enforced — but
-still live for a user-authored or marketplace skill with no manifest
+`:251` retains the no-body fallback for skills with no `SKILL.md` file. It is
+unreachable for shipped skills — 60 SKILL.md directories exist in `.agents/skills/`
+— but still live for a user-authored or marketplace skill with no body
 (`skill_tool.rs:544`).
 
-**Pinned by** `test_system_prompt_skills_section_describes_manifest_cascade`,
+**Pinned by** `test_system_prompt_skills_section_describes_body_injection`,
 which asserts on the *invariant* (a prohibition naming `read_file` and
 `SKILL.md`, plus the enforcement claim) rather than one exact sentence, so prose
 can be tightened without a false failure.
@@ -317,9 +318,8 @@ cargo test -p agent --lib templates::                        # 14 pass
 cargo test -p agent --lib read_file_tool                     # 27 pass
 cargo test -p markdown --lib mermaid                         # 21 pass
 
-# The 1:1 skill/manifest invariant the fallback at :251 depends on
-cargo test -p hkask-templates --test skill_companion_consistency
-bash kask/scripts/check-skill-span-namespace.sh               # OK: 64 skill manifests
+# The skill count (60 SKILL.md directories in .agents/skills/)
+ls .agents/skills/ | wc -l                                    # 60
 ```
 
 ## References

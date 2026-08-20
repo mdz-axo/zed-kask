@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Tutorial: Tracing a Turn Through the Bridge"
 audience: [developers new to zed-kask, agents onboarding to the integration seam]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [lifecycle]
@@ -31,7 +31,7 @@ crate that depends on both sides (`kask/crates/kask_bridge/src/kask_bridge.rs:9-
 | `should_recall` gate | `kask/crates/kask_bridge/src/context_injector.rs:110-115` |
 | `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:179-182` |
 | `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:459-654` |
-| `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:88-109` |
+| `SkillTool::run` (D1 — body injection) | `crates/agent/src/tools/skill_tool.rs:266` |
 | `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22-25` |
 | `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
 | `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1359-1361` |
@@ -49,7 +49,7 @@ flowchart TD
     Start[User submits prompt] --> A[1. Context injection<br/>BridgeContextInjector]
     A --> B[2. Inference<br/>LanguageModelInferencePort]
     B --> C{Skill activated?}
-    C -- yes --> D[3. Skill cascade<br/>BridgeManifestExecutor]
+    C -- yes --> D[3. Skill body injection<br/>SkillTool::run → render_skill_envelope]
     C -- no --> E[3. Tool calls<br/>McpRuntime as ToolPort]
     D --> E
     E --> F[4. Condensation<br/>BridgeThreadCondenser]
@@ -59,8 +59,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-001
-verified_date: 2026-08-13
-verified_against: kask/crates/kask_bridge/src/context_injector.rs:144-160; kask/crates/kask_bridge/src/inference.rs:179-182; kask/crates/kask_bridge/src/skill_executor.rs:88-109; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25; kask/crates/kask_bridge/src/memory.rs:65-119,1359-1361
+verified_date: 2026-08-20
+verified_against: kask/crates/kask_bridge/src/context_injector.rs:144-160; kask/crates/kask_bridge/src/inference.rs:179-182; crates/agent/src/tools/skill_tool.rs:266; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25; kask/crates/kask_bridge/src/memory.rs:65-119,1359-1361
 status: VERIFIED
 -->
 
@@ -108,27 +108,35 @@ cascade. A `model_override` field on each request lets the caller route to a
 specific provider-prefixed model via `LanguageModelRegistry` resolution
 (`inference.rs:219-253`).
 
-## Step 3 — Skill cascade and tool calls
+## Step 3 — Skill body injection and tool calls
 
-If the user activates a skill that has an hKask manifest, the agent crate's
-`SkillTool` calls the `SkillManifestExecutor` hook. The bridge's implementation
-is `BridgeManifestExecutor` (`skill_executor.rs:88-109`), the D1 seam.
+If the user activates a skill, the agent crate's `SkillTool` follows
+upstream Zed's body-injection model. `SkillTool::run`
+(`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from
+disk via `agent_skills::read_skill_body` and injects it into the
+conversation via `render_skill_envelope` (`crates/agent/src/agent.rs`). The
+model reads the body and follows the instructions — there is no manifest
+executor, no step machine, no Jinja2 cascade, and no `BridgeManifestExecutor`
+in the bridge. The bridge does not participate in this path.
 
-The executor resolves the skill name to a YAML manifest on disk under
-`kask/registry/manifests/<name>.yaml` (`skill_executor.rs:155-170`), loads it
-as a `BundleManifest`, and runs `ManifestExecutor::execute_manifest()`. Disk
-is the single runtime source — there is no compiled-in fallback. The shipped
-manifests are seeded to disk at startup by `seed_registry_to_disk`
-(`skill_executor.rs:457-531`), which writes to `{kask_data_dir}/skills/registry/`
-(D28) and never overwrites existing files — user edits are sovereign.
+Two companion built-in agent tools support the model-coordinated PDCA loops
+the SKILL.md bodies describe:
 
-When a skill has no manifest, the `SkillTool` falls back to `SKILL.md` body
-injection. The bridge does not participate in that path.
+- `lisp_eval` (`crates/agent/src/tools/lisp_eval_tool.rs`) — the agent calls
+  it directly when a SKILL.md instructs deterministic computation
+  (convergence signals, invariant checks, scoring). Wraps
+  `hkask_lisp::eval_sandboxed_with_budget`. Registered in `add_default_tools`.
+- `render_template` (`crates/agent/src/tools/render_template_tool.rs`) —
+  renders Jinja2 templates from `kask/registry/templates/` via `minijinja`.
+  The agent calls it when a SKILL.md instructs structured prompt scaffolding
+  for a specific step. Template base path wired via
+  `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.
+  Registered in `register_session` alongside `SkillTool`.
 
-For tool execution during the cascade (and during ordinary agent turns), the
-composition root passes `McpRuntime` directly as the `ToolPort`. There is no
-adapter struct — the runtime already implements the trait. The 12 built-in MCP
-servers are registered in `BUILT_IN_MCP_SERVERS`
+For tool execution during skill iteration (and during ordinary agent turns),
+the composition root passes `McpRuntime` directly as the `ToolPort`. There is
+no adapter struct — the runtime already implements the trait. The 10 built-in
+MCP servers are registered in `BUILT_IN_MCP_SERVERS`
 (`mcp_servers.rs:53-394`), and each server's child-process env is assembled by
 the single canonical path `build_mcp_server_env` (`mcp_servers.rs:514-559`).
 
@@ -183,10 +191,11 @@ You have traced one turn through all five bridge ports. The mental model is:
 |------|-------------|------------|--------------|
 | 1 | `BridgeContextInjector` | `ContextInjector` | `MemoryPort` |
 | 2 | `LanguageModelInferencePort` | `InferencePort` | `LanguageModel` |
-| 3 | `BridgeManifestExecutor` | `SkillManifestExecutor` | `SkillTool` + `McpRuntime` |
+| 3 | — (agent crate, not bridge) | — | `SkillTool::run` + `McpRuntime` |
 | 4 | `BridgeThreadCondenser` | `ThreadCondenser` | `CondenserEngine` |
 | 5 | `BridgeMemoryPort` / `RealMemoryPort` | `MemoryPort` | `MemoryStore` |
 
 Every seam file in `kask/crates/kask_bridge/src/` implements exactly one row
-of this table. When you encounter a new file, identify which trait it
+of this table (skill execution is the exception — it lives in the `agent`
+crate, not the bridge). When you encounter a new file, identify which trait it
 implements and which zed facility it wraps — that places it on the path.

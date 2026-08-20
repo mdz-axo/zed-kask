@@ -92,19 +92,9 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             // Stamp the bind check result onto the delegation result.
             result.bind_matched = bind_matched;
-            // Rung 3 (Grounding): enforce the grounding contract via the
-            // central verification ledger. The store runs
-            // `enforce_grounding` (when a contract exists for the
-            // agent_type), writes a `GroundingRecord` to the cross-tool
-            // ledger, and returns the result + cleaned JSON. All four local
-            // delegation paths (`swarm_delegate_local`,
-            // `swarm_execute_plan_local`, `swarm_fanout_local`,
-            // `swarm_pipeline_local`) now enforce; the cloud paths use
-            // `enforce_narrative` (prose-only grounding).
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
-            // artifact, two uses"). The result is carried into the envelope
-            // so consumers can distinguish Valid from NoSchema.
+            // artifact, two uses").
             let validation =
                 self.validate_produces(&req.agent_name, &agent.produces, &result.response);
             // Stigmergy (ACO pheromone trail): record the delegation's
@@ -189,13 +179,6 @@ impl SwarmServer {
                         .await
                     {
                         Ok(mut r) => {
-                            // Rung 3 (Grounding): enforce via the central
-                            // verification ledger, same as
-                            // `swarm_delegate_local`. Previously this path
-                            // skipped grounding — delegations ran unrecorded
-                            // and the trend query under-counted (the
-                            // `.rules` "every delegating path must call
-                            // enforce_and_stamp" Prohibition).
                             let validation = self.validate_produces(
                                 &entry.agent_name,
                                 &agent.produces,
@@ -277,16 +260,6 @@ impl SwarmServer {
                 let ceiling = self.client.config().max_credits_per_dispatch;
                 let mut results = Vec::new();
                 let mut prev_output = String::new();
-                // Track the previous step's envelope `blocks` array so the
-                // next step's grounding enforcement can apply the
-                // monotone-provenance (weakest-link) cap — a downstream
-                // field's provenance may never exceed the same-named upstream
-                // field's (paper §6 / .rules). The pipeline is the canonical
-                // agent-to-agent composition hop: step N receives step N-1's
-                // output via `{prev_output}`, so step N's provenance is capped
-                // by step N-1's envelope blocks. `prev_upstream_blocks` is
-                // empty for the first step (no parent).
-                let mut prev_upstream_blocks: Vec<serde_json::Value> = Vec::new();
                 let mut total_cost = 0i64;
                 // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
                 // capped costs, so it inherits their understatement. Reporting both
@@ -318,38 +291,11 @@ impl SwarmServer {
                         .await
                     {
                         Ok(mut r) => {
-                            // Rung 3 (Grounding): enforce via the central
-                            // verification ledger, same as
-                            // `swarm_delegate_local`. Previously this path
-                            // skipped grounding — delegations ran unrecorded
-                            // and the trend query under-counted (the
-                            // `.rules` "every delegating path must call
-                            // enforce_and_stamp" Prohibition). The cleaned
-                            // (grounded) response is what feeds the next
-                            // pipeline step via `prev_output`, so ungrounded
-                            // fields do not propagate down the chain.
-                            //
-                            // Monotone provenance (paper §6 / .rules): pass
-                            // the previous step's envelope `blocks` as
-                            // `upstream_blocks` so a downstream field cannot
-                            // be re-emitted with stronger provenance than the
-                            // same-named upstream field (the laundering case).
                             let validation = self.validate_produces(
                                 &step.agent_name,
                                 &agent.produces,
                                 &r.response,
                             );
-                            // Capture this step's envelope blocks for the next
-                            // iteration's weakest-link cap. When grounding did
-                            // not run (no contract / unenforceable), the
-                            // envelope carries an empty `blocks` array —
-                            // passing it is a no-op (no fields to cap).
-                            prev_upstream_blocks = r
-                                .envelope
-                                .as_ref()
-                                .and_then(|env| env.get("blocks").cloned())
-                                .and_then(|blocks| blocks.as_array().cloned())
-                                .unwrap_or_default();
                             prev_output = r.response.clone();
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
@@ -1414,15 +1360,12 @@ impl SwarmServer {
                                         crate::local_runtime::TaskSuccessProvenance::Deterministic,
                                 });
                             }
-                            // Rung 3 (Grounding): enforce via the central
-                            // verification ledger (same as
-                            // `swarm_delegate_local`).
+                            // Record stigmergy (same as swarm_delegate_local).
                             let validation = self.validate_produces(
                                 &entry.agent_name,
                                 &agent.produces,
                                 &r.response,
                             );
-                            // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(
                                 &self.local_memory,
                                 &entry.agent_name,
@@ -1461,11 +1404,8 @@ impl SwarmServer {
 
     /// Rung 2 (Typing) post-invocation: validate the agent's output against
     /// the schema for its `produces` port type (paper's "one artifact, two
-    /// uses"). The output has already been grounded (unsourced fields
-    /// nulled); schema validation is an additional structural check on what
-    /// remains. Returns `Some(ValidationResult)` when the agent declares a
-    /// `produces` port, `None` otherwise. The result is carried into the
-    /// envelope so consumers can distinguish `Valid` from `NoSchema`.
+    /// uses"). Returns `Some(ValidationResult)` when the agent declares a
+    /// `produces` port, `None` otherwise.
     pub(crate) fn validate_produces(
         &self,
         agent_id: &str,

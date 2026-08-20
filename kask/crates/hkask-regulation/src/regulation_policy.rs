@@ -49,25 +49,6 @@ pub enum RegulationReason {
     CircuitBreakerOpen,
     InferenceUnavailable,
     ModelUnavailable,
-    /// Grounding clean rate dropped below the configured floor — more than
-    /// the tolerated fraction of grounded delegations have nulled fields.
-    /// A quality regression: a tool broke, an agent's prompt drifted, or a
-    /// model was swapped. The operator's remediation is to investigate the
-    /// recent violations (via `curator_grounding_violations`) and fix the
-    /// root cause — the regulation system does not auto-fix grounding
-    /// contracts (that's a human decision).
-    GroundingCleanRateDegraded,
-    /// Grounding coverage rate dropped below the configured floor — more
-    /// than the tolerated fraction of delegations have no grounding contract.
-    /// A coverage gap (paper §6): agent types exist with delegations but no
-    /// contract. The operator's remediation is to register contracts for the
-    /// uncovered agent types.
-    GroundingCoverageDegraded,
-    /// Grounding violation delta is positive — new nulled fields appeared
-    /// since the last sense tick. The spike is the regulation signal that
-    /// something changed. Routed as Escalate so the Curator surfaces it to
-    /// the user via the algedonic alert path.
-    GroundingViolationDeltaIncreased,
 }
 
 impl RegulationReason {
@@ -104,9 +85,6 @@ impl RegulationReason {
             Self::CircuitBreakerOpen => "circuit_breaker_open",
             Self::InferenceUnavailable => "inference_unavailable",
             Self::ModelUnavailable => "model_unavailable",
-            Self::GroundingCleanRateDegraded => "grounding_clean_rate_degraded",
-            Self::GroundingCoverageDegraded => "grounding_coverage_degraded",
-            Self::GroundingViolationDeltaIncreased => "grounding_violation_delta_increased",
         }
     }
 }
@@ -473,39 +451,12 @@ impl RegulationPolicy {
 /// Extract (deficit, threshold) from a `RegulationData` variant.
 /// Returns (0, 0) when the variant doesn't carry deficit/threshold.
 ///
-/// For grounding variants, the deficit/threshold vocabulary is adapted:
-/// - `GroundingCleanRateDegraded`: deficit = floor - clean_rate (how far
-///   below floor), threshold = floor scaled to 100 for readability.
-/// - `GroundingCoverageDegraded`: deficit = floor - coverage_rate, threshold
-///   = floor scaled to 100.
-/// - `GroundingViolationDeltaIncreased`: deficit = delta (new violations),
-///   threshold = 0 (any positive delta is a deviation).
 /// This ensures the `error_context` JSON in the escalation queue carries
 /// meaningful values, not (0, 0) which looks like a bug.
 pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
             (*deficit as u64, *threshold as u64)
-        }
-        RegulationData::GroundingCleanRateDegraded { clean_rate, floor } => {
-            // Deficit = how far below the floor (scaled to 0-100).
-            // A clean_rate of 0.5 with floor 0.8 → deficit 30, threshold 80.
-            let deficit = ((floor - clean_rate) * 100.0).max(0.0) as u64;
-            let threshold = (floor * 100.0) as u64;
-            (deficit, threshold)
-        }
-        RegulationData::GroundingCoverageDegraded {
-            coverage_rate,
-            floor,
-        } => {
-            let deficit = ((floor - coverage_rate) * 100.0).max(0.0) as u64;
-            let threshold = (floor * 100.0) as u64;
-            (deficit, threshold)
-        }
-        RegulationData::GroundingViolationDeltaIncreased { delta } => {
-            // Deficit = the delta (new violations). Threshold = 0 (any
-            // positive delta is a deviation).
-            (*delta as u64, 0)
         }
         _ => (0, 0),
     }
@@ -571,9 +522,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
         // ── Observational (no substitution — Notify is terminal) ──
-        // Grounding metrics route to Escalate (terminal for grounding — the
-        // regulation system does not auto-fix grounding contracts, that's a
-        // human decision). No substitution ladder.
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount
         | SignalMetric::LowConfidenceCount
@@ -582,7 +530,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::SeamCoverage
         | SignalMetric::ToolReliability
         | SignalMetric::TestCoverage
-        | SignalMetric::MutationScore
-        => &[],
+        | SignalMetric::MutationScore => &[],
     }
 }

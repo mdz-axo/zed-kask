@@ -309,13 +309,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // could never arrive and corpus-mode transcript search was
             // permanently unavailable (RR-0061).
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
-            // Construct the verification store and register the companies-tool
-            // grounding contracts. The contracts declare each tool's output
-            // fields and their grounding dispositions (Inferred for computed
-            // fields, Narrative for prose). Without registration, every tool
-            // call writes a coverage-gap record — the trend query shows 45
-            // tools with no contract. With registration, the trend query shows
-            // grounded delegations with `was_enforced: true`.
             Ok(CompaniesServer::new(
                 ctx.webid,
                 reqwest::Client::new(),

@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -31,9 +31,11 @@ integration concern to one crate whose diff is reviewable as a unit.
 | Governing invariant | `kask/crates/kask_bridge/src/kask_bridge.rs:9-10` |
 | `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
 | `LanguageModelInferencePort` channel split | `kask/crates/kask_bridge/src/inference.rs:179-216` |
-| `BridgeManifestExecutor` (D1 seam) | `kask/crates/kask_bridge/src/skill_executor.rs:88-109` |
-| `BridgeManifestExecutor::new` | `kask/crates/kask_bridge/src/skill_executor.rs:118-134` |
-| `seed_registry_to_disk` (D28) | `kask/crates/kask_bridge/src/skill_executor.rs:457-531` |
+| Skill execution (D1 seam) | `crates/agent/src/tools/skill_tool.rs:266` (`SkillTool::run`) |
+| `render_skill_envelope` | `crates/agent/src/agent.rs` (body injection) |
+| `lisp_eval` tool | `crates/agent/src/tools/lisp_eval_tool.rs` |
+| `render_template` tool | `crates/agent/src/tools/render_template_tool.rs` |
+| Template base path hook | `agent::set_template_base_path()` (OnceLock, wired in `main.rs`) |
 | `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
 | `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:128-253` |
 | `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1359-1361` |
@@ -97,25 +99,25 @@ sequenceDiagram
     Main->>Bridge: BridgeContextInjector + BridgeCuratorContextInjector
     Main->>Agent: set_context_injector + set_curator_context_injector
     Main->>Bridge: LanguageModelInferencePort + EmbeddingPort
-    Main->>Bridge: BridgeManifestExecutor + seed_registry_to_disk
-    Main->>Agent: set_manifest_executor
+    Main->>Agent: register SkillTool + lisp_eval + render_template
+    Main->>Agent: set_template_base_path (OnceLock)
     Main->>Bridge: BridgeThreadCondenser
     Main->>Agent: set_thread_condenser
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-006
-verified_date: 2026-08-13
-verified_against: kask/crates/kask_bridge/src/kask_bridge.rs:9-10; kask/crates/kask_bridge/src/metacognition_bridge.rs:16-24; kask/crates/kask_bridge/src/identity.rs:217-257; kask/crates/kask_bridge/src/memory.rs:128-253,1359-1361; kask/crates/kask_bridge/src/context_injector.rs:168-204; kask/crates/kask_bridge/src/inference.rs:189-216; kask/crates/kask_bridge/src/skill_executor.rs:118-134,457-531; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25
+verified_date: 2026-08-20
+verified_against: kask/crates/kask_bridge/src/kask_bridge.rs:9-10; kask/crates/kask_bridge/src/metacognition_bridge.rs:16-24; kask/crates/kask_bridge/src/identity.rs:217-257; kask/crates/kask_bridge/src/memory.rs:128-253,1359-1361; kask/crates/kask_bridge/src/context_injector.rs:168-204; kask/crates/kask_bridge/src/inference.rs:189-216; crates/agent/src/tools/skill_tool.rs:266; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25
 status: VERIFIED
 -->
 
 `set_memory_port` and `set_metacognition_provider` use `Mutex` (re-settable)
 because the early phase leaves them `None` and the deferred phase upgrades
-them. The manifest executor and context injectors use `OnceLock` (set once).
-This is the `.rules` "Failure signals" pattern: a hook wired conditionally
-must `log::warn!` on failure so operators can distinguish "not configured"
-from "configured but broken."
+them. The context injectors and the template base path use `OnceLock` (set
+once). This is the `.rules` "Failure signals" pattern: a hook wired
+conditionally must `log::warn!` on failure so operators can distinguish "not
+configured" from "configured but broken."
 
 ## Why the inference adapter uses channels
 
@@ -193,30 +195,39 @@ attempt, never silently. This is the `.rules` "Advertised invariants need
 enforcement points" pattern — the self-healing claim points at
 `CuratorStore::try_heal` (`memory/curator_stores.rs:118-160`).
 
-## Why skill manifests live on disk
+## Why skills execute via body injection, not a manifest cascade
 
-`BridgeManifestExecutor` resolves a skill name to a YAML manifest on disk
-under `kask/registry/manifests/<name>.yaml` (`skill_executor.rs:155-170`).
-There is no compiled-in fallback at runtime. The shipped manifests are
-seeded to disk at startup by `seed_registry_to_disk`
-(`skill_executor.rs:457-531`), which writes to `{kask_data_dir}/skills/registry/`
-(D28) and never overwrites existing files.
+Skill execution in zed-kask follows upstream Zed's body-injection model.
+`SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the
+`SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it
+into the conversation via `render_skill_envelope`. The model reads the body
+and follows the instructions — there is no manifest executor, no step
+machine, no Jinja2 cascade, and no `BridgeManifestExecutor` / `skill_executor.rs`
+in `kask_bridge`.
 
-The disk-is-source design has three motivations:
+Two companion built-in tools support the model-coordinated PDCA loops the
+SKILL.md bodies describe:
 
-1. **Editability.** YAML/J2 edits take effect immediately without
-   recompilation. A user iterating on a skill manifest does not need to
-   rebuild the binary.
-2. **User sovereignty.** Existing files are never overwritten — a user who
-   deletes a shipped manifest will see it re-seeded on the next startup, but
-   a user who edits one keeps their edits (`skill_executor.rs:447-449`).
-3. **Single runtime path.** `BridgeManifestExecutor::manifest_yaml` and
-   `TemplateRenderer::load` read exclusively from disk. There is no
-   "compiled-in fallback" path that could drift from the disk path.
+1. **`lisp_eval`** (`crates/agent/src/tools/lisp_eval_tool.rs`) — wraps
+   `hkask_lisp::eval_sandboxed_with_budget`. The agent calls it directly when a
+   SKILL.md instructs it to perform deterministic computation (convergence
+   signals, invariant checks, scoring). Registered in `add_default_tools`.
+2. **`render_template`** (`crates/agent/src/tools/render_template_tool.rs`) —
+   renders Jinja2 templates from the kask registry (`kask/registry/templates/`)
+   via `minijinja`. The agent calls it when a SKILL.md instructs it to get
+   structured prompt scaffolding for a specific step. The template base path
+   is wired via `agent::set_template_base_path()` (OnceLock), called from
+   `main.rs` at startup (dev: `kask/registry/templates/`, prod:
+   `{kask_data_dir}/skills/registry/templates/`). Registered in
+   `register_session` alongside `SkillTool`.
 
-The compiled seed payload exists solely so a self-contained binary can
-populate the registry on a fresh install with no source tree
-(`skill_executor.rs:440-445`).
+The bridge crate does not participate in skill execution — it has no skill
+executor module. The D1 seam lives entirely in the `agent` crate's tool
+registration, matching the upstream Zed constructor `SkillTool::new(skills,
+fs)`. PDCA iteration is model-coordinated: the SKILL.md body describes
+convergence criteria, and the model uses `lisp_eval` for deterministic
+convergence checks and `render_template` for structured prompt scaffolding
+within iterations.
 
 ## Why settings defaults live in `Default` impls
 
@@ -279,14 +290,16 @@ to `Failed`.
 
 ## D28 changes
 
-The D28 divergence surface touches this crate in five places:
+The D28 divergence surface touches this crate in four places:
 
 1. **Threads DB override hook** — `HKASK_CURATOR_DB` is read by
    `curator_db_path` (`memory/curator_stores.rs:20-29`) to override the
    curator DB location.
 2. **Skills dir override hook** — `HKASK_SKILLS_DIR` is emitted from
    `mcp_env` when `swarm.skills_dir` is set (`settings.rs:953-958`) and
-   allowlisted for the swarm server (`mcp_servers.rs:332-337`).
+   allowlisted for the swarm server (`mcp_servers.rs:332-337`). Retained for
+   settings UI compatibility; the swarm server no longer reads it (skill
+   cascade cleanup removed the read site).
 3. **`HKASK_TRANSACTIONS_DIR` emission** — always emitted, default
    `mcp/portfolio/transactions/` under the kask data root
    (`settings.rs:804-816`); allowlisted for the portfolio server
@@ -294,6 +307,9 @@ The D28 divergence surface touches this crate in five places:
 4. **MCP server DB paths under `mcp/{server_id}/`** — the transactions dir
    follows the `mcp/<server>/` convention; the curator DB lives at
    `agents/curator/curator.db` (renamed from the former `pod.db`).
-5. **Registry at `skills/registry/`** — `seed_registry_to_disk` writes to
-   `{kask_data_dir}/skills/registry/` (`skill_executor.rs:451-456`), not the
-   former `agents/registry/` path.
+
+The former `seed_registry_to_disk` registry-seeding path (which wrote to
+`{kask_data_dir}/skills/registry/`) was removed with the `hkask-templates`
+executor infrastructure. Skill bodies and templates now live under the
+skills directory read by `agent_skills::read_skill_body` and the
+`render_template` tool's base path.

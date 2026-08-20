@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Tutorial: Operate Your First Swarm"
 audience: [operators, developers new to zed-kask swarms]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Swarm"
 mds_categories: [lifecycle]
@@ -106,8 +106,8 @@ In `Author` mode (`PanelMode::Author`, `swarm_panel.rs:389`) the panel calls
 `agent_card.json` to the local registry. The card carries
 `capabilities.mcp_tools` (qualified `server/tool` names — the allowlist for
 tool dispatch through the zed IPC bridge) and `capabilities.skills` (capped at
-3, executed through the zed-side `ManifestExecutor` before the LLM call)
-(`local_registry.rs:71-93`).
+3, executed via upstream-Zed body injection through `SkillTool::run` →
+`render_skill_envelope` in the agent crate) (`local_registry.rs:71-93`).
 
 In `abw` mode you would instead hire an existing ABW agent through the
 cost/consent flow (`hire.rs:21-117` for the cost preflight,

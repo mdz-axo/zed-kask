@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [domain, lifecycle]
@@ -309,11 +309,16 @@ channel is the daemon's `store_experience` call in the MCP server layer.
   tool-result compression path wired into the agent turn loop via
   `agent::set_thread_condenser` (`crates/agent/src/agent.rs:3144`),
   gated on `kask.condenser.auto_compress_tool_results` (default off).
-- `hkask-mcp-condenser` — MCP server exposing `condenser_ping`,
-  `condenser_persist`, `condenser_thread_summary`,
-  `condenser_score_saliency`. Persistence requires `HKASK_DB_PASSPHRASE`;
-  the condenser DB defaults to `mcp/condenser/condenser.db` per D28
-  (`kask/mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs:532`).
+
+> **Note (2026-08-20):** The `hkask-mcp-condenser` MCP server was deleted
+> (commit `26215d845e`). The former MCP-server surface
+> (`condenser_ping`, `condenser_persist`, `condenser_thread_summary`,
+> `condenser_score_saliency`) no longer exists. The `hkask-condenser`
+> **crate** remains as a pure domain crate consumed only by
+> `kask_bridge::BridgeThreadCondenser` for in-process thread condensation.
+> The `condenser_score_saliency` tool mentioned in the Saliency section
+> above was part of the deleted server; the `saliency` module's public
+> functions remain available to in-process callers.
 
 ## See also
 

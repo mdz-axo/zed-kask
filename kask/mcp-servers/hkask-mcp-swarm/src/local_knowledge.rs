@@ -184,11 +184,9 @@ pub(crate) async fn agent_memory_seed(
 /// logs, not silently dropped). The delegation result is still returned to the
 /// caller regardless of whether the annotation was written.
 ///
-/// Grounding annotations are no longer written here — they live in the
-/// central verification ledger (`hkask_verification::VerificationStore`),
-/// which is cross-tool and cross-server. The stigmergy trail retains the
-/// latency, task-success, and response annotations (the ACO pheromone signals
-/// + the dreaming substrate for the condenser).
+/// The stigmergy trail retains the latency, task-success, and response
+/// annotations (the ACO pheromone signals + the dreaming substrate for
+/// the condenser).
 pub(crate) async fn record_delegation(
     memory: &LazyLocalMemory,
     agent_id: &str,

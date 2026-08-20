@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Architecture"
 audience: [architects, developers]
-last_updated: 2026-08-14
-version: "1.0.2"
+last_updated: 2026-08-20
+version: "1.0.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]
@@ -53,9 +53,17 @@ flowchart TD
     CURATOR -->|delegate_results feedback| SI
 ```
 
+> **Note (2026-08-20):** The `hkask-verification` crate (which provided
+> `enforce_grounding` and the `VerificationStore` grounding ledger) was
+> deleted (commit `9e9c41ef3c`). The "Rung 3 Grounding" step in the diagram
+> above documents the prior grounding enforcement flow; with the crate
+> deleted, the grounding check and the curator feedback loop's
+> `GroundingSensor` are no longer wired. The `check_bind` Rung 4 binding
+> check lives in `hkask-mcp-swarm/src/local_runtime.rs` and survives.
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
-verified_date: 2026-08-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_is_exactly_52_registered_tools pins 52 = 27 ABW + 25 local); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md; kask/crates/hkask-verification/src/grounding.rs (enforce_grounding); kask/crates/hkask-verification/src/ledger.rs (VerificationStore::enforce_for_agent); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind)
+verified_date: 2026-08-20
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_is_exactly_52_registered_tools pins 52 = 27 ABW + 25 local); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind)
 status: VERIFIED
 -->

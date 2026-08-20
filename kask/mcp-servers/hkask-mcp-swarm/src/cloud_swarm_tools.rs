@@ -730,10 +730,6 @@ impl SwarmServer {
                 )
                 .await?;
 
-                // Rung 3 (Grounding): narrative-only grounding for ABW cloud
-                // delegation. The `data` is the ABW API response to posting
-                // the task — it may contain content from the ABW system.
-
                 Ok(self
                     .client
                     .with_wallet(serde_json::json!({

@@ -5,10 +5,7 @@
 //! unsupported keyword is NOT a pass — a validator that silently ignores
 //! what it cannot interpret returns `valid` for a document it never checked.
 //!
-//! Runs AFTER grounding, BEFORE the payload is consumed. The ordering
-//! matters: grounding nulls unsourced fields first, then validation checks
-//! what remains. A schema that pins an unsourceable field to `"type": "null"`
-//! would otherwise reject a document that grounding was about to clean.
+//! Runs BEFORE the payload is consumed.
 //!
 //! Supported keywords (7):
 //! - `type`: `"object"`, `"string"`, `"number"`, `"integer"`, `"boolean"`,
