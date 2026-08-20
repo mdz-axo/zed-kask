@@ -762,7 +762,17 @@ fn main() {
                 std::path::Path::new("skills/registry/templates"),
             )
         };
-        agent::set_template_base_path(template_base_path);
+        agent::set_template_base_path(template_base_path.clone());
+
+        // Seed templates to disk in production. In dev, the live source tree
+        // IS the target so seeding is a no-op.
+        if !dev_templates_dir.is_dir() {
+            let fs = app_state.fs.clone();
+            let seed_dir = template_base_path.clone();
+            cx.spawn(async move |_cx| {
+                agent_skills::seed_templates(fs.as_ref(), &seed_dir).await;
+            }).detach();
+        }
 
         // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to

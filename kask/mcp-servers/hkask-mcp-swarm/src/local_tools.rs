@@ -148,6 +148,38 @@ impl SwarmServer {
                 .delegate(&agent, &req.task, req.credits_authorized, ceiling)
                 .await
                 .map_err(map_local_swarm_error)?;
+            // Evaluator contract (phase 4): a card-declared evaluator is the
+            // agent's own oracle. Run each; the verdict passes only if ALL
+            // declared evaluators pass (they are conjunctive expectations
+            // about the response, not alternatives). A bad evaluator spec
+            // propagates as an error rather than stamping `pass: false` —
+            // the agent must not be blamed for a broken oracle.
+            if !agent.capabilities.evaluators.is_empty() {
+                let mut all_passed = true;
+                let mut detail_parts = Vec::new();
+                for declared in &agent.capabilities.evaluators {
+                    let passed = run_evaluator(
+                        &result.response,
+                        &declared.evaluator,
+                        &declared.spec,
+                    )?;
+                    detail_parts.push(format!(
+                        "evaluator={}, spec_len={}, pass={}",
+                        declared.evaluator,
+                        declared.spec.len(),
+                        passed
+                    ));
+                    if !passed {
+                        all_passed = false;
+                    }
+                }
+                result.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
+                    pass: all_passed,
+                    score: None,
+                    detail: Some(detail_parts.join("; ")),
+                    provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                });
+            }
             // Stamp the bind check result onto the delegation result.
             result.bind_matched = bind_matched;
             // Rung 2 (Typing) post-invocation: validate the agent's output
@@ -842,6 +874,7 @@ impl SwarmServer {
                         ),
                         skills: req.skills,
                         output_contract: req.output_contract,
+                        evaluators: req.evaluators.unwrap_or_default(),
                     },
                     cloud_swarm_id: None,
                     tags: req.tags,

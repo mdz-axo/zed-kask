@@ -127,10 +127,7 @@ fn main() {
 "
         ));
     }
-    template_code.push_str(
-        "]
-",
-    );
+    template_code.push_str("];\n");
 
     fs::write(out_dir.join("embedded_templates.rs"), template_code)
         .expect("write generated embedded_templates.rs");

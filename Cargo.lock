@@ -9532,6 +9532,7 @@ dependencies = [
  "dirs",
  "hf-hub",
  "hkask-bridge-ontology",
+ "hkask-event-store",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",

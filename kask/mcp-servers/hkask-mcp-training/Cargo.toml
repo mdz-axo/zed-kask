@@ -19,6 +19,7 @@ hkask-types.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true
+hkask-event-store.workspace = true
 hkask-inference.workspace = true
 # Ontology vocabulary bridge — concept URIs for the reg.tool span ontology tag.
 hkask-bridge-ontology.workspace = true
