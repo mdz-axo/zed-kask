@@ -472,6 +472,103 @@ pub fn skill_agent_contract() -> GroundingContract {
     }
 }
 
+/// The built-in grounding contract for `creative` agents.
+///
+/// Creative agents produce prose content (stories, descriptions, marketing
+/// copy). Their output is commissioned judgment, not tool-sourced data:
+/// - `content`: the main creative output. Inferred.
+/// - `summary`: a prose summary. Inferred.
+///
+/// The contract exists so creative delegations are grounded (not coverage
+/// gaps) and so fabricated file paths or tool-sourced claims in the output
+/// are caught by the grounding check.
+pub fn creative_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "content".to_string(),
+        FieldSpec {
+            sources: vec![],
+            response_path: "".to_string(),
+            why: "The main creative output. Commissioned by the system prompt — \
+                  the agent was asked to produce creative content."
+                .to_string(),
+            derived_from: None,
+            transform: None,
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            response_path: "".to_string(),
+            why: "A prose summary of the creative work. Commissioned by the \
+                  system prompt — the agent was asked to summarize."
+                .to_string(),
+            derived_from: None,
+            transform: None,
+        },
+    );
+    GroundingContract {
+        agent_type: "creative".to_string(),
+        field_sources,
+    }
+}
+
+/// The built-in grounding contract for `meta` agents.
+///
+/// Meta agents coordinate other agents, analyze results, and produce
+/// strategic recommendations. Their output is commissioned judgment:
+/// - `analysis`: a prose analysis. Inferred.
+/// - `summary`: a prose summary. Inferred.
+/// - `recommendations`: a list of recommendations. Inferred.
+///
+/// The contract exists so meta delegations are grounded (not coverage gaps)
+/// and so fabricated file paths or tool-sourced claims in the output are
+/// caught by the grounding check.
+pub fn meta_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "analysis".to_string(),
+        FieldSpec {
+            sources: vec![],
+            response_path: "".to_string(),
+            why: "A prose analysis of the coordination or strategic situation. \
+                  Commissioned by the system prompt — the agent was asked to analyze."
+                .to_string(),
+            derived_from: None,
+            transform: None,
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            response_path: "".to_string(),
+            why: "A prose summary of the meta-agent's findings. Commissioned by \
+                  the system prompt — the agent was asked to summarize."
+                .to_string(),
+            derived_from: None,
+            transform: None,
+        },
+    );
+    field_sources.insert(
+        "recommendations".to_string(),
+        FieldSpec {
+            sources: vec![],
+            response_path: "".to_string(),
+            why: "A list of recommendations produced by the meta-agent. Commissioned \
+                  by the system prompt — the agent was asked to propose actions."
+                .to_string(),
+            derived_from: None,
+            transform: None,
+        },
+    );
+    GroundingContract {
+        agent_type: "meta".to_string(),
+        field_sources,
+    }
+}
+
 /// Extract the set of tools that successfully returned data from the
 /// `tool_calls` summary on a `LocalDelegateResult`.
 ///

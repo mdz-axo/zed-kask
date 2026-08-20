@@ -39,8 +39,9 @@ use serde_json::Value;
 
 use crate::error::VerificationError;
 use crate::grounding::{
-    GroundingContract, GroundingResult, enforce_grounding, narrator_agent_contract,
-    research_agent_contract, scan_narrative_for_leaks, skill_agent_contract, task_agent_contract,
+    GroundingContract, GroundingResult, creative_agent_contract, enforce_grounding,
+    meta_agent_contract, narrator_agent_contract, research_agent_contract,
+    scan_narrative_for_leaks, skill_agent_contract, task_agent_contract,
 };
 use crate::trend::{GroundingTrendReport, TrendScope};
 use crate::types::GroundingRecord;
@@ -90,6 +91,10 @@ impl VerificationStore {
         contracts.insert(narrator_contract.agent_type.clone(), narrator_contract);
         let skill_contract = skill_agent_contract();
         contracts.insert(skill_contract.agent_type.clone(), skill_contract);
+        let creative_contract = creative_agent_contract();
+        contracts.insert(creative_contract.agent_type.clone(), creative_contract);
+        let meta_contract = meta_agent_contract();
+        contracts.insert(meta_contract.agent_type.clone(), meta_contract);
         Self {
             store,
             contracts: Mutex::new(contracts),

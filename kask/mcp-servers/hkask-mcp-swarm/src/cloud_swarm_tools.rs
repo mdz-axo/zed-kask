@@ -424,6 +424,24 @@ impl SwarmServer {
                 // current shape, the evidence fallback, and the legacy
                 // `response` field for older deploys.
                 let response_text = extract_execute_response(&data);
+                // Rung 3 (Grounding): narrative-only grounding for the ABW
+                // agent's response. Same pattern as `swarm_delegate` and
+                // `swarm_delegate_and_wait` — ABW agents produce free prose
+                // with no `tool_calls` visibility. `enforce_narrative`
+                // scans for leak patterns (fabricated file paths, test
+                // results, code execution claims) and records the result to
+                // the central verification ledger. Without this, the core
+                // floor (`execute_tool_semantic`) grounds the tool output
+                // envelope but never scans the agent's prose for fabricated
+                // claims.
+                if let Some(ref narrative) = response_text {
+                    self.verification_store.enforce_narrative(
+                        "swarm_execute_agent",
+                        &req.agent_name,
+                        "abw_cloud",
+                        narrative,
+                    );
+                }
                 let response_value = response_text
                     .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null);

@@ -34,9 +34,10 @@ pub mod types;
 // Re-export the primary API.
 pub use error::VerificationError;
 pub use grounding::{
-    FieldSpec, GroundingContract, GroundingResult, LeakRule, ProvenanceTag, enforce_grounding,
-    enforce_monotone_provenance, narrator_agent_contract, research_agent_contract,
-    scan_narrative_for_leaks, task_agent_contract,
+    FieldSpec, GroundingContract, GroundingResult, LeakRule, ProvenanceTag,
+    creative_agent_contract, enforce_grounding, enforce_monotone_provenance, meta_agent_contract,
+    narrator_agent_contract, research_agent_contract, scan_narrative_for_leaks,
+    skill_agent_contract, task_agent_contract,
 };
 pub use ledger::{CoverageEntry, DelegationCounter, EnforcementOutcome, VerificationStore};
 pub use trend::{GroundingTrendReport, TrendScope};
