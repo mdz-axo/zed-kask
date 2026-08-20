@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -120,7 +120,7 @@ only changes which substrate the _composition_ cascade uses by default.
 
 | Tool                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `swarm_delegate_local` | Run a local agent against a task. The execution path: **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
+| `swarm_delegate_local` | Run a local agent against a task. The execution path: **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task via upstream-Zed body injection (`SkillTool::run` → `render_skill_envelope`) before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
 | `swarm_fanout_local`   | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Runs sequentially to avoid ledger TOCTOU. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads.                                                                                                                                                                                                           |
 | `swarm_pipeline_local` | Sequential local pipeline: run N agents in order with `{prev_output}` substitution (each step's task may reference the previous step's response). Capped at 10 steps.                                                                                                                                                                                                                                                                 |
 | `swarm_a2a_send`       | Send an A2A (Agent2Agent) protocol message to a local agent: wraps in A2A types (Message/Task/Artifact) and dispatches in-process. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in `mcp_tools` to communicate with each other.                                                                                                                                                                              |
@@ -408,7 +408,7 @@ correct; removing either breaks its consumers.**[^mcp-spec-swarm-dual]
 
 | Path                                   | Scope                                                                                  | Serves                                       | Governs                                                           |
 | -------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| **`McpRuntime`** (app-global)          | One copy of each server, app-global                                                    | The skill cascade (FlowDef) + the kask panel | Per-agent call metering (runaway-loop breaker), `reg.tool.*` / `reg.mcp` spans. **No per-call authorization** — RR-0056 |
+| **`McpRuntime`** (app-global)          | One copy of each server, app-global                                                    | The skill body-injection path + the kask panel | Per-agent call metering (runaway-loop breaker), `reg.tool.*` / `reg.mcp` spans. **No per-call authorization** — RR-0056 |
 | **`ContextServerStore`** (per-project) | Each project launches its own copies via `ContextServerDescriptorRegistry` descriptors | The agent tool picker                        | Project-scoped, no governance membrane                            |
 
 The `ContextServerDescriptorRegistry` is app-level (global), but the
