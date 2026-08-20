@@ -156,11 +156,8 @@ pub struct LocalAgentCapabilities {
     /// a call for a tool not listed here is never dispatched.
     #[serde(default)]
     pub mcp_tools: Vec<String>,
-    /// Skill ids this agent declares. `swarm_delegate_local` executes each
-    /// declared skill (capped at 3) against the task through the zed IPC
-    /// bridge's `ManifestExecutor` before the LLM call, and injects the
-    /// cascade output into the prompt as context. Carried
-    /// through create/clone/push as well.
+    /// Skill ids this agent declares. Carried through create/clone/push.
+    /// Skills are available to the agent via the `skill` tool at runtime.
     #[serde(default)]
     pub skills: Vec<String>,
     /// Optional output contract for card-declared grounding (N1). When

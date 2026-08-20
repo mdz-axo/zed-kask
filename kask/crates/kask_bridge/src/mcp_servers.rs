@@ -266,11 +266,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (Zed's working dir, typically home or project root — not the
             // zed-kask repo), and local agent cards are never found.
             "HKASK_DATA_DIR",
-            // Skills corpus dir — read by `AgentExecutor::build_skill_catalog`
-            // via `HKASK_SKILLS_DIR` in `config.rs` (Slice 6 — local agent
-            // skill-awareness). Without this entry, a kask-settings-derived
-            // skills dir override is silently dropped by
-            // `filter_config_env_for_server`.
+            // Skills corpus dir — set from `KaskSwarmSettings.skills_dir`.
+            // Retained for settings UI compatibility; the swarm server no
+            // longer reads this env var (skill-awareness was removed with the
+            // ManifestExecutor cleanup).
             "HKASK_SKILLS_DIR",
             // Swarm memory store shape — read in config.rs alongside the
             // passphrase above. Without these the DB path and embedding
