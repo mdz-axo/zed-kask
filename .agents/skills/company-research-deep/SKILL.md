@@ -5,7 +5,7 @@ description: "Equity research deep pipeline converted from EFRA-AI (Replicant-Pa
 
 # Company Research — Deep Pipeline
 
-Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, web_extract, scenario_build) are called directly; templates do LLM synthesis over their outputs.
+Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
@@ -28,7 +28,7 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 6. Turd Blossom — is the market pricing it like a turd? Early shoots of improvement?
 7. Value Gorilla Elevator Pitch — economic opportunity + exploitation + why the market doubts it.
 8. Investment Thesis Statement — durable, timeless, covering all three pillars.
-9. Consume company_transcript, dcf_valuation, comparable_analysis, web_search, web_extract MCP tool outputs.
+9. Consume company_transcript, dcf_valuation, comparable_analysis, web_search MCP tool outputs.
 10. Emit data_gaps for any failed MCP tool — never collapse to None.
 
 ### falstaffian-competitive-rotation

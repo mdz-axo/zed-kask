@@ -50,6 +50,6 @@ pub use core::{ActionDecision, ImpactReport, LoopId, LoopMetrics, TriggerOrigin}
 pub use episodic::ExperienceClassification;
 pub use signals::{Deviation, DeviationDirection, Signal, SignalMetric};
 
-// Backward-compatible re-exports — CuratorDirective and CuratorHandle were
-// previously re-exported from here but live in hkask_types::curator.
-pub use hkask_types::curator::{CuratorDirective, CuratorHandle};
+// Backward-compatible re-export — CuratorDirective was previously re-exported
+// from here but lives in hkask_types::curator.
+pub use hkask_types::curator::CuratorDirective;

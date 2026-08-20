@@ -4,7 +4,6 @@
 //!
 
 pub mod agent_paths;
-pub mod concurrency;
 pub mod corpus;
 pub mod crypto;
 pub mod curator;
@@ -19,7 +18,6 @@ pub mod inference_ipc;
 pub mod json_extract;
 pub mod kanban_status;
 pub mod kanban_wire;
-pub mod macros;
 pub mod observable_span;
 pub mod regulation;
 pub mod secret;
@@ -38,7 +36,7 @@ pub mod visibility;
 // ── Essential re-exports (used by ≥3 downstream crates) ─────────────────
 
 pub use crypto::{Ed25519PublicKey, Ed25519Signature};
-pub use curator::{CurationThresholdConfig, CuratorDirective, CuratorHandle, EscalationSeverity};
+pub use curator::{CurationThresholdConfig, CuratorDirective, EscalationSeverity};
 pub use document::{Block, DocStructure, Page};
 pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};
 pub use event::{RegulationRecord, RegulationSink};

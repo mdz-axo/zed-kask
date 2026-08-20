@@ -11,18 +11,18 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis
-: You need to anchor a bug to the code graph before debugging (Phase 0)
+: You need to anchor a bug to the code structure before debugging (Phase 0)
 - You need to build a fast, deterministic feedback loop to reproduce the bug
 - You need to generate multiple falsifiable hypotheses rather than anchoring on the first plausible idea
 - You need to instrument code with targeted probes mapped to specific hypotheses
 - You need to apply a fix with a regression test written *before* the fix, then clean up instrumentation
 - You need to measure whether diagnosis convergence is sufficient to exit the loop
 : The bug spans multiple Dublin Core entity types or PKO procedure paths and needs ontological classification
-- A codegraph gap may be the real finding — the affected entity has no callers or is orphaned in the graph
+- A code structure gap may be the real finding — the affected entity has no callers or is orphaned
 
 ## Instructions
 
-1. **Anchor to the code graph (Phase 0 + step 1).** Step 0 calls `codegraph_impact` (MCP) directly (no template) to pre-compute the blast radius — deterministic; on failure, report surfaces a broken codegraph channel without blocking the diagnosis. Step 1 (`diagnose-spec-anchor.j2`) then anchors the bug to the actual code structure using a dual ontology: it calls `codegraph_query` to find the affected symbol and `codegraph_traverse` to trace the call chain (callers + callees). Classify the THING using Dublin Core (`dcterms:type` = entity kind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from graph position). Classify the FLOW using PKO (`pko:Procedure` = the call chain, `pko:Step` = each function, `pko:IssueOccurrence` = the bug at a specific `pko:StepExecution`). Every diagnosis must be anchored to a real codegraph entity or note that the graph is unavailable.
+1. **Anchor to the code structure (Phase 0 + step 1).** Step 0 uses `grep` to pre-compute the blast radius — search for all call sites of the affected symbol to understand impact (deterministic; on failure, report surfaces the gap without blocking the diagnosis). Step 1 (`diagnose-spec-anchor.j2`) then anchors the bug to the actual code structure using a dual ontology: use `grep` to find the affected symbol and `read_file` to trace the call chain (callers + callees). Classify the THING using Dublin Core (`dcterms:type` = entity kind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from code position). Classify the FLOW using PKO (`pko:Procedure` = the call chain, `pko:Step` = each function, `pko:IssueOccurrence` = the bug at a specific `pko:StepExecution`). Every diagnosis must be anchored to a real code entity or note that the structure is unavailable.
 
 2. **Build the feedback loop and reproduce the bug.** Construct the fastest, most deterministic feedback loop. Try strategies in order: failing test at the reaching seam → `cargo test` with specific test name → CLI invocation with fixture input → HTTP script → replay captured input → throwaway harness → property/fuzz loop → `git bisect run` → differential loop. Prioritize speed, signal sharpness, and determinism — a 2-second deterministic loop beats a 30-second flaky loop. For non-deterministic bugs, the goal is a higher reproduction rate, not a clean repro: loop 100×, parallelise, add stress. Do not proceed to hypothesising without a loop you believe in.
 
@@ -40,7 +40,7 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 | Template | Purpose |
 |----------|---------|
-| `diagnose-spec-anchor.j2` | Anchor a bug diagnosis to the actual code structure using a dual ontology: Dublin Core classifies the THING affected (entity type, identifier, source, subject domain derived from graph position) and PKO classifies the FLOW the bug occurs in (call chain as Procedure, each function as Step, bug as IssueOccurrence at a StepExecution). Uses codegraph_query/traverse/impact MCP tools. Phase 0 of the diagnosis pipeline. Replaces spec-anchoring — the bug is grounded in the real code graph, not a specification document. |
+| `diagnose-spec-anchor.j2` | Anchor a bug diagnosis to the actual code structure using a dual ontology: Dublin Core classifies the THING affected (entity type, identifier, source, subject domain derived from code position) and PKO classifies the FLOW the bug occurs in (call chain as Procedure, each function as Step, bug as IssueOccurrence at a StepExecution). Uses `grep` and `read_file` to locate symbols and trace call chains. Phase 0 of the diagnosis pipeline. Replaces spec-anchoring — the bug is grounded in the real code, not a specification document. |
 | `diagnose-loop.j2` | Build a feedback loop for the bug. Evaluate repro strategies, select the fastest deterministic signal, and confirm the bug reproduces before hypothesising. |
 | `diagnose-instrument.j2` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
@@ -59,5 +59,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Write the regression test BEFORE the fix; if no correct seam exists, do not write a shallow test that gives false confidence
 - All `[DIAG-xxxx]` instrumentation tags must be removed before declaring done
 - The commit/PR message must state the confirmed hypothesis
-- Do not fabricate codegraph entities — derive from actual `codegraph_query` results or note the graph is unavailable
+- Do not fabricate code entities — derive from actual `grep` and `read_file` results or note the structure is unavailable
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -19,10 +19,8 @@ schemars.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-zeroize.workspace = true
 hex.workspace = true
 futures-util.workspace = true
-tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 rusqlite = { workspace = true, optional = true }

@@ -9,7 +9,6 @@
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
-mod concurrency;
 mod condenser_bridge;
 mod context_injector;
 
@@ -22,7 +21,6 @@ mod memory;
 mod model_resolution;
 mod settings;
 
-pub use concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;

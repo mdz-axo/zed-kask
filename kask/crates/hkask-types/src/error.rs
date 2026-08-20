@@ -261,17 +261,6 @@ impl McpErrorKind {
     pub fn is_retryable(self) -> bool {
         matches!(self, Self::Unavailable | Self::Timeout | Self::RateLimited)
     }
-
-    /// Whether this error requires user/admin intervention.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is any McpErrorKind variant
-    /// post: returns true only for PermissionDenied and FailedPrecondition;
-    ///       returns false for Internal, Unavailable, Timeout, NotFound,
-    ///       InvalidArgument, and RateLimited
-    pub fn requires_intervention(self) -> bool {
-        matches!(self, Self::PermissionDenied | Self::FailedPrecondition)
-    }
 }
 
 impl std::fmt::Display for McpErrorKind {
@@ -294,8 +283,8 @@ impl McpErrorKind {
     ///
     /// Used by `tool_response::parse_tool_error` to recover the typed kind
     /// from the server's error envelope `{"error": ..., "kind": "..."}` so
-    /// consumers can call `is_retryable()` / `requires_intervention()` instead
-    /// of re-matching on the kind string locally. Returns `None` for an
+    /// consumers can call `is_retryable()` instead of re-matching on the kind
+    /// string locally. Returns `None` for an
     /// unknown kind string rather than a catch-all so a future server variant
     /// surfaces as an unclassified error rather than silently misclassifying.
     #[must_use]
