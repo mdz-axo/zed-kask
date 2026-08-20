@@ -123,27 +123,41 @@ impl SwarmServer {
                 // the operator's first delegation into the swarm.
                 &[],
             );
-            result.apply_grounding(outcome);
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
-            // artifact, two uses"). Non-fatal — logged at warn so the operator
-            // sees the mismatch, but the delegation result is still returned.
-            // The output has already been grounded (unsourced fields nulled);
-            // schema validation is an additional structural check on what
-            // remains.
-            if !agent.produces.is_empty() {
-                if let Ok(output_json) = serde_json::from_str::<serde_json::Value>(&result.response) {
-                    if let Err(schema_err) = self.local_registry.port_registry().validate_output(&agent.produces, &output_json) {
+            // artifact, two uses"). The output has already been grounded
+            // (unsourced fields nulled); schema validation is an additional
+            // structural check on what remains. The result is carried into
+            // the envelope so consumers can distinguish Valid from NoSchema.
+            let validation = if !agent.produces.is_empty() {
+                if let Ok(output_json) =
+                    serde_json::from_str::<serde_json::Value>(&outcome.cleaned)
+                {
+                    let val = self
+                        .local_registry
+                        .port_registry()
+                        .validate_output(&agent.produces, &output_json);
+                    if val.status != hkask_verification::envelope::ValidationStatus::Valid
+                        && val.status
+                            != hkask_verification::envelope::ValidationStatus::NoSchema
+                    {
                         tracing::warn!(
                             target: "hkask.swarm.port_registry",
                             agent = %req.agent_name,
                             produces = ?agent.produces,
-                            error = %schema_err,
+                            status = ?val.status,
+                            violations = ?val.violations,
                             "Port schema validation failed — agent output does not match its declared produces schema"
                         );
                     }
+                    Some(val)
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
+            result.apply_grounding(outcome, validation.as_ref());
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via
@@ -256,7 +270,7 @@ impl SwarmServer {
                                 // envelope to cap against.
                                 &[],
                             );
-                            r.apply_grounding(outcome);
+                            r.apply_grounding(outcome, None);
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -409,7 +423,7 @@ impl SwarmServer {
                                 &r.tool_calls,
                                 &prev_upstream_blocks,
                             );
-                            r.apply_grounding(outcome);
+                            r.apply_grounding(outcome, None);
                             // Capture this step's envelope blocks for the next
                             // iteration's weakest-link cap. When grounding did
                             // not run (no contract / unenforceable), the
@@ -1525,7 +1539,7 @@ impl SwarmServer {
                                 // parent envelope to cap against.
                                 &[],
                             );
-                            r.apply_grounding(outcome);
+                            r.apply_grounding(outcome, None);
                             // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(
                                 &self.local_memory,

@@ -20,38 +20,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Extract the feedback phase from a template reference for span emission.
-///
-/// Maps the last path segment of a template_ref to a canonical phase name
-/// (Classify, Gather, Draft, Evaluate, Convergence, OperatorFeedback, Write,
-/// Outcome). Used by `step_machine.rs` to emit `reg.skill.cascade.step_executed`
-/// spans with the correct phase field.
-pub(crate) fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
-    let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
-    if last_segment.contains("classify") {
-        Some("Classify")
-    } else if last_segment.contains("gather") {
-        Some("Gather")
-    } else if last_segment.contains("draft")
-        || last_segment.contains("generate")
-        || last_segment.contains("extract")
-    {
-        Some("Draft")
-    } else if last_segment.contains("evaluate") {
-        Some("Evaluate")
-    } else if last_segment.contains("convergence") || last_segment.contains("converge") {
-        Some("Convergence")
-    } else if last_segment.contains("operator_feedback") || last_segment.contains("feedback") {
-        Some("OperatorFeedback")
-    } else if last_segment.contains("write") {
-        Some("Write")
-    } else if last_segment.contains("outcome") {
-        Some("Outcome")
-    } else {
-        None
-    }
-}
-
 /// Manifest executor — drives the skill cascade via `StepMachine`.
 ///
 /// Created once per session (or per manifest invocation) and wired into the
