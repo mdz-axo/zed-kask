@@ -8,6 +8,11 @@
 
 use std::time::Instant;
 
+/// Bounded capacity of the capture channel. Small on purpose: capture is
+/// best-effort telemetry, and a full channel drops-and-counts rather than
+/// ever blocking a generation call.
+const CAPTURE_CHANNEL_CAPACITY: usize = 256;
+
 use crate::agent_executor::{AgentExecutor, RawDelegateResult};
 use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
@@ -137,6 +142,11 @@ pub struct LocalSwarmRuntime {
     operator_account: String,
     /// The asset name for local credits.
     asset: String,
+    /// Count of captures dropped because the capture channel was full or
+    /// the store append failed. Surfaced via `capture_drops()` — a drop is
+    /// never silent. Shared so the drainer task can increment it while the
+    /// runtime hands out `&self`.
+    capture_drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl LocalSwarmRuntime {
@@ -191,7 +201,54 @@ impl LocalSwarmRuntime {
             executor,
             operator_account,
             asset,
+            capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
+    }
+
+    /// Captures dropped due to channel backpressure or store failures.
+    /// A sensor signal, not an error: the delegation path must never fail
+    /// because capture is degraded.
+    pub(crate) fn capture_drops(&self) -> usize {
+        self.capture_drops
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Wire the event-store capture path: a bounded channel from the
+    /// executor's inference loop to a drainer task that appends
+    /// `model_request` events. Called by the harness (the store's first
+    /// consumer) after the store opens; a second call replaces the channel
+    /// (the old drainer exits when its sender is dropped).
+    ///
+    /// A full channel drops the capture and a store failure increments the
+    /// drop counter — surfaced via `capture_drops()`, never silent, never
+    /// blocking generation.
+    pub(crate) fn wire_capture(&self, store: std::sync::Arc<hkask_event_store::EventStore>) {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::agent_executor::CapturedInference>(
+            CAPTURE_CHANNEL_CAPACITY,
+        );
+        self.executor.set_capture(tx);
+        let drop_counter = std::sync::Arc::clone(&self.capture_drops);
+        tokio::spawn(async move {
+            while let Some(captured) = rx.recv().await {
+                let payload = serde_json::json!({
+                    "model": captured.model,
+                    "status": captured.status,
+                    "latency_ms": captured.latency_ms,
+                    "usage": { "total_tokens": captured.total_tokens },
+                    "tool_calls": captured.tool_calls,
+                    "round": captured.round,
+                });
+                if let Err(error) = store.append(&captured.rollout_id, "model_request", &payload) {
+                    drop_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        rollout = %captured.rollout_id,
+                        error = %error,
+                        "event store append failed — model_request capture dropped"
+                    );
+                }
+            }
+        });
     }
 
     /// Test-only constructor with injected dependencies. Mirrors the
@@ -495,6 +552,7 @@ impl LocalSwarmRuntime {
             // from the executor-populated `delegate_results`.
             task_success: None,
             bind_matched: None,
+            rollout_id: Some(raw.rollout_id),
         })
     }
 }
@@ -594,6 +652,13 @@ pub struct LocalDelegateResult {
     /// enforces `accepts` labels resolve to registered types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_matched: Option<bool>,
+    /// The rollout id under which this delegation's `model_request` events
+    /// were captured (the executor assigns it). Consumers that stamp
+    /// verdicts (the harness, the Curator) use it so the verdict groups
+    /// with the captured events in the store. Skipped from serialization
+    /// when absent (capture unwired) so the response shape is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_id: Option<String>,
 }
 
 impl LocalDelegateResult {
