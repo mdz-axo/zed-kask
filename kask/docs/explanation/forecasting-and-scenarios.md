@@ -160,14 +160,14 @@ A `compute` step invoked a canonical `hkask_forecast::*` primitive
 deterministically — no LLM round-trip, no MCP call, no inference
  cost.[^deming-pdca-compute]
 
-The superforecasting skill (formerly manifest) used `compute` for three
-deterministic stages within the 16-step pipeline:
+The superforecasting skill uses `lisp_eval` for three deterministic
+stages within the 16-step pipeline:
 
-| Step | Action | compute_ref | Role |
-|------|--------|------------|------|
-| 3 | compute | `calibrate_from_fermi` | Fermi weighted-average of LLM-produced sub-questions → inside estimate |
-| 5 | compute | `outside_view_adjustment` | Shrinkage blend of LLM-produced base rate with Fermi estimate → calibrated anchor |
-| 10 | compute | `bayesian_update` | Bayes' theorem: LLM produces P(E|H) + P(E), Rust computes the posterior |
+| Step | Tool | Form | Role |
+|------|------|------|------|
+| 3 | `lisp_eval` | `calibrate_from_fermi` | Fermi weighted-average of LLM-produced sub-questions → inside estimate |
+| 5 | `lisp_eval` | `outside_view_adjustment` | Shrinkage blend of LLM-produced base rate with Fermi estimate → calibrated anchor |
+| 10 | `lisp_eval` | `bayesian_update` | Bayes' theorem: LLM produces P(E|H) + P(E), Rust computes the posterior |
 | 16 | compute | `apply_calibration_adjustment` | Calibration feedback in loop re-entry → adjusted prior |
 
 ## Common drift and how this model prevents it
@@ -229,7 +229,7 @@ deterministic stages within the 16-step pipeline:
     Cited for the record → score → recalibrate cycle that operationalizes Brier's calibration feedback.
 
 [^deming-pdca-compute]: Deming, W. E. (1986). *Out of the Crisis*. MIT Center for Advanced Engineering Study.
-    Cited for the PDCA cycle the `compute` action embeds as a deterministic step within the LLM-driven cascade.
+    Cited for the PDCA cycle that `lisp_eval` embeds as a deterministic step within the LLM-driven skill process.
 
 [^ousterhout-drift]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
     Cited for the module-boundary rationale that prevents a server from reimplementing a canonical primitive.

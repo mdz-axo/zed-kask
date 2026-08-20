@@ -280,45 +280,16 @@ The operational assessment and remediation sequence is documented in the [zed-ka
 
 ### Replica Pipeline Dispatch
 
-*Inlined from `docs/diagrams/flowchart-replica-pipeline-dispatch.md`*
+Corpus pipeline operations are dispatched in-process through the unified `hkask-mcp-corpus` server. All corpus tools (`docproc_*` and `replica_*`) are now in-process — the former `corpus_pipeline_run` tool and the manifest executor have been removed. Pipeline workflows are orchestrated via the agent panel, which calls corpus MCP tools directly.
 
+`execute_tool` wraps the MCP call with a tool span and records success or error against the caller's WebID. That is observability, not authorization: per [P4 — Clear Boundaries](../architecture/core/PRINCIPLES.md#p4--clear-boundaries), operators must not treat this dispatcher as an authority boundary. Nor is `McpRuntime::invoke` downstream of it one — it meters and dispatches (RR-0056). The authority boundaries are the tool allowlists named in P4.2.
 
-# Corpus Pipeline Dispatch Flowchart
-
-> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via the in-process corpus MCP server (D1–D3), invoked from the agent panel. The former `kask mcp invoke` CLI has been removed.
-
-The historical flowchart below is retained for reference. It shows the former executable boundary of `corpus_pipeline_run`.
-
-```mermaid
-flowchart TD
-    A([corpus_pipeline_run]) --> B[Read and parse manifest]
-    B --> C[Load or create checkpoint]
-    C --> D{Step already complete?}
-    D -->|Yes| E[Return saved output]
-    D -->|No| F{requires_consent?}
-    F -->|Yes| G([Reject: P2 consent required])
-    F -->|No| H{Corpus tool?}
-    H -->|corpus_embed| I[Run corpus-ingest embed]
-    H -->|corpus_salience| J[Run corpus-ingest salience]
-    H -->|corpus_build_prompts| K[Run corpus-ingest build-prompts]
-    H -->|corpus_ingest_qa| L[Run corpus-ingest ingest-qa]
-    H -->|Other tool| M([Stop: external dispatch required])
-    I --> N[Verify output and checkpoint]
-    J --> N
-    K --> N
-    L --> N
-    N --> O{More steps?}
-    O -->|Yes| D
-    O -->|No| P([Return pipeline result])
-```
-`execute_tool` wraps the MCP call with a tool span and records success or error against the caller's WebID. That is observability, not authorization: per [P4 — Clear Boundaries](../architecture/core/PRINCIPLES.md#p4--clear-boundaries), operators must not treat this dispatcher as an authority boundary. Nor is `McpRuntime::invoke` downstream of it one — it meters and dispatches (RR-0056). The authority boundaries are the tool allowlists named in P4.2. The checkpoint/result path supports [P9 — Homeostatic Self-Regulation](../architecture/core/PRINCIPLES.md#p9--homeostatic-self-regulation) by retaining the last step outcome for inspection and retry.
-
-The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-researcher.yaml`](../../corpus/pipeline-capabilities-researcher.yaml); all its `docproc_*` and `training_*` steps are now dispatched in-process against the unified `hkask-mcp-corpus` server. See also [the corpus server reference](../reference/mcp-servers/README.md).
+See also [the corpus server reference](../reference/mcp-servers/README.md).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003
-verified_date: 2026-07-10
-verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted):37-142; kask/crates/hkask-types/src/ (pipeline_manifest.rs deleted):49-91; kask/crates/hkask-mcp-server/src/server/tool_span.rs:247-261
+verified_date: 2026-08-20
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-mcp-server/src/server/tool_span.rs:247-261
 status: VERIFIED
 -->
 

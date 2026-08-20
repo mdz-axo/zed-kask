@@ -272,7 +272,7 @@ skills: coding-guidelines,idiomatic-rust
 name: rust-review-bundle
 ```
 
-The skill-bundler performs inference-driven analysis to produce a coordinated bundle manifest.
+The skill-bundler performs inference-driven analysis to produce a coordinated composition.
 
 ### Bundle Management
 

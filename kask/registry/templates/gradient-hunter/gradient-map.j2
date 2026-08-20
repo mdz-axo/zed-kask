@@ -51,12 +51,11 @@ produces false gradients.
 ## Step 2 — Topology Extraction (delegate when needed)
 
 If the field is topological (call graph, dependency graph, span emission
-sites, orphan nodes, missing edges, disconnected components), delegate to
-`graph-audit` (code mode) for extraction. The graph-audit skill queries
-the code graph via the hkask-mcp-codegraph MCP server and returns
-structured topology.
+sites, orphan nodes, missing edges, disconnected components), use `grep`
+and manual code analysis for extraction. Look for function calls, trait
+implementations, and module dependencies using `grep` patterns.
 
-Set topology_extracted: true when graph-audit was used; include its output
+Set topology_extracted: true when code analysis was used; include the output
 in actual_field.
 
 ## Step 3 — Record the Actual Field

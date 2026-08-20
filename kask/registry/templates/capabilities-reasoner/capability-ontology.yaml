@@ -115,23 +115,23 @@ capability_domains:
       skills and MCP tools. Each principle is a capability with floor/ceiling/
       maturity-gate thresholds that the capabilities-reasoner can evaluate
       against a skill manifest. The principles are not academic theory — they
-      are empirical patterns extracted from 11 migrated skills (superforecasting,
+      are empirical patterns extracted from 10 migrated skills (superforecasting,
       scenario-builder, kanban-task-management, company-research-flash,
-      company-research-deep, swarm-intelligence, graph-audit, metacognition,
+      company-research-deep, swarm-intelligence, metacognition,
       kata-improvement, bug-hunt, diagnose).
     key_concepts:
       - term: "determinism frontier"
-        meaning: "The boundary between deterministic steps (execute/compute) and probabilistic steps (select). Push deterministic work out of select."
+        meaning: "The boundary between deterministic steps (lisp_eval, MCP tools) and probabilistic steps (LLM reasoning). Push deterministic work out of LLM steps."
       - term: "persistence-grounded learning"
-        meaning: "Skills read their own prior outputs from MCP persistence before the cascade starts, closing the feedback loop."
+        meaning: "Skills read their own prior outputs from MCP persistence before the process starts, closing the feedback loop."
       - term: "failure surfacing"
-        meaning: "Every execute step declares on_failure: { action: report, resume: '...' } — failures surface to the Curator, not silently collapse to None."
+        meaning: "Every tool call step calls curator_report_skill_use_issue on failure — failures surface to the Curator, not silently collapse to None."
       - term: "lisp scaffold"
-        meaning: "When an LLM step produces structured output with invariants, a lisp.eval compute step checks those invariants deterministically."
+        meaning: "When an LLM step produces structured output with invariants, a lisp_eval step checks those invariants deterministically."
       - term: "co-evolution loop"
-        meaning: "Skills and MCP tools adapt together: on_failure: report is the signal, EvolveMcpToolSchema is the response, new MCP capabilities are adopted via execute steps."
+        meaning: "Skills and MCP tools adapt together: curator_report_skill_use_issue is the signal, EvolveMcpToolSchema is the response, new MCP capabilities are adopted via tool call steps."
     applies_to:
-      - "Evaluating skill manifests for composition quality (not just format compliance)"
+      - "Evaluating skill SKILL.md files for composition quality (not just format compliance)"
       - "Auditing the kask skill registry as a capability system"
       - "Guiding new skill creation toward optimal composition patterns"
       - "Detecting skills below floor on composition principles (deprivation)"
@@ -171,7 +171,7 @@ skill_composition_capabilities:
       have at least 1 select step? If not, ceiling violation.
     examples:
       - "company-research-flash: 15 execute + 9 select (financial data is deterministic, analysis is judgment)"
-      - "graph-audit: 6 execute + 4 select + 3 compute (codegraph queries deterministic, synthesis is judgment)"
+      - "metacognition, kata-improvement, bug-hunt, diagnose: all use lisp_eval for convergence checks"
       - "metacognition: 1 execute + 4 compute + 4 select (calibration read deterministic, Kata reasoning is judgment)"
 
   - id: persistence_grounded_learning
@@ -213,7 +213,7 @@ skill_composition_capabilities:
       Enumerate all execute steps. For each, check on_failure.action == 'report'
       and on_failure.resume is non-empty. Count violations.
     examples:
-      - "All 5 newly migrated skills (graph-audit, metacognition, kata-improvement, bug-hunt, diagnose) have on_failure: report on every execute step"
+      - "All 5 migrated skills (metacognition, kata-improvement, bug-hunt, diagnose, superforecasting) call curator_report_skill_use_issue on tool failures"
       - "company-research-flash has 13 execute steps WITHOUT on_failure (pre-existing gap from Phase 1)"
 
   - id: lisp_scaffold
@@ -241,7 +241,7 @@ skill_composition_capabilities:
     examples:
       - "diagnose step 4: Lisp checks hypothesis count (3-7), completeness, diversity, mutual exclusivity"
       - "metacognition steps 5-8: Lisp computes object gap, process gap, hypotenuse, Brier score"
-      - "graph-audit steps 19/21/22: Lisp computes convergence from quality findings / blockers count"
+      - "metacognition steps use lisp_eval to compute convergence from quality findings / blockers count"
 
   - id: coevolution_loop
     name: "Co-evolution loop"

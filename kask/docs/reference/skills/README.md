@@ -77,7 +77,6 @@ read-only resources the skill body may reference via `render_template`.
 | `idiomatic-rust` | Type-driven Rust design through Graydon Hoare's principles |
 | `idiomatic-lisp` | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle |
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
-| `graph-audit` | Unified graph analysis: code mode (query/traverse/analyze code graph via MCP), semantic mode (domain-agnostic graph health), dual mode (extract code graph then audit it). Includes context-expansion mode (folded from zoom-out). Merged from codegraph + semantic-graph-audit. |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
 
 ---
@@ -117,7 +116,7 @@ read-only resources the skill body may reference via `render_template`.
 | `skill-maintenance` | Audit skill architecture for staleness, coverage gaps; validate .j2 template logic against stated goals |
 | `skill-bundler` | Compose multiple skills into a cohesive bundle |
 | `skill-discovery` | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation |
-| `skill-router` | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless matching service invoked by the orchestrator. Template-crate-only (no SKILL.md directory). |
+| `skill-router` | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless matching service invoked by the orchestrator. |
 | `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
 | `create-skill` | Convergent kask-native skill creation with ontological grounding: research phase finds academic/industry anchors, PDCA shape emerges from anchors, artifacts annotated with ontology references |
 
@@ -127,7 +126,7 @@ read-only resources the skill body may reference via `render_template`.
 
 | Skill | Purpose |
 |-------|---------|
-| `kali-audit` | Convergent security review: OWASP LLM Top 10, MITRE ATLAS, NIST SSDF against code, templates, manifests, MCP surfaces, LLM I/O. Includes taxonomy_map phase (folded from attack-taxonomy-mapper): maps supply-chain findings to OSC&R attack taxonomy. |
+| `kali-audit` | Convergent security review: OWASP LLM Top 10, MITRE ATLAS, NIST SSDF against code, templates, YAML manifests, MCP surfaces, LLM I/O. Includes taxonomy_map phase (folded from attack-taxonomy-mapper): maps supply-chain findings to OSC&R attack taxonomy. |
 | `supply-chain-sentinel` | Dependency and supply chain audit: version pinning, registry verification, license conflicts, unmaintained indicators |
 | `runtime-posture-monitor` | Runtime security posture: observes Regulation telemetry for endpoint abuse, bot traffic, LLM usage anomalies |
 
@@ -170,7 +169,7 @@ read-only resources the skill body may reference via `render_template`.
 | `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D33) |
 | `listening` | Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process |
 | `principle-constraints` | Compiles a stated principle into a set of checkable, code-path-anchored constraints with named falsifiers |
-| `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against their stated goals |
+| `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and SKILL.md files against their stated goals |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask |
 
 ---

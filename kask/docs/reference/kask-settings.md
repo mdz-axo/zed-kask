@@ -444,7 +444,7 @@ not an OpenAI-compatible chat endpoint).
 
 | Env Var | Server | Source setting |
 |---------|--------|----------------|
-| `HKASK_CODEGRAPH_DB` | codegraph | `codegraph.db_path` |
+
 | `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
 | `HKASK_TRANSACTIONS_DIR` | portfolio | `companies.transactions_dir` (emitted for portfolio server) |
@@ -526,7 +526,7 @@ are configurable via the `HKASK_REG_CONFIG` YAML file, not env vars. See
     Cited for the OpenAI-compatible provider model that the inference provider toggles configure.
 
 [^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
-    Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill cascade with; provider-side safety and refusal fallbacks remain the active defense.
+    Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill process with; provider-side safety and refusal fallbacks remain the active defense.
 
 [^reynolds-swarm-settings]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
     Cited for the swarm-coordination model the ABW swarm settings configure.

@@ -1,14 +1,13 @@
 # hkask-lisp
 
-Sandboxed Lisp interpreter for deterministic manifest compute steps.
+Sandboxed Lisp interpreter for deterministic computation in skill processes.
 
 ## Purpose
 
 Pure-Rust Lisp interpreter with no I/O, no filesystem, no network, and no
-environment variable access. Used by the `compute` action in
-`hkask-templates` executor (`compute_ref: "lisp.eval"`) to enable
+environment variable access. Used by the `lisp_eval` agent tool to enable
 deterministic recursive predicates, structural invariant checks, and
-capability-tree walks in manifests without an LLM round-trip.
+convergence signal computation in skill processes without an LLM round-trip.
 
 ## Design
 
@@ -22,9 +21,8 @@ by brundonsmith, with these deviations:
   infinite loops and stack overflow. Depth is checked only for compound forms
   (lists), not atoms.
 - **No `eval` builtin**: Lisp code cannot evaluate arbitrary strings. This is
-  a deliberate security restriction — the interpreter is safe for
-  infrastructure manifests provided the caller respects the `category: skill`
-  gate.
+  a deliberate security restriction — the interpreter is safe for skill
+  convergence checks.
 - **No `Hash` type**: JSON objects become association lists. This keeps the
   interpreter small (~1000 lines) and avoids the complexity of a hash map
   type. Users implement `map`/`filter` in Lisp itself.
@@ -50,17 +48,16 @@ let result = eval_sandboxed(form, &env).unwrap();
 assert_eq!(result, json!(true));
 ```
 
-## Manifest usage
+## Skill usage
 
-```yaml
-- ordinal: 4
-  action: compute
-  compute_ref: "lisp.eval"
-  input_mapping:
-    form: "(and (> (length findings) 0) (< composite 0.15))"
-    env:
-      findings: "{{ step_2_result.findings }}"
-      composite: "{{ step_3_result.composite }}"
+The `lisp_eval` agent tool calls `eval_sandboxed` with a Lisp form and a JSON
+environment. The SKILL.md instructs the agent to call `lisp_eval` for
+convergence checks, invariant validation, and deterministic scoring:
+
+```
+Call `lisp_eval`:
+  form: "(and (> (length findings) 0) (< composite 0.15))"
+  env: { "findings": <step_2_result.findings>, "composite": <step_3_result.composite> }
 ```
 
 ## Dependencies
@@ -79,8 +76,3 @@ No hKask crate dependencies — this is a standalone computation library.
 - Environment is immutable from Lisp's perspective (define mutates a local
   scope discarded after evaluation)
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate
-
-The caller must gate `lisp.eval` to `category: skill` manifests only —
-infrastructure manifests (`runtime-config`, `daemon-process`) run without human
-review and a Turing-complete step language is an attack surface (see `.rules`
-trap on manifests).
