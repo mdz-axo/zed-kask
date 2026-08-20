@@ -203,7 +203,10 @@ impl LanguageModelInferencePort {
             loop {
                 tokio::select! {
                     Some(req) = rx.recv() => {
-                        Self::handle_non_streaming(req, &model_for_task, cx).await;
+                        let model = model_for_task.clone();
+                        cx.spawn(async move |cx| {
+                            Self::handle_non_streaming(req, &model, cx).await;
+                        }).detach();
                     }
                     Some(req) = stream_rx.recv() => {
                         let model = model_for_task.clone();
