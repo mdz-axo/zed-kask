@@ -16,9 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// A structured document: pages of blocks.
 ///
-/// The unit of work for `corpus_chunk` when structure is available. When a
-/// backend cannot produce structure (e.g., OCR-only PDF), callers fall back to
-/// `DocStructure::from_plain_text`.
+/// The unit of work for `corpus_chunk` when structure is available.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocStructure {
     /// Source format that produced this structure (e.g., "pdf", "docx").
@@ -28,27 +26,6 @@ pub struct DocStructure {
 }
 
 impl DocStructure {
-    /// Construct a single-page structure from plain text.
-    ///
-    /// Used by backends that only produce flat text (OCR, plain text, HTML
-    /// after stripping). The text becomes one `Paragraph` block.
-    pub fn from_plain_text(text: &str, source_format: &str) -> Self {
-        let blocks = if text.trim().is_empty() {
-            Vec::new()
-        } else {
-            vec![Block::Paragraph {
-                text: text.to_string(),
-            }]
-        };
-        Self {
-            source_format: source_format.to_string(),
-            pages: vec![Page {
-                page_number: 1,
-                blocks,
-            }],
-        }
-    }
-
     /// Flatten the entire document to plain text, joining blocks with double
     /// newlines and pages with form feeds.
     ///

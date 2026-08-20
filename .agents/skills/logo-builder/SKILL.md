@@ -1,11 +1,11 @@
 ---
 name: logo-builder
-description: "Pragmatic logo design using LLM-assisted generation. Three-phase pipeline: discovery (brand-to-design mapping), formal generation (five formal gates), and iterative refinement (weighted critique loop). Uses generate_image and describe_image tools."
+description: "Pragmatic logo design using LLM-assisted generation. Three-phase pipeline: discovery (brand-to-design mapping), formal generation (five formal gates), and iterative refinement (weighted critique loop). Produces text-based logo design specifications and prompts."
 ---
 
 # Logo Builder
 
-Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Uses the media server's generate_image and describe_image tools. Logos stored in the gallery as regular images — no separate storage.
+Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Produces text-based logo design specifications and detailed prompts that can be used with any image generation tool.
 
 
 ## When to Use
@@ -13,7 +13,7 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 - Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters before generation.
 - Select an appropriate logo generation strategy (single-shot, iterative-refine, or moodboard-first) based on brand complexity and user preference.
 - Generate a professional logo from formal design parameters using Bokhua's five design gates (simplicity, monochrome viability, grid discipline, negative space, scalability).
-- Generate multiple logo candidates, critique them with a vision LLM across weighted dimensions, and iteratively refine the best candidate.
+- Generate multiple logo candidate descriptions, critique them across weighted dimensions, and iteratively refine the best candidate.
 - Produce a complete logo deliverables package, including a transparent PNG, monochrome variant, icon-only mark, and real-world context mockup.
 
 ## Instructions
@@ -47,16 +47,16 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 ### logo-iterative-refine
 
 1. Generate the specified number of initial logo candidates using the `logo-formal-prompt` template.
-2. Critique each candidate using a vision LLM, scoring readability, scalability, distinctiveness, professionalism, and text accuracy from 1-10.
+2. Critique each candidate, scoring readability, scalability, distinctiveness, professionalism, and text accuracy from 1-10.
 3. Summarize the strongest weakness of each candidate in one paragraph.
 4. Select the best candidate based on the highest aggregate score.
 5. Regenerate the selected candidate by incorporating critique feedback, fixing weaknesses while preserving strengths.
 6. Repeat the critique and refine cycles for the specified number of rounds.
-7. Remove the background from the final selected logo to produce a transparent PNG.
+7. Produce the final selected logo design specification with all refinements applied.
 
-### logo-presentation (legacy — registered in crate as `../media/logo-presentation.yaml`, not invoked by the skill execution)
+### logo-presentation (legacy — registered in crate as `logo-presentation.yaml`, not invoked by the skill execution)
 
-1. Remove the background from the final logo to produce a transparent PNG.
+1. Specify the final logo with transparent background for PNG output.
 2. Generate a monochrome variant (pure black on white) for single-color applications, maintaining the exact same design without color or gradients.
 3. Generate a 1:1 square icon-only version by removing all text and keeping only the symbol, ensuring it works at 64x64 pixels.
 4. Generate a photorealistic context mockup showing the logo in real-world use (signage, business card, app icon).
@@ -66,19 +66,19 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 | Template | Purpose |
 |----------|---------|
-| `../media/logo-discovery.yaml` | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
-| `../media/logo-discovery-map.j2` | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
-| `../media/logo-formal-prompt.j2` | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
-| `../media/logo-iterative-refine.yaml` | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables. |
-| `../media/logo-presentation.yaml` | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use. |
+| `logo-discovery.yaml` | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
+| `logo-discovery-map.j2` | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
+| `logo-formal-prompt.j2` | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
+| `logo-iterative-refine.yaml` | Peters-inspired iterative logo pipeline: generate N candidate descriptions, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is a refined logo design specification. |
+| `logo-presentation.yaml` | Generate a complete logo deliverables specification from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup description. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- `../media/logo-discovery.yaml`: Public.
-- `../media/logo-discovery-map.j2`: Public.
-- `../media/logo-formal-prompt.j2`: Public.
-- `../media/logo-iterative-refine.yaml`: Public.
-- `../media/logo-presentation.yaml`: Public.
+- `logo-discovery.yaml`: Public.
+- `logo-discovery-map.j2`: Public.
+- `logo-formal-prompt.j2`: Public.
+- `logo-iterative-refine.yaml`: Public.
+- `logo-presentation.yaml`: Public.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -506,7 +506,7 @@ impl WebSearchPort for ProviderPool {
         query: &SearchQuery,
         strategy: SearchStrategy,
     ) -> Result<CompoundSearchResult, WebError> {
-        // N1: CapabilityContext removed; OCAP is enforced at the dispatcher
+        // N1: CapabilityContext removed; Tool dispatch is enforced at the
         // membrane (GovernedTool), not at the port.
         if query.query.is_empty() {
             return Err(WebError::BadArgs("query must not be empty".into()));

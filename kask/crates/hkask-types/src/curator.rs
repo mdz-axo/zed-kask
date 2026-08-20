@@ -12,39 +12,6 @@
 
 use crate::id::WebID;
 
-// ── CuratorHandle — Loop 5 capability handle ────────────────────────────────
-
-/// The Curator's capability handle. Single agent — the user's
-/// counterpart in the zed-kask agent panel. Can read all loop state and write
-/// governance/observability policy.
-///
-/// **Singleton invariant:** There is exactly one Curator per hKask system.
-/// `CurationLoop` owns the single `CuratorHandle` instance; all other code
-/// accesses it through `CuratorContext::handle()`. Construct via
-/// `CuratorHandle::system()` — the `new(WebID)` constructor is `pub(crate)`
-/// to prevent external callers from creating additional handles.
-#[derive(Clone)]
-pub struct CuratorHandle {
-    curator_id: WebID,
-}
-
-impl CuratorHandle {
-    /// Create the system CuratorHandle using the system WebID.
-    ///
-    /// The Curator is a singleton — the user's counterpart in the zed-kask
-    /// agent panel. This constructor enforces that convention by deriving the ID from
-    /// the "curator" persona.
-    pub fn system() -> Self {
-        Self {
-            curator_id: WebID::from_persona(b"curator"),
-        }
-    }
-
-    pub fn curator_id(&self) -> &WebID {
-        &self.curator_id
-    }
-}
-
 // ── CuratorDirective — Curation → Cybernetics directives ────────────────────
 
 /// Severity level for domain escalations.

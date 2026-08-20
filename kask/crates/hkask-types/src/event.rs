@@ -54,42 +54,6 @@ impl RegulationRecord {
             visibility: "private".to_string(),
         }
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  outcome is a valid serde_json::Value
-    /// post: returns self with outcome set to Some(outcome)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_outcome(mut self, outcome: Value) -> Self {
-        self.outcome = Some(outcome);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  regulation is a valid serde_json::Value
-    /// post: returns self with regulation set to Some(regulation)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_regulation(mut self, regulation: Value) -> Self {
-        self.regulation = Some(regulation);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  parent is a valid EventID
-    /// post: returns self with parent_event set to Some(parent)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_parent(mut self, parent: EventID) -> Self {
-        self.parent_event = Some(parent);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  visibility is a non-empty string (e.g. "private", "public")
-    /// post: returns self with visibility set to visibility.to_string()
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_visibility(mut self, visibility: &str) -> Self {
-        self.visibility = visibility.to_string();
-        self
-    }
 }
 
 /// Validated Regulation span namespace.
@@ -643,20 +607,6 @@ impl TryFrom<crate::regulation::RegulationSpan> for SpanNamespace {
     }
 }
 
-impl SpanNamespace {
-    /// Construct a `SpanNamespace` from any type implementing
-    /// [`ObservableSpan`](crate::ObservableSpan), validating against
-    /// the canonical namespace registry.
-    ///
-    /// Domain crates use this to construct `SpanNamespace` from their
-    ///
-    /// Returns `None` if the span's namespace string is not registered in
-    /// `CANONICAL_NAMESPACES`.
-    pub fn from_observable(span: &impl crate::observable_span::ObservableSpan) -> Option<Self> {
-        Self::from_str_validated(span.as_str())
-    }
-}
-
 /// Unified Regulation span — namespace + fully-qualified path
 ///
 /// Constructed via `Span::new()` with a validated namespace.
@@ -686,11 +636,6 @@ impl Span {
         }
     }
 
-    /// Returns the fully-qualified span path
-    pub fn as_str(&self) -> &str {
-        &self.path
-    }
-
     /// Create a span from a typed `SpanKind` variant.
     ///
     /// Eliminates string typos at construction sites for the most common
@@ -716,34 +661,16 @@ impl Span {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpanKind {
     // ── Tool spans (reg.tool.*) ──
-    /// Tool invocation started: `reg.tool.invoked`
-    ToolInvoked,
     /// Tool invocation completed: `reg.tool.completed`
     ToolCompleted,
-    /// Tool invocation errored: `reg.tool.error`
-    ToolError,
 
     // ── Curation spans (reg.curation.*) ──
     /// Curation directive acknowledged: `reg.curation.directive_acknowledged`
     CurationDirectiveAcknowledged,
-    /// Curation escalation received: `reg.curation.escalation`
-    CurationEscalation,
-
-    // ── Agent pod spans (reg.agent_pod.*) ──
-    /// Agent pod registered: `reg.agent_pod.registered`
-    AgentPodRegistered,
-    /// Agent pod activated: `reg.agent_pod.activated`
-    AgentPodActivated,
-    /// Agent pod deactivated: `reg.agent_pod.deactivated`
-    AgentPodDeactivated,
 
     // ── Variety spans (reg.variety.*) ──
     /// Algedonic alert emitted: `reg.variety.algedonic_alert`
     VarietyAlgedonicAlert,
-
-    // ── Wallet spans (reg.wallet.*) ──
-    /// Deposit credited to wallet: `reg.wallet.deposit_credited`
-    DepositCredited,
 
     // ── Regulation spans (reg.regulation.*) — v0.31.0 Fermi impact-gate ──
     /// Impact verification completed: `reg.regulation.impact_verified`
@@ -762,16 +689,9 @@ impl SpanKind {
     /// Return the (namespace, local_path) pair for this span kind.
     fn namespace_and_path(&self) -> (&'static str, &'static str) {
         match self {
-            SpanKind::ToolInvoked => ("reg.tool", "invoked"),
             SpanKind::ToolCompleted => ("reg.tool", "completed"),
-            SpanKind::ToolError => ("reg.tool", "error"),
             SpanKind::CurationDirectiveAcknowledged => ("reg.curation", "directive_acknowledged"),
-            SpanKind::CurationEscalation => ("reg.curation", "escalation"),
-            SpanKind::AgentPodRegistered => ("reg.pod", "registered"),
-            SpanKind::AgentPodActivated => ("reg.pod", "activated"),
-            SpanKind::AgentPodDeactivated => ("reg.pod", "deactivated"),
             SpanKind::VarietyAlgedonicAlert => ("reg.variety", "algedonic_alert"),
-            SpanKind::DepositCredited => ("reg.wallet", "deposit_credited"),
             SpanKind::ImpactVerified => ("reg.outcome", "impact_verified"),
             SpanKind::ActionSubstituted => ("reg.outcome", "action_substituted"),
             SpanKind::ActionBlocked => ("reg.outcome", "action_blocked"),
@@ -789,8 +709,6 @@ pub enum CyclePhase {
     Compute,
     Compare,
     Act,
-    /// Post-action impact verification (Fermi impact-gate pattern).
-    Verify,
 }
 
 impl CyclePhase {
@@ -800,7 +718,6 @@ impl CyclePhase {
             CyclePhase::Compute => "compute",
             CyclePhase::Compare => "compare",
             CyclePhase::Act => "act",
-            CyclePhase::Verify => "verify",
         }
     }
 

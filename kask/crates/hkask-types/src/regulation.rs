@@ -1,7 +1,6 @@
 //! Core Regulation (Cybernetic Nervous System) types for hKask
 //!
-//! Core spans: reg.tool.*, reg.inference.*, reg.agent_pod.*,
-//! reg.curation.*, reg.heal.*, reg.memory.encode.*
+//! Core spans: reg.curation.*, reg.memory.encode.*
 //!
 //! Domain-specific spans have moved to their respective domain crates.
 //!
@@ -117,96 +116,10 @@ impl RegulationHealth {
 /// loop variables, and `SpanNamespace::new` rejects them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RegulationSpan {
-    /// Tool invocation span. Subsystem tracks which MCP server emitted the span.
-    Tool { subsystem: ToolSubsystem },
-    /// LLM inference request/response.
-    Inference,
-    /// Agent pod lifecycle events.
-    AgentPod,
     /// Curation loop operations — registry sync, pod sync, directive issuance.
     Curation,
-    /// Self-healing operation span. Canonical string: `"reg.heal"`.
-    SelfHeal,
     /// Memory encoding operations.
     MemoryEncode,
-}
-
-/// Subsystem identifier for `RegulationSpan::Tool` — which MCP server emitted the span.
-///
-/// Derived from the `hkask-mcp-*` server naming convention.
-/// Unknown or future servers use `Other`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ToolSubsystem {
-    WebSearch,
-    Training,
-    Corpus,
-    Research,
-    Communication,
-    Registry,
-    Wallet,
-    Media,
-    Kanban,
-    Memory,
-    Companies,
-    Filesystem,
-    Curator,
-    Scenarios,
-    Swarm,
-    /// Catch-all for unknown or future MCP servers.
-    Other,
-}
-
-impl ToolSubsystem {
-    /// Map an MCP server name (e.g., "memory", "hkask-mcp-corpus") to a ToolSubsystem.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  server_name is a non-empty string
-    /// post: returns the corresponding ToolSubsystem variant; Other if unknown
-    pub fn from_server_name(server_name: &str) -> Self {
-        let name = server_name
-            .strip_prefix("hkask-mcp-")
-            .unwrap_or(server_name);
-        match name {
-            "memory" => ToolSubsystem::Memory,
-            
-            "research" => ToolSubsystem::Research,
-            "companies" => ToolSubsystem::Companies,
-            "communication" => ToolSubsystem::Communication,
-            "media" => ToolSubsystem::Media,
-            "corpus" => ToolSubsystem::Corpus,
-            "training" => ToolSubsystem::Training,
-            "kanban" => ToolSubsystem::Kanban,
-            "curator" => ToolSubsystem::Curator,
-            
-            "scenarios" => ToolSubsystem::Scenarios,
-            "swarm" => ToolSubsystem::Swarm,
-            _ => ToolSubsystem::Other,
-        }
-    }
-
-    /// Canonical string suffix for the subsystem (e.g., `"web_search"`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ToolSubsystem::WebSearch => "web_search",
-            
-            ToolSubsystem::Training => "training",
-            ToolSubsystem::Corpus => "corpus",
-            ToolSubsystem::Research => "research",
-            ToolSubsystem::Communication => "communication",
-            ToolSubsystem::Registry => "registry",
-            ToolSubsystem::Wallet => "wallet",
-            ToolSubsystem::Media => "media",
-            ToolSubsystem::Kanban => "kanban",
-            ToolSubsystem::Memory => "memory",
-            ToolSubsystem::Companies => "companies",
-            ToolSubsystem::Filesystem => "filesystem",
-            ToolSubsystem::Curator => "curator",
-            
-            ToolSubsystem::Scenarios => "scenarios",
-            ToolSubsystem::Swarm => "swarm",
-            ToolSubsystem::Other => "other",
-        }
-    }
 }
 
 impl RegulationSpan {
@@ -224,10 +137,9 @@ impl RegulationSpan {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use hkask_types::regulation::{RegulationSpan, ToolSubsystem};
+    /// use hkask_types::regulation::RegulationSpan;
     ///
-    /// RegulationSpan::Tool { subsystem: ToolSubsystem::Media }
-    ///     .emit("invoked");
+    /// RegulationSpan::Curation.emit("invoked");
     /// ```
     pub fn emit(&self, operation: &str) {
         tracing::info!(
@@ -246,30 +158,7 @@ impl RegulationSpan {
     /// (P8 — Semantic Grounding).
     pub fn as_str(&self) -> &'static str {
         match self {
-            RegulationSpan::Tool { subsystem } => match subsystem {
-                ToolSubsystem::WebSearch => "reg.tool.web_search",
-                
-                ToolSubsystem::Training => "reg.tool.training",
-                ToolSubsystem::Corpus => "reg.tool.corpus",
-                ToolSubsystem::Research => "reg.tool.research",
-                ToolSubsystem::Communication => "reg.tool.communication",
-                ToolSubsystem::Registry => "reg.tool.registry",
-                ToolSubsystem::Wallet => "reg.tool.wallet",
-                ToolSubsystem::Media => "reg.tool.media",
-                ToolSubsystem::Kanban => "reg.tool.kanban",
-                ToolSubsystem::Memory => "reg.tool.memory",
-                ToolSubsystem::Companies => "reg.tool.companies",
-                ToolSubsystem::Filesystem => "reg.tool.filesystem",
-                ToolSubsystem::Curator => "reg.tool.curator",
-                
-                ToolSubsystem::Scenarios => "reg.tool.scenarios",
-                ToolSubsystem::Swarm => "reg.tool.swarm",
-                ToolSubsystem::Other => "reg.tool",
-            },
-            RegulationSpan::Inference => "reg.inference",
-            RegulationSpan::AgentPod => "reg.pod",
             RegulationSpan::Curation => "reg.curation",
-            RegulationSpan::SelfHeal => "reg.heal",
             RegulationSpan::MemoryEncode => "reg.memory.encode",
         }
     }
@@ -302,58 +191,7 @@ impl std::str::FromStr for RegulationSpan {
     /// successfully. Unknown strings return `Err(())`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "reg.tool" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Other,
-            }),
-            "reg.tool.web_search" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::WebSearch,
-            }),
-            "reg.tool.training" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Training,
-            }),
-            "reg.tool.corpus" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Corpus,
-            }),
-            "reg.tool.research" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Research,
-            }),
-            "reg.tool.communication" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Communication,
-            }),
-            "reg.tool.registry" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Registry,
-            }),
-            "reg.tool.wallet" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Wallet,
-            }),
-            "reg.tool.media" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Media,
-            }),
-            "reg.tool.kanban" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Kanban,
-            }),
-            "reg.tool.memory" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Memory,
-            }),
-            "reg.tool.companies" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Companies,
-            }),
-            "reg.tool.filesystem" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Filesystem,
-            }),
-            "reg.tool.curator" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Curator,
-            }),
-            "reg.tool.scenarios" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Scenarios,
-            }),
-            "reg.tool.swarm" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Swarm,
-            }),
-            "reg.inference" => Ok(RegulationSpan::Inference),
-            "reg.pod" => Ok(RegulationSpan::AgentPod),
             "reg.curation" => Ok(RegulationSpan::Curation),
-            "reg.heal" => Ok(RegulationSpan::SelfHeal),
             "reg.memory.encode" => Ok(RegulationSpan::MemoryEncode),
             _ => Err(()),
         }

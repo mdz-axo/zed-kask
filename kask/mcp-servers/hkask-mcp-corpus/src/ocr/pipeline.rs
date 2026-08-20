@@ -188,7 +188,7 @@ async fn run_pipeline_parallel(
     // never wired here — `global_concurrency_limiter()` always returns `None`
     // in this process. Use a local per-pipeline semaphore bounded by
     // `max_concurrency` (from `HKASK_OCR_CONCURRENCY`). The process-wide
-    // limiter lives in the zed process and gates skill cascades + MCP tool
+    // limiter lives in the zed process and gates skill execution + MCP tool
     // calls there; OCR's concurrency is bounded locally.
     //
     // If a future change embeds the corpus server in-process (no subprocess),

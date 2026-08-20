@@ -45,14 +45,6 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 pub struct AnyJsonValue(pub serde_json::Value);
 
-impl AnyJsonValue {
-    /// Extract the wrapped [`serde_json::Value`].
-    #[must_use]
-    pub fn into_inner(self) -> serde_json::Value {
-        self.0
-    }
-}
-
 impl Deref for AnyJsonValue {
     type Target = serde_json::Value;
 
