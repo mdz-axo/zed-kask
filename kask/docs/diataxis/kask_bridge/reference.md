@@ -126,7 +126,6 @@ classDiagram
         +memory: KaskMemorySettings
         +condenser: KaskCondenserSettings
         +research: KaskResearchSettings
-        +codegraph: KaskCodegraphSettings
         +companies: KaskCompaniesSettings
         +corpus: KaskCorpusSettings
         +media: KaskMediaSettings
@@ -313,7 +312,6 @@ values are included — servers have their own fallback defaults.
 | `HKASK_WEBID` | `HKASK_CURATOR_WEBID` env | When `HKASK_CURATOR_WEBID` is set |
 | `HKASK_MCP_SERVER_IDS` | `BUILT_IN_MCP_SERVERS_IDS` | Always |
 | `HKASK_TRANSACTIONS_DIR` | `companies.transactions_dir` | Always (D28; default `mcp/portfolio/transactions/`) |
-| `HKASK_CODEGRAPH_DB` | `codegraph.db_path` | Non-empty |
 | `HKASK_RSS_DB` | `research.rss_db` | Non-empty |
 | `HKASK_CHRONIC_STALENESS_DAYS` | `companies.chronic_staleness_days` | `> 0` |
 | `HKASK_FERMI_DEFAULTS` | `companies.fermi_defaults` | Non-empty |

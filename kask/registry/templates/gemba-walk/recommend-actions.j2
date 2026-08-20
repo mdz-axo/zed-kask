@@ -50,9 +50,7 @@ Focus skill: {{ focus_skill }}
 ## Your Task
 
 For each skill in the per_skill_digest with a health classification of
-"watch" or "intervene", propose a refinement action. Additionally, review
-the grounding_health section and propose grounding-specific actions when
-coverage gaps or degrading trends are present. Produce a JSON array
+"watch" or "intervene", propose a refinement action. Produce a JSON array
 of recommendation objects:
 
 ```json
@@ -91,39 +89,10 @@ of recommendation objects:
   single issue that might be transient). The operator should observe
   further — the next gemba walk will show whether the pattern persists.
 
-## Grounding-Specific Recommendations
-
-In addition to per-skill recommendations, review the grounding_health
-section of the briefing and propose actions for grounding issues:
-
-- **register_contract**: Propose when an agent type has delegations but
-  no grounding contract (from top_coverage_gaps). The specific_change is
-  the agent_type to register a contract for. Rationale: the agent type
-  has N delegations with no grounding — outputs are not checked for
-  fabricated values.
-- **review_violations**: Propose when the clean_rate dropped or
-  delegations_with_zero_nulled is trending down. The operator should
-  query curator_grounding_violations to see recent violations and
-  determine whether the contract needs tightening or the agent is
-  degrading.
-- **investigate_leaks**: Propose when narrative_leaks_detected is greater
-  than zero. The agent may be restating unsourced values in its summary.
-  The operator should review the recent violation records to identify
-  which agents are leaking.
-- **no_action** (grounding): Propose when grounding health is stable or
-  improving with no coverage gaps.
-
 ## Constraints
 
 - Only propose actions for skills classified as "watch" or "intervene".
   Skills classified as "healthy" do not need recommendations.
-- Grounding recommendations apply to the system, not a specific skill —
-  use "system" as the skill_id for grounding-specific recommendations.
-- Ground every rationale in the briefing's grounding_health signals. Do
-  not invent grounding issues that are not in the briefing.
-- If the grounding_health section is null or the grounding queries failed,
-  do not propose grounding-specific actions — note the gap in the
-  recommendations array instead.
 - Ground every rationale in the briefing's per_skill_digest signals. Do
   not invent issues that are not in the briefing.
 - If focus_skill is set and the briefing has one skill entry, the

@@ -755,7 +755,8 @@ fn main() {
         // without recompilation. In production, use the seeded copy under
         // `{kask_data_dir}/skills/registry/templates/`.
         let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
-        let template_base_path = if dev_templates_dir.is_dir() {
+        let is_dev = dev_templates_dir.is_dir();
+        let template_base_path = if is_dev {
             dev_templates_dir
         } else {
             hkask_types::agent_paths::resolve_under_data_dir(
@@ -766,11 +767,11 @@ fn main() {
 
         // Seed templates to disk in production. In dev, the live source tree
         // IS the target so seeding is a no-op.
-        if !dev_templates_dir.is_dir() {
-            let fs = app_state.fs.clone();
+        if !is_dev {
+            let seed_fs = fs.clone();
             let seed_dir = template_base_path.clone();
             cx.spawn(async move |_cx| {
-                agent_skills::seed_templates(fs.as_ref(), &seed_dir).await;
+                agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
             }).detach();
         }
 
@@ -2666,7 +2667,6 @@ fn main() {
         );
         telemetry.flush_events().detach();
 
-        let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         #[cfg(debug_assertions)]
@@ -2784,7 +2784,6 @@ fn main() {
 
         cx.spawn({
             let db = workspace::WorkspaceDb::global(cx);
-            let fs = app_state.fs.clone();
             let restore_finished = restore_finished.clone();
             async move |_cx| {
                 restore_finished.await;

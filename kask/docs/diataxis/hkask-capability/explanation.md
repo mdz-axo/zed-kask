@@ -116,7 +116,7 @@ registered ceiling: such an agent is auto-registered at
 `DEFAULT_RUNAWAY_CALL_CEILING` and the wiring gap is logged. The prior
 fail-closed behavior demonstrated why: `main.rs` seeded a ceiling only for the
 `swarm-panel` persona while the IPC dispatch used `kask-panel` and the MCP
-runtime used `manifest-executor`, so every delegated tool call was refused for a wiring
+runtime used a different persona, so every delegated tool call was refused for a wiring
 omission that had nothing to do with authority.
 
 ## The taint gate failed the same way, and was deleted too

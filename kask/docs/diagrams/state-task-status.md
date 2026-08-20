@@ -39,8 +39,8 @@ stateDiagram-v2
     Review --> InProgress : regress
     Review --> Done : advance
     Done --> InProgress : task_reopen (rework escape hatch)
-    InProgress --> Done : budget exhausted (gas/rJoule)
-    Review --> Done : budget exhausted (gas/rJoule)
+    InProgress --> Done : budget exhausted (rJoule)
+    Review --> Done : budget exhausted (rJoule)
     Done --> [*] : task archived
 ```
 

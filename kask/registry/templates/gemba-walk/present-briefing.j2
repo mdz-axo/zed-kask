@@ -92,29 +92,7 @@ accumulated skill-use issue reports in the curator's memory. This may
 indicate a quiet system or that skill-use issue reporting is not wired
 (check that skill manifests use on_failure: report)."
 
-### 5. Grounding Health Digest
-
-If the briefing has grounding_health data, render a summary paragraph
-followed by a markdown table of coverage gaps:
-
-| Agent Type | Delegations (no contract) | Delegations (with contract) |
-|------------|--------------------------|----------------------------|
-| ... | ... | ... |
-
-Open the paragraph with the lead metric: "N delegations with zero nulled
-fields (deletion-resistant)." Then state the clean_rate and coverage_rate
-as percentages, and the trend direction (improving / stable / degrading /
-no baseline). If narrative leaks were detected, note the count.
-
-If the grounding trend or coverage query failed, state: "Grounding trend
-or coverage data unavailable — the verification ledger may be down. Check
-curator_status and HKASK_VERIFICATION_DB."
-
-If there are no coverage gaps (all agent types with delegations have
-contracts), state: "No coverage gaps — all agent types with delegations
-have grounding contracts."
-
-### 6. Signal Channel Gaps
+### 5. Signal Channel Gaps
 
 List any signal channels that are unavailable or returned empty. Be
 explicit about the known gap: skill feedback spans (outcome,
@@ -122,7 +100,7 @@ operator_feedback, convergence) live in the in-memory RegulationLedger and
 are not exposed via MCP. The briefing relies on skill-use issue reports
 from curator memory as a proxy signal.
 
-### 7. Follow-Up
+### 6. Follow-Up
 
 Close with: "Ask follow-up questions about any skill, alert, or escalation.
 To act on a recommendation, continue the conversation — the next step of

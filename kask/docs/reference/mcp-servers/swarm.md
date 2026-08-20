@@ -30,7 +30,7 @@ composition, agent authoring, and governed spend:
   credits). No ABW calls, no consent token — the ledger balance check is the gate.
 
 Both substrates dispatch through the kask MCP runtime (per-agent call metering,
-gas/rjoule budgeting, `hkask.mcp.swarm` telemetry targets; tool reach itself is
+`hkask.mcp.swarm` telemetry targets; tool reach itself is
 bounded by the card's `mcp_tools` allowlist, not by the runtime — RR-0056). The server is the
 substrate for the **Agent Swarm panel** (`crates/swarm_panel`), the
 **`swarm-intelligence` skill**, and the **`swarm-steering` skill**.
@@ -476,7 +476,7 @@ plan's §14.
 - [Architecture diagram](../../diagrams/flowchart-swarm-architecture.md) — the swarm server topology
 - [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
 - [Steering loop sequence](../../diagrams/sequence-swarm-steering-loop.md) — advisory vs steering execution
-- [MCP Server Registry](README.md) — fleet-wide patterns and the 13-server catalog
+- [MCP Server Registry](README.md) — fleet-wide patterns and the 10-server catalog
 
 ## Footnotes
 
