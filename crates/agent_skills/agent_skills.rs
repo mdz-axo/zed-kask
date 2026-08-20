@@ -908,7 +908,7 @@ pub fn read_skill_body_from_content(
 //
 // The SKILL.md is the *interface* (frontmatter parsed for discovery); the
 // *implementation* (YAML manifests + Jinja2 templates) is seeded to disk by
-// the `hkask-templates` seeding path and resolved from disk at runtime by
+// the skill seeding path and resolved from disk at runtime by
 // the skill system (SKILL.md body injection via `SkillTool`).
 include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
 

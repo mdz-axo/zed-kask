@@ -2,7 +2,7 @@
 //!
 //! The `ConcurrencyLimiter`, its process-global `OnceLock`, and the
 //! `set_global_concurrency_limiter` / `global_concurrency_limiter` accessors
-//! live in `hkask-types` so both `hkask-templates` (skill cascades) and
+//! live in `hkask-types` so both the skill system and
 //! `hkask-mcp-corpus` (OCR pipeline) can share one limiter instance. This
 //! module re-exports them so `kask_bridge` callers (and `main.rs`) can
 //! `use kask_bridge::set_global_concurrency_limiter` without a direct

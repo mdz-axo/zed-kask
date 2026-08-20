@@ -1,7 +1,7 @@
 //! Shared macros for the hKask type system.
 //!
 //! Centralized here to eliminate the 4× duplication of `enum_str_ops!`
-//! across `hkask-types`, `hkask-templates`, and `hkask-storage`.
+//! across `hkask-types` and `hkask-storage`.
 
 /// Generates `as_str()` and `parse_str()` for a PascalCase enum.
 ///

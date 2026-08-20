@@ -280,7 +280,7 @@ pub trait SkillRegistryIndex {
 }
 
 /// Template registry lookups. Moved to hkask-types for Authority DAG.
-/// Impls: `Registry` (in-memory, hkask-templates)
+/// Impls: `Registry` (in-memory)
 pub trait RegistryIndex {
     fn list(&self, domain_hint: Option<TemplateType>) -> Vec<RegistryEntry>;
 

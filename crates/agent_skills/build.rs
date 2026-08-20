@@ -16,7 +16,7 @@
 //!
 //! The SKILL.md files are the *interface* (frontmatter parsed for discovery);
 //! the *implementation* (YAML manifests + Jinja2 templates) is seeded to disk
-//! separately by the `hkask-templates` seeding path.
+//! separately by the skill seeding path.
 
 use std::env;
 use std::fs;

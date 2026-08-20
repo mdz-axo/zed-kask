@@ -134,7 +134,7 @@ impl LocalSwarmRuntime {
     }
 
     /// Test-only constructor with injected dependencies. Mirrors the
-    /// `StubInferencePort` pattern in `hkask-templates`: the production
+    /// `StubInferencePort` pattern: the production
     /// `new(db_path)` resolves the inference port from env (zed IPC bridge or
     /// MediaRouter fallback), which is unsuitable for unit tests. This
     /// constructor accepts a pre-built ledger + the three agent-run ports
