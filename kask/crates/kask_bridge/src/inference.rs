@@ -195,17 +195,21 @@ impl LanguageModelInferencePort {
         let task = cx.spawn(async move |cx| {
             // Process both channels on the GPUI foreground executor.
             // `stream_completion` needs `&AsyncApp` which is not `Send`,
-            // so both must run here.
+            // so both must run here. Streaming requests are spawned as
+            // concurrent tasks so multiple skill cascades can stream
+            // inference concurrently. Awaiting each inline serialized all
+            // cascades behind whichever request the loop picked up first,
+            // defeating the parallel fan-out in `skill_bundle`.
             loop {
-                // Use tokio::select to poll both channels. The non-streaming
-                // path is the common case; the streaming path is used by
-                // `generate_stream` (skill cascade thinking traces).
                 tokio::select! {
                     Some(req) = rx.recv() => {
                         Self::handle_non_streaming(req, &model_for_task, cx).await;
                     }
                     Some(req) = stream_rx.recv() => {
-                        Self::handle_streaming(req, &model_for_task, cx).await;
+                        let model = model_for_task.clone();
+                        cx.spawn(async move |cx| {
+                            Self::handle_streaming(req, &model, cx).await;
+                        }).detach();
                     }
                     else => break,
                 }
