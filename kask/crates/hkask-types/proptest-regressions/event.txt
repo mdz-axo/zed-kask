@@ -1,9 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 41f6cd6383053a3ea62d78f25fe6716d3ac49a532b8899888f4b823c5daa5bb1 # shrinks to ns = "reg.wallet.balance"
-cc 7b3a80aac746b8e14ff403e17eeefb5ffb06c30a5a08e5ee8fbb25bd9661618b # shrinks to prefix = "agent_pod"
-cc a570097dca3d8f51bb9a7774f84ac4aecf145aeeda0fb51acc1399980cb5200e # shrinks to ns = "reg.outcome"

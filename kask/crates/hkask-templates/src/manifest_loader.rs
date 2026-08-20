@@ -8,8 +8,8 @@
 
 use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
-    BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig, BundleManifest,
-    BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig, ManifestCategory,
+    BundleAuditConfig, BundleLedgerConfig, BundleManifest, BundleManifestStep, ConvergenceConfig,
+    ErrorHandlingConfig, ManifestCategory,
 };
 use serde::Deserialize;
 use tracing::info;
@@ -38,15 +38,8 @@ struct ManifestFile {
     #[serde(default)]
     steps: Vec<BundleManifestStep>,
     #[serde(default)]
-    skills: Vec<BundleSkill>,
-    #[serde(default)]
-    conflicts: Vec<BundleConflict>,
-    #[serde(default)]
-    complementarities: Vec<BundleComplementarity>,
-    #[serde(default)]
     convergence: Option<ConvergenceConfig>,
     #[serde(default)]
-
     error_handling: Option<ErrorHandlingConfig>,
     #[serde(default)]
     ledger: Option<BundleLedgerConfig>,
@@ -54,8 +47,6 @@ struct ManifestFile {
     audit: Option<BundleAuditConfig>,
     #[serde(default)]
     inputs: Option<serde_json::Value>,
-    #[serde(default)]
-    principles: Option<serde_json::Value>,
 }
 
 /// Inner header from the `manifest:` key in YAML files.
@@ -102,9 +93,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         description: file.manifest.description,
         version: file.manifest.version,
         editor: file.manifest.editor,
-        skills: file.skills,
-        conflicts: file.conflicts,
-        complementarities: file.complementarities,
         steps: file.steps,
         convergence: file.convergence.unwrap_or_default(),
         error_handling: file.error_handling.unwrap_or_default(),
@@ -114,9 +102,7 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         category: file.manifest.category,
         inputs: file.inputs,
         enforce_inputs: file.manifest.enforce_inputs,
-        principles: file.principles,
         concurrency: file.manifest.concurrency,
-        golden_outputs: None,
     };
 
     // Sort steps by ordinal once at load time. The executor's `run_cascade`

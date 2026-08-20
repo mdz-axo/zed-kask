@@ -812,18 +812,6 @@ fn main() {
         // zed-kask: D3/D8 — F11: grounding health sensing (verification ladder Rung 3).
         // Wire the central verification ledger into the CyberneticsLoop so the
         // sense phase reads grounding violation trends. This closes the
-        // cybernetic feedback loop: grounding enforcement → ledger →
-        // regulation sense → algedonic alert → curator → user → action →
-        // improved contracts → better enforcement. The store shares the same
-        // DB file (`mcp/verification/grounding.db`) as the kata-kanban, swarm,
-        // and curator MCP servers — every grounded delegation writes to it,
-        // and the regulation loop reads the trend on each tick.
-        let verification_store = std::sync::Arc::new(
-            hkask_verification::VerificationStore::open(),
-        );
-        let cybernetics_loop_inner =
-            cybernetics_loop_inner.with_verification_store(verification_store.clone());
-        log::info!("hKask grounding health sensor wired to CyberneticsLoop");
         // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
         // Seed a call cap for the `swarm-panel` persona (see
         // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
@@ -1600,13 +1588,6 @@ fn main() {
                                 // creates the file if it doesn't exist yet, so
                                 // this can run before the swarm server receives
                                 // its first tool call.
-                                if let Some(counter) = kask_bridge::open_swarm_delegation_counter() {
-                                    let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
-                                    loop_guard.set_delegation_counter(counter);
-                                    log::info!("hKask grounding liveness-gap sensor wired — swarm ledger delegation counter connected");
-                                } else {
-                                    log::warn!("hKask grounding liveness-gap sensor NOT wired — swarm ledger could not be opened (delegations that skip enforce_and_stamp will be invisible)");
-                                }
 
                                 // D11: Wire the context injector now that the real memory port exists.
                                 // The injector shares the same memory port as the ingestion path.
@@ -3194,8 +3175,7 @@ async fn try_wire_manifest_executor(
                 gpui_tokio::Tokio::handle(cx),
             )
             .with_profile_resolver(profile_resolver)
-            .with_regulation_ledger(regulation_ledger.clone())
-            .with_verification_store(verification_store.clone()),
+            .with_regulation_ledger(regulation_ledger.clone()),
         );
         agent::set_manifest_executor(Some(executor));
         log::info!(

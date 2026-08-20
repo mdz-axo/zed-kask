@@ -17,7 +17,7 @@
 //! | **Precedes** | A must happen before B | `sumo:encoding` precedes `sumo:memory_consolidation` |
 //! | **HasProperty** | A has attribute/measure B | `fibo:Corporation` has `fibo:MarketCapitalization` |
 //! | **RelatedTo** | A and B are semantically linked | `sumo:salience` relates to `sumo:cued_recall` |
-//! | **Contains** | A structurally contains B | `omc:Scene` contains `omc:Shot` |
+//! | **Contains** | A structurally contains B | `sumo:Process` contains `sumo:Entity` |
 //! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo:Corporation` |
 
 use std::collections::HashMap;
