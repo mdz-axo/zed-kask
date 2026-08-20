@@ -3,14 +3,8 @@
 //! Ontology bridge — the single source of truth for ontology vocabulary and
 //! the dual-axis domain-selection logic in hKask.
 //!
-//! Nine ontologies: two universal axes, one universal core, one upper
+//! Eight ontologies: two universal axes, one upper
 //! ontology, and five domain supplements.
-//!
-//! Universal core:
-//! - **5W1H** (`five_w_one_h`): the six interrogative pronouns (Who/What/
-//!   When/Where/Why/How). The universal ground — every artifact answers at
-//!   least one interrogative. Maps to the state axis (Who/What/When/Where →
-//!   Dublin Core) and the process axis (Why/How → PKO).
 //!
 //! Two universal axes (P5.4):
 //! - **State axis** — Dublin Core + BIBO + CiTO (`dc_bibo`): the "what is this"
@@ -64,9 +58,8 @@ pub mod axis;
 pub mod dc_bibo;
 pub mod eso;
 pub mod fibo;
-pub mod five_w_one_h;
 pub mod golem;
-pub mod mlschema;
+pub mod ml_schema;
 pub mod pko;
 pub mod sdmx;
 pub mod sumo;
@@ -75,37 +68,3 @@ pub mod sumo;
 // access (`hkask_bridge_ontology::DcConcept`, `::PkoConcept`).
 pub use dc_bibo::DcConcept;
 pub use pko::PkoConcept;
-
-/// The unified ontology → explain-tool dispatch (the "I" pattern —
-/// ontology-bounded affordances). Every widget that has an "Explain"
-/// affordance calls this single function instead of each reimplementing
-/// its own ontology-specific dispatch.
-///
-/// The dispatch is driven by the concept URI prefix (the ontology
-/// namespace). Each ontology contributes its own match arm:
-/// - `fibo:*` → `research_search` (financial research)
-/// - `sdmx:*` → `research_search` (statistical data research)
-/// - `pko:*` → `kanban_task_list` (process step inspection)
-/// - `dcterms:*` → `research_search` (general research)
-/// - empty / unknown → `research_search` (the general fallback)
-///
-/// Widgets that already have a domain-specific explain tool (e.g. the
-/// scenarios widget's rung dispatch) don't call this — they dispatch by
-/// pipeline position, not by ontology concept. This function is for widgets
-/// that dispatch *because* of the ontology tag.
-pub fn explain_tool_for(ontology: &str) -> &'static str {
-    if ontology.starts_with("fibo:") {
-        return "research_search";
-    }
-    if ontology.starts_with("sdmx:") {
-        return "research_search";
-    }
-    if ontology.starts_with("pko:") {
-        return "kanban_task_list";
-    }
-    if ontology.starts_with("dcterms:") {
-        return "research_search";
-    }
-    // Empty or unknown — the general fallback.
-    "research_search"
-}
