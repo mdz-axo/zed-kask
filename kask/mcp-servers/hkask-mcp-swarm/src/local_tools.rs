@@ -130,30 +130,24 @@ impl SwarmServer {
             // structural check on what remains. The result is carried into
             // the envelope so consumers can distinguish Valid from NoSchema.
             let validation = if !agent.produces.is_empty() {
-                if let Ok(output_json) =
-                    serde_json::from_str::<serde_json::Value>(&outcome.cleaned)
+                let val = self
+                    .local_registry
+                    .port_registry()
+                    .validate_output(&agent.produces, &outcome.cleaned);
+                if val.status != hkask_verification::envelope::ValidationStatus::Valid
+                    && val.status
+                        != hkask_verification::envelope::ValidationStatus::NoSchema
                 {
-                    let val = self
-                        .local_registry
-                        .port_registry()
-                        .validate_output(&agent.produces, &output_json);
-                    if val.status != hkask_verification::envelope::ValidationStatus::Valid
-                        && val.status
-                            != hkask_verification::envelope::ValidationStatus::NoSchema
-                    {
-                        tracing::warn!(
-                            target: "hkask.swarm.port_registry",
-                            agent = %req.agent_name,
-                            produces = ?agent.produces,
-                            status = ?val.status,
-                            violations = ?val.violations,
-                            "Port schema validation failed — agent output does not match its declared produces schema"
-                        );
-                    }
-                    Some(val)
-                } else {
-                    None
+                    tracing::warn!(
+                        target: "hkask.swarm.port_registry",
+                        agent = %req.agent_name,
+                        produces = ?agent.produces,
+                        status = ?val.status,
+                        violations = ?val.violations,
+                        "Port schema validation failed — agent output does not match its declared produces schema"
+                    );
                 }
+                Some(val)
             } else {
                 None
             };

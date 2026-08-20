@@ -47,15 +47,20 @@ pub const BUILTIN_PORT_TYPES: &[&str] = &["text", "json", "task", "task_result"]
 /// `deliverable_path` and `test_verdict` are `["string", "null"]` because
 /// grounding nulls unsourced fields — the schema must accept the cleaned
 /// document, not just the pre-grounding one.
-pub const TASK_RESULT_SCHEMA: serde_json::Value = serde_json::json!({
-    "type": "object",
-    "properties": {
-        "deliverable_path": { "type": ["string", "null"] },
-        "test_verdict": { "type": ["string", "null"] },
-        "summary": { "type": "string" },
-        "approach": { "type": "string" }
-    }
-});
+///
+/// Returned as a function (not a `const`) because `serde_json::Value` has
+/// non-const destructors and cannot be constructed in a `const` context.
+pub fn task_result_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "deliverable_path": { "type": ["string", "null"] },
+            "test_verdict": { "type": ["string", "null"] },
+            "summary": { "type": "string" },
+            "approach": { "type": "string" }
+        }
+    })
+}
 
 /// Registered port types. A port label is a reference to a type, not a free
 /// string. The registry is seeded from `BUILTIN_PORT_TYPES`; operators extend
@@ -78,7 +83,7 @@ impl PortRegistry {
         types.insert(
             "task_result".to_string(),
             PortTypeEntry {
-                schema: Some(TASK_RESULT_SCHEMA.clone()),
+                schema: Some(task_result_schema()),
             },
         );
         Self { types }
@@ -278,7 +283,7 @@ mod tests {
             result
                 .violations
                 .iter()
-                .any(|v| v.path.contains("deliverable_path")),
+                .any(|v| v.message.contains("deliverable_path")),
             "violations must name the missing field: {:?}",
             result.violations
         );

@@ -1307,24 +1307,19 @@ impl KanbanServer {
             &[],
         );
         // Rung 2 (Schema validation): validate the cleaned document
-        // AFTER grounding, BEFORE it persists. Unsupported keywords
-        // are NOT a pass. Logged at warn — schema violations are
-        // diagnostic, not blocking (the cleaned document is still
-        // the best available output).
+        // AFTER grounding, BEFORE it persists. The schema is retrieved from
+        // the `PortRegistry` (the single source of truth for `task_result`),
+        // not hardcoded here — so swarm and kata-kanban validate against the
+        // same schema (the paper's "one artifact, two uses"). Unsupported
+        // keywords are NOT a pass. Logged at warn — schema violations are
+        // diagnostic, not blocking (the cleaned document is still the best
+        // available output).
         let mut schema_validation: Option<hkask_verification::envelope::ValidationResult> = None;
-        if let Some(ref gr) = outcome.result {
-            let validation = hkask_verification::schema_validate::validate(
-                &serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "deliverable_path": { "type": ["string", "null"] },
-                        "test_verdict": { "type": ["string", "null"] },
-                        "summary": { "type": "string" },
-                        "approach": { "type": "string" }
-                    }
-                }),
-                &outcome.cleaned,
-            );
+        if outcome.result.is_some() {
+            let validation = self
+                .local_registry
+                .port_registry()
+                .validate_output(&["task_result".to_string()], &outcome.cleaned);
             if !validation.violations.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.kata_kanban",
@@ -1343,28 +1338,7 @@ impl KanbanServer {
                     "schema validation: unsupported keyword(s) — NOT a pass",
                 );
             }
-            // Carry the validation result into the envelope so consumers
-            // can distinguish valid from invalid from unverified.
-            let status = if !validation.unsupported.is_empty() {
-                hkask_verification::envelope::ValidationStatus::UnsupportedSchema
-            } else if !validation.violations.is_empty() {
-                hkask_verification::envelope::ValidationStatus::Invalid
-            } else {
-                hkask_verification::envelope::ValidationStatus::Valid
-            };
-            schema_validation = Some(hkask_verification::envelope::ValidationResult {
-                status,
-                violations: validation
-                    .violations
-                    .iter()
-                    .map(|v| hkask_verification::envelope::SchemaViolation {
-                        path: v.path.clone(),
-                        message: v.message.clone(),
-                    })
-                    .collect(),
-                unsupported: validation.unsupported.clone(),
-            });
-            let _ = gr; // used below via outcome.result.as_ref()
+            schema_validation = Some(validation);
         }
         // Build the delegation envelope so provenance survives the hop to
         // the caller (N2). The envelope is additive — it carries the enforced

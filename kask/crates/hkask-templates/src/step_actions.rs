@@ -63,6 +63,44 @@ pub(crate) fn apply_input_mapping(
     }
 }
 
+fn cap_string_value(value: &Value) -> Value {
+    match value {
+        Value::String(s) if s.len() > 64 * 1024 => {
+            Value::String(s.chars().take(64 * 1024).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn tool_call_summary(mcp_ref: &str, result: std::result::Result<&Value, ()>) -> Value {
+    match result {
+        Ok(value) => {
+            serde_json::json!({"tool": mcp_ref, "ok": true, "result": cap_string_value(value)})
+        }
+        Err(_) => serde_json::json!({"tool": mcp_ref, "ok": false}),
+    }
+}
+
+fn load_sub_manifest_yaml(
+    renderer: &crate::template_renderer::TemplateRenderer,
+    template_ref: &str,
+    step_ordinal: u32,
+) -> Result<String> {
+    if let Ok(content) = renderer.load_from_disk(template_ref, step_ordinal) {
+        return Ok(content);
+    }
+    if let Some(content) = crate::template_yaml_file(template_ref) {
+        return Ok(content.to_string());
+    }
+    if let Some(content) = crate::template_file(template_ref) {
+        return Ok(content.to_string());
+    }
+    Err(TemplateError::NotFound(hkask_types::NotFound {
+        entity_type: "sub-manifest".to_string(),
+        id: format!("Step {step_ordinal}: sub-manifest '{template_ref}' not found"),
+    }))
+}
+
 impl StepMachine {
     /// **Choice** — evaluate a condition and jump to a target step.
     /// Pure: no inference, no tools, no side effects.
@@ -620,32 +658,8 @@ impl StepMachine {
         // "the tool ran," not "the value came from the tool." Recorded
         // before the `?` so both success and failure paths are captured.
         // On failure, `result` is absent (a failed call supplied no data).
-        let summary = match &tool_result {
-            Ok(value) => {
-                // Cap large string returns to prevent unbounded memory
-                // growth in the tool_calls summary. The grounding
-                // check only needs to find short field values (paths,
-                // URLs, verdicts) in the result — a 64KB prefix is
-                // sufficient. Only raw string returns (file contents,
-                // terminal output) grow large; structured returns are
-                // typically small enough.
-                let capped = match value {
-                    serde_json::Value::String(s) if s.len() > 64 * 1024 => {
-                        serde_json::Value::String(s.chars().take(64 * 1024).collect())
-                    }
-                    _ => value.clone(),
-                };
-                serde_json::json!({
-                    "tool": mcp_ref_for_tracking,
-                    "ok": true,
-                    "result": capped,
-                })
-            }
-            Err(_) => serde_json::json!({
-                "tool": mcp_ref_for_tracking,
-                "ok": false,
-            }),
-        };
+        let summary =
+            tool_call_summary(&mcp_ref_for_tracking, tool_result.as_ref().map_err(|_| ()));
         self.tool_calls.push(summary);
 
         let result = tool_result?;
@@ -840,27 +854,8 @@ impl StepMachine {
                 &entry.mcp,
                 &self.context,
             );
-            let summary = match result {
-                Ok((_, value)) => {
-                    // Cap large string returns (same logic as
-                    // execute_tool_invoke). See that function for rationale.
-                    let capped = match value {
-                        serde_json::Value::String(s) if s.len() > 64 * 1024 => {
-                            serde_json::Value::String(s.chars().take(64 * 1024).collect())
-                        }
-                        _ => value.clone(),
-                    };
-                    serde_json::json!({
-                        "tool": rendered,
-                        "ok": true,
-                        "result": capped,
-                    })
-                }
-                Err(_) => serde_json::json!({
-                    "tool": rendered,
-                    "ok": false,
-                }),
-            };
+            let summary =
+                tool_call_summary(&rendered, result.as_ref().map(|(_, v)| v).map_err(|_| ()));
             self.tool_calls.push(summary);
         }
 
@@ -990,25 +985,8 @@ impl StepMachine {
         let template_ref =
             crate::template_renderer::TemplateRenderer::render_inline(&template_ref, &self.context);
 
-        // Load the sub-manifest YAML.
-        let manifest_yaml = if let Ok(content) = infra
-            .template_renderer
-            .load_from_disk(&template_ref, node.ordinal)
-        {
-            content
-        } else if let Some(content) = crate::template_yaml_file(&template_ref) {
-            content.to_string()
-        } else if let Some(content) = crate::template_file(&template_ref) {
-            content.to_string()
-        } else {
-            return Err(TemplateError::NotFound(hkask_types::NotFound {
-                entity_type: "flowdef sub-manifest".to_string(),
-                id: format!(
-                    "Step {}: sub-manifest '{}' not found",
-                    node.ordinal, template_ref
-                ),
-            }));
-        };
+        let manifest_yaml =
+            load_sub_manifest_yaml(&infra.template_renderer, &template_ref, node.ordinal)?;
 
         // Parse the sub-manifest.
         let mut sub_manifest = crate::manifest_loader::load_manifest_from_yaml(&manifest_yaml)
@@ -1171,6 +1149,7 @@ impl StepMachine {
             .as_ref()
             .map(|l| l.max() as usize)
             .unwrap_or(branches.len());
+        let parent_depth = self.depth;
 
         let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
             // `run` now owns the `Infra` (so its future is `Send + 'static` and
@@ -1212,25 +1191,11 @@ impl StepMachine {
                         &template_ref,
                         &context_template,
                     );
-                    let manifest_yaml = if let Ok(content) = infra
-                        .template_renderer
-                        .load_from_disk(&template_ref, step_ordinal)
-                    {
-                        content
-                    } else if let Some(content) = crate::template_yaml_file(&template_ref) {
-                        content.to_string()
-                    } else if let Some(content) = crate::template_file(&template_ref) {
-                        content.to_string()
-                    } else {
-                        return Err(TemplateError::NotFound(hkask_types::NotFound {
-                            entity_type: "parallel sub-manifest".to_string(),
-                            id: format!(
-                                "Step {} parallel branch {}: sub-manifest '{}' \
-                                 not found",
-                                step_ordinal, branch_id, template_ref,
-                            ),
-                        }));
-                    };
+                    let manifest_yaml = load_sub_manifest_yaml(
+                        &infra.template_renderer,
+                        &template_ref,
+                        step_ordinal,
+                    )?;
                     let sub_manifest = crate::manifest_loader::load_manifest_from_yaml(
                         &manifest_yaml,
                     )
@@ -1259,7 +1224,7 @@ impl StepMachine {
                         sub_manifest.convergence.max_iterations,
                     );
                     let sub_manifest_id = branch_manifest_id.clone();
-                    let sub_machine = StepMachine::new(
+                    let mut sub_machine = StepMachine::new(
                         sub_graph,
                         context_template.clone(),
                         sub_budget,
@@ -1267,6 +1232,7 @@ impl StepMachine {
                         sub_manifest.error_handling.clone(),
                         format!("{}::parallel", sub_manifest_id),
                     );
+                    sub_machine.depth = parent_depth + 1;
                     let outcome = sub_machine.run(infra).await?;
                     // No branch-level limiter ramp: the inner `execute_select` /
                     // `execute_tool_invoke` calls already call `on_success` /
@@ -1869,123 +1835,6 @@ async fn call_inference_stream_with_messages(
     Ok((full_text, tool_calls, cost_usd, finish_reason))
 }
 
-/// Call inference with streaming, timeout, and reasoning-delta forwarding.
-/// Returns (text, tool_calls, cost_usd, finish_reason).
-///
-/// Only `reasoning_delta` is forwarded to the `progress` callback (the
-/// thinking trace). `text_delta` is accumulated into `full_text` for the
-/// cascade's result parsing but is NOT sent to the thinking trace — it's
-/// the LLM's raw output (often JSON from structured-output steps) and
-/// pollutes the thinking trace with non-thinking content.
-///
-/// `cost_usd` is accumulated from streaming chunks (carried by the
-/// provider's `UsageUpdate` event) and returned so the budget tracker can
-/// charge rJoules.
-///
-/// Retained for the D25 truncation test (`call_inference_stream_threads_
-/// finish_reason_length`), which pins the finish_reason propagation behavior.
-/// Production code uses `call_inference_stream_with_messages` (the cascade-
-/// aware variant that carries prior-turn + memory context).
-#[allow(dead_code)]
-async fn call_inference_stream(
-    inference: &Arc<dyn InferencePort + 'static>,
-    prompt: &str,
-    params: &LLMParameters,
-    tools: Option<&[ChatToolDefinition]>,
-    timeout: std::time::Duration,
-    step_ordinal: u32,
-    progress: Option<&Arc<dyn Fn(&str) + Send + Sync>>,
-) -> Result<(
-    String,
-    Vec<hkask_types::StructuredToolCall>,
-    Option<f64>,
-    Option<String>,
-)> {
-    use futures_util::StreamExt;
-
-    // Defense in depth: if a caller passes Duration::ZERO (e.g. from a
-    // manifest step with timeout_seconds: 0 loaded through a path that
-    // bypasses the serde default), tokio::time::timeout fires immediately
-    // without polling the inference future. Substitute the fallback.
-    let timeout = if timeout == std::time::Duration::ZERO {
-        tracing::warn!(
-            target: "hkask.templates.call_inference_stream",
-            "timeout is Duration::ZERO — substituting {INFERENCE_TIMEOUT_FALLBACK_SECS}s fallback"
-        );
-        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
-    } else {
-        timeout
-    };
-
-    let stream = inference.generate_stream(prompt, params, tools);
-
-    let (full_text, tool_calls, cost_usd, finish_reason) =
-        match tokio::time::timeout(timeout, async {
-            let mut full_text = String::new();
-            let mut accumulated_tool_calls = Vec::new();
-            let mut accumulated_cost_usd: Option<f64> = None;
-            let mut accumulated_finish_reason: Option<String> = None;
-            let mut stream = stream;
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        // Only reasoning deltas belong in the thinking trace.
-                        // text_delta is the LLM's raw output (often JSON from
-                        // structured-output steps) — sending it through progress
-                        // pollutes the thinking trace with non-thinking content.
-                        if !chunk.reasoning_delta.is_empty() {
-                            if let Some(progress) = progress {
-                                progress(&chunk.reasoning_delta);
-                            }
-                        }
-                        if !chunk.text_delta.is_empty() {
-                            full_text.push_str(&chunk.text_delta);
-                        }
-                        // Accumulate metadata across chunks. Providers may
-                        // send UsageUpdate (cost_usd) and Stop (finish_reason)
-                        // as separate events — tracking only the "final" chunk
-                        // would lose cost_usd when Stop arrives after UsageUpdate.
-                        if !chunk.tool_calls.is_empty() {
-                            accumulated_tool_calls.extend(chunk.tool_calls);
-                        }
-                        if chunk.cost_usd.is_some() {
-                            accumulated_cost_usd = chunk.cost_usd;
-                        }
-                        if chunk.finish_reason.is_some() {
-                            accumulated_finish_reason = chunk.finish_reason;
-                        }
-                    }
-                    Err(e) => return Err(TemplateError::Inference(e)),
-                }
-            }
-            Ok::<_, TemplateError>((
-                full_text,
-                accumulated_tool_calls,
-                accumulated_cost_usd,
-                accumulated_finish_reason,
-            ))
-        })
-        .await
-        {
-            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => {
-                (text, tool_calls, cost_usd, finish_reason)
-            }
-            Ok(Err(e)) => return Err(e),
-            Err(_elapsed) => {
-                // Typed Timeout error (not Manifest(String)) so the retry loop in
-                // `run_pass` can detect it without string-matching, and so callers
-                // report which step hung. The ordinal is threaded through this
-                // helper because it's a free function without access to the node.
-                return Err(TemplateError::Timeout {
-                    step_ordinal,
-                    elapsed_seconds: timeout.as_secs(),
-                });
-            }
-        };
-
-    Ok((full_text, tool_calls, cost_usd, finish_reason))
-}
-
 /// Resolve a tool's server and dispatch the call.
 ///
 /// A FIDES taint gate (`DefaultPolicy::check` on a `Source`→`Sink` flow) used to
@@ -2095,10 +1944,13 @@ mod tests {
             finish_reason: "length".into(),
             text: "{\"partial\":".into(),
         }) as Arc<dyn InferencePort>;
-        let (text, tool_calls, _cost, finish_reason) = call_inference_stream(
-            &inference,
-            "prompt",
-            &LLMParameters::default(),
+        let (text, tool_calls, _cost, finish_reason) = call_inference_stream_with_messages(
+            inference,
+            vec![ChatMessage {
+                role: "user".into(),
+                content: "prompt".into(),
+            }],
+            LLMParameters::default(),
             None,
             std::time::Duration::from_secs(30),
             1,
@@ -2261,10 +2113,13 @@ convergence:
         }
 
         let inference = Arc::new(EmptyOutput) as Arc<dyn InferencePort>;
-        let (text, tool_calls, _cost, finish_reason) = call_inference_stream(
-            &inference,
-            "prompt",
-            &LLMParameters::default(),
+        let (text, tool_calls, _cost, finish_reason) = call_inference_stream_with_messages(
+            inference,
+            vec![ChatMessage {
+                role: "user".into(),
+                content: "prompt".into(),
+            }],
+            LLMParameters::default(),
             None,
             std::time::Duration::from_secs(30),
             1,
@@ -3404,5 +3259,57 @@ convergence:
                 );
             }
         }
+    }
+
+    /// Without depth propagation in `execute_parallel`, a self-referencing
+    /// parallel manifest hangs (stack-overflow). With the fix, the guard fires.
+    #[tokio::test]
+    async fn execute_parallel_propagates_matryoshka_depth() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let limiter = Arc::new(ConcurrencyLimiter::new(1, 1));
+        let tmp = std::env::temp_dir().join(format!("hkask-matryoshka-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let self_ref_yaml = r#"
+manifest:
+  id: matryoshka-parallel-self-ref
+  category: skill
+convergence:
+  max_iterations: 1
+steps:
+  - ordinal: 1
+    action: parallel
+    description: "self-ref"
+    input_mapping:
+      branches:
+        - template_ref: matryoshka-parallel-self-ref
+      join: allSettled
+"#;
+        std::fs::write(tmp.join("matryoshka-parallel-self-ref.yaml"), self_ref_yaml).unwrap();
+
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(NoopToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        )
+        .with_concurrency_limiter(limiter)
+        .with_template_base_path(tmp.clone());
+
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(self_ref_yaml).expect("parse");
+        let result = executor
+            .execute_manifest_into(manifest, std::collections::HashMap::new())
+            .await;
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let msg = result
+            .expect_err("must hit depth guard, not hang")
+            .to_string();
+        assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
     }
 }
