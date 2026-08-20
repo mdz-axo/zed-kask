@@ -965,6 +965,29 @@ impl MemoryPort for RealMemoryPort {
             .await
         })
     }
+
+    // zed-kask: D34 — store the skill verification report in the curator's
+    // sovereign memory so the curator can recall it via
+    // `curator_memory_recall` (entity: `skill_verification:<skill_name>`).
+    fn store_skill_verification(&self, skill_name: &str, verdict: &str, tool_calls: &[String]) {
+        let entity = format!("skill_verification:{}", skill_name);
+        let report_value = serde_json::json!({
+            "skill_name": skill_name,
+            "verdict": verdict,
+            "tool_calls": tool_calls,
+        });
+        let h_mem = hkask_storage::HMem::new(&entity, "verified", report_value, self.curator_webid);
+        if let Some(curator_store) = self.curator_store.get() {
+            if let Err(e) = curator_store.store(h_mem) {
+                tracing::warn!(
+                    target: "reg.curation",
+                    skill = %skill_name,
+                    error = %e,
+                    "Failed to store skill verification report in curator memory"
+                );
+            }
+        }
+    }
 }
 
 impl RealMemoryPort {
@@ -1467,26 +1490,13 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                 "Skill step verification"
             );
             // Store the report in the curator's sovereign memory so the
-            // curator can recall it and detect patterns of incomplete
-            // skill execution.
-            let entity = format!("skill_verification:{}", report.skill_name);
-            let report_value = serde_json::json!({
-                "skill_name": report.skill_name,
-                "verdict": verdict_str,
-                "tool_calls": report.tool_call_sequence,
-            });
-            let h_mem =
-                hkask_storage::HMem::new(&entity, "verified", report_value, inner.curator_webid);
-            if let Some(curator_store) = inner.curator_store.get() {
-                if let Err(e) = curator_store.store(h_mem) {
-                    tracing::warn!(
-                        target: "reg.curation",
-                        skill = %report.skill_name,
-                        error = %e,
-                        "Failed to store skill verification report in curator memory"
-                    );
-                }
-            }
+            // curator can recall it and detect patterns of incomplete skill
+            // execution.
+            inner.store_skill_verification(
+                &report.skill_name,
+                &verdict_str,
+                &report.tool_call_sequence,
+            );
         }
         Box::pin(async move {
             inner
@@ -1510,6 +1520,7 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
 /// without duplicating the heavy `RealMemoryPort` setup. Mirrors the
 /// private `in_memory_port` helper in `tests` below.
 #[cfg(test)]
+#[allow(dead_code)] // test utility
 pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
     use hkask_storage::database::sqlite::SqliteDriver;
     let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();

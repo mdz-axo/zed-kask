@@ -67,6 +67,10 @@ pub(crate) struct AgentExecutor {
     /// Interior mutability so the runtime can wire it through the shared
     /// `&LocalSwarmRuntime` the lazy getter hands out.
     capture: std::sync::Mutex<Option<CaptureSender>>,
+    /// Count of captures dropped because the channel was full. The drainer
+    /// cannot observe send-side backpressure, so the count lives HERE —
+    /// a drop is never silent (the harness report surfaces it).
+    capture_send_drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl AgentExecutor {
@@ -78,6 +82,7 @@ impl AgentExecutor {
             inference,
             tool_dispatch,
             capture: std::sync::Mutex::new(None),
+            capture_send_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -87,14 +92,24 @@ impl AgentExecutor {
         *self.capture.lock().expect("capture lock poisoned") = Some(sender);
     }
 
+    /// Captures dropped on the send side (channel full). Shared with the
+    /// runtime so `capture_drops()` reports both send-side and drainer-side
+    /// drops.
+    #[allow(dead_code)] // sensor signal — consumed by capture_drops when wired
+    pub(crate) fn capture_send_drops(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        std::sync::Arc::clone(&self.capture_send_drops)
+    }
+
     /// Fire-and-forget capture: try-send, never block, never fail the call.
-    /// A full channel drops the capture — the drainer's drop counter
-    /// surfaces it (never silent).
+    /// A full channel drops the capture and increments the send-drop
+    /// counter — surfaced via the runtime's `capture_drops()`, never silent.
     fn capture_inference(&self, captured: CapturedInference) {
-        if let Ok(sender) = self.capture.lock() {
-            if let Some(sender) = sender.as_ref() {
-                let _ = sender.try_send(captured);
-            }
+        if let Ok(sender) = self.capture.lock()
+            && let Some(sender) = sender.as_ref()
+            && sender.try_send(captured).is_err()
+        {
+            self.capture_send_drops
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

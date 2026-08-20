@@ -1635,8 +1635,21 @@ impl SwarmServer {
                 // verdict under the executor-assigned rollout id. A store
                 // failure is logged and counted (`events_dropped`), never
                 // swallowed — the report must distinguish "recorded" from
-                // "record lost".
-                let event_store = self.event_store.get_or_init().ok();
+                // "record lost". An OPEN failure is warned with the path
+                // named (the failure-signal rule: "not configured" must be
+                // distinguishable from "configured but broken") and the run
+                // proceeds uncaptured — eval does not depend on the store.
+                let event_store = match self.event_store.get_or_init() {
+                    Ok(store) => Some(store),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            error = %error,
+                            "event store open failed — harness run proceeds uncaptured"
+                        );
+                        None
+                    }
+                };
                 if let Some(store) = &event_store {
                     runtime.wire_capture(std::sync::Arc::clone(store));
                 }
@@ -1720,6 +1733,11 @@ impl SwarmServer {
                 }
                 let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
                 let balance: Option<i64> = runtime.balance();
+                // Both drop counters, surfaced: verdict-append failures from
+                // this loop, capture drops (send-side backpressure +
+                // drainer-side append failures) from the runtime. A drop is
+                // never silent.
+                let capture_drops = runtime.capture_drops();
                 Ok(serde_json::json!({
                     "agent_name": req.agent_name,
                     "harness_run_id": harness_run_id,
@@ -1732,6 +1750,7 @@ impl SwarmServer {
                     "total_tokens": total_tokens,
                     "balance": balance,
                     "events_dropped": events_dropped,
+                    "capture_drops": capture_drops,
                 }))
             },
         )

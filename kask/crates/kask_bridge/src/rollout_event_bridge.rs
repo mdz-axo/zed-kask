@@ -82,8 +82,7 @@ impl RolloutEventSource for BridgeRolloutEventSource {
             .find_map(|event| value_of(&event.payload));
         let after = events
             .iter()
-            .filter(|event| event.position > before_position)
-            .next_back()
+            .rfind(|event| event.position > before_position)
             .and_then(|event| value_of(&event.payload));
         match (before, after) {
             (Some(before), Some(after)) => Ok(Some((before, after))),

@@ -153,4 +153,11 @@ pub trait MemoryPort: Send + Sync {
     ) -> MemoryFuture<'a, Result<Vec<MemorySnippet>, MemoryError>> {
         Box::pin(async { Ok(Vec::new()) })
     }
+
+    // zed-kask: D34 — store a skill verification report in the curator's
+    // sovereign memory so the curator can recall it via
+    // `curator_memory_recall` (entity: `skill_verification:<skill_name>`)
+    // to detect systematically incomplete skills. The default implementation
+    // is a no-op — graceful degradation when no curator store is configured.
+    fn store_skill_verification(&self, _skill_name: &str, _verdict: &str, _tool_calls: &[String]) {}
 }

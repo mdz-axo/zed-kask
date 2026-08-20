@@ -1309,83 +1309,70 @@ impl CyberneticsLoop {
         for action in previous_actions {
             // Event-substrate path (phase 6): when the action's parameters
             // name a rollout and a rollout event source is wired, query the
-            // store for the before/after values. This is the general path —
-            // the struct walk below is the fallback for actions that don't
-            // target a rollout. A query failure is logged and falls through
-            // to the fallback (degraded, not broken — the loop still
-            // verifies via re-sensing).
+            // store for the before/after values. The struct walk below is the
+            // fallback for actions that don't target a rollout. A query
+            // failure is logged and falls through to the fallback (degraded,
+            // not broken — the loop still verifies via re-sensing).
+            //
+            // Both paths converge on the SAME classify/stagnation/block
+            // tail below — the store path sets (metric, before, after) and
+            // jumps past the struct walk; it must not bypass the stagnation
+            // detector or the block escalation, or a store-answered failure
+            // would never trigger plateau detection while a re-sensed one
+            // would.
+            let mut store_answered = false;
+            let (mut before_val, mut metric) = (0.0, SignalMetric::EnergyRemaining);
+            let mut after_val = 0.0;
             if let Some(source) = &self.rollout_events
                 && let Some((rollout_id, before_position)) = action.parameters.data.rollout_target()
-                && let Ok(Some((before_val, after_val))) = source.metric_before_and_after(
+                && let Ok(Some((queried_before, queried_after))) = source.metric_before_and_after(
                     &rollout_id,
                     action.parameters.data.metric_name(),
                     before_position,
                 )
             {
-                let metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
+                metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
                     .unwrap_or(SignalMetric::EnergyRemaining);
-                let decision = {
-                    let delta = after_val - before_val;
-                    // Same per-metric direction semantics as the fallback
-                    // path below: EnergyRemaining improves upward, everything
-                    // else improves toward zero.
-                    let improved = match metric {
-                        SignalMetric::EnergyRemaining => delta > 0.0,
-                        _ => delta < 0.0,
-                    };
-                    let worsening = if improved { 0.0 } else { delta.abs() };
-                    let block_worsening_ratio = self
-                        .calibrated_thresholds
-                        .read()
-                        .await
-                        .block_worsening_ratio;
-                    classify_decision(
-                        worsening,
-                        self.set_points.stage_worsening_ratio,
-                        block_worsening_ratio,
-                    )
-                };
-                reports.push(ImpactReport::new(
-                    action.action_type,
-                    metric,
-                    before_val,
-                    after_val,
-                    decision,
-                ));
+                before_val = queried_before;
+                after_val = queried_after;
+                store_answered = true;
                 tracing::debug!(
                     target: "reg.cybernetics",
                     rollout = %rollout_id,
-                    before = before_val,
-                    after = after_val,
+                    before = queried_before,
+                    after = queried_after,
                     "verify_impact answered from the rollout event store"
                 );
-                continue;
             }
-            // Determine metric and pre-action value from the typed RegulationData.
-            let (before_val, metric) = match &action.parameters.data {
-                RegulationData::EnergyBudgetLow {
-                    remaining_ratio, ..
-                }
-                | RegulationData::BudgetGuardEscalation {
-                    remaining_ratio, ..
-                }
-                | RegulationData::EnergyDepletionAutoAdjust {
-                    remaining_ratio, ..
-                } => (*remaining_ratio, SignalMetric::EnergyRemaining),
-                RegulationData::VarietyDeficitExceeded { deficit, .. } => {
-                    (*deficit, SignalMetric::VarietyDeficit)
-                }
-                _ => continue,
-            };
-
-            let after_val = match metric {
-                SignalMetric::EnergyRemaining => budget_statuses
-                    .iter()
-                    .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
-                    .fold(1.0, f64::min),
-                SignalMetric::VarietyDeficit => current_deficit,
-                _ => continue,
-            };
+            if !store_answered {
+                // Fallback: determine metric and pre-action value from the
+                // typed RegulationData, then re-sense the after value.
+                let (fallback_before, fallback_metric) = match &action.parameters.data {
+                    RegulationData::EnergyBudgetLow {
+                        remaining_ratio, ..
+                    }
+                    | RegulationData::BudgetGuardEscalation {
+                        remaining_ratio, ..
+                    }
+                    | RegulationData::EnergyDepletionAutoAdjust {
+                        remaining_ratio, ..
+                    } => (*remaining_ratio, SignalMetric::EnergyRemaining),
+                    RegulationData::VarietyDeficitExceeded { deficit, .. } => {
+                        (*deficit, SignalMetric::VarietyDeficit)
+                    }
+                    _ => continue,
+                };
+                before_val = fallback_before;
+                metric = fallback_metric;
+                after_val = match metric {
+                    SignalMetric::EnergyRemaining => budget_statuses
+                        .iter()
+                        .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
+                        .fold(1.0, f64::min),
+                    SignalMetric::VarietyDeficit => current_deficit,
+                    _ => continue,
+                };
+            }
 
             let delta = after_val - before_val;
             // For EnergyRemaining: higher is better (positive delta = improved).
