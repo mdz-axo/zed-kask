@@ -5,7 +5,7 @@ cwe: CWE-1336
 owasp_llm_2025: LLM01
 atlas_tactic: AML.TA0005
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-templates/src/template_renderer.rs:337-338 and :179, kask/registry/templates/**/*.j2
+discovered_in: kask/registry/templates/**/*.j2 (the deleted hkask-templates template_renderer.rs originally set up the minijinja environment without autoescape)
 discovered_by: kali-audit
 discovered_at: 2026-08-12
 severity: medium

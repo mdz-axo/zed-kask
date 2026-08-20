@@ -24,12 +24,7 @@ mds_categories: [composition, domain]
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are launched by zed's
 > `context_server` host as child processes over stdio; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs:330` enumerates the 10 on-disk servers. Three servers
-> from the prior 13 were deleted (commit `26215d845e`): `codegraph` (folded into the `graph-audit`
-> skill), `condenser` (the `hkask-condenser` crate lives; the MCP server surface was removed), and
-> `media` (folded into the `logo-builder` skill's provider path). See
-> [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
-> §2.4.
+> `kask/crates/kask_bridge/src/mcp_servers.rs:330` enumerates the 10 on-disk servers.
 
 ## Server Catalog
 
@@ -39,7 +34,7 @@ mds_categories: [composition, domain]
 |--------|-------|---------|------------------:|
 | [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 45 |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 28 |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query, grounding trend) | 10 |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 10 |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 24 |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 |

@@ -451,7 +451,7 @@ impl SetPoints {
 ///
 #[must_use]
 pub fn load_set_points() -> SetPoints {
-    let mut points = match std::env::var("HKASK_REG_CONFIG") {
+    let points = match std::env::var("HKASK_REG_CONFIG") {
         Ok(path) => match SetPointsConfig::load_from_file(&path) {
             Ok(config) => {
                 let points = SetPoints::from_config(&config);

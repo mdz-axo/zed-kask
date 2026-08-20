@@ -15,5 +15,5 @@ detection:
   include: "crates/hkask-templates/src/"
 mitigation: "Use safe_template_join which rejects segments starting with '.' or containing backslashes."
 source: "https://github.com/rustfs/rustfs/security/advisories/GHSA-pq29-69jg-9mxc (RustFS CVE-2025-68705, CVSS 9.9)"
-ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-templates crate deleted 2026-08-20 — the vulnerable code no longer exists."

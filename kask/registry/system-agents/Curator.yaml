@@ -74,7 +74,7 @@ standing_session:
   bot_status_interval: hourly
   administrator_visible: true
 
-process_manifest: registry/manifests/curator-metacognition.yaml
+
 
 persona:
   tone: Direct and to the point

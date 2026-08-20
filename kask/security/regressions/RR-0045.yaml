@@ -17,5 +17,5 @@ detection:
   include: "crates/hkask-templates/src/ crates/kask_bridge/src/"
 mitigation: "ManifestExecutor::execute_manifest returns HashMap<String, Value> with step_N_result keys. HashMap iteration order is randomized (RandomState), so values().last() picks an arbitrary step, not the final one. Use extract_final_step_result (in kask_bridge/src/skill_executor.rs or hkask-templates/src/executor.rs) which parses the ordinal from step_N_result keys and picks the highest. See .rules: ManifestExecutor final-result extraction must be ordinal-keyed."
 source: ".rules: ManifestExecutor final-result extraction must be ordinal-keyed"
-ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-templates crate deleted 2026-08-20 — the ManifestExecutor no longer exists."

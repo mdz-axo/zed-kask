@@ -5,7 +5,7 @@ cwe: CWE-1188
 owasp_llm_2025: LLM06
 atlas_tactic: AML.TA0006
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-templates/src/step_actions.rs (invoke_tool policy block), kask/crates/hkask-capability/src/tool_taint.rs, kask/crates/hkask-regulation/src/runtime_policy.rs
+discovered_in: kask/crates/hkask-capability/src/tool_taint.rs (deleted), kask/crates/hkask-regulation/src/runtime_policy.rs (deleted), kask/crates/hkask-templates/src/step_actions.rs (deleted)
 discovered_by: kali-audit
 discovered_at: 2026-08-04
 severity: medium

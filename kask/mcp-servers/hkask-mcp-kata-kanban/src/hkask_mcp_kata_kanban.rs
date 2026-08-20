@@ -1187,7 +1187,7 @@ impl KanbanServer {
         let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
             McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
         })?;
-        let mut result = runtime
+        let result = runtime
             .delegate(agent, &task_text, credits, ceiling)
             .await
             .map_err(|e| {
@@ -1203,9 +1203,6 @@ impl KanbanServer {
         // paper's "one artifact, two uses"). Unsupported keywords are NOT
         // a pass. Logged at warn — schema violations are diagnostic, not
         // blocking (the document is still the best available output).
-        let mut schema_validation: Option<
-            hkask_mcp_swarm::schema_validate::StatusValidationResult,
-        > = None;
         if let Ok(cleaned) = serde_json::from_str::<serde_json::Value>(&result.response) {
             let validation = self
                 .local_registry
@@ -1229,7 +1226,6 @@ impl KanbanServer {
                     "schema validation: unsupported keyword(s) — NOT a pass",
                 );
             }
-            schema_validation = Some(validation);
         }
 
         let verdict = result.task_success.clone();

@@ -111,7 +111,7 @@ pub(crate) fn render_skills_setup_page(
 
 fn render_skill_row(
     skill: &Skill,
-    settings_window: &SettingsWindow,
+    _settings_window: &SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let skill_file_path = skill.skill_file_path.clone();

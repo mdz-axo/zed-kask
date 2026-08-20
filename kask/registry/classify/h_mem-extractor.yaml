@@ -59,15 +59,14 @@ classifier:
     "primary_dimension":"Lovelace",
     "quality_flags":["precise","authoritative"]}
 
-    Passage: "Templates follow a KnowAct contract pattern: input types,
-    output types, and an energy cap are declared in a frontmatter block.
-    The contract is verified at render time against the provided context."
-    {"topic":"KnowAct template contract pattern with energy caps",
-    "concepts":["KnowAct","template contract","energy cap",
-    "frontmatter"],
+    Passage: "Prompt templates follow a contract pattern: input types,
+    output types are declared in a frontmatter block.
+    The template is rendered with minijinja from kask/registry/templates/."
+    {"topic":"Prompt template contract pattern",
+    "concepts":["prompt template","template contract","frontmatter"],
     "entities":[],
-    "relationships":["contract declares input/output types and energy cap",
-    "contract is verified at render time against context"],
+    "relationships":["contract declares input/output types",
+    "template is rendered with minijinja"],
     "primary_dimension":"Hopper",
     "quality_flags":["clear","well_structured"]}
 

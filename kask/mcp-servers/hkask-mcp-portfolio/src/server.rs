@@ -15,7 +15,6 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::sync::Arc;
 
 hkask_mcp_server::mcp_server!(
     pub struct PortfolioServer {
