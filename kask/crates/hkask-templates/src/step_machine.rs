@@ -18,7 +18,7 @@
 
 use crate::budget::BudgetTracker;
 use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
-use crate::ports::Result;
+use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
 use crate::step_graph::{ControlFlow, ENTRY, ExitKind, StepGraph, StepId};
 use crate::template_renderer::TemplateRenderer;
@@ -351,7 +351,7 @@ impl StepMachine {
             // Emit feedback span for select steps.
             if node.action.as_ref() == "select"
                 && let Some(ref template_ref) = node.template_ref
-                && let Some(phase) = crate::executor::extract_feedback_phase(template_ref)
+                && let Some(phase) = extract_feedback_phase(template_ref)
             {
                 tracing::info!(
                     target: "reg.skill.cascade.step_executed",
@@ -725,6 +725,45 @@ enum PassResult {
     Exit(ExitKind),
 }
 
+/// Extract the feedback phase from a template reference for span emission.
+pub(crate) fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
+    let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
+    if last_segment.contains("classify") {
+        Some("Classify")
+    } else if last_segment.contains("gather") {
+        Some("Gather")
+    } else if last_segment.contains("draft")
+        || last_segment.contains("generate")
+        || last_segment.contains("extract")
+    {
+        Some("Draft")
+    } else if last_segment.contains("evaluate") {
+        Some("Evaluate")
+    } else if last_segment.contains("convergence") || last_segment.contains("converge") {
+        Some("Convergence")
+    } else if last_segment.contains("operator_feedback") || last_segment.contains("feedback") {
+        Some("OperatorFeedback")
+    } else if last_segment.contains("write") {
+        Some("Write")
+    } else if last_segment.contains("outcome") {
+        Some("Outcome")
+    } else {
+        None
+    }
+}
+
+/// Parse a JSON response from an inference call.
+pub(crate) fn parse_json_response(text: &str, step_ordinal: u32) -> Result<serde_json::Value> {
+    if let Ok(v) = serde_json::from_str(text) {
+        return Ok(v);
+    }
+    let extracted = hkask_types::json_extract::extract_json_from_response(text);
+    serde_json::from_str(&extracted).map_err(|e| TemplateError::ParseFailure {
+        step_ordinal,
+        detail: format!("Failed to parse JSON response: {e}"),
+    })
+}
+
 /// Classify a `TemplateError` into a stable `failure_mode` string for the
 /// `reg.skill.cascade.step_failed` tracing target. This lets operators
 /// filter and aggregate skill failures by mode (e.g.
@@ -747,6 +786,42 @@ fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
         crate::ports::TemplateError::Validation(_) => "validation_error",
         crate::ports::TemplateError::PathTraversal(_) => "path_traversal",
         crate::ports::TemplateError::SandboxViolation(_) => "sandbox_violation",
+    }
+}
+
+#[cfg(test)]
+mod extract_feedback_phase_tests {
+    use super::extract_feedback_phase;
+
+    #[test]
+    fn resolves_known_refs() {
+        assert_eq!(
+            extract_feedback_phase("sankey-flow/sankey-classify"),
+            Some("Classify")
+        );
+        assert_eq!(
+            extract_feedback_phase("bug-hunt/bug-hunt-gather"),
+            Some("Gather")
+        );
+        assert_eq!(extract_feedback_phase("skill/draft-plan"), Some("Draft"));
+        assert_eq!(
+            extract_feedback_phase("skill/evaluate-result"),
+            Some("Evaluate")
+        );
+        assert_eq!(
+            extract_feedback_phase("skill/convergence-check"),
+            Some("Convergence")
+        );
+        assert_eq!(
+            extract_feedback_phase("skill/operator_feedback"),
+            Some("OperatorFeedback")
+        );
+        assert_eq!(extract_feedback_phase("skill/write-report"), Some("Write"));
+        assert_eq!(
+            extract_feedback_phase("skill/outcome-track"),
+            Some("Outcome")
+        );
+        assert_eq!(extract_feedback_phase("skill/unknown-phase"), None);
     }
 }
 
