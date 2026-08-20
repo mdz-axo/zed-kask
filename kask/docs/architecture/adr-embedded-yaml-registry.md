@@ -1,16 +1,28 @@
 ---
 title: "ADR: Build-time embedded YAML/Jinja2 registry — amended to disk-first seed model"
 audience: [architects, developers, agents]
-last_updated: 2026-08-05
-version: "0.36.0"
-status: "Active"
+last_updated: 2026-08-20
+version: "0.37.0"
+status: "Superseded"
 domain: "architecture"
 mds_categories: [composition, lifecycle, trust]
 ---
 
 # ADR: Build-time embedded YAML/Jinja2 registry — amended to disk-first seed model
 
-**Status:** Active — **AMENDED 2026-08-05** (see [§ Amended decision](#amended-decision-2026-08-05) below). The original Decision section is preserved verbatim for context; its central mechanism (embedded-preferred, filesystem-as-dev-fallback) was inverted by commit `134d19659c` ("Seed shipped skills to disk at startup", 2026-08-04, part of the 2026-08-02-era registry seeding work). **The current reality is: disk is the single runtime source; the embedded `include_str!` payload is a one-time seed.** Reading the original sections without the amendment inverts the architecture.
+**Status:** Superseded — **AMENDED 2026-08-05** (see [§ Amended decision](#amended-decision-2026-08-05) below), then **SUPERSEDED 2026-08-20** by the upstream-Zed body-injection model (see [§ Supersession (2026-08-20)](#supersession-2026-08-20) below). The original Decision section is preserved verbatim for context; its central mechanism (embedded-preferred, filesystem-as-dev-fallback) was inverted by commit `134d19659c` ("Seed shipped skills to disk at startup", 2026-08-04, part of the 2026-08-02-era registry seeding work), then the entire `hkask-templates` crate and `registry/manifests/` FlowDef layer were deleted by commit `5f4cf5f10d`. **The current reality is: skill execution is upstream-Zed body injection via `SkillTool::run` → `render_skill_envelope` (`crates/agent/src/tools/skill_tool.rs:266`); there is no `ManifestExecutor`, no StepMachine, no PDCA cascade machinery. The `render_template` tool still reads Jinja2 templates from `kask/registry/templates/` (62 template crates remain), but there are no FlowDef manifests.** Reading the original sections without the amendment and supersession inverts the architecture.
+
+## Supersession (2026-08-20)
+
+The build-time embedding model described in this ADR — and the disk-first seed amendment — are **superseded** by the upstream-Zed body-injection model. Commit `5f4cf5f10d` deleted the `hkask-templates` crate (which contained `build.rs`, `BridgeManifestExecutor`, `ManifestExecutor`, `TemplateRenderer`, the `Registry` template index, and the FlowDef cascade machinery) and the entire `kask/registry/manifests/` directory (all FlowDef process manifests).
+
+**What replaced it:**
+
+- **Skill execution** is now upstream-Zed body injection. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it into the model context via `render_skill_envelope`. The model reads the body and follows the instructions. There is no `ManifestExecutor`, no `StepMachine`, no PDCA cascade machinery, no `ConvergenceTracker`, no `BundleManifest`, no `ExitKind`. PDCA loops are **model-coordinated**, not machine-enforced: the SKILL.md body describes convergence criteria and the model self-iterates using the `lisp_eval` tool (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic checks and the `render_template` tool for structured prompt scaffolding.
+- **Jinja2 templates** survive. The `render_template` tool (registered in `register_session`, not `add_default_tools`) renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. **62 template crates remain** under that path. The tool strips YAML frontmatter (`---`-delimited headers) — the frontmatter's `contract:` and `[inference]` blocks are NOT processed; LLM parameters (temperature, thinking_budget) in the frontmatter have no effect. Path traversal protection via `canonicalize` + `starts_with` rejects a `template_ref` containing `..` that resolves outside the base path. The template base path is wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup (dev: `kask/registry/templates/`, prod: `{kask_data_dir}/skills/registry/templates/`); if unset, the tool returns an error rather than rendering from the wrong path.
+- **`lisp_eval`** survives as a registered built-in tool (`add_default_tools`) — a sandboxed Lisp interpreter with no I/O, no `eval`, no network, bounded by `max_steps` (default 100000) and `max_depth` (default 64).
+
+**What this means for the four-layer table below:** the SKILL.md companions layer and the Jinja2 templates layer survive (the former via `agent_skills` discovery + `SkillTool::run` body injection; the latter via the `render_template` tool). The per-skill template manifests layer and the process manifests (FlowDef PDCA) layer are **deleted** — their rows below describe a model that no longer exists and are preserved only for historical context.
 
 ## Context
 
@@ -18,12 +30,12 @@ The kask-skills system is a four-layer architecture with a single Rust bridge:
 
 | Layer | Source of truth | Consumer |
 |-------|----------------|----------|
-| SKILL.md companions | `.agents/skills/<name>/SKILL.md` | `agent_skills` (discovery catalog) |
-| Per-skill template manifests | `registry/templates/<name>/manifest.yaml` | `Registry` (template index) |
-| Process manifests (FlowDef PDCA) | `registry/manifests/<name>.yaml` | `ManifestExecutor` (cascade driver) |
-| Jinja2 templates | `registry/templates/<name>/*.j2` | `TemplateRenderer` (prompt rendering) |
+| SKILL.md companions | `.agents/skills/<name>/SKILL.md` | `agent_skills` (discovery catalog) + `SkillTool::run` (body injection) |
+| Per-skill template manifests | `registry/templates/<name>/manifest.yaml` | ~~`Registry` (template index)~~ — **deleted with `hkask-templates` (commit `5f4cf5f10d`)** |
+| Process manifests (FlowDef PDCA) | `registry/manifests/<name>.yaml` | ~~`ManifestExecutor` (cascade driver)~~ — **deleted with `hkask-templates` (commit `5f4cf5f10d`); `registry/manifests/` no longer exists** |
+| Jinja2 templates | `registry/templates/<name>/*.j2` | `render_template` tool (prompt rendering, 62 template crates remain) |
 
-The architectural rationale — often stated as *"the flexible non-compiled YAML and Jinja2 layers can rapidly evolve as a natural sandboxing and learning surface around the core Rust code"* — is only half the story. The other half is in `hkask-templates/build.rs`.[^fowler-poeaa]
+The architectural rationale — often stated as *"the flexible non-compiled YAML and Jinja2 layers can rapidly evolve as a natural sandboxing and learning surface around the core Rust code"* — is only half the story. The other half was in `hkask-templates/build.rs`.[^fowler-poeaa] **(The `hkask-templates` crate and its `build.rs` were deleted by commit `5f4cf5f10d`; the embedding mechanism they describe is preserved below for historical context only.)**
 
 ## Decision (original, 2026-08-04 — SUPERSEDED)
 

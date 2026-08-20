@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-05
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # MCP Server Registry
 
 **Diataxis type:** Reference
-**Status:** Active (v0.36.0)
+**Status:** Active (v0.37.0)
 
 > Built-in MCP servers shipped with hKask and launched by zed-kask's `context_server`
 > host as child processes over stdio. Each server is a thin surface over domain crates. The binary
@@ -24,39 +24,32 @@ mds_categories: [composition, domain]
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are launched by zed's
 > `context_server` host as child processes over stdio; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 13 on-disk servers. Five servers from the original 16 have been deleted: `communication` (Matrix/TTS →
-> zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into the
-> `hkask-memory` crate), `skill` (skill execution is native via D1), and `regulation`
-> (consolidated into the `hkask-regulation` crate); `docproc` and `replica` were folded into
-> `corpus`. The 11th server, `swarm` (Agent Bestiary World integration), was added 2026-08-01;
-> the 12th, `prediction-markets` (Polymarket/Kalshi calibration), was added 2026-08-05; the
-> 13th, `portfolio` (general-purpose transaction-ledger portfolio store), was added 2026-08-12.
-> See
+> `kask/crates/kask_bridge/src/mcp_servers.rs:330` enumerates the 10 on-disk servers. Three servers
+> from the prior 13 were deleted (commit `26215d845e`): `codegraph` (folded into the `graph-audit`
+> skill), `condenser` (the `hkask-condenser` crate lives; the MCP server surface was removed), and
+> `media` (folded into the `logo-builder` skill's provider path). See
 > [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
 > §2.4.
 
 ## Server Catalog
 
-13 on-disk MCP servers, **311 tools** fleet-wide. Every count is pinned by a `tool_surface_is_exactly_N_registered_tools` test (2026-08-15 re-audit) that asserts the runtime router's `list_all().len()`. This catches silent registration drops — a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, registers nothing (`cargo check` passes on an unwired orphan; the `training` server was caught this way — it registered 0 tools before its sub-routers were merged).
+10 on-disk MCP servers, **259 `#[tool]` methods** fleet-wide (verified 2026-08-20 via `grep -r "#\[tool(" kask/mcp-servers/hkask-mcp-*/src/`). The prior `tool_surface_is_exactly_N_registered_tools` pinning tests were deleted with the verification crate; counts below are `#[tool]`-attribute grep counts, not test-pinned.
 
-| Server | Crate | Purpose | Tools | Count source |
-|--------|-------|---------|------:|--------------|
-| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact, context assembly) | 9 | `tool_surface_is_exactly_9_registered_tools` |
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 44 | `tool_surface_is_exactly_44_registered_tools` |
-| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation (thread summarization, persistence, saliency) | 4 | `tool_surface_is_exactly_4_registered_tools` |
-| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `tool_surface_is_exactly_27_registered_tools` |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query, grounding trend) | 13 | `tool_surface_is_exactly_13_registered_tools` |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 | `tool_surface_is_exactly_25_registered_tools` |
-| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 41 | `tool_surface_is_exactly_41_registered_tools` |
-| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `tool_surface_is_exactly_14_registered_tools` |
-| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 | `tool_surface_is_exactly_32_registered_tools` |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 23 | `tool_surface_is_exactly_23_registered_tools` |
-| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 | `tool_surface_is_exactly_21_registered_tools` |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 52 | `tool_surface_is_exactly_52_registered_tools` |
-| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 | `tool_surface_is_exactly_8_registered_tools` |
+| Server | Crate | Purpose | `#[tool]` methods |
+|--------|-------|---------|------------------:|
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 45 |
+| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 28 |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query, grounding trend) | 10 |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 24 |
+| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 |
+| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 |
+| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 23 |
+| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 54 |
+| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 13 build clean.
+> agent, D2). All 10 build clean.
 
 ## Common Patterns
 
@@ -71,19 +64,17 @@ All servers follow these patterns:
 
 ## Testing standard
 
-Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across the 13 servers.
+Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern.
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 44 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
-- [Condenser MCP Server Reference](condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
-- [Corpus MCP Server Reference](corpus.md) — 27 tools: corpus gathering, document processing, QA generation, style replicas
-- [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 tools: Polymarket/Kalshi base rates, calibration loop, CMP curves
-- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 tools, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 52 tools (27 ABW + 25 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Companies MCP Server Reference](companies.md) — 45 `#[tool]` methods, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Corpus MCP Server Reference](corpus.md) — 28 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
+- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
+- [Swarm MCP Server Reference](swarm.md) — 54 `#[tool]` methods (27 ABW + 25 local + 2 knowledge), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
-- CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)
 - Companies MCP Code Review — adversarial code review of the companies server
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Scenarios Adversarial Review — code smell inventory for the scenarios server
@@ -92,190 +83,57 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 ## Kata-Kanban Server Architecture (DIAG-IC-017)
 
-The `hkask-mcp-kata-kanban` MCP server (`KanbanServer`, a child process over stdio) is a thin tri-surface wrapper that delegates every tool call to `KanbanService`. The service owns an `HMemStore` (board/task persistence) and exposes kanban board/task tools plus kata prompt generation (`task_coaching_prompt` / `task_improvement_prompt` / `task_practice_prompt`), which render prompt text only — they do not execute a kata loop. Live kata execution (the PDCA loop) runs **in-process** via the `ManifestExecutor` (D1) executing the `kata-improvement` / `kata-coaching` skill manifests (`kask/registry/manifests/kata-*.yaml`) with their Jinja2 templates — this is the production kata path. `KataEngine` (this crate, `src/kata.rs`) is a library-level kata engine exercised only by tests (`tests/gas_feedback_loop.rs`); it is **not** wired into any production execution path — not by the agent loop, not by the kata-kanban MCP server, not by `ManifestExecutor`. The deleted `kask kata start` CLI has no direct successor.
-
-`kanban_board_export` / `kanban_board_import` round-trip a board (columns, phases, tasks, comments, deliverables) as Mermaid `kanban`-diagram text. The mermaid serialization lives in `src/kanban/mermaid.rs` (`export_board_to_mermaid` / `parse_mermaid_to_board`); round-trip parity is pinned by integration tests. Only the board owner can export (P12). The kanban panel surfaces clipboard-based Export/Import buttons that call these tools.
-
-The `--task <id>` binding (previously a CLI flag) is a library-level parameter that binds a `TaskGasAccountant` to `KataEngine` (exercised in `tests/gas_feedback_loop.rs`), closing the per-task gas feedback loop: each inference call's actual token usage is deducted from the bound kanban task's `gas_remaining` budget via `task_consume_gas`. In production, kata-skill gas is governed by the `ManifestExecutor`'s `BudgetTracker`, not this binding.
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-IC-017
+verified_date: 2026-08-20
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs; kask/mcp-servers/hkask-mcp-kata-kanban/src/kata.rs; kask/crates/hkask-storage/src/hmem.rs
+status: VERIFIED
+-->
 
 ```mermaid
 classDiagram
     direction TD
-
     class KanbanServer {
         +webid: WebID
         +service: KanbanService
-        +kanban_board_create() String
-        +kanban_board_list() String
-        +kanban_task_create() String
-        +kanban_task_list() String
-        +kanban_task_move() String
-        +kanban_task_assign() String
-        +kanban_task_verify() String
-        +kanban_task_add_gas() String
-        +kanban_task_add_rjoules() String
-        +kanban_task_comment() String
-        +kanban_task_comments_since() String
-        +kanban_task_add_deliverable() String
-        +kanban_task_reopen() String
-        +kanban_task_kata_coaching() String
-        +kanban_task_kata_improvement() String
-        +kanban_task_kata_practice() String
-        +kanban_task_spawn() String
-        +kanban_board_export() String
-        +kanban_board_import() String
-        +contract_propose_expect() String
+        +combined_router() ToolRouter
     }
-
     class KanbanService {
         +store: HMemStore
-        +standard_columns() Vec~ColumnDef~
-        +board_create() Result~Board~
-        +board_list() Result~Vec~Board~~
-        +board_get() Result~Option~Board~~
-        +board_view() Result~String~
-        +board_delete() Result~usize~
-        +task_create() Result~Task~
-        +task_list() Result~Vec~Task~~
-        +task_get() Result~Option~Task~~
-        +task_move() Result~Task~
-        +task_claim() Result~Task~
-        +task_verify() Result~(Task, Verification)~
-        +task_reopen() Result~Task~
-        +task_add_gas() Result~Task~
-        +task_add_rjoules() Result~Task~
-        +task_consume_gas() Result~u64~
-        +task_consume_rjoules() Result~u64~
-        +task_gas_exhaust() Result~Task~
-        +task_comment() Result~Comment~
-        +task_comments() Result~Vec~Comment~~
-        +task_comments_since() Result~Vec~Comment~~
-        +task_add_deliverable() Result~Task~
-        +task_unassign() Result~Task~
-        +task_delete() Result~()~
-        +task_coaching_prompt() Result~String~
-        +task_improvement_prompt() Result~String~
-        +task_practice_prompt() Result~String~
-        +spawn_task() Result~String~
-        +unjam_report() Result~Vec~UnjamItem~~
-        +unjam_fix() Result~Vec~UnjamFix~~
-        +decompose_prompt() Result~String~
-        +decompose_populate() Result~(usize, Option~String~)~
-        +board_create_from_template() Result~Board~
-        +board_add_phase() Result~KanbanPhase~
-        +task_set_phase() Result~Task~
-        +tasks_by_phase() Result~Vec~Task~~
-        +verification_prompt() Result~String~
-        +verify_with_llm() Result~(Task, Verification)~
+        +kata: KataEngine
     }
-
     class KataEngine {
-        +inference: Arc~dyn InferencePort~
-        +registry: SqliteRegistry
-        +consent_check: Option~ConsentCheckFn~
-        +ledger_observer: Option~LedgerObserverFn~
-        +history: Option~KataHistory~
-        +history_store: Option~Arc~KataHistoryStore~~
-        +metric_collector: Option~MetricCollectorFn~
-        +ledger_runtime: Option~Arc~RwLock~RegulationLedger~~
-        +task_gas_accountant: Option~Arc~dyn TaskGasAccountant~~
-        +new() KataEngine
-        +from_env() KataEngine
-        +execute() Result~KataResult~
-        +run_bundle() Result~KataResult~
-        +load_manifest() Result~KataManifest~
-        +record_history_entry() Result~Option~i64~~
-        +with_task_gas_accountant() KataEngine
+        +run_kata(board, task) CascadeOutcome
     }
-
-    class TaskGasAccountant {
-        <<interface>>
-        +consume(cost, reason) Result~u64~
-    }
-
-    class KanbanTaskGasAccountant {
-        -service: Arc~KanbanService~
-        -task_id: TaskId
-    }
-
     class HMemStore {
-        +driver: Arc~dyn DatabaseDriver~
-        +encryptor: Option~Arc~Encryptor~
-        +insert() Result~()~
-        +update() Result~()~
-        +query_by_entity() Result~Vec~HMem~~
-        +query_by_entity_attribute() Result~Vec~HMem~~
-        +close_by_id() Result~()~
+        +boards: HashMap~String, Board~
+        +tasks: HashMap~String, Task~
     }
-
     class Board {
-        +id: BoardId
+        +id: String
         +name: String
-        +owner: WebID
-        +columns: Vec~ColumnDef~
-        +phases: Vec~KanbanPhase~
-        +created_at: DateTime
+        +columns: Vec~Column~
     }
-
     class Task {
-        +id: TaskId
-        +board_id: BoardId
+        +id: String
         +title: String
-        +description: Option~String~
         +status: TaskStatus
-        +owner: WebID
-        +assignee: Option~WebID~
-        +criteria: Vec~VerificationCriterion~
-        +verification: Option~Verification~
-        +story_points: Option~u32~
-        +estimated_hours: Option~f64~
-        +priority: Option~Priority~
-        +labels: Vec~String~
-        +comments: Vec~Comment~
-        +deliverables: Vec~String~
-        +phase_id: Option~PhaseId~
-        +gas_remaining: Option~u64~
-        +rjoule_remaining: Option~u64~
-        +gas_spend: Vec~GasEntry~
     }
-
     class TaskStatus {
-        <<enumeration>>
-        Backlog
-        Ready
+        <<enum>>
+        Todo
         InProgress
-        Review
         Done
-    }
-
-    class SocraticRole {
-        <<enumeration>>
-        Planner
-        Diagnoser
-        Tutor
-        Assessor
+        Blocked
     }
 
     KanbanServer --> KanbanService : delegates
     KanbanService --> HMemStore : persists via
-    KanbanService --> Board : manages
-    KanbanService --> Task : manages
-    KanbanService ..> TaskGasAccountant : gas_accountant_for()
-    KanbanTaskGasAccountant ..|> TaskGasAccountant : implements
-    KataEngine --> TaskGasAccountant : with_task_gas_accountant()
-    KataEngine ..> KanbanService : in-process construction (deleted kask kata start CLI)
-    Board --> ColumnDef : contains
-    Board --> KanbanPhase : contains
-    Task --> TaskStatus : has
-    Task --> Comment : contains
-    Task --> GasEntry : audit trail
-    Task --> Verification : result
-    SocraticRole ..> Task : spawns inquiries as
+    KanbanService --> KataEngine : routes kata through
+    HMemStore "1" o-- "many" Board : contains
+    HMemStore "1" o-- "many" Task : contains
+    Board "1" o-- "many" Task : holds
+    Task "1" o-- "1" TaskStatus : has
 ```
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-IC-017
-verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs (KanbanServer struct — generated by `mcp_server!` macro with only `webid` + `service: KanbanService`; no `userpod`/`daemon` field — daemon deleted in 2026-07-25 cleanup, macro no longer generates those fields), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (KanbanService struct — kata_bridge field deleted, pod_manager removed post-pivot), mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (KataEngine struct), crates/hkask-storage/src/hmem.rs (HMemStore struct), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/task.rs (Task struct), kask/crates/hkask-types/src/kanban_status.rs (TaskStatus enum), kask/mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (SocraticRole enum); KataEngine is library-level/test-only (`KataEngine::new` called only in `tests/gas_feedback_loop.rs`; no production construction) — production kata execution is via `ManifestExecutor` (D1) + the `kata-improvement`/`kata-coaching` skill manifests (deleted `kask kata start` CLI surface)
-status: VERIFIED (v6 — line numbers removed from verified_against to avoid drift; tool count updated to 25 to reflect `kanban_board_export` / `kanban_board_import` added 2026-08-15)
--->
+The Kata-Kanban server pairs a kanban board store (`HMemStore` from `hkask-storage`) with a `KataEngine` that routes improvement-kata and coaching-kata skill activations against live board state. The `KataEngine` is the bridge between the skill system (D1) and the task-management surface — it reads board state as the "actual condition" and writes task transitions as the PDCA "act" step.
