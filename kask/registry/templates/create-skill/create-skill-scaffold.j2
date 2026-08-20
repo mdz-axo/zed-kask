@@ -73,6 +73,45 @@ templates:
 
 For each PDCA phase, generate a .j2 template with:
 
+### Inference Parameters (choose per step)
+
+The `[inference]` block controls model behavior. Choose parameters based on the
+step's cognitive role, not by defaulting everything to high:
+
+| Parameter | Deep reasoning step | Synthesis/classification step | Formatting step |
+|---|---|---|---|
+| `thinking_budget` | `"full"` | `"off"` | `"off"` |
+| `work_effort` | `"high"` | `"medium"` | `"low"` |
+| `verbosity` | `"detailed"` | `"standard"` | `"concise"` |
+| `temperature` | 0.3-0.5 | 0.1-0.3 | 0.1 |
+
+Deep reasoning: analytical steps that require extended reasoning (competitive
+analysis, scenario generation, economic modeling, hypothesis formation).
+Synthesis/classification: steps that assemble or evaluate already-analyzed data
+(scoring, judging, categorizing, synthesizing prior outputs).
+Formatting: steps that format or communicate without new analysis.
+
+`thinking_budget` is the primary execution-time lever — `"off"` eliminates
+hidden reasoning tokens, dramatically reducing inference time. `work_effort`
+is a fallback for `thinking_budget` (high/medium → ON, low/minimal → OFF).
+`verbosity` injects a system-prompt instruction controlling output length.
+
+### Template Leanness
+
+Each template should be lean — no redundancy:
+- Describe each concept ONCE. If a framework or methodology is explained in a
+  "basis" section, do not re-explain it in a "protocol" section.
+- Use single-sentence anchors for methodology quotes, not paragraph-length
+  quotations.
+- JSON output schemas use type placeholders (e.g., `"(description)"`), not
+  concrete analysis content as example values.
+- State each instruction ONCE. If an instruction appears in the protocol section,
+  do not repeat it in the constraints section.
+- Use generic examples, not industry-specific ones that may not apply to the
+  skill's domain.
+
+### Template Structure
+
 ```
 {% raw %}
 [inference]
