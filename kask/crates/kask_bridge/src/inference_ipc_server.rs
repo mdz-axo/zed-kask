@@ -289,7 +289,6 @@ impl InferenceIpcServer {
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
         tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
-        skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -335,7 +334,6 @@ impl InferenceIpcServer {
         let port = inference_port.clone();
         let emb_port = embedding_port;
         let tools = tool_port.clone();
-        let skill_exec = skill_exec_port.clone();
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
@@ -471,11 +469,10 @@ async fn handle_connection(
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
     tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
-    skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
-    worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>,
 ) {
     if !peer_is_owner(&stream) {
         return;
@@ -526,7 +523,6 @@ async fn handle_connection(
             &port,
             embedding_port.as_ref(),
             tool_port.as_ref(),
-            skill_exec_port.as_ref(),
             &list_models_tx,
             worktree_spawn_tx.as_ref(),
             request,
@@ -578,11 +574,10 @@ async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
     tool_port: Option<&Arc<dyn hkask_capability::ToolPort>>,
-    skill_exec_port: Option<&Arc<dyn hkask_types::SkillExecPort>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
-    worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
@@ -721,43 +716,6 @@ async fn dispatch(
             Err(e) => InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "ToolPort".to_string(),
-                    message: e.to_string(),
-                },
-            },
-        };
-    }
-
-    // Skill-execute requests route to the zed-side `ManifestExecutor` (via
-    // the injected `SkillExecPort`). The cascade runs with its own enforcement
-    // enforcement on the zed side — the child process never holds token
-    // material. Used by `hkask-mcp-swarm`'s local delegate to run an agent's
-    // declared `skills` against the task before the LLM call.
-    if matches!(request.method, InferenceMethod::SkillExecute) {
-        let Some(skill_exec_port) = skill_exec_port else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "skill execution not configured on the zed side — the IPC \
-                        server was started without a skill exec port. This indicates a \
-                        startup wiring bug."
-                        .to_string(),
-                },
-            };
-        };
-        let Some(name) = params.skill_name.clone() else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "SkillExec".to_string(),
-                    message: "skill_execute request missing skill_name".to_string(),
-                },
-            };
-        };
-        let task = params.skill_task.unwrap_or_default();
-        return match skill_exec_port.execute_skill(&name, &task).await {
-            Ok(result) => InferenceOutcome::SkillResult { result },
-            Err(e) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "SkillExec".to_string(),
                     message: e.to_string(),
                 },
             },

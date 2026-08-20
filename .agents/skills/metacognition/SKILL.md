@@ -9,7 +9,7 @@ description: "Master self-reflection skill following the Toyota Improvement Kata
 Master self-reflection skill following the Toyota Improvement Kata (Rother 2010).
 The skill runs actual PDCA: grasp the current condition, establish a target
 condition, make a prediction, run an experiment, measure the gap, and score
-the prediction. Convergence is detected deterministically via the hypotenuse
+the prediction. Evaluate convergence via the hypotenuse
 of object-space (Dublin Core) and process-space (PKO) gaps, plus Brier-scored
 prediction calibration.
 
@@ -52,7 +52,7 @@ prediction calibration.
 2. Re-measure the current condition after the experiment (the experiment changed the system).
 3. Produce new current_artifacts and current_procedure for the gap computation.
 
-### Convergence (Steps 5-9: Check + Act — deterministic compute, no LLM)
+### Convergence (Steps 5-9: Check + Act — model-evaluated)
 
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).

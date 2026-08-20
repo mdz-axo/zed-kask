@@ -1410,7 +1410,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             curator: c.curator.map(Into::into).unwrap_or_default(),
             memory: c.memory.map(Into::into).unwrap_or_default(),
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
-            codegraph: c.codegraph.map(Into::into).unwrap_or_default(),
             research: c.research.map(Into::into).unwrap_or_default(),
             companies: c.companies.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
