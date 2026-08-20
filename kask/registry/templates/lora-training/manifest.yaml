@@ -5,7 +5,6 @@
 crate:
   name: lora-training
   version: "0.35.0"
-  visibility: public
   description: >
     LoRA/QLoRA training configuration and contract enforcement skill for
     hKask. Produces a composable PEFT recommendation via a deterministic

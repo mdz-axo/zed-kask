@@ -17,7 +17,7 @@
 use chrono::{Datelike, Timelike};
 use std::path::{Path, PathBuf};
 
-use agent_skills::Skill;
+use agent_skills::{Skill, is_core_skill};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::{GzipDecoder, GzipEncoder};
 use async_tar::Builder;
@@ -373,6 +373,28 @@ fn parse_manifest_dependencies(manifest_content: &str) -> Vec<String> {
     deps
 }
 
+/// zed-kask: Pure pre-publish check: refuse core skills. Core skills are
+/// overwritten on every seed (`seed_shipped_skills`), so a published copy
+/// would diverge from the shipped binary's version and survive as a stale
+/// marketplace listing. Extracted for testability without fs/http types
+/// (mirrors `ensure_manifest_matches_skill_id`).
+///
+/// The visibility-toggle UI (`skills_visibility.rs` `handle_visibility_toggle`)
+/// already refuses core skills; this is the publish-path enforcement —
+/// defense in depth against a direct call or a future caller that bypasses
+/// the toggle gate. Pinned by `test_refuse_core_skill_at_publish`.
+fn refuse_core_skill_at_publish(skill: &Skill) -> Result<()> {
+    if is_core_skill(&skill.name) {
+        bail!(
+            "skill '{}' is a core skill and cannot be published to the marketplace. \
+             Core skills are overwritten on seed; a published copy would diverge \
+             from the shipped binary.",
+            skill.name
+        );
+    }
+    Ok(())
+}
+
 /// Publish a skill to the marketplace by uploading to S3.
 ///
 /// This is called by the `SkillVisibilityQueue` drain task when a skill is
@@ -390,6 +412,9 @@ pub async fn publish_skill(
     source_user: &str,
     version: &str,
 ) -> Result<()> {
+    // zed-kask: refuse to publish a core skill (see `refuse_core_skill_at_publish`).
+    refuse_core_skill_at_publish(skill)?;
+
     log::info!(
         "kask-extensions: publishing skill '{}/{}' version {}",
         source_user,
@@ -1035,6 +1060,56 @@ mod tests {
         assert!(
             msg.contains("catalog's latest is 2026-08-02.1"),
             "error must name the catalog's version: {msg}"
+        );
+    }
+
+    // zed-kask: a core skill must be refused at publish time. Core skills are
+    // overwritten on seed, so a published copy would diverge from the shipped
+    // binary. The visibility-toggle UI refuses core skills, but this pins the
+    // publish-path enforcement (defense in depth). Uses a name in
+    // CORE_SKILL_NAMES ("create-skill") so `is_core_skill` returns true.
+    #[test]
+    fn test_refuse_core_skill_at_publish() {
+        let core_skill = Skill {
+            name: "create-skill".to_string(),
+            description: "core skill".to_string(),
+            source: agent_skills::SkillSource::Global,
+            directory_path: PathBuf::from("/skills/create-skill"),
+            skill_file_path: PathBuf::from("/skills/create-skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            visibility: agent_skills::SkillVisibility::Public,
+            dependencies: Vec::new(),
+            core: true,
+        };
+        let result = refuse_core_skill_at_publish(&core_skill);
+        assert!(result.is_err(), "publishing a core skill must be refused");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("core skill"),
+            "error must name the core-skill violation; got: {msg}"
+        );
+    }
+
+    // zed-kask: a non-core skill passes the publish refusal gate. This pins
+    // that the check does not over-reach and block legitimate user skills.
+    #[test]
+    fn test_refuse_core_skill_at_publish_allows_user_skill() {
+        let user_skill = Skill {
+            name: "my-user-skill".to_string(),
+            description: "a normal user skill".to_string(),
+            source: agent_skills::SkillSource::Global,
+            directory_path: PathBuf::from("/skills/my-user-skill"),
+            skill_file_path: PathBuf::from("/skills/my-user-skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            visibility: agent_skills::SkillVisibility::Public,
+            dependencies: Vec::new(),
+            core: false,
+        };
+        assert!(
+            refuse_core_skill_at_publish(&user_skill).is_ok(),
+            "a non-core skill must pass the publish refusal gate"
         );
     }
 }

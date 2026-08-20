@@ -4,7 +4,6 @@
 crate:
   name: training
   version: "0.35.0"
-  visibility: public
   description: >
     Harness-native training configuration renderers. These templates transform
     typed TrainingParams into provider input; they do not perform inference or

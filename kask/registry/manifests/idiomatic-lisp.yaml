@@ -119,9 +119,16 @@ steps:
       absent.
     timeout_seconds: 10
     input_mapping:
+      # Guards against the step-3 LLM output not being a JSON object —
+      # `assoc` errors with "type error: expected list, got string" when
+      # step_3_result is prose/markdown (observed live: the skill returned a
+      # degenerate signal instead of a report). Same guard class as the
+      # essentialist convergence form (see essentialist_manifest_test.rs).
       form: >
-        (let ((score (assoc "critique_score" step_3_result)))
-          (if (is_null score) 0 score))
+        (if (not (listp step_3_result))
+            0
+            (let ((score (assoc "critique_score" step_3_result)))
+              (if (is_null score) 0 score)))
       env:
         step_3_result: "{{ step_3_result | default({}) }}"
 
