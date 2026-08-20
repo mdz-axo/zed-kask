@@ -67,8 +67,4 @@ graph TD
 
 ## Cross-Links
 
-- [Document Index](README.md) — the full document set with Diataxis classification and MDS coverage
-- [Framework Specifications](interdisciplinary-constraint-forces-frameworks.md) — GSR (§1) and CFR (§2) as named procedures
-- [Research Report](interdisciplinary-constraint-forces-report.md) — provenance table, hypotheses, tests, gradient map
-- [Translational Amendment](interdisciplinary-constraint-forces-translational-amendment.md) — scope boundary and conflation trap
 - [MDS](../architecture/core/MDS.md) — Minimal Domain Specification categories
