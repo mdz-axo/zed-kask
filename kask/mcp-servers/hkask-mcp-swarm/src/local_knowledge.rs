@@ -344,12 +344,17 @@ pub(crate) async fn ingest_turn(
         "response": capped_response,
         "model": model,
     });
+    // Store the turn as a JSON *string* (not an object) so the recall path's
+    // `h_mem.value.as_str()` recovers the full text — mirrors the bridge's
+    // `RealMemoryPort::ingest_turn`, which stringifies the turn JSON for the
+    // same reason.
+    let turn_record = serde_json::Value::String(turn_value.to_string());
 
     // Process-axis anchoring (P5.4): a swarm delegation is a PKO step
     // execution of the delegate procedure, anchored to the agent so recall
     // can distinguish turns by producer.
     let ontology = HMemOntology::episodic("swarm_delegate", "turn", agent_id);
-    let mut h_mem = HMem::new(&entity, "chatted", turn_value, owner).with_ontology(ontology);
+    let mut h_mem = HMem::new(&entity, "chatted", turn_record, owner).with_ontology(ontology);
     // Shared visibility so the turn is part of the shared knowledgebase —
     // recallable across all agents/swarms, not just the producing agent.
     h_mem.access.visibility = Visibility::Shared;
@@ -509,4 +514,233 @@ pub(crate) async fn one_shot_generate(
             LocalSwarmError::Unavailable(format!("local inference generate failed: {e}"))
         })?;
     Ok(result.text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    /// Embedding dimension used by the test stubs. Must match the store's
+    /// `vec0` table dim, which `Database::open` creates from
+    /// `hkask_storage::embedding_dim()` (the schema's `$DIM`). Reading the
+    /// same resolver keeps the stub in sync with the store regardless of
+    /// `HKASK_EMBEDDING_DIM`.
+    fn test_dim() -> usize {
+        hkask_storage::embedding_dim()
+    }
+    const TEST_PASSPHRASE: &str = "test-passphrase";
+
+    /// A stub `InferencePort` whose `embed` returns a deterministic unit
+    /// vector of length `dim`, so ingest and recall round-trip through the
+    /// real sqlite-vec KNN index. `generate` is unused by the memory path.
+    struct EmbedStubInference {
+        dim: usize,
+    }
+
+    impl hkask_types::InferencePort for EmbedStubInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Ok(hkask_types::InferenceResult {
+                    text: "stub".into(),
+                    model: "stub-model".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+
+        fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+            // Capture only the count (owned, `Copy`) so the future borrows
+            // nothing — the trait ties the returned future's lifetime to
+            // `&self`, and `texts` carries an unrelated lifetime.
+            let count = texts.len();
+            let dim = self.dim;
+            Box::pin(async move {
+                Ok((0..count)
+                    .map(|_| {
+                        let mut vector = vec![0.0f32; dim];
+                        if dim > 0 {
+                            vector[0] = 1.0;
+                        }
+                        vector
+                    })
+                    .collect())
+            })
+        }
+    }
+
+    /// A `LazyLocalMemory` backed by a unique temp SQLCipher file. Each test
+    /// gets its own DB so ingest/recall round-trips never collide. The files
+    /// leak in the temp dir (the path is owned by `LazyLocalMemory`); this
+    /// mirrors the production open path exactly, including sqlite-vec.
+    fn temp_memory() -> LazyLocalMemory {
+        let path =
+            std::env::temp_dir().join(format!("kask-swarm-mem-test-{}.db", uuid::Uuid::new_v4()));
+        LazyLocalMemory::lazy(
+            path.to_string_lossy().to_string(),
+            TEST_PASSPHRASE.to_string(),
+            test_dim(),
+        )
+    }
+
+    /// `ingest_turn` stores the full turn (task + response + model) as an h_mem
+    /// AND an embedding of the task, so `recall_turns` retrieves it by
+    /// semantic similarity. Pins the round-trip end-to-end through sqlite-vec.
+    #[tokio::test]
+    async fn ingest_turn_stores_full_turn_retrievable_by_recall() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+        ingest_turn(
+            &memory,
+            &inference,
+            "market_analyst",
+            "analyze the market",
+            "the market is up",
+            "test-model",
+        )
+        .await;
+
+        let turns = recall_turns(&memory, &inference, "market", 10)
+            .await
+            .expect("recall succeeds on a configured store");
+        assert_eq!(turns.len(), 1, "the ingested turn is the only KNN hit");
+        assert_eq!(turns[0].agent_id, "market_analyst");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&turns[0].text).expect("turn text is the turn JSON");
+        assert_eq!(parsed["agent_id"], "market_analyst");
+        assert_eq!(parsed["task"], "analyze the market");
+        assert_eq!(parsed["response"], "the market is up");
+        assert_eq!(parsed["model"], "test-model");
+    }
+
+    /// The knowledgebase is SHARED: `search_similar` has no agent filter, so a
+    /// turn one agent produced is retrievable by any other. This pins that
+    /// cross-agent/cross-swarm property — the whole point of one DB for all
+    /// swarms.
+    #[tokio::test]
+    async fn recall_spans_all_agents_shared_knowledgebase() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+        // A turn produced by `agent_alpha`.
+        ingest_turn(
+            &memory,
+            &inference,
+            "agent_alpha",
+            "shared research task",
+            "shared finding",
+            "m",
+        )
+        .await;
+
+        // `recall_turns` takes no agent argument — it spans the whole KB. A
+        // turn `agent_alpha` produced is retrievable here ("by" any agent).
+        let turns = recall_turns(&memory, &inference, "anything", 10)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].agent_id, "agent_alpha");
+    }
+
+    /// `ingest_turn` degrades gracefully when the store cannot be opened (short
+    /// passphrase): it must not panic and must write nothing. `recall_turns`
+    /// surfaces the unavailability as an error (callers show a
+    /// `memory_unconfigured` note, never fabricated empty hits — the `.rules`
+    /// unwrap_or(0) trap).
+    #[tokio::test]
+    async fn ingest_turn_skips_and_recall_errors_when_store_unavailable() {
+        let path =
+            std::env::temp_dir().join(format!("kask-swarm-mem-test-{}.db", uuid::Uuid::new_v4()));
+        // A passphrase shorter than 8 chars makes `get_or_init` error every
+        // time, so the store never opens.
+        let memory = LazyLocalMemory::lazy(
+            path.to_string_lossy().to_string(),
+            "short".to_string(),
+            test_dim(),
+        );
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+
+        // Must not panic and must not fail the call (memory is non-fatal).
+        ingest_turn(&memory, &inference, "agent", "task", "response", "m").await;
+
+        let recall_error = recall_turns(&memory, &inference, "q", 10).await;
+        assert!(
+            recall_error.is_err(),
+            "recall surfaces unavailability, not empty hits"
+        );
+    }
+
+    /// Multiple turns from multiple agents accumulate in the shared KB and are
+    /// all retrievable — the knowledgebase grows across delegations.
+    #[tokio::test]
+    async fn multiple_turns_accumulate_in_shared_knowledgebase() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+        ingest_turn(
+            &memory,
+            &inference,
+            "agent_a",
+            "task one",
+            "response one",
+            "m",
+        )
+        .await;
+        ingest_turn(
+            &memory,
+            &inference,
+            "agent_b",
+            "task two",
+            "response two",
+            "m",
+        )
+        .await;
+        ingest_turn(
+            &memory,
+            &inference,
+            "agent_a",
+            "task three",
+            "response three",
+            "m",
+        )
+        .await;
+
+        let turns = recall_turns(&memory, &inference, "query", 50)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(
+            turns.len(),
+            3,
+            "all three turns accumulated and are retrievable"
+        );
+        let agent_ids: std::collections::HashSet<String> =
+            turns.into_iter().map(|turn| turn.agent_id).collect();
+        assert!(agent_ids.contains("agent_a"));
+        assert!(agent_ids.contains("agent_b"));
+    }
 }

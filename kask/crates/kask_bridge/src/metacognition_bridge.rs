@@ -50,8 +50,6 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "critical_alerts": s.critical_alerts,
                 "regulation_effectiveness": s.regulation_effectiveness,
                 "escalation_count": s.escalation_count,
-                // D34 — skill verification failures since the last tick.
-                "skill_verification_failures": s.skill_verification_failures,
                 "healthy": s.ledger_health.healthy,
                 "total_cycles": s.regulation_health.total_cycles,
                 "accepted": s.regulation_health.accepted,

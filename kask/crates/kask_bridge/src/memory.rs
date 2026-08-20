@@ -926,26 +926,6 @@ impl MemoryPort for RealMemoryPort {
         })
     }
 
-    // zed-kask: D34 — store the skill verification report in the curator's
-    // sovereign memory so the curator can recall it via
-    // `curator_memory_recall` (entity: `skill_verification:<skill_name>`).
-    fn store_skill_verification(&self, skill_name: &str, verdict: &str, tool_calls: &[String]) {
-        let entity = format!("skill_verification:{}", skill_name);
-        let report_value = serde_json::json!({
-            "skill_name": skill_name,
-            "verdict": verdict,
-            "tool_calls": tool_calls,
-        });
-        let h_mem = hkask_storage::HMem::new(&entity, "verified", report_value, self.curator_webid);
-        if let Some(curator_store) = self.curator_store.get() {
-            if let Err(e) = curator_store.store(h_mem) {
-                tracing::warn!(
-                    target: "reg.curation",
-                    skill = %skill_name,
-                    error = %e,
-                    "Failed to store skill verification report in curator memory"
-                );
-            }
         }
     }
 }
@@ -1391,52 +1371,6 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         let inner = self.inner.clone();
         let user_message = !record.user_input.trim().is_empty();
         hkask_tool_invoker::correlate_reask(user_message);
-        // Skill step verification: emit a reg span AND store the report as
-        // an episodic h_mem in the curator's memory so the curator can
-        // recall it via `curator_memory_recall` (entity:
-        // `skill_verification:<skill_name>`) to detect systematically
-        // incomplete skills. This closes the trust loop: skill runs →
-        // verdict produced → stored in curator memory → curator recalls
-        // pattern → issues CuratorDirective to fix the skill.
-        if let Some(ref report) = record.skill_step_report {
-            let verdict_str = match &report.verdict {
-                agent::skill_step_tracker::SkillVerificationVerdict::Verified => {
-                    "verified".to_string()
-                }
-                agent::skill_step_tracker::SkillVerificationVerdict::Incomplete {
-                    missing_steps,
-                } => {
-                    format!("incomplete: missing {:?}", missing_steps)
-                }
-                agent::skill_step_tracker::SkillVerificationVerdict::NoDeclaration => {
-                    "no_declaration".to_string()
-                }
-            };
-            // D34 — increment the process-global failure counter on
-            // Incomplete verdicts so the MetacognitionLoop senses it.
-            if matches!(
-                report.verdict,
-                agent::skill_step_tracker::SkillVerificationVerdict::Incomplete { .. }
-            ) {
-                hkask_regulation::metacognition::record_skill_verification_failure();
-            }
-            hkask_types::regulation::RegulationSpan::Curation.emit("skill_verification");
-            tracing::info!(
-                target: "reg.curation",
-                skill = %report.skill_name,
-                verdict = %verdict_str,
-                tool_calls = ?report.tool_call_sequence,
-                "Skill step verification"
-            );
-            // Store the report in the curator's sovereign memory so the
-            // curator can recall it and detect patterns of incomplete skill
-            // execution.
-            inner.store_skill_verification(
-                &report.skill_name,
-                &verdict_str,
-                &report.tool_call_sequence,
-            );
-        }
         Box::pin(async move {
             inner
                 .ingest_turn(TurnRecord {
@@ -2647,7 +2581,6 @@ mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: None,
-            skill_step_report: None,
         };
         let result = bridge.ingest_turn(record).await;
         assert!(

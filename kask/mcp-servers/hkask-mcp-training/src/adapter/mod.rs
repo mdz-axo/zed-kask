@@ -13,10 +13,9 @@
 //! `TrainedLoRAAdapter` (content-addressed, owner-scoped artifact) to an
 //! `InferenceEndpointHandle` (a provider-provisioned, lifecycle-governed, cost-tracked resource).
 //!
-//! OCAP enforcement happens at the `McpRuntime` governance layer
+//! Tool dispatch enforcement happens at the `McpRuntime` governance layer
 //! (`McpRuntime::with_governance` in `crates/zed/src/main.rs`), not at the
 //! adapter layer. The previous `AdapterPort` trait + `AdapterRouter` impl
-//! (which advertised OCAP via `_token` parameters but never verified them)
 //! was removed — it was dead code with zero production callers. The training
 //! tools use `AdapterStore` (CRUD) and `InferencePort` (inference) directly.
 

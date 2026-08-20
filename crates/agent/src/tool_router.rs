@@ -189,7 +189,7 @@ where
 /// was considered and rejected on evidence: measuring a representative 20-tool
 /// MCP surface showed that precise requests legitimately select **one or two**
 /// tools ("generate an image and add it to the gallery" → `generate_image` +
-/// `gallery_search`; "what is the calibrated probability this market resolves
+/// `web_search`; "what is the calibrated probability this market resolves
 /// yes" → `market_forecast` alone), and those are the selections worth keeping —
 /// they are where the token saving comes from. A floor of 3 would have discarded
 /// exactly the cases the router gets right while fixing only the empty ones.
@@ -435,8 +435,8 @@ impl LazyToolRouter {
         //
         // Matching is whole-term for every keyword length. It was previously
         // substring-based for keywords over 4 characters, which made `search`
-        // match "re-search": a request to search the gallery scored
-        // `companies_profile` and `codegraph_query` as relevant purely because
+        // match "re-search": a request to search the web scored
+        // `companies_profile` and `web_search` as relevant purely because
         // their descriptions contain the word "research".
         let matched = context_keywords
             .iter()
@@ -444,11 +444,11 @@ impl LazyToolRouter {
             .count();
 
         // A keyword hitting the tool's *name* is far stronger evidence than one
-        // hitting its prose. Tool names are curated identifiers (`codegraph_query`,
+        // hitting its prose. Tool names are curated identifiers (`web_search`,
         // `generate_speech`), so a match there is close to the user naming the
         // tool outright, whereas descriptions share incidental vocabulary with
-        // every other tool. Measured on the eval set: "query the codegraph for the
-        // symbol..." shares three description terms with `codegraph_query` yet
+        // every other tool. Measured on the eval set: "search the web for the
+        // symbol..." shares three description terms with `web_search` yet
         // scored 0.20 and was outranked by unrelated tools, because name evidence
         // counted for nothing.
         let name_matched = context_keywords
@@ -588,7 +588,7 @@ const CODE_TOOL_NUDGE: f64 = 0.10;
 /// match on all three saturates at 1.0 without clamping.
 ///
 /// Name evidence is weighted highest because tool names are curated identifiers:
-/// a keyword matching `codegraph_query`'s name is near-explicit tool selection,
+/// a keyword matching `web_search`'s name is near-explicit tool selection,
 /// whereas description vocabulary is shared incidentally across the surface.
 const NAME_WEIGHT: f64 = 0.40;
 const DESCRIPTION_WEIGHT: f64 = 0.35;
@@ -825,10 +825,7 @@ mod tests {
             user_message: Some(long_message.to_string()),
             open_file_paths: vec![],
             candidates: vec![
-                candidate(
-                    "codegraph_traverse",
-                    "Traverse the code graph to find callers of a function",
-                ),
+                candidate("web_search", "Look up web pages and extract content"),
                 candidate(
                     "kanban_task_create",
                     "Create a task to delegate work to a subagent",
@@ -869,9 +866,9 @@ mod tests {
     /// bypass and never scored.
     #[test]
     fn short_code_request_with_no_scoreable_keywords_fails_open() {
-        let names: Vec<SharedString> = vec!["codegraph_query".into(), "market_lookup".into()];
+        let names: Vec<SharedString> = vec!["web_search".into(), "market_lookup".into()];
         let descriptions: Vec<SharedString> = vec![
-            "Search the codebase for symbols by name or file path".into(),
+            "Search the web with RRF fusion across providers".into(),
             "Look up a prediction market by question".into(),
         ];
         let tools: Vec<(&SharedString, &SharedString)> =
@@ -902,10 +899,7 @@ mod tests {
             ),
             open_file_paths: vec!["/project/src/main.rs".to_string()],
             candidates: vec![
-                candidate(
-                    "codegraph_query",
-                    "Search the codebase for symbols by name or file path",
-                ),
+                candidate("web_search", "Search the web for code and documentation"),
                 candidate("market_lookup", "Look up a prediction market by question"),
             ],
         };
@@ -913,8 +907,8 @@ mod tests {
             .select_tools(&context)
             .expect("router should activate");
         assert!(
-            selected.contains(&"codegraph_query".into()),
-            "the matching code tool must be retained"
+            selected.contains(&"web_search".into()),
+            "the matching web tool must be retained"
         );
         assert!(
             !selected.contains(&"market_lookup".into()),
@@ -1077,7 +1071,7 @@ mod tests {
     }
 
     /// Keyword matching must be whole-term. Substring matching made `search`
-    /// match "re*search*", so a gallery search scored `companies_profile` and
+    /// match "re*search*", so a web search scored `companies_profile` and
     /// any other tool whose description merely contained the word "research".
     #[test]
     fn keyword_matching_is_whole_term_not_substring() {
@@ -1085,18 +1079,18 @@ mod tests {
         let selected = router
             .select_tools(&ToolSelectionContext {
                 user_message: Some(
-                    "search the gallery for the mountain image i generated last week".to_string(),
+                    "search the web for the mountain image i generated last week".to_string(),
                 ),
                 open_file_paths: vec![],
                 candidates: vec![
-                    candidate("gallery_search", "Search the media gallery for images"),
+                    candidate("web_search", "Search the web for images and content"),
                     candidate("companies_profile", "Research a company profile and sector"),
                 ],
             })
             .expect("message should activate the router");
 
         assert!(
-            selected.contains(&"gallery_search".into()),
+            selected.contains(&"web_search".into()),
             "the genuinely matching tool must be kept"
         );
         assert!(
@@ -1114,11 +1108,11 @@ mod tests {
         let selected = router
             .select_tools(&ToolSelectionContext {
                 user_message: Some(
-                    "please search the gallery and the corpus for the mountain image".to_string(),
+                    "please search the web and the corpus for the mountain image".to_string(),
                 ),
                 open_file_paths: vec![],
                 candidates: vec![
-                    candidate("gallery_search", "Search the media gallery for images"),
+                    candidate("web_search", "Search the web for images and content"),
                     candidate("corpus_search", "Search the ingested document corpus"),
                     candidate("other_search", "Search unrelated telemetry archives"),
                     candidate("third_search", "Search custodial ledger statements"),

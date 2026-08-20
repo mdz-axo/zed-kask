@@ -21,7 +21,7 @@ This pipeline implements Schwartz's scenario planning methodology. It refines a 
 | 7 | `scenario-convergence-check.j2` | Compute convergence metric + stall detection | 3,000 |
 | 8 | *(loop)* | Restart at step 4 if convergence not met | — |
 
-**Total Gas Budget:** 100,000 tokens
+**Total Token Budget:** 100,000 tokens
 
 ## Theoretical Foundation
 

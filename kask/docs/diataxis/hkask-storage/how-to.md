@@ -72,8 +72,8 @@ multiple stores or is foundational (like `hmems`, `embeddings`,
 `agent_registry`, `kata_history`), it belongs in
 `src/core/sql/schema.sql` (loaded by `initialize_schema` in
 `core/database.rs:206-211`). If the table is specific to one store (like
-`reg_records` for regulation, `escalations` for the escalation queue, or the
-`gallery_*` family), it belongs in that store's `init_schema` method.
+`reg_records` for regulation or `escalations` for the escalation
+queue), it belongs in that store's `init_schema` method.
 
 ### Step 2: Add the `CREATE TABLE` statement
 

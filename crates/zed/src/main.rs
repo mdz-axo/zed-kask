@@ -2240,7 +2240,7 @@ fn main() {
                              panel tool invoker (panel cannot dispatch tools), \
                              curator session factory (panel cannot run per-tab curator conversations), \
                              regulation status (panel cannot emit regulation spans). \
-                             The manifest executor is wired separately by the model-dependent task \
+                             Skill execution is wired separately by the model-dependent task \
                              and will fire if/when the model resolves. \
                              The inference IPC server is started with a no-op port so MCP \
                              servers route through the bridge and get a diagnostic error \
@@ -2372,8 +2372,8 @@ fn main() {
         // populated from settings.json (`agent.default_model`), not from
         // cloud auth, so gating the skill cascade on user login was a
         // bug: users with a configured default model but no cloud login had
-        // skills silently disabled (the `skill` tool returned the no-op
-        // envelope "Skill manifest executor not configured").
+        // skills silently disabled (the `skill` tool returned a no-op
+        // envelope instead of the skill body).
         //
         // The task subscribes to `LanguageModelRegistry` events
         // (`DefaultModelChanged`, `ProviderStateChanged`, `AddedProvider`,
@@ -2458,7 +2458,7 @@ fn main() {
                 .detach();
 
                 log::info!(
-                    "hKask model-dependent manifest executor task started — \
+                    "hKask model-dependent skill execution task started — \
                      waiting for LanguageModelRegistry to report a default model"
                 );
             })

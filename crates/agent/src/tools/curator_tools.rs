@@ -95,8 +95,6 @@ pub struct CuratorStatusOutput {
     /// before they are evicted unread. `None` when the metacognition provider
     /// isn't wired.
     pub alert_log_approaching_cap: Option<bool>,
-    // D34 — skill verification failures since the last metacognition tick.
-    pub skill_verification_failures: Option<usize>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -135,7 +133,6 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_count: None,
                 alert_log_cap: None,
                 alert_log_approaching_cap: None,
-                skill_verification_failures: None,
             })?;
 
             // Distinguish "provider not wired" from "provider wired but
@@ -154,7 +151,6 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
-                    skill_verification_failures: None,
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
@@ -168,7 +164,6 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
-                    skill_verification_failures: None,
                 });
             };
             let effectiveness = snapshot
@@ -206,17 +201,13 @@ impl AgentTool for CuratorStatusTool {
             let alert_log_approaching_cap = snapshot
                 .get("alert_log_approaching_cap")
                 .and_then(|d| d.as_bool());
-            let skill_verification_failures = snapshot
-                .get("skill_verification_failures")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize);
+            // A degraded curator memory store is a health signal in its own
+            // right — surface it in `status` so a caller reading only the
+            // status line (not the structured fields) still sees it.
             let status = if memory_degraded == Some(true) {
-                "ok (memory degraded)".to_string()
-            } else if skill_verification_failures.unwrap_or(0) > 0 {
-                format!(
-                    "ok (skill verification: {} incomplete skill(s) since last tick)",
-                    skill_verification_failures.unwrap()
-                )
+                "ok (memory degraded — curator episodic/semantic store down, \
+                 self-healing re-open in progress)"
+                    .to_string()
             } else if alert_log_approaching_cap == Some(true) {
                 "ok (algedonic log approaching cap — run algedonic-review to clear reviewed entries)"
                     .to_string()
@@ -237,7 +228,6 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_count,
                 alert_log_cap,
                 alert_log_approaching_cap,
-                skill_verification_failures,
             })
         })
     }
@@ -252,8 +242,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
              Memory: {}\n\
-             Algedonic Log: {}\n\
-             Skill Verification: {}",
+             Algedonic Log: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -292,16 +281,6 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 }
                 _ => "not available".to_string(),
             },
-            output
-                .skill_verification_failures
-                .map(|f| {
-                    if f == 0 {
-                        "0 failures".to_string()
-                    } else {
-                        format!("{} incomplete skill(s) — recall skill_verification:* via curator_memory_recall", f)
-                    }
-                })
-                .unwrap_or_else(|| "not monitored".to_string()),
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
     }
