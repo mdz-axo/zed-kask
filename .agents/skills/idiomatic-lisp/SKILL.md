@@ -1,6 +1,5 @@
 ---
 name: idiomatic-lisp
-visibility: public
 description: "Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Convergent inquiry loop: anchor against Lisp's founding principles, propose macro- and data-driven solutions, and refine through adversarial review with REPL evaluation."
 ---
 

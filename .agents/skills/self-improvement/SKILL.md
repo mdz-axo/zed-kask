@@ -1,6 +1,5 @@
 ---
 name: self-improvement
-visibility: public
 description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience."
 ---
 

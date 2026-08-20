@@ -1,6 +1,5 @@
 ---
 name: caveman
-visibility: public
 description: "Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, articles, and pleasantries while keeping full technical accuracy. Active every response once triggered."
 ---
 

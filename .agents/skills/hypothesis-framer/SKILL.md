@@ -1,6 +1,5 @@
 ---
 name: hypothesis-framer
-visibility: public
 description: "Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates topics through Feasibility, Interest, Novelty, Ethics, and Relevance gates, structures questions, derives testable hypotheses."
 ---
 

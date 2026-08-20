@@ -1,6 +1,5 @@
 ---
 name: gradient-hunter
-visibility: public
 description: "Find steep gradients between populated and unpopulated regions of a codebase, telemetry, or test field and investigate the reason. The signal is in the gradient shape and its cause, not in the absence itself."
 ---
 

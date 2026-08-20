@@ -1,6 +1,5 @@
 ---
 name: capabilities-reasoner
-visibility: public
 description: "Reason about a system's capabilities against a typed registry with floor, ceiling, and maturity-gate limits. Evaluates elicited potential vs observed behavior across a multi-metric scenario matrix."
 ---
 

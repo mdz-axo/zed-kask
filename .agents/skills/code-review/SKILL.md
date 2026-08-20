@@ -1,7 +1,6 @@
 ---
 name: code-review
 core: true
-visibility: public
 description: "Convergent code review of a change against its stated spec. Multi-axis detection, IS/OUGHT adjudication, falsifier, file:line no-fiction. Optional implement phase via fix_mode context. Grounded in Fagan, PERFECT, Ousterhout."
 ---
 

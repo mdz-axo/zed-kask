@@ -20,7 +20,6 @@ pub use hkask_types::time::now_rfc3339;
 
 pub mod embeddings;
 pub mod escalation;
-pub mod gallery;
 pub mod hmem;
 pub mod regulation_store;
 
@@ -28,10 +27,6 @@ pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult, StoredEmb
 pub use escalation::{
     EscalationBatch, EscalationEntry, EscalationError, EscalationQueue, EscalationStats,
     EscalationStatus,
-};
-pub use gallery::{
-    FaceRegistryRecord, GalleryMode, GalleryRecord, GalleryStore, GalleryStoreError, ImageRecord,
-    TagRecord,
 };
 pub use hkask_types::HMemId;
 pub use hmem::archive::{ArchiveError, BackupArchive, BackupMeta, MigrationReceipt};

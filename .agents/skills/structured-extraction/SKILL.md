@@ -1,6 +1,5 @@
 ---
 name: structured-extraction
-visibility: public
 description: "Structured data extraction from unstructured text. Identifies entities, extracts inter-entity relations, and maps extracted data to target schemas with field-level coverage and inferred field population.
 "
 ---

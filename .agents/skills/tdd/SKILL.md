@@ -1,6 +1,5 @@
 ---
 name: tdd
-visibility: public
 description: "Test-driven development with red-green-refactor loop and codegraph-anchored testing. Builds features or fixes bugs one vertical slice at a time. Enforces behavior testing through public interfaces and minimal-implementation discipline."
 ---
 

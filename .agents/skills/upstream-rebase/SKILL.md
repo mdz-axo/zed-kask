@@ -1,6 +1,5 @@
 ---
 name: upstream-rebase
-visibility: public
 description: "Manage upstream Zed rebases for zed-kask. Decides per-D-seam-file strategy (git merge vs. mapped re-application vs. destroy-and-rebuild), executes it, pins every kask-wiring deviation with a test, and updates DIVERGENCE.md."
 ---
 

@@ -1,6 +1,5 @@
 ---
 name: grill-me
-visibility: public
 description: "Socratic interrogation skill. Tests deep understanding through escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis). Probes gaps, challenges assumptions, produces gap analysis.
 "
 ---

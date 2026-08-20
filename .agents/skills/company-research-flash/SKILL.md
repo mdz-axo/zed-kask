@@ -1,6 +1,5 @@
 ---
 name: company-research-flash
-visibility: public
 description: "Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step flowdef: SCOUT alpha score → INTEL business context + earnings listening + pragmatic-semantics certainty classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (native mcp_batch of 4 MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) + metacognition calibration gap measurement → LENS five-framework audit (2 native MCP tool calls + LLM synthesis) → convergence check → loop on PARTIAL → forecast persist. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Early-exit gates (DROP / HALT / BLOCK) are condition: on downstream steps. Converges on LENS verdict consistency."
 ---
 

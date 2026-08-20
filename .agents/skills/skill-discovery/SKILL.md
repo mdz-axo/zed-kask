@@ -1,7 +1,6 @@
 ---
 name: skill-discovery
 core: true
-visibility: public
 description: "Acquire NEW skills for hKask. Full lifecycle: detect capability gaps, search the catalog for candidates, evaluate against format/quality/safety criteria, and guide installation. Distinct from skill-router (matches tasks to existing skills)."
 ---
 

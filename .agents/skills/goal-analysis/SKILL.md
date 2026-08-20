@@ -1,6 +1,5 @@
 ---
 name: goal-analysis
-visibility: public
 description: "Goal specification and verification. Extracts structured goals from user intent, judges completion via semantic evaluation or command execution, and produces calibrated verdicts with confidence scoring."
 ---
 

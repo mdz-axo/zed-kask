@@ -495,7 +495,6 @@ name = "agent_skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "const_format",
  "fs",
  "futures 0.3.32",

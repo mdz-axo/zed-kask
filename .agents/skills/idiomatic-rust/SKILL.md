@@ -1,6 +1,5 @@
 ---
 name: idiomatic-rust
-visibility: public
 description: "Idiomatic Rust design through Graydon Hoare's lens, grounded by rust-analyzer and clippy as extrinsic oracles. Propose type-driven solutions informed by LSP code actions and refine through adversarial review verified against compiler feedback."
 ---
 

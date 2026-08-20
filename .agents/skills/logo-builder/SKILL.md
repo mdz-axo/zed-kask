@@ -1,6 +1,5 @@
 ---
 name: logo-builder
-visibility: public
 description: "Pragmatic logo design using LLM-assisted generation. Three-phase pipeline: discovery (brand-to-design mapping), formal generation (five formal gates), and iterative refinement (weighted critique loop). Uses generate_image and describe_image tools."
 ---
 

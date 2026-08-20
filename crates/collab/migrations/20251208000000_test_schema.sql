@@ -202,55 +202,6 @@ CREATE SEQUENCE public.extensions_id_seq
 
 ALTER SEQUENCE public.extensions_id_seq OWNED BY public.extensions.id;
 
-CREATE TABLE public.kask_skills (
-    id integer NOT NULL,
-    source_user text NOT NULL,
-    skill_name text NOT NULL,
-    description text NOT NULL,
-    latest_version text NOT NULL,
-    total_download_count bigint DEFAULT 0 NOT NULL,
-    upvote_count bigint DEFAULT 0 NOT NULL,
-    downvote_count bigint DEFAULT 0 NOT NULL
-);
-
-CREATE SEQUENCE public.kask_skills_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.kask_skills_id_seq OWNED BY public.kask_skills.id;
-
-CREATE TABLE public.kask_skill_versions (
-    kask_skill_id integer NOT NULL,
-    version text NOT NULL,
-    published_at timestamp without time zone DEFAULT now() NOT NULL,
-    dependencies text DEFAULT '' NOT NULL,
-    tarball_sha256 text NOT NULL,
-    public_key text NOT NULL,
-    signature text NOT NULL,
-    expires_at text NOT NULL,
-    download_count bigint DEFAULT 0 NOT NULL
-);
-
-CREATE TABLE public.kask_skill_votes (
-    kask_skill_id integer NOT NULL,
-    user_id integer NOT NULL,
-    vote smallint NOT NULL,
-    voted_at timestamp without time zone DEFAULT now() NOT NULL
-);
-
--- zed-kask: D30 — local fallback blob store for the no-S3 publish path.
-CREATE TABLE public.kask_skill_tarballs (
-    source_user text NOT NULL,
-    skill_name text NOT NULL,
-    version text NOT NULL,
-    tarball bytea NOT NULL,
-    PRIMARY KEY (source_user, skill_name, version)
-);
-
 CREATE TABLE public.followers (
     id integer NOT NULL,
     room_id integer NOT NULL,
@@ -549,7 +500,6 @@ ALTER TABLE ONLY public.contacts ALTER COLUMN id SET DEFAULT nextval('public.con
 
 ALTER TABLE ONLY public.extensions ALTER COLUMN id SET DEFAULT nextval('public.extensions_id_seq'::regclass);
 
-ALTER TABLE ONLY public.kask_skills ALTER COLUMN id SET DEFAULT nextval('public.kask_skills_id_seq'::regclass);
 
 ALTER TABLE ONLY public.followers ALTER COLUMN id SET DEFAULT nextval('public.followers_id_seq'::regclass);
 
@@ -605,14 +555,8 @@ ALTER TABLE ONLY public.extension_versions
 ALTER TABLE ONLY public.extensions
     ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.kask_skill_versions
-    ADD CONSTRAINT kask_skill_versions_pkey PRIMARY KEY (kask_skill_id, version);
 
-ALTER TABLE ONLY public.kask_skill_votes
-    ADD CONSTRAINT kask_skill_votes_pkey PRIMARY KEY (kask_skill_id, user_id);
 
-ALTER TABLE ONLY public.kask_skills
-    ADD CONSTRAINT kask_skills_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.followers
     ADD CONSTRAINT followers_pkey PRIMARY KEY (id);
@@ -695,9 +639,7 @@ CREATE UNIQUE INDEX index_extensions_external_id ON public.extensions USING btre
 
 CREATE INDEX index_extensions_total_download_count ON public.extensions USING btree (total_download_count);
 
-CREATE UNIQUE INDEX index_kask_skills_source_user_skill_name ON public.kask_skills USING btree (source_user, skill_name);
 
-CREATE INDEX index_kask_skills_total_download_count ON public.kask_skills USING btree (total_download_count);
 
 CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_id_a ON public.followers USING btree (project_id, leader_connection_server_id, leader_connection_id, follower_connection_server_id, follower_connection_id);
 
@@ -815,11 +757,7 @@ ALTER TABLE ONLY public.contributors
 ALTER TABLE ONLY public.extension_versions
     ADD CONSTRAINT extension_versions_extension_id_fkey FOREIGN KEY (extension_id) REFERENCES public.extensions(id);
 
-ALTER TABLE ONLY public.kask_skill_versions
-    ADD CONSTRAINT kask_skill_versions_kask_skill_id_fkey FOREIGN KEY (kask_skill_id) REFERENCES public.kask_skills(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.kask_skill_votes
-    ADD CONSTRAINT kask_skill_votes_kask_skill_id_fkey FOREIGN KEY (kask_skill_id) REFERENCES public.kask_skills(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.project_repositories
     ADD CONSTRAINT fk_project_repositories_project_id FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;

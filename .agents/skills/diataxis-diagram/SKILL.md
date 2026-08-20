@@ -1,6 +1,5 @@
 ---
 name: diataxis-diagram
-visibility: public
 description: "Generate Mermaid diagrams from code using Diataxis methodology. Supports core types (ERD, flowchart, state, sequence, class) plus extended types (architecture, sankey, gantt, mindmap, timeline, and more). Renders natively in Zed."
 ---
 
