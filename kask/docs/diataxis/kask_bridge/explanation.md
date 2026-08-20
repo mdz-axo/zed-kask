@@ -195,7 +195,7 @@ attempt, never silently. This is the `.rules` "Advertised invariants need
 enforcement points" pattern — the self-healing claim points at
 `CuratorStore::try_heal` (`memory/curator_stores.rs:118-160`).
 
-## Why skills execute via body injection, not a manifest cascade
+## Why skills execute via body injection
 
 Skill execution in zed-kask follows upstream Zed's body-injection model.
 `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the
