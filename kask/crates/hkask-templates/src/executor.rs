@@ -236,14 +236,42 @@ impl ManifestExecutor {
 /// the machine-tracked `last_result_step` — deterministic by construction (no
 /// randomized HashMap order), and correct for `populate`/`render`-final
 /// manifests (their stored value is the result, not a fallback to the whole
-/// context). Returns `Value::Null` when no step stored a result.
+/// context).
 ///
 /// Applies `normalize_model_output` to strip `<thinking>` reasoning wrappers.
+///
+/// **Primary rule** (`last_result_step` set): the last select/render/execute
+/// step's stored value is the result. Compute steps store via `StoredNamed`
+/// (suffix `"compute"`) and deliberately do NOT set `last_result_step` — their
+/// output is an auxiliary value (convergence signal, validation list), not the
+/// skill's product. This fixes the 49-of-~58 registry manifests that ended in
+/// `…select → compute(convergence signal) → loop` and returned bare numbers
+/// (e.g. `"0"`) instead of the select step's report.
+///
+/// **Fallback** (`last_result_step` is `None`): no select/render/execute step
+/// stored a primary result — surface the highest-ordinal step result. This
+/// narrowly resurrects the pre-K5 max-ordinal scan for the `None` case only:
+/// compute-only manifests (bench manifests, test sub-branches without a
+/// trailing render step) still surface their compute output instead of
+/// collapsing to `Null`. `store_named` keeps compute results in the `results`
+/// map, so the scan sees them. When `last_result_step` IS set, the primary
+/// rule above wins — a render step following a compute step clobbers the
+/// compute result as the cascade's final output.
 pub fn extract_final_step_result(outcome: &CascadeOutcome) -> Value {
+    if let Some(step_id) = outcome.last_result_step {
+        if let Some(result) = outcome.context.result(step_id) {
+            return normalize_model_output(&result.value).into_owned();
+        }
+    }
+    // Fallback (compute-only cascades + parallel sub-branches): no
+    // select/render/execute step stored a primary result — surface the
+    // highest-ordinal step result. `store_named` keeps compute results in
+    // `results`, so the scan sees them.
     outcome
-        .last_result_step
-        .and_then(|step_id| outcome.context.result(step_id))
-        .map(|r| normalize_model_output(&r.value).into_owned())
+        .context
+        .results_iter()
+        .max_by_key(|(_, result)| result.ordinal)
+        .map(|(_, result)| normalize_model_output(&result.value).into_owned())
         .unwrap_or(Value::Null)
 }
 
@@ -394,12 +422,13 @@ steps:
         )
     }
 
-    /// Compute results are auxiliary (convergence signals, validation lists),
-    /// not the skill's product — 49 of ~58 registry manifests end in
-    /// `…compute → loop`, and a compute step setting `last_result_step` made
-    /// every one return its bare convergence signal ("0") instead of the
-    /// last select step's report. This manifest isolates the rule: a lone
-    /// compute step whose result must NOT become the cascade's final output.
+    /// A compute-only manifest (no select/render/execute step). Compute steps
+    /// store via `StoredNamed` (suffix `"compute"`) and do NOT set
+    /// `last_result_step`. When no primary result exists, the fallback in
+    /// `extract_final_step_result` surfaces the highest-ordinal step result —
+    /// the compute output — instead of collapsing to `Null`. This is the
+    /// compute-only / parallel-sub-branch path: bench manifests, test branches
+    /// without a trailing render step.
     const COMPUTE_ONLY_MANIFEST: &str = r#"
 manifest:
   id: compute-final-result-test
@@ -428,8 +457,39 @@ steps:
       convergence_signal: "{{ step_1_result }}"
 "#;
 
+    /// A render step followed by a compute step — the clobber pin. The render
+    /// step stores via `Effect::Stored` (sets `last_result_step`); the compute
+    /// step stores via `StoredNamed` (does NOT set `last_result_step`). The
+    /// primary rule in `extract_final_step_result` must win: the render step's
+    /// output is the final result, not the compute step's auxiliary value.
+    /// This is the decisive test that the `StoredNamed` fix + fallback doesn't
+    /// regress the 49 registry manifests (select → compute → loop) — the
+    /// select/render step's report clobbers the compute signal.
+    const RENDER_THEN_COMPUTE_MANIFEST: &str = r#"
+manifest:
+  id: render-then-compute-test
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: proceed
+steps:
+  - ordinal: 1
+    action: render
+    description: emit the product report
+    template_ref: "the report"
+  - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: emit a convergence signal
+    timeout_seconds: 10
+    input_mapping:
+      form: "99"
+"#;
+
     #[tokio::test]
-    async fn compute_result_is_not_the_final_result() {
+    async fn compute_only_manifest_surfaces_compute_result_via_fallback() {
         let executor = make_executor(vec![]);
         let manifest = crate::manifest_loader::load_manifest_from_yaml(COMPUTE_ONLY_MANIFEST)
             .expect("parse compute-only manifest");
@@ -449,12 +509,50 @@ steps:
             serde_json::json!(42),
             "compute output stays reachable as step_N_result for downstream bindings"
         );
-        // ...but it must NOT be the cascade's final result.
+        // ...and because no select/render/execute step set `last_result_step`,
+        // the fallback surfaces the highest-ordinal step result — the compute
+        // output (42). Compute-only manifests and parallel sub-branches without
+        // a trailing render step surface their compute result, not Null.
         assert_eq!(
             extract_final_step_result(&outcome),
-            serde_json::Value::Null,
-            "a compute step's auxiliary output must not become the skill's \
-             final result — before the StoredNamed fix this returned 42"
+            serde_json::json!(42),
+            "compute-only manifest must surface its compute result via the \
+             fallback when no primary result step exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn render_step_clobbers_compute_step_as_final_result() {
+        let executor = make_executor(vec![]);
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(RENDER_THEN_COMPUTE_MANIFEST)
+                .expect("parse render-then-compute manifest");
+        let outcome = executor
+            .execute_manifest_into(manifest, HashMap::new())
+            .await
+            .expect("render-then-compute cascade must run");
+        // The render step sets `last_result_step`; the compute step does NOT
+        // (StoredNamed). The primary rule returns the render step's output.
+        // This is the decisive pin for the 49 registry manifests that end in
+        // `…select → compute(convergence signal) → loop`: the select/render
+        // step's report is the final result, not the compute signal.
+        assert_eq!(
+            extract_final_step_result(&outcome),
+            serde_json::json!("the report"),
+            "a render step preceding a compute step must clobber the compute \
+             output as the cascade's final result — the compute step's \
+             StoredNamed effect does not reset last_result_step"
+        );
+        // The compute step's 99 is still reachable as step_2_result.
+        assert_eq!(
+            outcome
+                .context
+                .lookup("step_2_result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            serde_json::json!(99),
+            "compute output stays reachable as step_N_result even when it is \
+             not the final result"
         );
     }
 

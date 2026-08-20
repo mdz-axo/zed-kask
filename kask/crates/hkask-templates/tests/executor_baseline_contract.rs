@@ -148,16 +148,20 @@ steps:
 
 /// The expected `extract_final_step_result` for the bench manifest. The
 /// manifest is compute-only (steps 1-3 `compute`, 4 `choice`, 5 `loop`, 6
-/// `abort`). Since the `StoredNamed` fix (commit c1dc9f535b), compute steps
-/// store their output under `step_{ordinal}_compute` and do NOT set
-/// `last_result_step` — compute outputs are auxiliary values (convergence
-/// signals, validation lists), not the skill's product. `choice`/`loop`/
-/// `abort` don't store either, so no step sets `last_result_step` and
-/// `extract_final_step_result` returns `Null`. (Before the fix, step 3's
-/// compute result `6` was the final; 49 of ~58 registry manifests end in
-/// `…compute → loop` and were returning bare numbers instead of the last
-/// select step's report.)
-const GOLDEN_FINAL: Value = Value::Null;
+/// `abort`). Compute steps store via `StoredNamed` (suffix `"compute"`) and do
+/// NOT set `last_result_step` — their output is an auxiliary value, not the
+/// skill's product. `choice`/`loop`/`abort` don't store either, so no step sets
+/// `last_result_step`. The fallback in `extract_final_step_result` surfaces the
+/// highest-ordinal step result — step 3's compute `(- 10 4)` = `6`. (Before the
+/// `StoredNamed` fix, compute steps set `last_result_step` directly and the
+/// final was also `6`, but for the wrong reason — 49 of ~58 registry manifests
+/// ending in `…select → compute(convergence signal) → loop` returned bare
+/// numbers instead of the select step's report. The `StoredNamed` fix +
+/// fallback split makes compute-only manifests surface their compute result
+/// via the fallback, while select/render-final manifests use the primary rule.)
+fn golden_final() -> Value {
+    serde_json::json!(6)
+}
 
 fn build_executor() -> ManifestExecutor {
     ManifestExecutor::new(
@@ -182,7 +186,8 @@ async fn golden_output_is_stable() {
 
     let final_value = extract_final_step_result(&result);
     assert_eq!(
-        final_value, GOLDEN_FINAL,
+        final_value,
+        golden_final(),
         "golden final-step result changed — a later slice altered observable behavior"
     );
 }
@@ -223,7 +228,7 @@ async fn concurrency_field_has_no_effect_today() {
          either the field is partially wired (a hidden enforcement point) or \
          the test manifest is non-deterministic"
     );
-    assert_eq!(extract_final_step_result(&result_p), GOLDEN_FINAL,);
+    assert_eq!(extract_final_step_result(&result_p), golden_final(),);
 }
 
 #[tokio::test]
@@ -249,7 +254,7 @@ async fn compute_steps_do_not_invoke_inference() {
 
     assert_eq!(
         extract_final_step_result(&result),
-        GOLDEN_FINAL,
+        golden_final(),
         "compute-only manifest produced unexpected output"
     );
 }
@@ -816,7 +821,7 @@ async fn baseline_tail_latency() {
             .expect("execution");
         let elapsed = start.elapsed();
         // Guard the measurement against a silent behavior break.
-        assert_eq!(extract_final_step_result(&result), GOLDEN_FINAL);
+        assert_eq!(extract_final_step_result(&result), golden_final());
         durations_us.push(elapsed.as_micros() as u64);
     }
 
