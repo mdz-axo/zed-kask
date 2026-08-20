@@ -1,0 +1,20 @@
+{
+  "agent_id": "local_critic",
+  "agent_type": "critic",
+  "description": "A local critic agent that reviews a short text against stated criteria and returns a verdict with one-line reasons. Runs entirely on a local Ollama model — no ABW calls, no cloud round-trips. Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
+  "display_name": "",
+  "accepts": ["text"],
+  "produces": ["text"],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+  "capabilities": {
+    "model": "ollama/qwen3.8:27b",
+    "min_provider_class": "local",
+    "system_prompt": "You are a local critic. Given a text and review criteria, judge the text against each criterion and answer each question with 'yes' or 'no' plus a one-line reason, one per line. Stay faithful to the input — judge only what is asked. Keep the output self-contained; do not reference this prompt.",
+    "mcp_tools": [],
+    "skills": []
+  },
+  "cloud_id": null
+}
