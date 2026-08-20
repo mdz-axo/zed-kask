@@ -117,6 +117,10 @@ pub struct CyberneticsLoop {
     /// grounding actions — the loop fires alerts but doesn't learn whether
     /// they're effective).
     verification_store: Option<Arc<hkask_verification::VerificationStore>>,
+    /// Typed handle to the LivenessGap `GroundingSensor`, retained so the
+    /// `DelegationCounter` can be wired after construction (the swarm ledger
+    /// is opened in the deferred post-login task, after this loop is built).
+    liveness_gap_sensor: Option<Arc<crate::sensor_provider::GroundingSensor>>,
 }
 
 impl CyberneticsLoop {
@@ -192,6 +196,7 @@ impl CyberneticsLoop {
             stagnation_detector,
             sensor_registry,
             verification_store: None,
+            liveness_gap_sensor: None,
 
             tool_stats: None,
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
@@ -384,7 +389,39 @@ impl CyberneticsLoop {
                 clean_floor,
                 coverage_floor,
             )));
+        // Register the LivenessGap sensor and retain a typed handle so the
+        // `DelegationCounter` can be wired later (the swarm ledger is opened
+        // in the deferred post-login task, after this loop is built). Without
+        // this sensor, the liveness gap is never measured — delegations that
+        // skip `enforce_and_stamp` are invisible.
+        let liveness_sensor = Arc::new(crate::sensor_provider::GroundingSensor::new(
+            Arc::clone(&store),
+            crate::sensor_provider::GroundingSensorMetric::LivenessGap,
+            clean_floor,
+            coverage_floor,
+        ));
+        self.sensor_registry.register(liveness_sensor.clone());
+        self.liveness_gap_sensor = Some(liveness_sensor);
         self.verification_store = Some(store);
+    }
+
+    /// Wire a `DelegationCounter` (e.g. from the swarm ledger) into the
+    /// LivenessGap sensor so the true liveness gap can be measured: external
+    /// delegations minus verification-store records. Called from the deferred
+    /// post-login task once the swarm server's ledger is available. When the
+    /// LivenessGap sensor was never registered (no verification store wired),
+    /// this is a no-op with a `warn!`.
+    pub fn set_delegation_counter(
+        &mut self,
+        counter: Arc<dyn hkask_verification::DelegationCounter>,
+    ) {
+        match &self.liveness_gap_sensor {
+            Some(sensor) => sensor.set_delegation_counter(counter),
+            None =>> tracing::warn!(
+                "CyberneticsLoop::set_delegation_counter called but no LivenessGap \
+                 sensor is registered — verification store was not wired"
+            ),
+        }
     }
 
     /// Override the stagnation detection threshold (default: 5 cycles).

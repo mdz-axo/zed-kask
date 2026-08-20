@@ -834,7 +834,7 @@ impl GroundingSensor {
         if report.total_delegations == 0 {
             return None;
         }
-        let gap = match &self.delegation_counter {
+        let gap = match self.delegation_counter.lock().as_ref() {
             Some(counter) => {
                 let total = counter.delegation_count()?;
                 total.saturating_sub(report.total_delegations as u64) as f64
