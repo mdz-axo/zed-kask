@@ -514,7 +514,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 10 MCP servers (no capability gating — RR-0056) |
 | `hkask-forecast` | Domain | Forecast domain logic |
-| ~~`hkask-condenser`~~ (deleted) | Curation | Context condensation. **Deleted (commit `26215d845e`)** along with the `hkask-mcp-condenser` MCP server — condensation moved to the corpus server's internal pipeline. |
+| `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). The `hkask-mcp-condenser` MCP server was deleted (commit `26215d845e`); the **crate survives** and is consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, ESO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
