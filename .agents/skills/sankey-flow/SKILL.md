@@ -113,7 +113,7 @@ If the prompt does not match any domain, default to **process** with conservatio
 
 ## Instructions
 
-The cascade is example-anchored match → adapt → render (single pass, 2 LLM calls + 1 deterministic render). The old 7-step PDCA loop (classify → gather → draft → evaluate → converge → loop → write) was overengineered — it made up to 21 LLM calls and never converged because the evaluate step kept flagging intentional design choices (e.g., non-conserving loss-making income statements) as quality gaps.
+The process is example-anchored match → adapt → render (single pass, 2 LLM calls + 1 deterministic render). The old 7-step PDCA loop (classify → gather → draft → evaluate → converge → loop → write) was overengineered — it made up to 21 LLM calls and never converged because the evaluate step kept flagging intentional design choices (e.g., non-conserving loss-making income statements) as quality gaps.
 
 1. **MATCH.** Read the prompt and select the single best-fit domain from the catalog above, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
 
@@ -136,7 +136,7 @@ The cascade is example-anchored match → adapt → render (single pass, 2 LLM c
 
 3. **Conservation check (deterministic).** Call `lisp_eval` to sum source-side and sink-side edge weights for mandatory conservation mode and compare for equality (within epsilon 0.01). Returns conservation_verified, source_total, sink_total, delta. Non-mandatory modes return verified: true (skipped). No LLM call.
 
-4. **Surface the diagram.** A final `render` step (`present-sankey.j2`, RenderAct — deterministic, no LLM call) wraps the adapt step's mermaid source in a titled, annotated markdown document with a title, description, the mermaid diagram, the conservation check, a data table annotating each flow with its weight and provenance, and references. This becomes the cascade's final output — the fenced ```mermaid block reaches the chat stream directly, not buried inside a JSON object field.
+4. **Surface the diagram.** A final `render` step (`present-sankey.j2`, Rendering template — deterministic, no LLM call) wraps the adapt step's mermaid source in a titled, annotated markdown document with a title, description, the mermaid diagram, the conservation check, a data table annotating each flow with its weight and provenance, and references. This becomes the process's final output — the fenced ```mermaid block reaches the chat stream directly, not buried inside a JSON object field.
 
 ## Research Delegation — Detailed Protocol
 
@@ -180,16 +180,16 @@ When the gather step takes Path B (research delegation), follow this protocol:
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
 - **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
-- **Visual artifact surfacing** — the `present-sankey.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the adapt step's JSON output — the model must then discover and extract the `markdown` field, which is fragile.
+- **Visual artifact surfacing** — the `present-sankey.j2` render step (rendering template) must be the process's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the adapt step's JSON output — the model must then discover and extract the `markdown` field, which is fragile.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
+| Template | Purpose |
+|----------|---------|
 | `sankey-examples.j2` | Include | Library of canonical Sankey structural templates (income statement, budget, data pipeline, funnel, balance sheet, process flow) with match triggers, node patterns, edge patterns, conservation modes, and filled instances. Included by the match and adapt templates as few-shot context. |
-| `sankey-match.j2` | KnowAct | Classify the prompt's domain, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). |
-| `sankey-adapt.j2` | KnowAct | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
-| `present-sankey.j2` | RenderAct | RenderAct — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the cascade's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
+| `sankey-match.j2` |  | Classify the prompt's domain, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). |
+| `sankey-adapt.j2` |  | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
+| `present-sankey.j2` |  | Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

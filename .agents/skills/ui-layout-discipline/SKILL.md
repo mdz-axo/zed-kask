@@ -46,17 +46,17 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `sense.j2` | KnowAct | Measure the rendering container's available width and each child element's minimum width. Compute whether sum(min_widths) + gaps exceeds the container. If a text column (flex_1) is present, compute its residual width after fixed-width children claim their space. Grounded in Fitts's Law (minimum target width) and the CSS flexbox overflow invariant. |
-| `orient.j2` | KnowAct | Count the interactive elements in the container. Compare to the action budget (≤5 primary, per Hick's Law). Grep the crate for sibling card/panel components and compare action-count/spacing conventions (Nielsen consistency). Compute the feature congestion score (Rosenholtz) and the action-to-content ratio (Tufte data-ink). |
-| `decide.j2` | KnowAct | Apply the Fagan-style inspection checklist as hard gates: (1) no overflow, (2) primary action visible, (3) text column ≥ min width, (4) on-grid spacing, (5) action count ≤ budget. Each gate is a yes/no verdict, not a vibe check. Produce a layout_health vector and a pass/fail decision. |
-| `act.j2` | KnowAct | For each failing gate, prescribe the canonical GPUI remedy: secondary actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen progressive disclosure), truncate() on text labels, flex_shrink_0 on fixed elements, min_w_0 on flexible text columns, or explicit hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern. |
-| `review.j2` | KnowAct | Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. |
+| Template | Purpose |
+|----------|---------|
+| `sense.j2` |  | Measure the rendering container's available width and each child element's minimum width. Compute whether sum(min_widths) + gaps exceeds the container. If a text column (flex_1) is present, compute its residual width after fixed-width children claim their space. Grounded in Fitts's Law (minimum target width) and the CSS flexbox overflow invariant. |
+| `orient.j2` |  | Count the interactive elements in the container. Compare to the action budget (≤5 primary, per Hick's Law). Grep the crate for sibling card/panel components and compare action-count/spacing conventions (Nielsen consistency). Compute the feature congestion score (Rosenholtz) and the action-to-content ratio (Tufte data-ink). |
+| `decide.j2` |  | Apply the Fagan-style inspection checklist as hard gates: (1) no overflow, (2) primary action visible, (3) text column ≥ min width, (4) on-grid spacing, (5) action count ≤ budget. Each gate is a yes/no verdict, not a vibe check. Produce a layout_health vector and a pass/fail decision. |
+| `act.j2` |  | For each failing gate, prescribe the canonical GPUI remedy: secondary actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen progressive disclosure), truncate() on text labels, flex_shrink_0 on fixed elements, min_w_0 on flexible text columns, or explicit hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern. |
+| `review.j2` |  | Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` with `Public` visibility; they emit `reg.ui_layout.*` spans.
+- All templates are prompt templates with `Public` visibility; they emit `reg.ui_layout.*` spans.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

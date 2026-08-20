@@ -18,21 +18,21 @@ The Jinja2 template (`swarm-intelligence/swarm-compose-guide.j2`) is the
 canonical source for composition guidance (field definitions, ABW/Local
 considerations, composition principles). It is shared with the
 swarm-intelligence skill's template set. This skill makes it invocable as a
-standalone cascade from the MCP server (`swarm_ai_assist`) via the
+standalone process from the MCP server (`swarm_ai_assist`) via the
 `SkillExecPort` path.
 
 ## When to Use
 
-- The swarm panel's AI Assist button is clicked (action=suggest) — the cascade
+- The swarm panel's AI Assist button is clicked (action=suggest) — the process
   suggests completions for empty or partial author/compose form fields.
-- The swarm panel's Validate button is clicked (action=validate) — the cascade
+- The swarm panel's Validate button is clicked (action=validate) — the process
   checks well-formedness and surfaces issues before creating the agent or swarm.
 - The swarm-intelligence DECIDE phase proposes an `author_agent` move and needs
   canonical authoring guidance for field definitions and backend constraints.
 
 ## Instructions
 
-The cascade is a single-step `select` that renders the
+The process is a single-step `select` that renders the
 `swarm-intelligence/swarm-compose-guide.j2` template with the operator's partial
 inputs and the surface/mode/action selectors. The template encodes:
 
@@ -47,14 +47,14 @@ inputs and the surface/mode/action selectors. The template encodes:
 
 The form fields are serialized as a JSON object string and passed as the `task`
 through the `SkillExecPort::execute_skill` seam. `AgentSkillExec` (zed side)
-detects JSON-object tasks and merges their fields into the cascade context as
+detects JSON-object tasks and merges their fields into the process context as
 top-level template variables.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `../swarm-intelligence/swarm-compose-guide.j2` | KnowAct | Renders guidance for agent/swarm composition forms. Returns suggested completions (action=suggest) or a validation verdict (action=validate) over the supplied fields. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool. |
+| Template | Purpose |
+|----------|---------|
+| `../swarm-intelligence/swarm-compose-guide.j2` |  | Renders guidance for agent/swarm composition forms. Returns suggested completions (action=suggest) or a validation verdict (action=validate) over the supplied fields. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

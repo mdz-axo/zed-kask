@@ -2,7 +2,7 @@
 title: "Skill ↔ MCP ↔ Lisp Capabilities Seam — Architecture"
 audience: [architects, developers, agents]
 last_updated: 2026-08-20
-version: "0.37.0"
+version: "0.38.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, domain]
@@ -16,15 +16,12 @@ server wiring** (D3), and the **Lisp capabilities layer** (the `lisp_eval`
 tool's deterministic primitive). Every node traces to a grep-verified symbol;
 no symbol is invented.
 
-> **Note (2026-08-20):** The prior manifest-cascade model
-> (`ManifestExecutor`, `BridgeManifestExecutor`, `StepMachine`, `FlowDef`,
-> `hkask-templates` crate) was deleted (commit `5f4cf5f10d`). Skill execution
-> is now upstream-Zed body injection: `SkillTool::run` reads the `SKILL.md`
-> body from disk via `agent_skills::read_skill_body` and injects it via
-> `render_skill_envelope`. The model reads the body and follows the
-> instructions. PDCA loops are model-coordinated: the model self-iterates
-> using the `lisp_eval` tool for deterministic checks and the
-> `render_template` tool for structured prompt scaffolding.
+Skill execution is upstream-Zed body injection: `SkillTool::run` reads the
+`SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it
+via `render_skill_envelope`. The model reads the body and follows the
+instructions. PDCA loops are model-coordinated: the model self-iterates using
+the `lisp_eval` tool for deterministic checks and the `render_template` tool
+for structured prompt scaffolding.
 
 ## The seam
 
@@ -86,11 +83,10 @@ Both share the same metering (`CallCapManager::charge_metered`), the same
 The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker).
 
-> **Note:** The prior "Skill cascade (deterministic)" dispatch path — where
-> `StepMachine::dispatch_action` invoked `ToolPort::invoke` under a
-> `manifest-executor` persona — was removed with `hkask-templates` (commit
-> `5f4cf5f10d`). Skills no longer dispatch MCP tools deterministically; the
-> model decides every tool call.
+The model decides every tool call. Skills do not dispatch MCP tools
+deterministically; the `SKILL.md` body instructs the model, and the model
+emits tool_use events through the same agent tool-use loop as any other
+request.
 
 ## The Lisp capabilities layer
 
@@ -103,11 +99,6 @@ the canonical scaffold for structural invariants the LLM cannot reliably
 self-evaluate (see the `lisp-scaffold-reasoning` skill). It is a built-in
 tool registered in `add_default_tools` and bypasses the `LazyToolRouter`.
 
-> **Note:** The prior `action: compute` manifest step (which routed
-> `compute_ref: lisp.eval` through `dispatch_compute` in
-> `hkask-templates/src/compute.rs`) was removed with `hkask-templates`. The
-> same Lisp runtime is now reached via the `lisp_eval` agent tool.
-
 ## The 10 on-disk MCP servers
 
 `McpRuntime` dispatches to child processes over stdio. The 10 servers live
@@ -116,14 +107,8 @@ under `kask/mcp-servers/hkask-mcp-*` and are enumerated by
 `companies`, `corpus`, `curator`, `kata-kanban`, `portfolio`,
 `prediction-markets`, `research`, `scenarios`, `swarm`, `training`.
 
-> **Note (2026-08-20):** The `codegraph`, `condenser`, and `media` MCP servers
-> were deleted (commit `26215d845e`). The prior count was 13; the current
-> count is 10. The `hkask-condenser` **crate** remains for in-process thread
-> condensation via `kask_bridge::BridgeThreadCondenser`.
-
 ## Related
 
-- [Skill Invocation Flowchart](./flowchart-skill-invocation.md) — **DEPRECATED** (manifest cascade model; retained for historical reference)
 - [MCP Tool Call Sequence](./sequence-mcp-tool-call.md) — the `LazyToolRouter` → `McpRuntime::invoke` → `unwrap_tool_envelope` path
 - [Credential Resolution ERD](./erd-credential-resolution.md) — the `ctx.credentials` → keychain → `nudge_mcp_servers` chain
 - [MCP Runtime Invoke — Metering and Dispatch Flow](./flowchart-mcp-runtime-invoke.md) — the metering detail

@@ -48,11 +48,11 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `cybernetics-analyze-loop.j2` | KnowAct | Analyze a feedback loop on 5 properties: polarity, delay, gain, closure, fidelity. Diagnose broken loops and prescribe remediation. |
-| `cybernetics-variety-check.j2` | KnowAct | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. |
-| `cybernetics-vsm-map.j2` | KnowAct | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention. |
+| Template | Purpose |
+|----------|---------|
+| `cybernetics-analyze-loop.j2` |  | Analyze a feedback loop on 5 properties: polarity, delay, gain, closure, fidelity. Diagnose broken loops and prescribe remediation. |
+| `cybernetics-variety-check.j2` |  | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. |
+| `cybernetics-vsm-map.j2` |  | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

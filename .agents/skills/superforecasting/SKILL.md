@@ -49,7 +49,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 ### stage_3_probability_estimate (delegated split)
 
-The former single inside-view step is split into three FlowDef steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
+The former single inside-view step is split into three steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the forecasting question, `domain` = "forecasting", `context` = the sub-questions and outside-view output. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
@@ -103,8 +103,8 @@ The former single inside-view step is split into three FlowDef steps. Generation
 
 ## LEAP Integration
 
-The superforecasting cascade accepts an optional `expert_prior` array input
-alongside `market_context`. Before invoking the cascade, the invoking agent
+The superforecasting process accepts an optional `expert_prior` array input
+alongside `market_context`. Before invoking the process, the invoking agent
 should:
 
 1. Call `rss_search` on the `fri-leap` and `fri-leap-reports` streams with
@@ -119,15 +119,15 @@ should:
 3. Pass the `expert_prior` array alongside `market_context` when invoking the
    superforecasting skill.
 
-The cascade does not fetch LEAP itself — the invoking agent does, because the
-cascade is a single skill invocation and should not reach out to MCP servers
-mid-cascade (per the existing `market_context` pattern). If `rss_search`
+The process does not fetch LEAP itself — the invoking agent does, because the
+process is a single skill invocation and should not reach out to MCP servers
+mid-process (per the existing `market_context` pattern). If `rss_search`
 returns no matches for the forecasting question, `expert_prior` is empty and
-the cascade runs without it. Do not fabricate LEAP data.
+the process runs without it. Do not fabricate LEAP data.
 
 ## EQM Feedback Integration
 
-The superforecasting cascade accepts an optional `overconfidence_bias` number
+The superforecasting process accepts an optional `overconfidence_bias` number
 input that feeds the step-16 compute (`apply_calibration_adjustment`) to
 close the Brier feedback loop. Before re-invoking superforecasting on a prior
 iteration's forecast, the invoking agent should:
@@ -141,9 +141,9 @@ iteration's forecast, the invoking agent should:
    = underconfident (excessive `speculative_terms` without grounding).
 3. Pass the `overconfidence_bias` value when re-invoking superforecasting.
 
-The cascade does not run `eqm` itself — the invoking agent does, because the
-cascade is a single skill invocation and should not reach out to other skills
-mid-cascade (per the existing `market_context` and `expert_prior` pattern). If
+The process does not run `eqm` itself — the invoking agent does, because the
+process is a single skill invocation and should not reach out to other skills
+mid-process (per the existing `market_context` and `expert_prior` pattern). If
 `eqm` is not run, `overconfidence_bias` defaults to 0.0 (no adjustment). Do
 not fabricate the bias value.
 
@@ -155,18 +155,18 @@ preserving the forecast probability (alignment invariant).
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `stage_0_triage.j2` | WordAct | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. |
-| `stage_1_fermi_decompose.j2` | WordAct | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. |
-| `stage_2_outside_view.j2` | WordAct | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. |
-| `stage_3_probability_estimate.j2` | WordAct | Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. |
-| `stage_4_evidence_update.j2` | WordAct | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
-| `stage_5_synthesis.j2` | WordAct | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
-| `stage_6_calibration.j2` | WordAct | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
-| `stage_7_record.j2` | WordAct | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
-| `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
-| `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| Template | Purpose |
+|----------|---------|
+| `stage_0_triage.j2` |  | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. |
+| `stage_1_fermi_decompose.j2` |  | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. |
+| `stage_2_outside_view.j2` |  | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. |
+| `stage_3_probability_estimate.j2` |  | Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. |
+| `stage_4_evidence_update.j2` |  | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
+| `stage_5_synthesis.j2` |  | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
+| `stage_6_calibration.j2` |  | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
+| `stage_7_record.j2` |  | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
+| `forecast-quality-gate.j2` |  | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| `forecast-quality-gate.j2` |  | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -174,9 +174,9 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 - `stage_0_triage.j2`: Public.
 - `stage_1_fermi_decompose.j2`: Public.
-- `stage_2_outside_view.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before cascade invocation, parallel to `market_context`.)
+- `stage_2_outside_view.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before process invocation, parallel to `market_context`.)
 - `stage_3_probability_estimate.j2`: Public. (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
-- `stage_4_evidence_update.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before cascade invocation, parallel to `market_context`.)
+- `stage_4_evidence_update.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before process invocation, parallel to `market_context`.)
 - `stage_5_synthesis.j2`: Public.
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.

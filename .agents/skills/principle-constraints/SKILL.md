@@ -35,7 +35,7 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 
 ## Instructions
 
-### Derive mode (cascade step 1 — `principle-derive.j2`)
+### Derive mode (process step 1 — `principle-derive.j2`)
 
 The skill calls `render_template` with only `principle-derive` (step 1); both `derive` and `verify` modes route through this single template via the `mode` input. The `principle-verify.j2` template is registered in the crate but NOT referenced by the skill — see the legacy note under Verify mode below.
 
@@ -63,10 +63,10 @@ The skill calls `render_template` with only `principle-derive` (step 1); both `d
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `principle-derive.j2` | KnowAct | Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep/codegraph, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. The output is a proposal — a human reviews it before any constraint becomes permanent. |
-| `principle-verify.j2` | KnowAct | Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. |
+| Template | Purpose |
+|----------|---------|
+| `principle-derive.j2` |  | Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep/codegraph, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. The output is a proposal — a human reviews it before any constraint becomes permanent. |
+| `principle-verify.j2` |  | Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

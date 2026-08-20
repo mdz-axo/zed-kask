@@ -33,17 +33,17 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `finer-evaluate.j2` | KnowAct | Apply FINER criteria to a broad research topic. Evaluate feasibility (subjects, expertise, resources), interest (audience relevance), novelty (knowledge contribution), ethics (compliance), and relevance (clinical impact). Produces per-dimension scores with rationale and refinement suggestions. |
-| `pico-structure.j2` | KnowAct | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
-| `hypothesis-operationalize.j2` | KnowAct | Single cognitive act: derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps — because you cannot assess testability without knowing the objectives. |
+| Template | Purpose |
+|----------|---------|
+| `finer-evaluate.j2` |  | Apply FINER criteria to a broad research topic. Evaluate feasibility (subjects, expertise, resources), interest (audience relevance), novelty (knowledge contribution), ethics (compliance), and relevance (clinical impact). Produces per-dimension scores with rationale and refinement suggestions. |
+| `pico-structure.j2` |  | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
+| `hypothesis-operationalize.j2` |  | Single cognitive act: derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps — because you cannot assess testability without knowing the objectives. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` type with `Public` visibility
+- All templates are prompt templates with `Public` visibility
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null hypothesis must postulate no difference or no relationship
 - Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable

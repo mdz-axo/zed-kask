@@ -98,18 +98,18 @@ Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `lean-prover-anchor.j2` | KnowAct | Anchor a proof obligation against the Curry-Howard correspondence and the Prop/Type discipline. Classify the proposition (Prop vs Type), identify the proof obligation's structure (universal, existential, implication, conjunction), determine the appropriate proof method (term mode, tactic mode, decide, native_decide), and assess whether the proposition is decidable. |
-| `lean-prover-construct.j2` | KnowAct | Construct a Lean proof for the anchored obligation. Choose between term mode (explicit proof terms) and tactic mode (imperative proof steps). Apply the appropriate tactics (intro, apply, exact, induction, simp, rw, decide). Handle termination via structural recursion or well-founded recursion. Produce a proof that compiles. |
-| `lean-prover-refute.j2` | KnowAct | Adversarial review of a proof attempt. Search for counterexamples that invalidate the proposition. Identify failed proof paths (tactics that don't apply, induction that doesn't terminate, simp lemmas that loop). Challenge proof irrelevance assumptions. Test edge cases (empty types, uninhabited Props, proof terms that don't erase). Produce refinement directives for each failure. |
-| `lean-prover-erase.j2` | KnowAct | Reason about proof erasure and irrelevance. Determine which proof terms are computationally relevant (in Type) vs irrelevant (in Prop). Assess whether the proof erases to a no-op or carries computational content. Identify small vs large elimination. Verify that the proof doesn't leak computational content across the Prop/Type boundary. |
+| Template | Purpose |
+|----------|---------|
+| `lean-prover-anchor.j2` |  | Anchor a proof obligation against the Curry-Howard correspondence and the Prop/Type discipline. Classify the proposition (Prop vs Type), identify the proof obligation's structure (universal, existential, implication, conjunction), determine the appropriate proof method (term mode, tactic mode, decide, native_decide), and assess whether the proposition is decidable. |
+| `lean-prover-construct.j2` |  | Construct a Lean proof for the anchored obligation. Choose between term mode (explicit proof terms) and tactic mode (imperative proof steps). Apply the appropriate tactics (intro, apply, exact, induction, simp, rw, decide). Handle termination via structural recursion or well-founded recursion. Produce a proof that compiles. |
+| `lean-prover-refute.j2` |  | Adversarial review of a proof attempt. Search for counterexamples that invalidate the proposition. Identify failed proof paths (tactics that don't apply, induction that doesn't terminate, simp lemmas that loop). Challenge proof irrelevance assumptions. Test edge cases (empty types, uninhabited Props, proof terms that don't erase). Produce refinement directives for each failure. |
+| `lean-prover-erase.j2` |  | Reason about proof erasure and irrelevance. Determine which proof terms are computationally relevant (in Type) vs irrelevant (in Prop). Assess whether the proof erases to a no-op or carries computational content. Identify small vs large elimination. Verify that the proof doesn't leak computational content across the Prop/Type boundary. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 
-- All templates are `KnowAct` type with `Public` visibility.
+- All templates are prompt templates with `Public` visibility.
 - The Lean type-checker is the extrinsic oracle — always run `lean` or `lake build` to verify proofs.
 - A proof with `sorry` is not a complete proof — it's a proof obligation with holes.
 - The Prop/Type boundary is inviolable: computational content cannot leak from Prop to Type without large elimination.

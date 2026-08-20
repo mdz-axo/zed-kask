@@ -49,11 +49,11 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `extract-relations.j2` | KnowAct | Open Information Extraction (Banko et al. 2007): extract binary relations between identified entities as `(arg1, relation, arg2)` tuples with free-text predicates, trigger spans, and coreference resolution. NOT RDF triples — predicates are free-text verb phrases, not typed IRIs. |
-| `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
-| `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
+| Template | Purpose |
+|----------|---------|
+| `extract-relations.j2` |  | Open Information Extraction (Banko et al. 2007): extract binary relations between identified entities as `(arg1, relation, arg2)` tuples with free-text predicates, trigger spans, and coreference resolution. NOT RDF triples — predicates are free-text verb phrases, not typed IRIs. |
+| `identify-entities.j2` |  | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
+| `map-to-schema.j2` |  | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

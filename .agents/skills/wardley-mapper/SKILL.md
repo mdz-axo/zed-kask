@@ -62,20 +62,20 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 ### present-map
 
-1. RenderAct (step 7, `render` action, `present-map.j2`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
-2. This is the cascade's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
+1. Rendering step (step 7, `render` action, `present-map.j2`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
+2. This is the process's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
 3. Deterministic (no LLM call) — pure Jinja2 rendering via the `render` action.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `inventory-components.j2` | KnowAct | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
-| `classify-evolution.j2` | KnowAct | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
-| `map-value-chain.j2` | KnowAct | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
-| `identify-movement.j2` | KnowAct | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
-| `synthesize-recommendations.j2` | KnowAct | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
-| `present-map.j2` | RenderAct | RenderAct — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the cascade's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
+| Template | Purpose |
+|----------|---------|
+| `inventory-components.j2` |  | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
+| `classify-evolution.j2` |  | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
+| `map-value-chain.j2` |  | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
+| `identify-movement.j2` |  | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
+| `synthesize-recommendations.j2` |  | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
+| `present-map.j2` |  | Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -86,5 +86,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `map-value-chain.j2`: Public.
 - `identify-movement.j2`: Public.
 - `synthesize-recommendations.j2`: Public.
-- `present-map.j2`: Public. RenderAct (no inference) — surfaces the diagram as the cascade's final output.
+- `present-map.j2`: Public. rendering template (no inference) — surfaces the diagram as the process's final output.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
