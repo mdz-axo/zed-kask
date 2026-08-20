@@ -39,8 +39,7 @@ prevention — see `Cargo.toml:13`).
 | `sanitize_name` | `kask/crates/hkask-types/src/agent_paths.rs:180` |
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:212` |
 | `ToolDispatchPort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:94` |
-| `SkillExecPort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:174` |
-| `WorktreeSpawnPort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:200` |
+| `WorktreeSpawnPort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:85` |
 | `ModelEntry` / `MediaGenerateParams` | `kask/crates/hkask-types/src/ports/inference_port.rs:73,40` |
 | `InferenceStreamChunk` | `kask/crates/hkask-types/src/ports/inference_port.rs:409` |
 | `ChatMessage` / `InferenceResult` / `InferenceUsage` / `ChatToolDefinition` / `StructuredToolCall` / `InferenceError` / `compute_confidence` | `kask/crates/hkask-types/src/ports/inference_types.rs:15,139,62,108,130,45,89` |
@@ -188,10 +187,6 @@ classDiagram
         <<interface>>
         +invoke_tool(server, tool, args, allowed) Future
     }
-    class SkillExecPort {
-        <<interface>>
-        +execute_skill(name, task) Future
-    }
     class WorktreeSpawnPort {
         <<interface>>
         +create_worktree_thread(prompt, title, worktree, base) Future
@@ -244,10 +239,9 @@ types: `ModelEntry` (`inference_port.rs:73`), `MediaGenerateParams`
 and the `inference_types.rs` set (`ChatMessage`, `InferenceResult`,
 `InferenceUsage`, `ChatToolDefinition`, `StructuredToolCall`,
 `InferenceError`, `TokenProbability`, `compute_confidence`). `ToolDispatchPort`
-(`inference_port.rs:94`), `SkillExecPort` (`inference_port.rs:174`), and
-`WorktreeSpawnPort` (`inference_port.rs:200`) are MCP-server-side boundaries
-for governed tool dispatch, skill cascade execution, and worktree-backed
-agent spawning respectively. All four traits have blanket impls for
+(`inference_port.rs:94`) and `WorktreeSpawnPort` (`inference_port.rs:85`) are
+MCP-server-side boundaries for governed tool dispatch and worktree-backed
+agent spawning respectively. Both traits have blanket impls for
 `Arc<dyn Trait>`.
 
 ### Memory cluster

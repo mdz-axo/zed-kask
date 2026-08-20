@@ -129,7 +129,9 @@ Emit a single JSON object:
 
 ## Reference: Manual Pass on P1
 
-The manual pass on "conclusions never promoted to verified fact" found five constraints in `kask/crates/hkask-verification/src/grounding.rs`:
+The manual pass on "conclusions never promoted to verified fact" found five constraints
+in the deleted `kask/crates/hkask-verification/src/grounding.rs` (historical reference —
+the crate has been deleted; these constraints are retained as a worked example):
 
 1. `Derived` from `Inferred` is `Inferred` (falsifier: `derived_from_inferred_is_inferred`)
 2. `Derived` from `Unsourced` (nulled) is nulled (falsifier: `derived_from_nulled_is_nulled`)

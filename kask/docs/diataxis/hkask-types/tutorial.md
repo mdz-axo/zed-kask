@@ -107,9 +107,9 @@ deliberate object-safety choice. Companion types in the same file
 
 Two further traits live in this file: `ToolDispatchPort`
 (`inference_port.rs:94`) lets a child MCP server invoke governed MCP tools
-that live in the zed process, and `SkillExecPort` (`inference_port.rs:174`)
-lets a child run an hKask skill cascade on the zed side. Both have blanket
-impls for `Arc<dyn Trait>` so callers can hold a shared handle.
+that live in the zed process, and `WorktreeSpawnPort`
+(`inference_port.rs:85`) lets a child spawn processes in the worktree.
+Both have blanket impls for `Arc<dyn Trait>` so callers can hold a shared handle.
 
 ## Step 6: Read MemoryPort
 

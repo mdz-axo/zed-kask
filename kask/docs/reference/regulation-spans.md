@@ -168,14 +168,13 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 | Namespace group | Sub-namespaces | Emitted When |
 |---|---|---|
 | `reg.skill.lifecycle` | `.skill_activated`, `.skills_loaded`, `.skills_discovered`, `.skill_published` | Skill lifecycle events (activation, loading, publishing) |
-| `reg.skill.registry` | `.registry_validated` | Registry manifest validated successfully |
+| `reg.skill.registry` | `.registry_validated` | Skill registry validated successfully |
 | `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured`, `.choice_misconfigured`, `.timeout_retry`, `.gate_passed`, `.gate_failed` | Cascade step execution; cascade escalation; branching/choice misconfiguration; timeout retry; gate pass/fail outcomes |
 | `reg.skill.convergence` | `.converged`, `.escalated` | Cascade convergence outcomes (metric ≤ threshold, or max iterations exhausted) |
 | `reg.skill.budget` | `.gas_exhausted`, `.gas_alert`, `.rjoule_exhausted`, `.rjoule_alert` | Gas and rJoule budget events |
 | `reg.skill.provenance` | (bare) | Skill provenance tracking |
 | `reg.skill.profile_enforcement` | (bare) | Skill profile enforcement |
 | `reg.skill.frontmatter` | `.missing` | SKILL.md frontmatter parse errors |
-| `reg.skill.manifest` | `.unparseable`, `.absent`, `.unreadable` | Registry manifest errors |
 | `reg.skill.routing` | `.matched`, `.uncovered` | Skill-to-task routing (skill-router) |
 | `reg.skill.discovery` | `.gap_detected`, `.searched`, `.evaluated` | Capability gap detection and candidate evaluation (skill-discovery) |
 | `reg.skill` | (bare) | Unified cybernetic feedback — one namespace per skill: every skill emits `reg.skill.<skill-id>.<phase>` for its PDCA phases |
