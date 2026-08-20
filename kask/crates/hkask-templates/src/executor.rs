@@ -3,54 +3,20 @@
 //! The heavy lifting lives in `step_machine.rs` (the deterministic interpreter)
 //! and `step_actions.rs` (the per-action implementations). This module exposes
 //! the `ManifestExecutor` builder + `execute_manifest` entry point that the
-//! bridge (`kask_bridge::skill_executor`) calls, plus the utility functions
-//! (`normalize_model_output`, `parse_json_response`, `extract_final_step_result`,
-//! `extract_feedback_phase`) that `step_actions.rs` and the bridge consume.
+//! bridge (`kask_bridge::skill_executor`) calls, plus `extract_final_step_result`
+//! and `normalize_model_output`.
 
 use crate::budget::BudgetTracker;
 use crate::convergence::ConvergenceTracker;
-use crate::ports::{Result, TemplateError};
+use crate::ports::Result;
 use crate::step_context::StepContext;
 use crate::step_graph::StepGraph;
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::TemplateRenderer;
-use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-/// Extract the feedback phase from a template reference for span emission.
-///
-/// Maps the last path segment of a template_ref to a canonical phase name
-/// (Classify, Gather, Draft, Evaluate, Convergence, OperatorFeedback, Write,
-/// Outcome). Used by `step_machine.rs` to emit `reg.skill.cascade.step_executed`
-/// spans with the correct phase field.
-pub(crate) fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
-    let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
-    if last_segment.contains("classify") {
-        Some("Classify")
-    } else if last_segment.contains("gather") {
-        Some("Gather")
-    } else if last_segment.contains("draft")
-        || last_segment.contains("generate")
-        || last_segment.contains("extract")
-    {
-        Some("Draft")
-    } else if last_segment.contains("evaluate") {
-        Some("Evaluate")
-    } else if last_segment.contains("convergence") || last_segment.contains("converge") {
-        Some("Convergence")
-    } else if last_segment.contains("operator_feedback") || last_segment.contains("feedback") {
-        Some("OperatorFeedback")
-    } else if last_segment.contains("write") {
-        Some("Write")
-    } else if last_segment.contains("outcome") {
-        Some("Outcome")
-    } else {
-        None
-    }
-}
 
 /// Manifest executor — drives the skill cascade via `StepMachine`.
 ///
@@ -305,22 +271,6 @@ pub(crate) fn normalize_model_output(value: &Value) -> std::borrow::Cow<'_, Valu
     }
     cleaned = cleaned.replace("</thinking>", "");
     std::borrow::Cow::Owned(Value::String(cleaned))
-}
-
-/// Parse a JSON response from an inference call.
-///
-/// Attempts direct `serde_json::from_str`, then falls back to
-/// `llm_json::extract_json_from_response` for brace-balanced extraction
-/// (handles markdown code fences and injected JSON in reasoning preamble).
-pub(crate) fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
-    if let Ok(v) = serde_json::from_str(text) {
-        return Ok(v);
-    }
-    let extracted = llm_json::extract_json_from_response(text);
-    serde_json::from_str(&extracted).map_err(|e| TemplateError::ParseFailure {
-        step_ordinal,
-        detail: format!("Failed to parse JSON response: {e}"),
-    })
 }
 
 #[cfg(test)]
@@ -702,36 +652,5 @@ steps:
         let ctx = StepContext::new(HashMap::new());
         let outcome = outcome_with_last(ctx, None);
         assert_eq!(extract_final_step_result(&outcome), Value::Null);
-    }
-
-    #[test]
-    fn extract_feedback_phase_resolves_known_refs() {
-        assert_eq!(
-            extract_feedback_phase("sankey-flow/sankey-classify"),
-            Some("Classify")
-        );
-        assert_eq!(
-            extract_feedback_phase("bug-hunt/bug-hunt-gather"),
-            Some("Gather")
-        );
-        assert_eq!(extract_feedback_phase("skill/draft-plan"), Some("Draft"));
-        assert_eq!(
-            extract_feedback_phase("skill/evaluate-result"),
-            Some("Evaluate")
-        );
-        assert_eq!(
-            extract_feedback_phase("skill/convergence-check"),
-            Some("Convergence")
-        );
-        assert_eq!(
-            extract_feedback_phase("skill/operator_feedback"),
-            Some("OperatorFeedback")
-        );
-        assert_eq!(extract_feedback_phase("skill/write-report"), Some("Write"));
-        assert_eq!(
-            extract_feedback_phase("skill/outcome-track"),
-            Some("Outcome")
-        );
-        assert_eq!(extract_feedback_phase("skill/unknown-phase"), None);
     }
 }

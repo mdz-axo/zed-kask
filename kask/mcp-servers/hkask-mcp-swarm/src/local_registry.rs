@@ -62,6 +62,34 @@ pub fn validate_typing(
     Ok(())
 }
 
+/// Rung 3 (Grounding): if the card declares an `output_contract.grounding`,
+/// validate it via `card_contract::validate`. Error findings reject the card
+/// (e.g. a `sourced` field naming a tool the agent doesn't declare); warnings
+/// pass (e.g. missing `response_path`). A card with no `output_contract` or
+/// no `grounding` sub-object passes — grounding is optional, but a declared
+/// contract must be well-formed.
+pub fn validate_grounding_contract(card: &LocalAgentCard) -> Result<(), LocalSwarmError> {
+    let Some(ref oc) = card.capabilities.output_contract else {
+        return Ok(());
+    };
+    let Some(grounding) = oc.get("grounding") else {
+        return Ok(());
+    };
+    let findings =
+        hkask_verification::card_contract::validate(Some(grounding), &card.capabilities.mcp_tools);
+    let errors: Vec<_> = findings.iter().filter(|f| !f.is_warning()).collect();
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let messages: Vec<String> = errors.iter().map(|f| f.message.clone()).collect();
+    Err(LocalSwarmError::InvalidInput(format!(
+        "agent '{}': output_contract.grounding has {} error(s): {}",
+        card.agent_id,
+        errors.len(),
+        messages.join("; ")
+    )))
+}
+
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
 /// catalogue + future execution. Mirrors the JSON shape in
 /// `agents/local/curated/<id>/agent_card.json`.
@@ -361,24 +389,25 @@ impl LocalAgentRegistry {
                 continue;
             }
             // Rung 3 (Card-declared grounding): if the card declares an
-            // output_contract.grounding, validate it at admission. A card
-            // that declares a grounding contract naming tools it doesn't
-            // have is a contract that protects nothing.
+            // output_contract.grounding, validate it at load. A card that
+            // declares a grounding contract naming tools it doesn't have is
+            // a contract that protects nothing. `card_contract::validate`
+            // lives in `hkask-verification`, which this crate already depends
+            // on. Findings with error severity skip the card; warnings pass.
             if let Some(ref oc) = card.capabilities.output_contract {
                 if let Some(grounding) = oc.get("grounding") {
-                    // Lightweight check: the full card_contract::validate
-                    // lives in kata-kanban (it can't live here because
-                    // kata-kanban depends on swarm, not vice versa). Here
-                    // we check that the grounding is an object and warn if
-                    // it's malformed. The full validation with tool-name
-                    // cross-referencing happens when the kata-kanban
-                    // server resolves the agent.
-                    if !grounding.is_object() {
+                    let findings = hkask_verification::card_contract::validate(
+                        Some(grounding),
+                        &card.capabilities.mcp_tools,
+                    );
+                    let has_errors = findings.iter().any(|f| !f.is_warning());
+                    if has_errors {
                         tracing::warn!(
                             target: "hkask.mcp.swarm",
                             card_path = %card_path.display(),
                             agent_id = %card.agent_id,
-                            "output_contract.grounding is not an object — skipping card"
+                            findings = ?findings,
+                            "output_contract.grounding has error-severity findings — skipping card"
                         );
                         continue;
                     }
@@ -478,14 +507,19 @@ impl LocalAgentRegistry {
     /// the same invariant `swarm_create_local_agent`/`swarm_remove_local` pin.
     /// Returns the written card path on success.
     pub fn write_card(&self, card: &LocalAgentCard) -> Result<String, LocalSwarmError> {
-        // Rung 1 (Presence) + Rung 2 (Typing): validate before writing.
-        // Unlike `load` (which skips bad cards), `write_card` rejects —
-        // a programmatic write should fail loudly rather than silently
-        // writing a card that will be skipped on the next load.
+        // Rung 1 (Presence) + Rung 2 (Typing) + Rung 3 (Grounding): validate
+        // before writing. Unlike `load` (which skips bad cards), `write_card`
+        // rejects — a programmatic write should fail loudly rather than
+        // silently writing a card that will be skipped on the next load.
+        // The grounding validation (`card_contract::validate`) catches cards
+        // that declare a `sourced` field naming a tool the agent doesn't have
+        // — a contract that protects nothing. Error findings reject; warnings
+        // (e.g. missing `response_path`) pass.
         self.load_port_extensions();
         let registry = self.port_registry();
         validate_presence(card)?;
         validate_typing(card, &registry)?;
+        validate_grounding_contract(card)?;
         let safe_id = crate::sanitize::sanitize_agent_id(&card.agent_id).ok_or_else(|| {
             LocalSwarmError::Sanitize(format!(
                 "agent_id '{}' contains no safe characters (alphanumeric, dash, underscore, dot)",

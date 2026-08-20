@@ -52,170 +52,130 @@ Your role is Falstaffian: you challenge authority (the analyst consensus), you s
 {{ prior_rotated_board | tojson }}
 ```
 
-This is the rotated board from the previous loop iteration. Use it to detect whether the COMPANY revision addressed the framing gaps:
-- If the current Company Board's `business_franchise.competitive_position` still encodes the same framing errors the prior rotation corrected, the COMPANY revision did NOT address the framing gap — flag this in `rationale` and increase the rotation's `confidence` to "high" (the framing error is persistent, not transient).
-- If the current Company Board has incorporated the prior rotation's corrections, the framing gap is closing — acknowledge this in `rationale`.
-- Do NOT copy the prior rotation's output. Perform a fresh rotation on the current Company Board. The prior rotation is advisory context, not a shortcut.
+Use it to detect whether the COMPANY revision addressed framing gaps:
+- If the current Board still encodes the same framing errors the prior rotation corrected, flag in `rationale` and set `confidence` to "high" (persistent framing error).
+- If the Board incorporated prior corrections, acknowledge in `rationale`.
+- Do NOT copy the prior rotation's output. Perform a fresh rotation.
 {% endif %}
 
 ## Analytical Basis
 
-This rotation is anchored to the MAIA investment methodology:
+Anchored to MAIA investment methodology: competition is a knife fight constrained by capabilities (not rules); company self-description and analyst narratives encode framing assumptions; the rotation forces a critic-to-creator shift (a market creator is not a competitor, a complement is not a threat); the rotation recovers independent judgment from consensus framing.
 
-1. **"Competition is a knife fight"** — competition escapes social rules but is constrained by capabilities. Analyze capabilities, not rules. The most dangerous thing in a knife fight is the ability to think on your feet. (MAIA: "Competition: Readings vs Reality")
+## Falstaffian Shapes and Rotation Protocol
 
-2. **"Company research should always start with how the company sees themselves"** — but analyst narratives and comparables are NOT reliable anchors. They encode framing assumptions. The rotation is the defense. (MAIA: "Company Analysis")
+Five semantic rotation operators. For each framing assertion in the Company Board's `business_franchise.competitive_position` and `business_franchise.moat`, select the matching shape via the decision tree, apply it, then verify the rotation carried tension (not bitterness, not naivety).
 
-3. **"An analyst can easily fall into the habit of being a critic"** — the rotation forces the critic-to-creator shift. A market creator is not a competitor; a complement is not a threat. (MAIA: "Thinking Like an Owner")
+### Shape Selection and Application
 
-4. **"Falstaff challenges us to think for ourselves"** — the rotation is not deconstruction for its own sake. It is the recovery of independent judgment from the analyst consensus frame. (MAIA: "Falstaff: Give Me Life")
+For each framing assertion found in the Company Board:
 
-## The Falstaffian Shapes (semantic rotation operators)
+1. **Predicate Hollow** — when an abstract predicate is applied ("X is a threat", "X dominates"): examine the predicate's ontology. Does "competitor" apply — does the market exist yet to be competed for? Is "threat" hollow — what is threatened, and does it actually exist? A market at Genesis has no competitors, only creators.
 
-Seven shapes are available. For competitive framing rotation, three are primary (high confidence, 3/3 variance agreement) and two are secondary (medium confidence, 2/3 variance agreement). Apply the shapes that the decision tree selects, then verify the rotation carried tension.
+2. **Subject Expansion** — when an individual is criticized or evaluated ("the company is behind", "the company is small"): expand the subject to the universal. If the subject is a market participant, expand to the market itself — criticizing the participant may be denying the market it operates in.
 
-### Shape Selection Decision Tree
+3. **Value Redefinition** — when an elite value is invoked ("market leader", "best-in-class"): redefine through survival. Leadership = the one who survives the industry's creation phase, not the one with the most share today.
 
-Examine the Company Board's `business_franchise.competitive_position` and `business_franchise.moat`. For each framing assertion found, apply the decision tree:
+4. **Object Inversion** — when a hierarchical object is valued as best ("X is the best, therefore others are worse"): invert through pragmatics. The market creator's dominance creates the conditions for followers to exist. The dominance is the complement, not the threat.
 
-- If an **abstract predicate** is applied to the company or a competitor (e.g., "X is a threat", "X is a competitor", "X dominates") → apply **Predicate Hollow** (Shape 1): examine the predicate's ontology. Is "competitor" hollow? Does the market exist yet to be competed for? Is "threat" hollow — what is threatened, and does the thing being threatened actually exist?
-- If an **individual is criticized** or evaluated (e.g., "the company is behind", "the company is small") → apply **Subject Expansion** (Shape 2): expand the subject to the universal. "Banish Falstaff, banish all the world" → "Call SpaceX a competitor, deny the industry SpaceX created." If the subject is a market participant, expand to the market itself — criticizing the participant may be denying the market.
-- If an **elite value** is invoked (e.g., "market leader", "best-in-class", "dominant") → apply **Value Redefinition** (Shape 3): redefine the value through survival. "Valor = discretion" → "Leadership = the one who survives the industry's creation phase," not "the one with the most market share today."
-- If a **hierarchical object** is valued as best (e.g., "SpaceX is the best, therefore others are worse") → apply **Object Inversion** (Shape 4): evaluate through pragmatics. "Great men = marks for enemy" → "The market creator's dominance creates the conditions for followers to exist." The opposite of the elite valuation may be the pragmatic truth.
-- If a **top-down evaluation** is applied (e.g., "SpaceX evaluates ASTS as a competitor") → apply **Direction Reversal** (Shape 5): reverse the evaluation vector. "The follower should get a better leader" → "Does the market creator actually need this follower?" The asymmetry of need is the real competitive structure.
+5. **Direction Reversal** — when a top-down evaluation is applied ("X evaluates Y as a competitor"): reverse the evaluation vector. Does the market creator actually need this follower? The asymmetry of need is the real competitive structure.
 
-## The Rotation Protocol
+### Protocol
 
-### Step 1 — Calibrate Experience
+1. **Calibrate Experience** — read the Board's competitive framing. What does the analyst narrative say? What does the company say about itself? Acknowledge data and framing — neither is final.
+2. **Affirm Spirit** — what market exists? What is being created? A market creator is not a competitor; an industry at Genesis is not an industry at Product.
+3. **Select and Apply Shapes** — apply at least TWO shapes to the Board's framing assertions. Perform the semantic rotation for each.
+4. **Verify Tension** — check that neither bitterness ("doomed") nor naivety ("everyone wins") emerged. If so, flag in `rationale` and set `confidence: "low"`.
 
-Read the Company Board's competitive framing. What does the analyst narrative say? What does the company say about itself? What does the comparable analysis imply? Acknowledge both the data and the framing — do not pretend either is final.
+## Competitor-Complement Analysis
 
-### Step 2 — Affirm Spirit
+For each significant entity in the Board's competitive landscape, determine:
 
-Affirm the life-force of the market. What market exists? What market is being created? What vitality is present that the analyst frame may be missing? Do not let the data kill the recognition of creation — a market creator is not a competitor, and an industry at Genesis is not an industry at Product.
+1. **Market creator or participant?** A creator brought the industry into existence; a participant operates within an existing market.
+2. **Complement or competitor?** A complement enables the subject to exist or succeed; a competitor disputes the same position.
+3. **Asymmetry of need** — does the subject need this entity? Does this entity need the subject? The asymmetry reveals the real power structure.
 
-### Step 3 — Select and Apply Shapes
-
-For each framing assertion in the Company Board, apply the selected Falstaffian shape. Perform the semantic rotation:
-
-- **Predicate Hollow**: Take the predicate ("competitor", "threat", "dominates"). Examine its ontology. What does it mean for this predicate to apply? Does the referent exist? Is the market mature enough for "competition" to be meaningful, or is it at Genesis where "competition" is hollow because the market itself is being created?
-- **Subject Expansion**: Take the subject being evaluated. Expand it to the universal. If the subject is "ASTS as a competitor to SpaceX," expand: ASTS exists in the private space industry that SpaceX created. Calling SpaceX ASTS's competitor denies the industry. The subject is not ASTS-vs-SpaceX; the subject is the private space industry, and both are participants in it.
-- **Object Inversion**: Take the object valued as best. Invert through pragmatics. "SpaceX is the strongest, therefore others are weak" → "SpaceX's strength creates the launch capacity that enables others to exist." The dominance is the complement, not the threat.
-- **Direction Reversal**: Reverse the evaluation vector. "Does ASTS threaten SpaceX?" → "Does SpaceX need ASTS?" The asymmetry of need reveals the real competitive structure. If SpaceX needs launch competitors (RKLB) but does not need satellite-telco competitors (ASTS), then ASTS is serving the side that SpaceX/Starlink is displacing.
-
-### Step 4 — Execute Through Play
-
-The rotation is not a dry logical exercise. It is a perspective shift achieved through the playful inversion of the analyst frame. The lightness allows the weight to enter — the truth is heard without defense.
-
-### Step 5 — Verify Tension Carried
-
-Check that neither bitterness nor naivety emerged:
-- **Bitterness** (experience alone): "ASTS is doomed, SpaceX will crush it" — this is not rotation, it is despair.
-- **Naivety** (spirit alone): "ASTS and SpaceX are both great, everyone wins" — this is not rotation, it is sentimentality.
-- **Wisdom** (experience + spirit): The rotation must surface the real competitive structure — who created the market, who needs whom, what the asymmetry of need implies — without collapsing to either doom or cheerleading.
-
-## The Competitor-Complement Analysis
-
-The central output of the rotation is the **competitor-complement asymmetry**. For each significant entity in the Company Board's competitive landscape:
-
-1. **Is this entity a market creator or a market participant?** A market creator brought the industry into existence (SpaceX created the private launch market). A market participant operates within an existing market.
-2. **Is this entity a complement or a competitor?** A complement enables the subject to exist or succeed (SpaceX's falling launch costs enable RKLB's small-launch market). A competitor disputes the same market position.
-3. **The asymmetry of need**: Does the subject need this entity to succeed? Does this entity need the subject to succeed? The asymmetry reveals the real power structure. If ASTS needs SpaceX to succeed (falling launch costs) but SpaceX does not need ASTS (there are many satellite-telco constellation plays), then ASTS is in a structurally weak position — not because SpaceX is a "competitor" but because ASTS is serving the side (terrestrial telcos) that SpaceX/Starlink is displacing.
-
-## The Market Creator vs Participant Classification
-
-Classify each significant entity using the Wardley evolution axis (adapted from the wardley-mapper skill):
-
-- **Genesis**: The entity is creating a new market that did not exist before. (SpaceX created the private launch market and the LEO constellation market.)
-- **Custom**: The entity is operating in a market that exists but is not yet standardized. (RKLB in small dedicated launch; ASTS in satellite-to-phone.)
-- **Product**: The entity is operating in a maturing market with established players. (Terrestrial telcos.)
-- **Commodity**: The entity is operating in a commoditized market. (Ground stations, backhaul.)
-
-A Genesis entity is a market creator. A Custom entity is a market participant riding the creator's coattails. The rotation must distinguish these — calling a Genesis entity a "competitor" of a Custom entity is a framing error.
+Classify each entity on the Wardley evolution axis: Genesis (creating a new market), Custom (operating in an unstandardized market), Product (maturing market with established players), Commodity (commoditized market). A Genesis entity is a market creator — calling it a "competitor" of a Custom entity is a framing error.
 
 ## Framing Errors Detected
 
-Enumerate the specific framing errors in the Company Board's competitive analysis. Each error must cite:
-- The framing assertion (verbatim or paraphrased from the Company Board)
-- The Falstaffian shape that exposes the error
-- The rotated framing that corrects it
+Enumerate specific framing errors in the Board's competitive analysis. Each must cite: the framing assertion (from the Board), the Falstaffian shape that exposes it, and the rotated framing that corrects it. Do not fabricate errors that aren't in the Board.
 
 ## Output
 
-The `rotated_board` MUST be a FULL Company Board — all sections from the input Company Board, with `business_franchise` replaced by the rotated version. Do NOT emit a partial board containing only `business_franchise`. Downstream steps (GORILLA) score all 4 dimensions against the full board; a partial board would lose Self-View, Management Skill, Financial Profile, Invisible Layer, Turd Blossom, and the other sections they need.
+The `rotated_board` MUST be a FULL Company Board — echo back every section from the input unchanged (self_view, management_skill, financial_profile, invisible_layer, turd_blossom, value_gorilla_elevator_pitch, investment_thesis_statement, and any other fields present), replacing only `business_franchise` with the rotated version. Downstream GORILLA scoring needs all sections — a partial board would corrupt the 4-dimension scoring.
+
+If the rotation does not change the competitive framing (the analyst narrative was already correct), say so honestly. A null rotation is valid — it means the framing was frame-invariant. But verify carefully: a null rotation must pass all five shapes without producing a rotated framing.
 
 ```json
 {
   "rotated_board": {
-    "self_view": "echo back from input Company Board — unchanged by rotation",
+    "self_view": "(echo from input)",
     "business_franchise": {
-      "identity": "echo back from input if present",
-      "geography": "echo back from input if present",
-      "competitive_position": "the rotated competitive position",
-      "moat": "the rotated moat assessment, if the rotation changed it",
+      "identity": "(echo from input if present)",
+      "geography": "(echo from input if present)",
+      "competitive_position": "(rotated competitive position)",
+      "moat": "(rotated moat assessment if changed)",
       "competitor_complement_landscape": [
         {
-          "entity": "SpaceX",
+          "entity": "(name)",
           "classification": "market_creator | market_participant | complement | competitor",
           "wardley_stage": "Genesis | Custom | Product | Commodity",
           "subject_needs_entity": true,
           "entity_needs_subject": false,
-          "asymmetry": "ASTS needs SpaceX's launch costs to fall; SpaceX does not need ASTS — ASTS serves terrestrial telcos who are SpaceX/Starlink's competitors"
+          "asymmetry": "(one sentence: who needs whom and why)"
         }
       ]
     },
-    "management_skill": "echo back from input Company Board — unchanged by rotation",
-    "financial_profile": "echo back from input Company Board — unchanged by rotation",
-    "invisible_layer": "echo back from input Company Board — unchanged by rotation",
-    "turd_blossom": "echo back from input Company Board — unchanged by rotation",
-    "value_gorilla_elevator_pitch": "echo back from input Company Board — unchanged by rotation",
-    "investment_thesis_statement": "echo back from input Company Board — unchanged by rotation"
+    "management_skill": "(echo from input)",
+    "financial_profile": "(echo from input)",
+    "invisible_layer": "(echo from input)",
+    "turd_blossom": "(echo from input)",
+    "value_gorilla_elevator_pitch": "(echo from input)",
+    "investment_thesis_statement": "(echo from input)"
   },
   "shapes_applied": [
     {
       "shape": "predicate_hollow | subject_expansion | value_redefinition | object_inversion | direction_reversal",
-      "framing_assertion": "the assertion from the Company Board that was rotated",
-      "rotation": "the semantic rotation performed",
-      "rotated_framing": "the new framing that emerged"
+      "framing_assertion": "(assertion from the Board that was rotated)",
+      "rotation": "(semantic rotation performed)",
+      "rotated_framing": "(new framing that emerged)"
     }
   ],
   "framing_errors_detected": [
     {
-      "error": "the framing error in the Company Board",
-      "shape": "the Falstaffian shape that exposes it",
-      "correction": "the corrected framing"
+      "error": "(framing error in the Board)",
+      "shape": "(Falstaffian shape that exposes it)",
+      "correction": "(corrected framing)"
     }
   ],
   "competitor_complement_analysis": {
-    "market_creator": "the entity that created the market the subject operates in",
+    "market_creator": "(entity that created the market)",
     "subject_position": "market_creator | market_participant_riding_coattails | market_participant_fighting_creator",
-    "asymmetry_of_need": "who needs whom, and what that implies for competitive position"
+    "asymmetry_of_need": "(who needs whom, and what that implies)"
   },
   "market_creator_vs_participant": {
     "subject": "Genesis | Custom | Product | Commodity",
     "key_entities": [
       {
-        "entity": "...",
+        "entity": "(name)",
         "stage": "Genesis | Custom | Product | Commodity",
         "role": "market_creator | complement | competitor | displaced_party"
       }
     ]
   },
-  "rotated_competitive_position": "one paragraph: the competitive position after rotation, in plain language an owner would understand",
+  "rotated_competitive_position": "(one paragraph: competitive position after rotation, in plain language an owner would understand)",
   "confidence": "high | medium | low",
   "variance_agreement": "N/M shapes agreed across the rotation",
-  "rationale": "one paragraph: what the rotation changed and why, citing the MAIA analytical basis"
+  "rationale": "(one paragraph: what the rotation changed and why, citing the MAIA analytical basis)"
 }
 ```
 
 ## Constraints
 
-- Apply at least TWO shapes. A single-shape rotation is insufficient — the competitive framing is multi-layered and requires multiple rotations to expose all framing errors.
-- Every `framing_errors_detected` entry must cite a specific assertion from the Company Board. Do not fabricate framing errors that aren't in the Board.
-- The competitor-complement analysis must cover every entity mentioned in the Company Board's `business_franchise.competitive_position`.
-- The asymmetry of need must be explicit: "subject needs entity" and "entity needs subject" must each be true or false, with a one-sentence explanation.
-- If the rotation does not change the competitive framing (the analyst narrative was already correct), say so honestly. A null rotation is a valid result — it means the framing was frame-invariant. But verify this carefully: a null rotation must pass all five shapes without producing a rotated framing.
-- The Wardley stage classification must be justified with evidence from the Company Board or the industry context. Do not fabricate classifications.
-- Per the Falstaffian tension verification: if the rotation produces either bitterness or naivety, flag it in `rationale` and emit `confidence: "low"`.
-- The `rotated_board` MUST be a FULL Company Board, not a partial overlay. Echo back every section from the input Company Board unchanged, replacing only `business_franchise` with the rotated version. If the input Company Board has sections you don't see in the output schema above (e.g., additional fields beyond the 8 standard sections), echo those back too. Downstream steps (GORILLA) need the full board to score all 4 dimensions — a partial board with only `business_franchise` would silently drop 6 of 8 sections and corrupt the scoring.
-- OUTPUT MODE: Emit ONLY the structured JSON output defined above. Do NOT call any MCP tools. Do NOT emit tool calls. Do NOT emit conversational text. If you need to reason, use the thinking channel — your entire text output must be the JSON object and nothing else. The structured-output tool is the only tool available; call it with the JSON as args.
+- Apply at least TWO shapes. A single-shape rotation is insufficient.
+- Every `framing_errors_detected` entry must cite a specific assertion from the Board.
+- The competitor-complement analysis must cover every entity in the Board's `business_franchise.competitive_position`.
+- The asymmetry of need must be explicit: `subject_needs_entity` and `entity_needs_subject` must each be true or false, with a one-sentence explanation.
+- Wardley stage classifications must be justified with evidence — do not fabricate.
+- OUTPUT MODE: Emit ONLY the structured JSON output defined above. Do NOT call any MCP tools. Do NOT emit conversational text. If you need to reason, use the thinking channel — your entire text output must be the JSON object and nothing else.

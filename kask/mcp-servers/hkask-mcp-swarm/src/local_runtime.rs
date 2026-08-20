@@ -562,46 +562,30 @@ impl hkask_verification::DelegationCounter for SwarmDelegationCounter {
         )
     }
 }
-/// Classify the request shape for the bind check (Rung 4). This heuristic
-/// has no correct setting — widen it and it swallows structured ports,
-/// narrow it and it misses real declarations. It exists only because
-/// uncontrolled strings exist. Its deletion is the success condition for
-/// the typing layer. Logged at `warn!` but not serialized onto the result.
-pub(crate) fn classify_request(task: &str) -> &'static str {
-    let trimmed = task.trim();
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        "json"
-    } else if trimmed.contains('\n') && trimmed.len() > 200 {
-        "structured"
-    } else {
-        "prose"
-    }
-}
-
-/// Rung 4 (Binding): does the classified request match any declared
-/// `accepts` label? Returns `None` when the agent declares no `accepts`
-/// (absence ≠ contradiction, paper Rule 5.3). `text` is treated as a
-/// universal accept — an agent declaring `accepts: ["text"]` matches
-/// any request classification.
-pub(crate) fn check_bind(card: &crate::local_registry::LocalAgentCard, task: &str) -> Option<bool> {
+/// Rung 4 (Binding): does the request match any declared `accepts` label?
+///
+/// Returns `None` when the agent declares no `accepts` (absence ≠
+/// contradiction, paper Rule 5.3). `text` is treated as a universal accept
+/// — an agent declaring `accepts: ["text"]` matches any request. For any
+/// other label, the bind check returns `None` (cannot determine): runtime
+/// classification of free-text requests is a heuristic with no correct
+/// setting (widen it and it swallows structured ports, narrow it and it
+/// misses real declarations), so it was deleted. The typing layer at
+/// admission (`validate_typing`) is the gate that enforces `accepts`
+/// labels resolve to registered types; runtime bind matching against
+/// those labels is the typing layer's unfinished transition, not this
+/// function's job.
+pub(crate) fn check_bind(
+    card: &crate::local_registry::LocalAgentCard,
+    _task: &str,
+) -> Option<bool> {
     if card.accepts.is_empty() {
         return None;
     }
-    let classification = classify_request(task);
-    let matched = card
-        .accepts
-        .iter()
-        .any(|a| a == classification || a == "text");
-    if !matched {
-        tracing::warn!(
-            target: "hkask.mcp.swarm",
-            agent_id = %card.agent_id,
-            classification,
-            declared_accepts = ?card.accepts,
-            "bind check mismatch: request classification does not match any declared accept"
-        );
+    if card.accepts.iter().any(|a| a == "text") {
+        return Some(true);
     }
-    Some(matched)
+    None
 }
 
 /// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
@@ -756,7 +740,16 @@ impl LocalDelegateResult {
     /// consumers can read grounding status without parsing the
     /// `GroundingResult`. The envelope is additive — it does not alter any
     /// existing field.
-    pub(crate) fn apply_grounding(&mut self, outcome: EnforcementOutcome) {
+    ///
+    /// `validation` carries the schema validation result (Rung 2) when the
+    /// caller computed it (e.g. `swarm_delegate_local` validates the output
+    /// against the `produces` port schema). `None` leaves the envelope's
+    /// validation status as `NoSchema`.
+    pub(crate) fn apply_grounding(
+        &mut self,
+        outcome: EnforcementOutcome,
+        validation: Option<&hkask_verification::envelope::ValidationResult>,
+    ) {
         if outcome.result.is_some() {
             self.response =
                 serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| self.response.clone());
@@ -813,7 +806,7 @@ impl LocalDelegateResult {
             grounding_status,
             payload_status,
             outcome.result.as_ref(),
-            None, // No schema validation in swarm paths (yet)
+            validation,
         ));
     }
 
@@ -1033,7 +1026,7 @@ mod tests {
             raw_response: "{\"deliverable_path\": \"/src/fabricated.rs\"}".to_string(),
             was_object: true,
         };
-        result.apply_grounding(outcome);
+        result.apply_grounding(outcome, None);
         assert_eq!(
             result.response, "{\"deliverable_path\":null}",
             "response must be the cleaned JSON (unsourced fields nulled)"
@@ -1090,7 +1083,7 @@ mod tests {
             raw_response: original.to_string(),
             was_object: true,
         };
-        result.apply_grounding(outcome);
+        result.apply_grounding(outcome, None);
         assert_eq!(
             result.response, original,
             "response must be unchanged when grounding did not run (coverage gap)"
@@ -1137,7 +1130,7 @@ mod tests {
             raw_response: original.to_string(),
             was_object: false,
         };
-        result.apply_grounding(outcome);
+        result.apply_grounding(outcome, None);
         assert_eq!(
             result.response, original,
             "response must be unchanged when output was not a JSON object"
@@ -1276,48 +1269,6 @@ mod accounting_honesty_tests {
     use crate::local_registry::LocalAgentCard;
 
     #[test]
-    fn classify_request_detects_json() {
-        assert_eq!(classify_request("{\"key\": \"value\"}"), "json");
-        assert_eq!(classify_request("[1, 2, 3]"), "json");
-    }
-
-    #[test]
-    fn classify_request_detects_structured() {
-        let long_multiline = "line one\nline two\nline three\nline four\nline five\nline six\nline seven\nline eight\nline nine\nline ten\nline eleven\nline twelve\nline thirteen\nline fourteen\nline fifteen\nline sixteen\nline seventeen\nline eighteen\nline nineteen\nline twenty\nline twenty-one\nline twenty-two\nline twenty-three\nline twenty-four\nline twenty-five\nline twenty-six\nline twenty-seven\nline twenty-eight\nline twenty-nine\nline thirty";
-        assert_eq!(classify_request(long_multiline), "structured");
-    }
-
-    #[test]
-    fn classify_request_detects_prose() {
-        assert_eq!(classify_request("Summarize this file."), "prose");
-        assert_eq!(classify_request("short text"), "prose");
-    }
-
-    #[test]
-    fn check_bind_matches_json_to_json_accept() {
-        let card = LocalAgentCard {
-            agent_id: "test".to_string(),
-            agent_type: "test".to_string(),
-            accepts: vec!["json".to_string()],
-            capabilities: Default::default(),
-            ..Default::default()
-        };
-        assert_eq!(check_bind(&card, "{\"key\": \"value\"}"), Some(true));
-    }
-
-    #[test]
-    fn check_bind_mismatches_prose_to_json_accept() {
-        let card = LocalAgentCard {
-            agent_id: "test".to_string(),
-            agent_type: "test".to_string(),
-            accepts: vec!["json".to_string()],
-            capabilities: Default::default(),
-            ..Default::default()
-        };
-        assert_eq!(check_bind(&card, "summarize this file"), Some(false));
-    }
-
-    #[test]
     fn check_bind_returns_none_when_no_accepts_declared() {
         let card = LocalAgentCard {
             agent_id: "test".to_string(),
@@ -1340,6 +1291,24 @@ mod accounting_honesty_tests {
         };
         assert_eq!(check_bind(&card, "any prose at all"), Some(true));
         assert_eq!(check_bind(&card, "{\"json\": true}"), Some(true));
+    }
+
+    #[test]
+    fn check_bind_returns_none_for_non_text_labels() {
+        // The classification heuristic was deleted (no correct setting).
+        // A card declaring `accepts: ["json"]` cannot be runtime-matched
+        // against a free-text request without re-introducing the heuristic.
+        // The typing layer at admission (`validate_typing`) is the gate;
+        // runtime bind matching returns `None` (cannot determine).
+        let card = LocalAgentCard {
+            agent_id: "test".to_string(),
+            agent_type: "test".to_string(),
+            accepts: vec!["json".to_string()],
+            capabilities: Default::default(),
+            ..Default::default()
+        };
+        assert_eq!(check_bind(&card, "{\"key\": \"value\"}"), None);
+        assert_eq!(check_bind(&card, "summarize this file"), None);
     }
 }
 

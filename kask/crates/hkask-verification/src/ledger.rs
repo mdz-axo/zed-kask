@@ -1233,6 +1233,37 @@ mod tests {
         assert_eq!(by_source.delegations_with_nulled, 1);
     }
 
+    /// `enforce_narrative` must NOT apply monotone provenance — it handles
+    /// prose-only ABW cloud responses with no structured fields or `upstream_blocks`.
+    /// This test pins that invariant: the result's `provenance` map is empty
+    /// (narrative grounding produces only `narrative_leaks`, no field-level
+    /// provenance). If someone adds `enforce_monotone_provenance` to the
+    /// narrative path (e.g. by accepting `upstream_blocks` and calling it),
+    /// this test breaks because the provenance map would no longer be empty.
+    /// The fix is to switch the caller to `enforce_and_stamp` with
+    /// `upstream_blocks`, not to weaken this assertion.
+    #[test]
+    fn enforce_narrative_does_not_apply_monotone_provenance() {
+        let store = test_store();
+        let result = store.enforce_narrative(
+            "swarm_delegate",
+            "test_agent",
+            "abw_cloud",
+            "I wrote the file at /src/main.rs and all tests passed.",
+        );
+        // Narrative grounding produces narrative_leaks, not field-level
+        // provenance. The provenance map must be empty — monotone provenance
+        // operates on structured field provenance and has nothing to cap here.
+        assert!(
+            result.provenance.is_empty(),
+            "enforce_narrative must not produce field-level provenance (no monotone cap): {:?}",
+            result.provenance
+        );
+        // Narrative leaks may be present (the prose contains claim patterns).
+        // The point is that leaks are not provenance — they are violations.
+        assert!(!result.nulled_fields.is_empty() || !result.narrative_leaks.is_empty());
+    }
+
     // ── Monotone provenance (weakest-link) wiring tests ─────────────────
     //
     // These tests pin the "conclusions-never-become-facts" rule (paper §6 /

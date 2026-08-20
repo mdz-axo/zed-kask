@@ -10,7 +10,7 @@
 use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
 use crate::step_graph::{ExitKind, StepId};
-use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
+use crate::step_machine::{CascadeOutcome, Infra, StepMachine, parse_json_response};
 use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
 use futures_util::future::FutureExt;
@@ -400,7 +400,7 @@ impl StepMachine {
                     ),
                 });
             }
-            crate::executor::parse_json_response(&result_text, node.ordinal)?
+            parse_json_response(&result_text, node.ordinal)?
         };
 
         // Inject budget context for template awareness.
