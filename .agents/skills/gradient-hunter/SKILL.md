@@ -104,6 +104,8 @@ Key non-obvious rules the taxonomy encodes:
 | `gradient-report.j2` | KnowAct | Compile detected gradients into a structured report. Each gradient entry includes location, shape, ontology anchor, scale, domain, fractal recurrence, prior, populated side, desert side, magnitude, reason hypotheses, recommended reason, and action. Prioritizes by reason class (broken allosteric coupling > metastable trap > MNAR > MAR > MCAR), then fractal recurrence, then magnitude, then populated-side criticality. Emits lessons_learned and pattern_signatures for the next iteration's prior (feedback loop closure). |
 | `gradient-shapes.yaml` | RenderAct | Reference: eight gradient shapes drawn from seven academic domains (image processing, spatial statistics, causal inference, computational topology, software engineering, statistical physics, biochemistry/ biophysics). Each shape includes ontology, anchor concept, meaning, reason family, and fractal recurrence across scales. Includes the seven-class reason taxonomy (Rubin MCAR/MAR/MNAR + spin glass metastable trap + allostery broken coupling) and priority ordering. Substrate ontology (spin glass) explains why gradients exist at all. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.

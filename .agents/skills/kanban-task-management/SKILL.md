@@ -49,7 +49,7 @@ which phase to run:
 | `board_id` | operate | monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate |
 
 Templates for non-active phases receive the triage phase and produce a
-skip result without meaningful work. This is necessary because skill execution processes all phases in ordinal order.
+skip result without meaningful work. This is necessary because skill execution processes all phases in order.
 
 ## MCP Tools
 
@@ -87,6 +87,8 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 | `move-tasks.j2` | KnowAct | Recommend status transitions based on evidence. Includes post-cascade instructions for the agent to call kanban_task_move. Phase: operate. |
 | `verify-completion.j2` | KnowAct | Evaluate deliverables against acceptance criteria. Includes post-cascade instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. |
 | `escalate.j2` | KnowAct | Convert unresolved issues into human-operator-ready escalations. Includes post-cascade instructions for the agent to call kanban_task_comment. Phase: operate. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 

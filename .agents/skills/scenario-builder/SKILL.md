@@ -95,6 +95,8 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 | `key-forces.j2` | KnowAct | Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups. |
 | `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `axes-and-narratives.j2`: Public.

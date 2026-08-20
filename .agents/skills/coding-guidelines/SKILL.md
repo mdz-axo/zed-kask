@@ -35,6 +35,8 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 | `guidelines-apply.j2` | KnowAct | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
 | `guidelines-verify.j2` | KnowAct | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - Visibility is Public across all KnowAct templates; the anti-patterns fragment has no standalone contract

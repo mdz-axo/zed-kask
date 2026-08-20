@@ -54,6 +54,8 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 | `act.j2` | KnowAct | For each failing gate, prescribe the canonical GPUI remedy: secondary actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen progressive disclosure), truncate() on text labels, flex_shrink_0 on fixed elements, min_w_0 on flexible text columns, or explicit hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern. |
 | `review.j2` | KnowAct | Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates are `KnowAct` with `Public` visibility; they emit `reg.ui_layout.*` spans.

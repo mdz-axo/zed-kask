@@ -68,6 +68,8 @@ The skill calls `render_template` with only `principle-derive` (step 1); both `d
 | `principle-derive.j2` | KnowAct | Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep/codegraph, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. The output is a proposal — a human reviews it before any constraint becomes permanent. |
 | `principle-verify.j2` | KnowAct | Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Reference: Manual Pass on P1
 
 The manual pass on the principle "conclusions never promoted to verified fact" (paper §4, last paragraph) produced five constraints from `kask/crates/hkask-verification/src/grounding.rs`:

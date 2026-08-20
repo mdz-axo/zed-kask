@@ -943,11 +943,10 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 self.fs.clone(),
             ));
-            // Register the render_template tool for Jinja2 template rendering
-            // from the kask registry. The SKILL.md body tells the model when
-            // to call it for structured prompt scaffolding. `lisp_eval` is
-            // already registered via `add_default_tools`.
-            thread.add_tool(crate::tools::RenderTemplateTool);
+            // `lisp_eval` and `render_template` are already registered via
+            // `add_default_tools` — they are stateless tools available to all
+            // threads. Only `SkillTool` needs per-session registration because
+            // it holds a per-project skills resolver closure.
         });
 
         let subscriptions = vec![

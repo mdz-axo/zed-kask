@@ -106,6 +106,8 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 | `ra-strangle.j2` | KnowAct | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
 | `ra-verify.j2` | KnowAct | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.

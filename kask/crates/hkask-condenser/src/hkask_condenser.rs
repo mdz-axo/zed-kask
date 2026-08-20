@@ -37,7 +37,7 @@
 //! This crate provides the domain primitives consumed by:
 //! - `kask_bridge` (`BridgeThreadCondenser` — the runtime tool-result
 //!   compression path wired into the agent turn loop)
-//! - `hkask-mcp-condenser` (MCP server — thin wrapper exposing tools)
+//! - `kask_bridge::BridgeThreadCondenser` (in-process thread condensation)
 
 pub mod algorithms;
 pub mod engine;

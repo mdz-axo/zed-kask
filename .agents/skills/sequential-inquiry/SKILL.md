@@ -67,6 +67,8 @@ Brier. Evaluate convergence after each iteration.
 | `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
 | `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.

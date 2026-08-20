@@ -71,6 +71,8 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 | `sensitivity-analysis.j2` | KnowAct | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. |
 | `weight-and-score.j2` | KnowAct | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `identify-criteria.j2`: Public.

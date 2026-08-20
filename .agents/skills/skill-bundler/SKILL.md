@@ -30,6 +30,8 @@ Run peer-level skills concurrently and merge their outputs into a single unified
 |----------|------|---------|
 | `bundler-merge.j2` | KnowAct | Merge the outputs of N concurrently-executed skills into a single cohesive report with per-skill summaries, cross-skill insights, conflict surfacing, and prioritized recommendations. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `bundler-merge.j2`: Public.

@@ -126,15 +126,17 @@ Test-driven development with red-green-refactor loop, codegraph-anchored testing
 | `tdd-explore.j2` | KnowAct | Explore for codegraph blind spots by dispatching to the bug-hunt skill with a charter scoped to the slice's code. bug-hunt finds bugs the spec did not name (Weinberg: absent tests = quality threat). Findings not covered by an existing tracer bullet become new codegraph entities routing back to the plan. Dispatches only when coverage is thin OR the slice touches Trust (P0) code — not on every low-risk slice. |
 | `tdd-gap-check.j2` | KnowAct | Codegraph gap analysis: compare codegraph entities against tested behaviors including goal-principle alignment cross-reference against MDS category defaults, constraining principle completeness (Magna Carta P1-P4), and expectation quality scoring (0-3 scale). Identify uncovered requirements (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps MUST have tracer bullets. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `tdd-plan.j2`: Public. Planning only — do not write code in this phase.
 - `tdd-tracer.j2`: Public. Contract-first ordering: Contract → Test → Implementation. Test through public interface only. Minimal implementation — no speculative features. Selects `oracle_type` (hardcoded/reference/invariant) driving step 3.
-- `tdd-strengthen.j2`: Public. Dispatches to proptest ONLY for property-shaped contracts (reference/invariant oracle). Skips cleanly for hardcoded. Standalone execution mode (TDD can run tests). A proptest fail is RED — routes back to tracer or plan via the manifest's `branching` field (enforced by the ManifestExecutor — `BundleManifestStep.branching` is evaluated after `select`/`execute` steps, jumping to the target ordinal based on the `routing` field in the step result).
+- `tdd-strengthen.j2`: Public. Dispatches to proptest ONLY for property-shaped contracts (reference/invariant oracle). Skips cleanly for hardcoded. Standalone execution mode (TDD can run tests). A proptest fail is RED — routes back to tracer or plan: if the step result's `routing` field says to jump, re-enter the cycle at the target step.
 - `tdd-refactor.j2`: Public. Never refactor while RED. Never change behavior. Preserve all contract layers during refactoring. Post-refactor grep verification for contract metadata.
 - `tdd-verify.j2`: Public. Uses `./scripts/test --trace` (not bare `cargo test`) so runs are visible to harness-optimize. Emit `reg.contract.violated` spans for missing/malformed contracts. Reject vacuous `expect:` fields. A proptest `fail` verdict forces `all_tests_pass: false`.
 - `tdd-gap-check.j2`: Public. Every requirement in exactly one of: covered, gaps, deferrals. P0 gaps MUST recommend tracer-bullet. Consumes bug-hunt findings + surviving mutants as additional gap sources when provided.
-- `tdd-explore.j2`: Public. Dispatches to bug-hunt ONLY when coverage is thin OR slice touches Trust (P0). Findings must cite file:line (no-fiction). P0/P1 new gaps route to replan via the manifest's `branching` field (enforced by the ManifestExecutor); P2 may defer.
+- `tdd-explore.j2`: Public. Dispatches to bug-hunt ONLY when coverage is thin OR slice touches Trust (P0). Findings must cite file:line (no-fiction). P0/P1 new gaps route to replan: re-enter the cycle at the plan step; P2 may defer.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Relationship to Other Skills

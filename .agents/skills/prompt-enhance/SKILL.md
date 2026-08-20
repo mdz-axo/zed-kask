@@ -86,6 +86,8 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `enhance-output-render.j2` | KnowAct | Render-only variant of enhance-output for programmatic delivery without an LLM round-trip. Formats the enhanced prompt per output_format. |
 | `enhance-audit.j2` | KnowAct | Audit the input prompt through three lenses: pragmatic-semantics (classify claims by IS/OUGHT, epistemic mode, constraint force), pragmatic-cybernetics (feedback loop properties), and essentialist (deletion test + surface count). Not referenced by the current process manifest — the audit is folded into enhance-rewrite.j2. Retained for potential future re-decomposition. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.
@@ -93,7 +95,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 - Single-pass pipeline — no PDCA loop. `max_iterations: 1` prevents re-entry.
 - Verify step is decoupled from the rewrite step (self-improvement §9.1).
 - Hypothesis-tier findings are never mutated — always deferred for user verification.
-- Step conditions use `condition:` (not `skip_condition:`) — the step runs when the condition is true.
+- Step conditions use a condition check (the step runs when the condition is true).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Relationship to Other Skills
