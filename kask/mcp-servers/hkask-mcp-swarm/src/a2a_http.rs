@@ -110,6 +110,7 @@ fn run_server(
                     request,
                     &runtime,
                     &registry,
+                    &verification_store,
                     &tokio_handle,
                     &base_url,
                     max_credits_per_dispatch,
@@ -550,9 +551,10 @@ mod tests {
             "/tmp/hkask-a2a-test-unused-ledger.db".to_string(),
             None,
         ));
+        let verification_store = Arc::new(hkask_verification::VerificationStore::in_memory());
         let handle = tokio::runtime::Runtime::new().unwrap();
         let handle = handle.handle().clone();
-        handle_jsonrpc(body, &runtime, registry, &handle, 50)
+        handle_jsonrpc(body, &runtime, registry, &verification_store, &handle, 50)
     }
 
     #[test]

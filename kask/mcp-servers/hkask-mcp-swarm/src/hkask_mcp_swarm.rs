@@ -291,6 +291,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 config.embedding_dim,
             ));
 
+            // Central grounding ledger — shared by the swarm server and the
+            // A2A HTTP gateway so both paths write grounding records to the
+            // same cross-tool ledger.
+            let verification_store =
+                std::sync::Arc::new(hkask_verification::VerificationStore::open());
+
             // A2A HTTP gateway (opt-in via HKASK_A2A_HTTP_ENABLE). Exposes local
             // agents to external A2A clients over loopback JSON-RPC. Disabled by
             // default - it opens a loopback port. The startup-failure signals
@@ -301,6 +307,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     Ok(handle) => match a2a_http::A2aHttpServer::start(
                         local_runtime.clone(),
                         local_registry.clone(),
+                        verification_store.clone(),
                         handle,
                         config.max_credits_per_dispatch,
                     ) {
@@ -359,7 +366,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             Ok(SwarmServer::new(
                 ctx.webid,
-                std::sync::Arc::new(hkask_verification::VerificationStore::open()),
+                verification_store,
                 std::sync::Arc::new(SwarmClient::new(
                     reqwest::Client::builder()
                         .connect_timeout(std::time::Duration::from_secs(10))
