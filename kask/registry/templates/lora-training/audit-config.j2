@@ -164,7 +164,7 @@ STATIC_CONFIG
   push-to-Hub, driven by `HKASK_HF_MODEL_REPO` / `HF_TOKEN` env vars and
   `job.artifacts`.
   - Runpod host: missing env vars → `refuse` (adapter lost on ephemeral pod).
-  - DeepInfra/Nebius hosts: `warn` (no auto-upload configured today —
+  - Nebius host: `warn` (no auto-upload configured today —
     `job.artifacts` is not set; manual retrieval may be possible but not
     guaranteed on ephemeral infrastructure).
   - Local/unknown hosts: `not_applicable`.

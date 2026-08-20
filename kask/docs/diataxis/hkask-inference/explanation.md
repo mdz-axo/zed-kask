@@ -88,7 +88,7 @@ cannot get standalone:
    the zed process.
 3. **Unified model routing.** Chat, vision, and embedding all route through
    zed's `LanguageModelRegistry`, which resolves provider prefixes
-   (`DeepInfra/`, `OpenRouter/`, `ollama/`, `RunPod/`) to the configured
+   (`OpenRouter/`, `ollama/`, `RunPod/`) to the configured
    provider. The MCP server does not need to know how zed maps prefixes to
    credentials; it just sends a model name.
 
@@ -119,9 +119,9 @@ real failure. The error tells the operator exactly what to fix.
 ## Why media terminates in the `MediaRouter`, not the IPC bridge
 
 Media generation uses non-chat APIs that zed's `LanguageModel`
-(chat-completions-only) abstraction cannot represent: AtlasCloud's
-submit+poll task routing, DeepInfra's inference/TTS/transcription endpoints
-with binary returns. So media routed to zed via the IPC bridge terminates
+(chat-completions-only) abstraction cannot represent: submit+poll task
+routing, TTS/transcription endpoints with binary returns. So media routed
+to zed via the IPC bridge terminates
 back in the hKask `MediaRouter` (the `InferenceIpcServer` holds a
 `MediaRouter` as its `media_router` and dispatches `media_generate` requests
 to it). If zed later adds a media trait to its registry, this terminal can
@@ -130,9 +130,9 @@ delegate to it instead — until then the providers live in this crate.
 ## Why prefix-based provider selection
 
 Provider selection is prefix-based: a caller chooses the provider by
-prefixing the model name (`DeepInfra/...`, `OpenRouter/...`, `ollama/...`,
+prefixing the model name (`OpenRouter/...`, `ollama/...`,
 `RunPod/...`). `ProviderId::parse_from_model` (`config.rs:61`) parses the
-prefix; an unprefixed name uses `default_provider` (DeepInfra by default,
+prefix; an unprefixed name uses `default_provider` (OpenRouter by default,
 `config.rs:166`). This keeps the provider choice explicit and auditable — a
 span that records the model name also records the provider. A
 configuration-based approach (where the provider is selected by a separate
@@ -153,9 +153,8 @@ registered provider. It selects the primary via a 7-dimension scored engine
 orders the fallback chain by descending weighted score
 (`provider.rs:185-206`). With a single candidate there is no selection to make
 — the lone provider is used directly so single-provider ops don't emit a
-spurious selection span. The default score table reproduces the prior
-registration-order policy (DeepInfra-first / AtlasCloud-fallback), so
-dispatch behavior is preserved while leaving room for cost- or
+spurious selection span. The default score table is a neutral baseline
+while leaving room for cost- or
 latency-aware routing later.
 
 ## IPC request-response sequence

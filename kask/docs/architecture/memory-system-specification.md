@@ -72,7 +72,7 @@ flowchart TD
     Injector -->|"recall_context"| RealMemoryPort
     RealMemoryPort -->|"store / store_embedding"| MemStore
     RealMemoryPort -->|"embed(model, [text])"| EmbedPort
-    EmbedPort -->|"HTTP /embeddings"| Provider["DeepInfra/Qwen3<br/>(1024-dim)"]
+    EmbedPort -->|"HTTP /embeddings"| Provider["ollama/nomic-embed-text<br/>(768-dim)"]
     MemStore --> HMemStore
     MemStore --> EmbedStore
     Consolidator -->|"background timer"| MemStore
@@ -255,7 +255,7 @@ concurrent recall.
 | `HKASK_MEMORY_LIFE_DAYS`          | 180                                   | Memory life S in days (decay constant) |
 | `HKASK_MEMORY_STORAGE_BUDGET`     | 10000                                 | Max h_mems before consolidation prunes |
 | `HKASK_MEMORY_INGEST_CONCURRENCY` | 1                                     | Ingestion semaphore permits            |
-| `HKASK_EMBEDDING_MODEL`           | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | Embedding model                        |
+| `HKASK_EMBEDDING_MODEL`           | `ollama/nomic-embed-text` | Embedding model                        |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension             |
 
 ### Settings UI

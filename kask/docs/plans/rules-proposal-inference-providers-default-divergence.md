@@ -12,7 +12,7 @@ divergence, or independently once reviewed.
 > `From<Content>` diverge: `Default` is all-false (derived, pure, no side
 > effects — keeps `KaskSettings::default()` and tests deterministic); `From`
 > calls `from_env()` which auto-enables a provider whose API key env var is
-> set (`DEEPINFRA_API_KEY`, `OPENROUTER_API_KEY`, `ATLASCLOUD_API_KEY`).
+> set (`OPENROUTER_API_KEY`).
 > Renderers must go through `From` or `from_env()`, never
 > `unwrap_or_default()` on the inner field — `Default` would silently hide a
 > configured provider from the UI. The divergence is documented at
@@ -48,7 +48,7 @@ divergence, or independently once reviewed.
   all-false (the derived `Default` for a struct of `bool` fields sets each to
   `false`).
 - `kask/crates/kask_bridge/src/settings.rs:218-224` — `from_env()` reads
-  `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` / `ATLASCLOUD_API_KEY` and
+  `OPENROUTER_API_KEY` and
   sets the corresponding `*_enabled` to `true` if the env var is present.
 - `kask/crates/kask_bridge/src/settings.rs:1411-1421` — `From<Content>` calls
   `from_env()` and uses each env-resolved value as the fallback for a `None`
@@ -76,7 +76,7 @@ let inference = raw
 ```
 
 …would show every provider toggle as off even when the user has
-`DEEPINFRA_API_KEY` set in their environment. The user appears unconfigured;
+`OPENROUTER_API_KEY` set in their environment. The user appears unconfigured;
 the runtime (which goes through `From`) auto-enables the provider. The UI and
 the runtime disagree — a broken feedback loop (the same class of trap as
 `unwrap_or(0)` on regulation sense inputs: a missing signal reads as a

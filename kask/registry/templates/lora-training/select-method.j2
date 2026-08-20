@@ -417,7 +417,7 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
     {% if provider_capabilities and provider_capabilities | length > 0 %}
     ## v0.31.0: Deep capability reasoning over the full capability space
     provider_capabilities is available. Reason over the full capability matrix:
-    - **available_hosts**: which training hosts (runpod, deepinfra, nebius) are
+    - **available_hosts**: which training hosts (runpod, nebius) are
       configured and have API keys? This affects which harnesses are practically
       usable (all three hosts support all three harnesses, but GPU type
       availability may constrain model size).

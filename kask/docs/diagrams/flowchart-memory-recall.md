@@ -25,7 +25,7 @@ and injected as a bounded `Role::System` message.
 flowchart TD
     Prompt["User prompt<br/>(≥20 chars, ≥3 words)"] --> Gate{"should_recall?"}
     Gate -- "No" --> Empty["Return empty"]
-    Gate -- "Yes" --> Embed["Embed query via<br/>LanguageModelEmbeddingPort<br/>(HTTP to DeepInfra/Qwen3)"]
+    Gate -- "Yes" --> Embed["Embed query via<br/>LanguageModelEmbeddingPort<br/>(HTTP to the embedding provider)"]
     Embed --> KNN["search_similar(query_vector, limit)<br/>sqlite-vec cosine KNN"]
     KNN --> Join["For each KNN neighbor:<br/>query_deduped_untouched(entity_ref)<br/>→ h_mem text"]
     Join --> SemanticCandidates["Semantic candidates<br/>relevance = 1.0 - distance"]

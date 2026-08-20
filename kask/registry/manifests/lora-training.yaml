@@ -149,7 +149,7 @@ inputs:
       v0.31.0: Capability matrix for available training hosts and inference
       providers. Enables G6 to reason over the full capability space rather
       than just harness-method compatibility. Includes: available_hosts
-      (runpod, deepinfra, nebius), host_gpu_types, host_cost_models
+      (runpod, nebius), host_gpu_types, host_cost_models
       (gpu_hourly_rate, setup_minutes, teardown_grace), and inference_provider
       capabilities (lora_composition support, cost models). When absent, G6
       falls back to harness-method compatibility only.

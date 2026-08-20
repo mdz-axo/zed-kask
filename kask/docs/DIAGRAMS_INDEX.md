@@ -86,7 +86,7 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | DIAG-TRAIN-003 | flowchart | Corpus pipeline dispatch and unsupported-step boundary                          | `explanation/training-and-adapters.md` | `hkask-mcp-corpus`, `hkask-types`, `hkask-mcp`                                            | ✅ VERIFIED 2026-07-10 (path corrected)                |
 | DIAG-TRAIN-004 | flowchart | Full training pipeline (reasoning + Rust adapters + eval)                       | `explanation/training-and-adapters.md` | HF: `Axolotl-Partners/rust-adapter-scripts`                                               | ✅ VERIFIED 2026-07-11 (path corrected)                |
 | DIAG-TRAIN-005 | state     | Training job lifecycle: Queued → Running → Completed → Terminated               | `explanation/training-and-adapters.md` | `hkask-mcp-training/src/providers/types.rs`, HF: `Axolotl-Partners/rust-adapter-scripts`  | ✅ VERIFIED 2026-07-11 (path corrected)                |
-| DIAG-TRAIN-006 | class     | Training server type hierarchy: TrainingHost, HarnessAdapter, PodStatus, params | `explanation/training-and-adapters.md` | `hkask-mcp-training/src/providers/{types,runpod,deepinfra,nebius,harness,trl_harness}.rs` | ✅ VERIFIED 2026-07-23 (path corrected)                |
+| DIAG-TRAIN-006 | class     | Training server type hierarchy: TrainingHost, HarnessAdapter, PodStatus, params | `explanation/training-and-adapters.md` | `hkask-mcp-training/src/providers/{types,runpod,nebius,harness,trl_harness}.rs` | ✅ VERIFIED 2026-07-23 (path corrected)                |
 
 ## 11. Additional Inlined Diagrams (surviving only)
 
