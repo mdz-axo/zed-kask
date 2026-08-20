@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
-    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig, 
+    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
 };
 use hkask_types::SkillPolarity;
 
@@ -179,8 +179,6 @@ pub struct BundleManifestStep {
     pub input_mapping: Option<serde_json::Value>,
     #[serde(default)]
     pub output_schema: Option<serde_json::Value>,
-    #[serde(default)]
-    pub phase: CascadePhase,
     /// Optional condition expression. If present, the step is only executed when
     /// the condition evaluates to true against the current context.
     /// Supported: "var_name" (truthy), "NOT var_name" (falsy),
@@ -274,15 +272,6 @@ pub struct OnFailureConfig {
     pub resume: String,
 }
 
-impl BundleManifestStep {
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self.phase is a valid CascadePhase variant
-    /// post: returns the PascalCase string representation of the cascade phase
-    pub fn phase_str(&self) -> &'static str {
-        self.phase.as_str()
-    }
-}
-
 /// Composed bundle of skills with declared conflicts, complementarities, and cascade steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -292,9 +281,6 @@ pub struct BundleManifest {
     pub description: String,
     pub version: String,
     pub editor: String,
-    pub skills: Vec<BundleSkill>,
-    pub conflicts: Vec<BundleConflict>,
-    pub complementarities: Vec<BundleComplementarity>,
     pub steps: Vec<BundleManifestStep>,
     pub convergence: ConvergenceConfig,
     pub error_handling: ErrorHandlingConfig,
@@ -321,8 +307,6 @@ pub struct BundleManifest {
     /// rather than via the interactive `skill` tool's `context` map.
     #[serde(default)]
     pub enforce_inputs: Option<bool>,
-    #[serde(default)]
-    pub principles: Option<serde_json::Value>,
     /// Declared maximum number of steps to execute concurrently within a single
     /// PDCA iteration. Default 32, max 128 (`MAX_CONCURRENCY`); set to 1 for
     /// strictly serial execution.
@@ -340,17 +324,6 @@ pub struct BundleManifest {
     /// advisory.
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
-    /// Optional golden-output fixtures for maintenance-time validation of
-    /// skills with deterministic-ish output contracts. Each fixture is a
-    /// `(input_context_json, expected_output)` pair. When present,
-    /// `BridgeManifestExecutor::validate_golden_outputs` runs the skill
-    /// against the input and compares the output string exactly.
-    ///
-    /// Not a runtime gate — this is a maintenance-time check used by
-    /// `skill-maintenance` and the gemba walk briefing. Not applicable to
-    /// methodology-driven synthesis skills (which have no golden output).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub golden_outputs: Option<Vec<GoldenOutputFixture>>,
 }
 
 impl BundleManifest {
@@ -536,4 +509,3 @@ impl ValidationResult {
         !self.warnings.is_empty()
     }
 }
-

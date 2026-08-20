@@ -11,7 +11,7 @@
 //! - Dublin Core + BIBO anchor the state axis (what this is)
 //! - PKO anchors the process axis (how this came to be)
 //! - `ontology_tags` is the open-world map for domain supplements (FIBO,
-//!   GOLEM, OMC, ESO, ML-Schema, SUMO) — adding a new ontology doesn't
+//!   GOLEM, ESO, ML-Schema, SUMO) — adding a new ontology doesn't
 //!   require a schema change
 
 use std::collections::HashMap;
@@ -75,7 +75,7 @@ pub struct HMemOntology {
     // ── Open-world domain ontology tags ─────────────────────────────────
     /// Domain-specific ontology concepts, keyed by namespace.
     /// Examples:
-    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"], "omc": ["scene"]}
+    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"]}
     ///
     /// Adding a new ontology is just a new key — no struct change needed.
     /// Mirrors `corpus::TaggedChunk::ontology_tags` so h_mems and corpus

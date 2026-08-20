@@ -12,7 +12,7 @@ no-default-features = false
 
 [advisories]
 ignore = [
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive via pulp (← exr ← image ← gpui/hkask-media-widget) and simba (← nalgebra ← manatee git pin). The former utoipa-axum chain is gone. Reviewed 2026-08-04 — re-review 2026-11-04." },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive via pulp (← exr ← image ← gpui) and simba (← nalgebra ← manatee git pin). The former utoipa-axum chain is gone. Reviewed 2026-08-04 — re-review 2026-11-04." },
     # RUSTSEC-2026-0173 (proc-macro-error2) removed 2026-08-12: cargo-deny reports
     # `advisory-not-detected` and proc-macro-error2 is absent from Cargo.lock
     # (`grep -c 'name = "proc-macro-error2"' Cargo.lock` -> 0). The stacksafe-macro
