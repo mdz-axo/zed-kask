@@ -91,7 +91,7 @@ Validate:
 - E3: Convergence block — for `category: skill`: `convergence:` with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` (abort or escalate). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`.
 - E4: Category valid — `manifest.category` is one of: skill, qa-script, runtime-config, daemon-process, pipeline.
 - E5: Template ref resolvable — every `template_ref` resolves to an embedded `.j2` or `.yaml` in `registry/templates/`.
-- E8: Sub-manifest budgets — any `template_ref` to a `.yaml` sub-manifest (FlowDef recursion) has `gas` and `rjoule` blocks.
+- E8: Sub-manifest budgets — any `template_ref` to a `.yaml` sub-manifest (FlowDef recursion) has `rjoule` block.
 - E9: Step description — every step has a non-empty `description` field.
 - E10: Ordinal sequence — step ordinals are sequential starting from 1 (or 0 for pre-processing steps).
 - E11: Ledger span namespace — `ledger.span_namespace` present and equals `reg.skill.<manifest.id>`; no abolished `spans:` list.

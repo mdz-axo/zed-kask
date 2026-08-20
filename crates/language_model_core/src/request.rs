@@ -473,14 +473,8 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
-    // zed-kask: D13 — per-request output token budget. When `Some`, the
-    // provider honors it instead of the model's default `max_output_tokens`.
-    // Set by `kask_bridge::LanguageModelInferencePort::build_request` from
-    // `LLMParameters.max_tokens` so the skill manifest cascade requests its
-    // own (typically small) output budget instead of the model's full
-    // context window, which overflows on providers like OpenRouter/GLM-5.2
-    // (input + full-context output > context_length → 400). `None` for the
-    // agent chat path, which falls back to the model default as before.
+    /// Per-request output token budget. Deprecated — the provider handles
+    /// this via the model's `max_output_tokens`. Kept for serde compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
 }

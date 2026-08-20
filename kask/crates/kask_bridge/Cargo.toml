@@ -16,6 +16,7 @@ hkask-capability.workspace = true
 hkask-templates.workspace = true
 hkask-memory.workspace = true
 hkask-storage.workspace = true
+hkask-ledger.workspace = true
 hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true

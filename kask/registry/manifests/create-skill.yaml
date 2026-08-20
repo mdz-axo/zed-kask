@@ -125,7 +125,7 @@ steps:
       scaffolding. Produces: (1) template manifest with ontology-annotated
       template entries; (2) .j2 templates with contracts whose types come
       from the ontology; (3) process manifest with the idiosyncratic PDCA
-      shape (not a generic template), gas/rjoule/convergence blocks, capability
+      shape (not a generic template), rjoule/convergence blocks, capability
       capabilities; (4) SKILL.md companion with ontology references.
     renderer: minijinja
     template_ref: create-skill/create-skill-scaffold

@@ -470,12 +470,6 @@ impl LanguageModelInferencePort {
             messages: req_messages,
             tools: req_tools,
             temperature: Some(parameters.temperature),
-            // zed-kask: D13/D8 — propagate the cascade's output budget so the
-            // provider doesn't fall back to the model's full context window.
-            // Without this, OpenRouter receives no `max_tokens` and reserves
-            // the model's max output (e.g. 1,048,576 for GLM-5.2), making
-            // input + output exceed `context_length` → 400 on every cascade
-            // call. `LLMParameters::default()` sets 2048.
             max_tokens: None,
             // zed-kask: D25 — when a structured-output tool (emit_result) is offered,
             // force the model to call it via tool_choice: Any ("required" in
@@ -1418,17 +1412,8 @@ mod embedding_tests {
         }
     }
 
-    // zed-kask: D13/D8 — pinning test for max_tokens propagation.
-    // The model_override propagation tests above pin that the override reaches
-    // the channel. This test pins that the cascade's output budget
-    // (parameters.max_tokens) reaches the LanguageModelRequest.max_tokens
-    // field. Without this, a refactor could silently revert to
-    // `max_tokens: None` (Default), causing OpenRouter to reserve the model's
-    // full output window and return 400 on every cascade call — the exact
-    // regression the D13/D8 comment at build_request (inference.rs:473)
-    // describes.
     #[test]
-    fn build_request_propagates_max_tokens_to_language_model_request() {
+    fn build_request_does_not_set_max_tokens() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let (stream_tx, _stream_rx) =
             tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
@@ -1437,9 +1422,9 @@ mod embedding_tests {
         let params = LLMParameters::default();
 
         let messages = vec![ChatMessage::user("hello".to_string())];
-        let _req = port.build_request(&messages, &params, None);
+        let req = port.build_request(&messages, &params, None);
 
-        // max_tokens is no longer on LLMParameters — the provider API handles it.
+        assert_eq!(req.max_tokens, None);
     }
 
     // ── generate_stream_with_model override propagation ──

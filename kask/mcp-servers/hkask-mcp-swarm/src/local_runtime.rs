@@ -562,28 +562,6 @@ impl hkask_verification::DelegationCounter for SwarmDelegationCounter {
         )
     }
 }
-
-/// Open a `DelegationCounter` from the swarm ledger at the given path.
-/// Returns `None` if the ledger cannot be opened (e.g. the file doesn't
-/// exist yet — the swarm server creates it on first use). The caller should
-/// accept the absence: the `GroundingSensor` returns 0.0 (honest: "no gap
-/// detected") until the counter is wired, and a `None` here means "not yet
-/// available," not "zero delegations."
-pub fn open_delegation_counter(
-    ledger_path: &str,
-) -> Option<std::sync::Arc<dyn hkask_verification::DelegationCounter>> {
-    let manager = r2d2_sqlite::SqliteConnectionManager::file(ledger_path)
-        .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
-    let pool = r2d2::Pool::builder().max_size(2).build(manager).ok()?;
-    let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
-        std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
-    let ledger = hkask_ledger::Ledger::from_driver(driver).ok()?;
-    Some(std::sync::Arc::new(SwarmDelegationCounter::new(
-        std::sync::Arc::new(ledger),
-        "operator".to_string(),
-        "credits".to_string(),
-    )))
-}
 /// Classify the request shape for the bind check (Rung 4). This heuristic
 /// has no correct setting — widen it and it swallows structured ports,
 /// narrow it and it misses real declarations. It exists only because
