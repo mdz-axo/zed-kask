@@ -58,7 +58,7 @@ impl From<RouterModelEntry> for ModelInfo {
 
 impl From<hkask_types::ModelEntry> for ModelInfo {
     fn from(entry: hkask_types::ModelEntry) -> Self {
-        // Parse the provider from the prefixed name (e.g. "deepinfra/qwen/..." → DeepInfra).
+        // Parse the provider from the prefixed name (e.g. "openrouter/qwen/..." → OpenRouter).
         let provider_str = entry
             .prefixed_name
             .split('/')

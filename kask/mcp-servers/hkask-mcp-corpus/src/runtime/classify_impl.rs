@@ -31,7 +31,7 @@ pub struct ClassifyResult {
     pub cost_urj: u64,
     /// True if the API call failed but token/cost data was recovered.
     pub failed: bool,
-    /// Provider that served this classification (e.g., "deepinfra").
+    /// Provider that served this classification (e.g., "openrouter").
     pub provider: String,
 }
 
@@ -85,11 +85,11 @@ pub struct ClassifierDef {
     pub temperature: f64,
     #[serde(default = "default_fallback")]
     pub fallback_category: String,
-    /// API input token cost in nano-rJ per token (e.g., 30,000 for DeepInfra $0.03/M).
+    /// API input token cost in nano-rJ per token (e.g., 30,000 at $0.03/M).
     /// 1 µrJ = 1,000 nJ. Zero means cost tracking disabled.
     #[serde(default)]
     pub cost_input_nj_per_token: u64,
-    /// API output token cost in nano-rJ per token (e.g., 60,000 for DeepInfra $0.06/M).
+    /// API output token cost in nano-rJ per token (e.g., 60,000 at $0.06/M).
     #[serde(default)]
     pub cost_output_nj_per_token: u64,
     /// API cached input token read cost in nano-rJ per token.
@@ -413,7 +413,7 @@ pub async fn classify_batch(
                 "unknown"
             } else {
                 // The provider is the model name's namespace prefix (e.g.
-                // "DeepInfra" from "DeepInfra/Qwen/Qwen3-Embedding-0.6B").
+                // "OpenRouter" from "OpenRouter/qwen/qwen3-embedding").
                 // Fall back to "classify" if no prefix.
                 results
                     .first()

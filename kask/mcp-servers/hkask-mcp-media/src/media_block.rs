@@ -128,7 +128,7 @@ pub fn video_hint_from_result(result: &serde_json::Value) -> Option<String> {
 
 /// Extract the first URL from a `media_generate` result's `output_urls`
 /// array and format it as an audio display hint. Falls back to the `"audio"`
-/// field used by speech generation (DeepInfra TTS returns a single data URI).
+/// field used by speech generation (TTS providers return a single data URI).
 pub fn audio_hint_from_result(result: &serde_json::Value) -> Option<String> {
     result
         .get("output_urls")
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_audio_hint_from_result_audio_field() {
-        // DeepInfra TTS returns {"audio": "data:audio/mp3;base64,..."}
+        // TTS providers return {"audio": "data:audio/mp3;base64,..."}
         let result = serde_json::json!({
             "audio": "data:audio/mp3;base64,SUQzBAAAAAA",
             "format": "mp3"

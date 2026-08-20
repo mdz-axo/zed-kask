@@ -1400,7 +1400,7 @@ mod embedding_tests {
         let future = port.generate_with_messages(
             &messages,
             &LLMParameters::default(),
-            Some("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+            Some("ollama/nomic-embed-text"),
             None,
         );
         tokio::select! {
@@ -1409,7 +1409,7 @@ mod embedding_tests {
                 let req = req.expect("should have received an InferenceRequest");
                 assert_eq!(
                     req.model_override.as_deref(),
-                    Some("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+                    Some("ollama/nomic-embed-text"),
                     "generate_with_messages must propagate model_override to the channel"
                 );
             }

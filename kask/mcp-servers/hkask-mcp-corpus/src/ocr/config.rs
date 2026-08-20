@@ -37,7 +37,7 @@ pub enum OcrBackend {
     /// Classical OCR via Tesseract (fast, best for text-only).
     Tesseract,
     /// Vision-language model OCR via hkask-inference router.
-    /// The inner `String` is the model name (e.g., `DeepInfra/allenai/olmOCR-2-7B-1025`).
+    /// The inner `String` is the model name (e.g., `RunPod/kask-ocr`).
     LlmOcr(String),
 }
 

@@ -37,8 +37,8 @@ Simplified from 21 → 15 → 8 across 2026-07-19 cleanups.
 
 ## Providers
 
-Three cloud hosts: **Runpod** (primary, with completion detection via
-HuggingFace artifacts), **DeepInfra** and **Nebius** (no completion detection
+Two cloud hosts: **Runpod** (primary, with completion detection via
+HuggingFace artifacts) and **Nebius** (no completion detection
 yet — `training_status` reports `Running` indefinitely). Three harnesses:
 **Axolotl** (YAML, SFT), **TRL** (Python, SFT + preference optimization), and
 **Ludwig** (YAML, SFT + preference + GRPO/advanced PEFT).
@@ -64,7 +64,7 @@ candidate set covering GRPO (reward-model-free RLHF) and the full advanced-PEFT
 initializer set (PiSSA, EVA, CorDA, LoftQ) that hKask's `LoraInit` enum
 declares. Source: https://ludwig.ai/latest/ · https://github.com/ludwig-ai/ludwig
 
-Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). The Runpod host is sufficient for all training workloads.
+Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). Deleted providers (2026-08-20): `DeepInfraHost` (DeepInfra GPU containers). The Runpod host is sufficient for all training workloads.
 
 Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a concrete data/training need — Axolotl + TRL + Ludwig are sufficient until then.
 
@@ -79,9 +79,6 @@ Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a
 | `RUNPOD_DOCKER_IMAGE` | Docker image override |
 | `RUNPOD_DOCKER_ARGS` | Extra Docker args for the pod |
 | `HKASK_PODS_FILE` | Path to RunPod pod ID persistence file (default: `data/training-pods.json`) |
-| `DEEPINFRA_API_KEY` | DeepInfra API key |
-| `DEEPINFRA_GPU_CONFIG` | DeepInfra GPU config override |
-| `DEEPINFRA_CONTAINER_IMAGE` | DeepInfra container image override |
 | `NEBIUS_PROJECT_ID` | Nebius project ID |
 | `NEBIUS_SUBNET_ID` | Nebius subnet ID |
 | `NEBIUS_GPU_PLATFORM` | Nebius GPU platform override |
@@ -92,7 +89,7 @@ Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a
 | `HKASK_HF_ARTIFACT_OWNER` | HuggingFace artifact owner (required for Runpod) |
 | `HKASK_HF_DATASET_REPO` | HuggingFace dataset repo (required for Runpod) |
 | `HKASK_HF_MODEL_REPO` | HuggingFace model repo (required for Runpod) |
-| `HKASK_TRAINING_HOST` | Host selector: `runpod` / `deepinfra` / `nebius` |
+| `HKASK_TRAINING_HOST` | Host selector: `runpod` / `nebius` |
 | `HKASK_TRAINING_CACHE_DIR` | Cache directory for datasets |
 | `HKASK_TRAINING_DB` | Job/adapter SQLite DB path |
 | `HKASK_DB_PASSPHRASE` | DB encryption passphrase |

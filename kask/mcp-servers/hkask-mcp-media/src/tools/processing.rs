@@ -6,7 +6,7 @@ impl MediaServer {
     // ── Derivation tools ─────────────────────────────────────────────────────
 
     #[tool(
-        description = "Remove background from a gallery image. Delegates to DeepInfra Bria RMBG 2.0."
+        description = "Remove background from a gallery image. Delegates to the configured background-removal provider."
     )]
     pub async fn image_remove_background(
         &self,
