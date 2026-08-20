@@ -31,5 +31,3 @@ hkask-mcp-prediction-markets.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true

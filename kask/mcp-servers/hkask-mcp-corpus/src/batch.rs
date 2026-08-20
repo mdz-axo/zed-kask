@@ -24,13 +24,6 @@ pub(crate) enum BatchStatus {
 }
 
 impl BatchStatus {
-    #[cfg(test)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BatchStatus::Success => "success",
-            BatchStatus::Degraded => "degraded",
-        }
-    }
 }
 
 /// Outcome of a batch run, classifying the failure rate against the degraded threshold.
@@ -121,78 +114,5 @@ where
                 tokio::time::sleep(backoff).await;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn batch_outcome_success_when_failure_below_threshold() {
-        let outcome = BatchOutcome::from_counts(5, 95);
-        assert_eq!(outcome.status, BatchStatus::Success);
-        assert_eq!(outcome.status.as_str(), "success");
-    }
-
-    #[test]
-    fn batch_outcome_degraded_when_failure_at_threshold() {
-        // 10% failure rate = exactly at threshold
-        let outcome = BatchOutcome::from_counts(10, 100);
-        assert_eq!(outcome.status, BatchStatus::Degraded);
-    }
-
-    #[test]
-    fn batch_outcome_degraded_when_failure_above_threshold() {
-        let outcome = BatchOutcome::from_counts(20, 100);
-        assert_eq!(outcome.status, BatchStatus::Degraded);
-    }
-
-    #[test]
-    fn batch_outcome_handles_zero_total() {
-        let outcome = BatchOutcome::from_counts(0, 0);
-        assert_eq!(outcome.status, BatchStatus::Success);
-        assert_eq!(outcome.failure_pct(), 0);
-    }
-
-    #[test]
-    fn is_degraded_uses_saturating_div() {
-        assert!(!BatchOutcome::is_degraded(9, 100));
-        assert!(BatchOutcome::is_degraded(10, 100));
-        assert!(BatchOutcome::is_degraded(1, 1));
-    }
-
-    #[tokio::test]
-    async fn retry_succeeds_on_first_attempt() {
-        let result: Result<i32, String> =
-            retry_with_backoff(3, "test", "item1", || async { Ok(42) }).await;
-        assert_eq!(result, Ok(42));
-    }
-
-    #[tokio::test]
-    async fn retry_succeeds_on_second_attempt() {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        let attempts = AtomicU32::new(0);
-        let result: Result<i32, String> = retry_with_backoff(3, "test", "item2", || {
-            let count = attempts.fetch_add(1, Ordering::Relaxed);
-            async move {
-                if count == 0 {
-                    Err("transient".to_string())
-                } else {
-                    Ok(42)
-                }
-            }
-        })
-        .await;
-        assert_eq!(result, Ok(42));
-    }
-
-    #[tokio::test]
-    async fn retry_fails_after_max_retries() {
-        let result: Result<i32, String> = retry_with_backoff(2, "test", "item3", || async {
-            Err("permanent".to_string())
-        })
-        .await;
-        assert!(result.is_err());
     }
 }

@@ -17,11 +17,11 @@ pub use cascade_context::{
 };
 pub use embedding::EmbeddingGenerationError;
 pub use inference_port::{
-    EmbedFuture, InferencePort, InferenceStreamChunk, MediaFuture, MediaGenerateParams, ModelEntry,
+    EmbedFuture, InferencePort, ModelEntry,
     SkillExecError, SkillExecPort, ToolDispatchPort, WorktreeSpawnPort,
 };
 pub use inference_types::{
-    ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
+    ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult, InferenceStreamChunk,
     InferenceUsage, StructuredToolCall, TokenProb, TokenProbability, compute_confidence,
 };
 pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, TurnRecord};

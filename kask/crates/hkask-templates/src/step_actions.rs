@@ -10,7 +10,7 @@
 use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
 use crate::step_graph::StepId;
-use crate::step_machine::{CascadeOutcome, Infra, StepMachine, parse_json_response};
+use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
 use futures_util::future::FutureExt;
@@ -46,7 +46,6 @@ pub enum Effect {
     Reenter(StepId),
     Exit(crate::step_graph::ExitKind),
     NoOp,
-    ConsumedRJoule(f64),
 }
 
 /// Helper: resolve a step's `input_mapping` into the context.
@@ -238,7 +237,7 @@ impl StepMachine {
             }
         }
 
-        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let timeout_dur = std::time::Duration::from_secs(node.timeout_seconds as u64);
 
         // Build the message array: [memory_system?, ...prior_messages, system=template, user=trigger]
         // This gives the provider the real conversation as proper role-tagged
@@ -527,7 +526,7 @@ impl StepMachine {
         // Clone `infra.tools` into a standalone owned local before the await so
         // the borrow is of a local, not of `infra.tools` (rustc's HRTB `Send`
         // check rejects field borrows held across `.await` under `tokio::spawn`).
-        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let timeout_dur = std::time::Duration::from_secs(node.timeout_seconds as u64);
         let tools = infra.tools.clone();
         let mcp_ref_for_tracking = mcp_ref.clone();
         let tool_result =
@@ -535,7 +534,6 @@ impl StepMachine {
                 Ok(inner) => inner,
                 Err(_elapsed) => {
                     // Record the timed-out tool call before propagating.
-                    // Without this, grounding cannot distinguish "tool timed
                     // out" from "tool never called" — a timed-out call that
                     // supplied no data is an Unsourced field, not an absent
                     // one (paper: absence ≠ verdict). The `ok` flag is false
@@ -560,11 +558,8 @@ impl StepMachine {
                 _ => {}
             }
         }
-
-        // Record the tool call for grounding enforcement (Phase 5). The
         // summary shape matches `LocalDelegateResult.tool_calls`:
         // `{"tool": "server/tool_name", "ok": true/false, "result": <value>}`.
-        // The `result` field carries the tool's return value so grounding
         // can value-match (Truth rung) — without it, "sourced" only means
         // "the tool ran," not "the value came from the tool." Recorded
         // before the `?` so both success and failure paths are captured.
@@ -606,7 +601,7 @@ impl StepMachine {
     ) -> Result<Effect> {
         use futures_util::future::join_all;
 
-        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let timeout_dur = std::time::Duration::from_secs(node.timeout_seconds as u64);
         let limiter = infra.concurrency_limiter.clone();
         let tools = Arc::clone(&infra.tools);
 
@@ -724,7 +719,6 @@ impl StepMachine {
                 // Record every batch entry as a failed tool call before
                 // propagating. On timeout, `join_all` did not return, so the
                 // recording loop below is unreachable — without this, a
-                // timed-out batch leaves zero tool_calls entries and grounding
                 // cannot distinguish "all tools timed out" from "no tools
                 // called" (paper: absence ≠ verdict). Each entry is recorded
                 // with `ok: false` so `failed_tools` includes it.
@@ -732,7 +726,6 @@ impl StepMachine {
                 // Render the mcp ref through the template engine so the
                 // recorded tool name matches what `execute_tool_invoke`
                 // records (the resolved ref, not the raw template string).
-                // Grounding enforcement matches tool names against contract
                 // sources — an unrendered template would never match.
                 for entry in batch.iter() {
                     let rendered = crate::template_renderer::TemplateRenderer::render_inline(
@@ -751,14 +744,11 @@ impl StepMachine {
             }
         };
         let elapsed_ms = batch_started.elapsed().as_millis();
-
-        // Record tool calls for grounding enforcement (Phase 5). Each batch
         // entry is recorded with its rendered MCP ref and success/failure
         // status. The results vec is in the same order as the batch entries
         // (join_all preserves order). Rendering the mcp ref through the
         // template engine ensures the recorded tool name matches the
         // resolved reference that `execute_tool_invoke` would record —
-        // grounding enforcement matches tool names against contract sources,
         // so an unrendered template string would never match.
         for (entry, result) in batch.iter().zip(results.iter()) {
             let rendered = crate::template_renderer::TemplateRenderer::render_inline(
@@ -949,8 +939,7 @@ impl StepMachine {
             &parent_named_keys,
         );
 
-        // Deduct the sub-cascade's actual rJoule consumption.
-
+        
         Ok(Effect::Stored {
             step_id: node.id,
             value: result_value,
@@ -960,9 +949,7 @@ impl StepMachine {
     /// **Parallel** — run a list of sub-cascades concurrently (K2). Branches
     /// live under `input_mapping.branches`; `concurrency_cap` bounds in-flight
     /// branches; `join` is `"list"` (first cut). Each branch: its own
-    /// `ConvergenceTracker` + a `BudgetTracker` that owns its rJoule (joined
-    /// after via `charge_rjoule`). Results join by `branch_id` — deterministic,
-    /// not completion order.
+            /// not completion order.
     pub(crate) async fn execute_parallel(
         &mut self,
         node: crate::step_graph::StepNode,
@@ -1005,8 +992,7 @@ impl StepMachine {
         for (i, branch) in branches.iter().enumerate() {
             let template_ref = branch.get("template_ref").and_then(|v| v.as_str()).map(|s| s.to_string());
             let branch_id = branch.get("branch_id").and_then(|v| v.as_u64()).unwrap_or(i as u64) as usize;
-            let sub_manifest = node.flowdef_manifest.clone();
-            let timeout = effective_timeout(branch.get("timeout_seconds").and_then(|v| v.as_u64()).map(|s| s as u64).unwrap_or(300));
+            let timeout = effective_timeout(branch.get("timeout_seconds").and_then(|v| v.as_u64()).map(|s| s as u64));
             let limiter = infra.concurrency_limiter.clone();
             let depth = self.depth + 1;
             let ctx = self.context.clone();
@@ -1037,13 +1023,13 @@ impl StepMachine {
         }
 
         let results = match tokio::time::timeout(
-            effective_timeout(node.timeout_seconds),
+            std::time::Duration::from_secs(node.timeout_seconds as u64),
             futures_util::future::join_all(tool_futs),
         ).await {
             Ok(joined) => joined,
             Err(_) => return Err(TemplateError::Timeout {
                 step_ordinal: node.ordinal,
-                elapsed_seconds: node.timeout_seconds.unwrap_or(300),
+                elapsed_seconds: node.timeout_seconds,
             }),
         };
 
@@ -1110,7 +1096,7 @@ fn render_step_template(
     let template_ref = node.template_ref.as_deref().ok_or_else(|| {
         TemplateError::Manifest(format!("Step {} has no template_ref", node.ordinal))
     })?;
-    let template_content = infra.template_renderer.load(template_ref)?;
+    let template_content = infra.template_renderer.load(template_ref, 0)?;
     infra.template_renderer.render(&template_content, context)
 }
 
@@ -1122,7 +1108,7 @@ fn render_step_template_with_raw(
     let template_ref = node.template_ref.as_deref().ok_or_else(|| {
         TemplateError::Manifest(format!("Step {} has no template_ref", node.ordinal))
     })?;
-    let raw = infra.template_renderer.load(template_ref)?;
+    let raw = infra.template_renderer.load(template_ref, 0)?;
     let (renderable, inference_block) = crate::template_renderer::parse_and_strip_inference_block(
         crate::template_renderer::strip_front_matter(&raw),
     );
@@ -1131,9 +1117,8 @@ fn render_step_template_with_raw(
 }
 
 fn effective_timeout(seconds: Option<u64>) -> std::time::Duration {
-    std::time::Duration::from_secs(seconds.unwrap_or(300))
+    std::time::Duration::from_secs(seconds)
 }
-
 
 fn build_cascade_messages(
     prior_messages: &[ChatMessage],
@@ -1146,7 +1131,7 @@ fn build_cascade_messages(
     if !memory_snippets.is_empty() {
         let memory_text = memory_snippets
             .iter()
-            .map(|s| format!("- {}", s.content))
+            .map(|s| format!("- {}", s.text))
             .collect::<Vec<_>>()
             .join("\n");
         messages.push(ChatMessage {
@@ -1233,19 +1218,10 @@ async fn call_inference_stream_with_messages(
     Ok((full_text, tool_calls, cost_usd, finish_reason))
 }
 
-fn invoke_tool(
-    tools: Arc<dyn ToolPort>,
-    tool_name: String,
-    input: Value,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>> {
-    Box::pin(async move {
-        let info = tools.get_tool_info(&tool_name)
-            .map_err(|e| TemplateError::Manifest(format!("tool '{tool_name}': {e}")))?;
-        let result = tools.invoke(&info.server_id, &info.tool_name, &input)
-            .await
-            .map_err(|e| TemplateError::Manifest(format!("tool '{tool_name}' failed: {e}")))?;
-        Ok(result)
-    })
+fn invoke_tool(tools: Arc<dyn ToolPort>, tool_name: String, input: Value) -> Result<Value> {
+    let info = tools.get_tool_info(&tool_name)?;
+    let result = tools.invoke(&info.server_id, &info.tool_name, &input, std::sync::Arc::new(|| {}))?;
+    Ok(result)
 }
 
 fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {

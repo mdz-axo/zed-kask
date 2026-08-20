@@ -259,7 +259,6 @@ fn default_weight() -> f64 {
     1.0
 }
 
-
 /// Error handling configuration. Loaded from manifest YAML.
 ///
 /// `on_error` controls retry for all transient step failures (timeout,

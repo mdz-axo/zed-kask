@@ -27,5 +27,3 @@ ed25519-dalek = { workspace = true, features = ["zeroize"] }
 [lints]
 workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true

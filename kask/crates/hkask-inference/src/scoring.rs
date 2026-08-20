@@ -8,7 +8,6 @@
 //! registered again.
 
 use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
-use hkask_types::MediaGenerateParams;
 use std::sync::Arc;
 
 /// 7-dimension score for a provider (each 0.0–1.0).
@@ -89,7 +88,6 @@ fn score_provider(id: &str, op: MediaOp) -> ProviderScore {
 pub fn select_scored(
     registry: &ProviderRegistry,
     op: MediaOp,
-    _params: &MediaGenerateParams,
 ) -> Result<(Arc<dyn MediaProvider>, Vec<ScoredProvider>), hkask_types::InferenceError> {
     let weights = ScoreWeights::default();
     let candidates: Vec<&Arc<dyn MediaProvider>> = registry
@@ -137,22 +135,4 @@ pub fn select_scored(
     );
 
     Ok((chosen, scored))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::InferenceConfig;
-    use crate::media_router::MediaRouter;
-
-    #[test]
-    fn select_scored_errors_when_no_provider_supports_op() {
-        let router = MediaRouter::new(InferenceConfig::default());
-        let result = select_scored(
-            &router.registry,
-            MediaOp::GenerateImage,
-            &MediaGenerateParams::default(),
-        );
-        assert!(result.is_err(), "empty registry must error, not panic");
-    }
 }

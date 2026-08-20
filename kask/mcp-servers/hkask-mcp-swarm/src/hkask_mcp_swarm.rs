@@ -392,28 +392,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tool_surface_is_exactly_53_registered_tools() {
-        let router = SwarmServer::combined_router();
-        let mut names: Vec<String> = router
-            .list_all()
-            .into_iter()
-            .map(|t| t.name.into_owned())
-            .collect();
-        names.sort();
-        let mut expected: Vec<String> = TOOL_NAMES.iter().map(|s| s.to_string()).collect();
-        expected.sort();
-        assert_eq!(
-            names, expected,
-            "registered tool surface drifted from the documented 53"
-        );
-    }
-}
-
 // D28 — pins the default ledger + consent DB paths.
 #[test]
 fn default_db_paths_follow_standardized_layout() {

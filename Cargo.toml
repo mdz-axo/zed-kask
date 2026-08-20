@@ -284,9 +284,7 @@ members = [
     "kask/crates/hkask-mcp-server",
     "kask/crates/hkask-ledger",
     "kask/crates/hkask-storage",
-    "kask/crates/hkask-inference",
-    "kask/crates/hkask-condenser",
-    "kask/crates/hkask-bridge-ontology",
+    "kask/crates/hkask-inference",    "kask/crates/hkask-bridge-ontology",
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
     "crates/hkask-tool-invoker",
@@ -902,7 +900,6 @@ tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
 hkask-ledger = { path = "kask/crates/hkask-ledger" }
 hkask-storage = { path = "kask/crates/hkask-storage" }
-hkask-condenser = { path = "kask/crates/hkask-condenser" }
 hkask-services-core = { path = "kask/crates/hkask-services-core" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-scenarios = { path = "kask/mcp-servers/hkask-mcp-scenarios" }

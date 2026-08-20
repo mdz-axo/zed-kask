@@ -4,7 +4,6 @@
 //!
 //! In zed-kask, chat inference routes through the zed IPC bridge
 //! (`InferenceIpcClient` → `LanguageModelRegistry`). This crate provides:
-//! - `MediaRouter` — media generation (image/video/speech/transcription) via
 //!   `MediaProvider` backends, not covered by zed's `LanguageModel` abstraction.
 //! - `InferenceIpcClient` — the IPC bridge client used by MCP servers to route
 //!   chat/vision/embed through zed's `LanguageModelRegistry`.
@@ -14,15 +13,12 @@
 //! # Architecture
 //!
 //! ```text
-//! MediaRouter (implements InferencePort — media only)
 //!   └── ProviderRegistry — dispatches to registered MediaProvider backends
-//!       (currently empty; providers are registered in MediaRouter::new as
 //!       they are added back)
 //!
 //! InferenceIpcClient (implements InferencePort — chat/vision/embed via zed)
 //!   └── Unix socket → zed LanguageModelRegistry
 //!
-//! resolve_inference_port() — tries IPC bridge first, falls back to MediaRouter
 //! ```rust,no_run
 //!
 //! # Model Naming
@@ -32,9 +28,7 @@
 
 pub mod chat_protocol;
 pub mod config;
-pub mod inference_ipc_client;
-pub mod media_router;
-pub mod model_constants;
+pub mod inference_ipc_client;pub mod model_constants;
 pub mod openai_compat;
 pub mod provider;
 pub mod scoring;
@@ -42,8 +36,7 @@ pub mod scoring;
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
-pub use media_router::MediaRouter;
-pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
+pub pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
 
 /// Unified model entry from any provider, with provider prefix applied.
 #[derive(Debug, Clone)]
@@ -156,7 +149,6 @@ impl RouterModelEntry {
 ///
 /// This is the canonical entry point for MCP servers at startup. It tries
 /// the IPC bridge first (connecting back to zed's `LanguageModelRegistry`
-/// via a Unix socket), and falls back to constructing a `MediaRouter`
 /// from env-var API keys when the IPC socket is not available.
 ///
 /// # Priority
@@ -165,7 +157,6 @@ impl RouterModelEntry {
 ///    socket is reachable. This routes inference through zed's
 ///    `LanguageModelRegistry` (with guard and zed's configured
 ///    API keys). Chat, vision, embed, and list_models all go through here.
-/// 2. `MediaRouter` — constructed from `InferenceConfig::from_env()`.
 ///    This handles only media generation. Chat/vision/
 ///    embed return a clear error directing the operator to the IPC bridge.
 ///    Used when running standalone or when the IPC socket is not available.
@@ -175,7 +166,6 @@ impl RouterModelEntry {
 /// Logs which path was taken at `info` level so operators can verify the
 /// inference routing from server startup logs.
 ///
-/// expect: "MCP servers route inference through zed when available, fall back to MediaRouter for media-only"
 /// pre:  none (reads env vars)
 /// post: returns an `Arc<dyn InferencePort>` ready for inference calls
 #[must_use]
@@ -192,16 +182,12 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
             tracing::warn!(
                 target: "hkask.inference",
                 error = %e,
-                "IPC bridge connection failed — falling back to MediaRouter (media-only; chat/vision unavailable)"
             );
-            std::sync::Arc::new(MediaRouter::new(InferenceConfig::from_env()))
         }
         None => {
             tracing::info!(
                 target: "hkask.inference",
-                "HKASK_INFERENCE_SOCKET not set — using MediaRouter (media-only; chat/vision unavailable)"
             );
-            std::sync::Arc::new(MediaRouter::new(InferenceConfig::from_env()))
         }
     }
 }

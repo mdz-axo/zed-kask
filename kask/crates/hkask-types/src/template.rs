@@ -53,7 +53,6 @@ pub struct LLMParameters {
     /// When true, the model is instructed to skip internal reasoning and produce
     /// output directly. Essential for summarization/condensation tasks where
     /// output tokens are needed, not reasoning tokens.
-    /// Default: false (thinking enabled). Set to true for condenser tasks.
     #[serde(default)]
     pub disable_thinking: bool,
 

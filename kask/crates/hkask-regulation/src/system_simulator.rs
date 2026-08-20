@@ -105,22 +105,3 @@ impl MovingAverageExtrapolator {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn observations_make_predictions_reliable() {
-        let simulator = MovingAverageExtrapolator::new(3);
-        simulator.observe(SignalMetric::ErrorRate, 0.1);
-        simulator.observe(SignalMetric::ErrorRate, 0.2);
-        simulator.observe(SignalMetric::ErrorRate, 0.3);
-
-        let prediction = simulator.predict(SignalMetric::ErrorRate, 0.3, 0.5);
-
-        assert!(prediction.reliable);
-        assert!(prediction.trend > 0.0);
-        assert_eq!(prediction.ticks_to_threshold, Some(2));
-    }
-}

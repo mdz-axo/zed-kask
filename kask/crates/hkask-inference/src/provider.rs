@@ -4,14 +4,12 @@
 //! holds the registered providers in priority order and dispatches an op to
 //! the first provider that supports it, falling back to the next on runtime
 //! error. This is the registry that replaces the hardcoded two-field dispatch
-//! in `MediaRouter`: adding a provider = implement `MediaProvider` + register
-//! in `MediaRouter::new`; no dispatch edits.
+
 //!
 //! No implementations are currently registered (the former media backends
 //! were removed); the trait + registry remain the generic dispatch
 //! infrastructure for providers added in the future.
 
-use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::future::Future;
@@ -22,17 +20,12 @@ use std::sync::Arc;
 /// declares which subset it [`MediaProvider::supports`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediaOp {
-    GenerateImage,
     ImageToImage,
     RemoveBackground,
     Upscale,
-    GenerateVideo,
     ImageToVideo,
-    GenerateSpeech,
     Transcribe,
 }
-
-/// Parse the string op name used by `InferencePort::media_generate`.
 ///
 /// expect: "The system maps string media ops to typed registry ops"
 /// pre:  op is a known media op string
@@ -41,13 +34,10 @@ impl std::str::FromStr for MediaOp {
     type Err = InferenceError;
     fn from_str(op: &str) -> Result<Self, Self::Err> {
         match op {
-            "generate_image" => Ok(Self::GenerateImage),
             "image_to_image" => Ok(Self::ImageToImage),
             "remove_background" => Ok(Self::RemoveBackground),
             "upscale" => Ok(Self::Upscale),
-            "generate_video" => Ok(Self::GenerateVideo),
             "image_to_video" => Ok(Self::ImageToVideo),
-            "generate_speech" => Ok(Self::GenerateSpeech),
             "transcribe" => Ok(Self::Transcribe),
             other => Err(InferenceError::Connection(format!(
                 "unknown media op: {other}"
@@ -57,17 +47,13 @@ impl std::str::FromStr for MediaOp {
 }
 
 impl MediaOp {
-    /// The canonical string name (matches `InferencePort::media_generate` op).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::GenerateImage => "generate_image",
             Self::ImageToImage => "image_to_image",
             Self::RemoveBackground => "remove_background",
             Self::Upscale => "upscale",
-            Self::GenerateVideo => "generate_video",
             Self::ImageToVideo => "image_to_video",
-            Self::GenerateSpeech => "generate_speech",
             Self::Transcribe => "transcribe",
         }
     }
@@ -75,7 +61,6 @@ impl MediaOp {
 
 /// One provider behind the media membrane.
 ///
-/// Implementations map the unified [`MediaGenerateParams`] to their
 /// provider-specific call. The trait is `Send + Sync` so providers can live in
 /// an `Arc<dyn MediaProvider>` behind the registry.
 pub trait MediaProvider: Send + Sync {
@@ -94,7 +79,6 @@ pub trait MediaProvider: Send + Sync {
     fn execute<'a>(
         &'a self,
         op: MediaOp,
-        params: &'a MediaGenerateParams,
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>>;
 }
 
@@ -156,7 +140,6 @@ impl ProviderRegistry {
     pub async fn execute(
         &self,
         op: MediaOp,
-        params: &MediaGenerateParams,
     ) -> Result<Value, InferenceError> {
         let candidates: Vec<Arc<dyn MediaProvider>> = self
             .providers

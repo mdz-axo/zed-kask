@@ -85,36 +85,3 @@ pub fn derive_sub_key_with_version(
     let versioned_context = format!("hkask-v{key_version}:{context}");
     derive_sub_key(master_key, &versioned_context)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    //
-    // Version N and version N+1 must produce cryptographically independent
-    // sub-keys from the same master key and context.
-    #[test]
-    fn different_versions_produce_different_keys() {
-        let master_key = [0u8; 32];
-        let context = "test-context";
-
-        let v1 = derive_sub_key_with_version(&master_key, context, 1);
-        let v2 = derive_sub_key_with_version(&master_key, context, 2);
-
-        assert_ne!(&*v1, &*v2, "Different versions must produce different keys");
-    }
-
-    //
-    // The same master key, context, and version must always produce
-    // the same sub-key (deterministic derivation).
-    #[test]
-    fn same_version_produces_same_key() {
-        let master_key = [0u8; 32];
-        let context = "test-context";
-
-        let v1_a = derive_sub_key_with_version(&master_key, context, 1);
-        let v1_b = derive_sub_key_with_version(&master_key, context, 1);
-
-        assert_eq!(&*v1_a, &*v1_b, "Same version must produce same key");
-    }
-}

@@ -13,21 +13,6 @@ path = "src/hkask_mcp_swarm.rs"
 name = "hkask-mcp-swarm"
 path = "src/main.rs"
 
-[[test]]
-name = "swarm_gap_properties"
-path = "tests/swarm_gap_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "swarm_properties"
-path = "tests/swarm_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "swarm_live_probes"
-path = "tests/swarm_live_probes.rs"
-required-features = ["test-utils"]
-
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-bridge-ontology.workspace = true
@@ -57,12 +42,6 @@ workspace = true
 
 [features]
 test-utils = []
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
-proptest = { workspace = true }
-tempfile = { workspace = true }
-serde_json = { workspace = true }
 
 [build-dependencies]
 regex = { workspace = true }

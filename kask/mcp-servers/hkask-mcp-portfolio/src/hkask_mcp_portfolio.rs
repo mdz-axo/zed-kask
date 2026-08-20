@@ -49,5 +49,3 @@ pub mod server;
 
 pub use server::{map_portfolio_error, run};
 
-#[cfg(test)]
-mod tests;

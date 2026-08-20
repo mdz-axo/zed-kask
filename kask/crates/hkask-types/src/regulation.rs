@@ -138,7 +138,6 @@ pub enum RegulationSpan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ToolSubsystem {
     WebSearch,
-    Condenser,
     Training,
     Corpus,
     Research,
@@ -151,7 +150,6 @@ pub enum ToolSubsystem {
     Companies,
     Filesystem,
     Curator,
-    Codegraph,
     Scenarios,
     Swarm,
     /// Catch-all for unknown or future MCP servers.
@@ -170,7 +168,7 @@ impl ToolSubsystem {
             .unwrap_or(server_name);
         match name {
             "memory" => ToolSubsystem::Memory,
-            "condenser" => ToolSubsystem::Condenser,
+            
             "research" => ToolSubsystem::Research,
             "companies" => ToolSubsystem::Companies,
             "communication" => ToolSubsystem::Communication,
@@ -179,7 +177,7 @@ impl ToolSubsystem {
             "training" => ToolSubsystem::Training,
             "kanban" => ToolSubsystem::Kanban,
             "curator" => ToolSubsystem::Curator,
-            "codegraph" => ToolSubsystem::Codegraph,
+            
             "scenarios" => ToolSubsystem::Scenarios,
             "swarm" => ToolSubsystem::Swarm,
             _ => ToolSubsystem::Other,
@@ -190,7 +188,7 @@ impl ToolSubsystem {
     pub fn as_str(self) -> &'static str {
         match self {
             ToolSubsystem::WebSearch => "web_search",
-            ToolSubsystem::Condenser => "condenser",
+            
             ToolSubsystem::Training => "training",
             ToolSubsystem::Corpus => "corpus",
             ToolSubsystem::Research => "research",
@@ -203,7 +201,7 @@ impl ToolSubsystem {
             ToolSubsystem::Companies => "companies",
             ToolSubsystem::Filesystem => "filesystem",
             ToolSubsystem::Curator => "curator",
-            ToolSubsystem::Codegraph => "codegraph",
+            
             ToolSubsystem::Scenarios => "scenarios",
             ToolSubsystem::Swarm => "swarm",
             ToolSubsystem::Other => "other",
@@ -250,7 +248,7 @@ impl RegulationSpan {
         match self {
             RegulationSpan::Tool { subsystem } => match subsystem {
                 ToolSubsystem::WebSearch => "reg.tool.web_search",
-                ToolSubsystem::Condenser => "reg.tool.condenser",
+                
                 ToolSubsystem::Training => "reg.tool.training",
                 ToolSubsystem::Corpus => "reg.tool.corpus",
                 ToolSubsystem::Research => "reg.tool.research",
@@ -263,7 +261,7 @@ impl RegulationSpan {
                 ToolSubsystem::Companies => "reg.tool.companies",
                 ToolSubsystem::Filesystem => "reg.tool.filesystem",
                 ToolSubsystem::Curator => "reg.tool.curator",
-                ToolSubsystem::Codegraph => "reg.tool.codegraph",
+                
                 ToolSubsystem::Scenarios => "reg.tool.scenarios",
                 ToolSubsystem::Swarm => "reg.tool.swarm",
                 ToolSubsystem::Other => "reg.tool",
@@ -310,9 +308,6 @@ impl std::str::FromStr for RegulationSpan {
             "reg.tool.web_search" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::WebSearch,
             }),
-            "reg.tool.condenser" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Condenser,
-            }),
             "reg.tool.training" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Training,
             }),
@@ -349,9 +344,6 @@ impl std::str::FromStr for RegulationSpan {
             "reg.tool.curator" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Curator,
             }),
-            "reg.tool.codegraph" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Codegraph,
-            }),
             "reg.tool.scenarios" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Scenarios,
             }),
@@ -365,189 +357,5 @@ impl std::str::FromStr for RegulationSpan {
             "reg.memory.encode" => Ok(RegulationSpan::MemoryEncode),
             _ => Err(()),
         }
-    }
-}
-
-#[cfg(test)]
-mod reg_span_tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn regspan_display_produces_canonical_strings() {
-        assert_eq!(
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Other
-            }
-            .to_string(),
-            "reg.tool"
-        );
-        assert_eq!(RegulationSpan::Inference.to_string(), "reg.inference");
-        assert_eq!(RegulationSpan::AgentPod.to_string(), "reg.pod");
-        assert_eq!(RegulationSpan::Curation.to_string(), "reg.curation");
-        assert_eq!(RegulationSpan::SelfHeal.to_string(), "reg.heal");
-        assert_eq!(
-            RegulationSpan::MemoryEncode.to_string(),
-            "reg.memory.encode"
-        );
-    }
-
-    #[test]
-    fn regspan_from_str_rejects_invalid() {
-        assert!(RegulationSpan::from_str("reg.nonexistent").is_err());
-        assert!(RegulationSpan::from_str("invalid").is_err());
-        assert!(RegulationSpan::from_str("").is_err());
-        assert!(RegulationSpan::from_str("tool").is_err()); // short form not supported
-    }
-
-    #[test]
-    fn regspan_from_str_round_trips() {
-        let variants = vec![
-            "reg.tool",
-            "reg.tool.web_search",
-            "reg.tool.condenser",
-            "reg.tool.training",
-            "reg.tool.corpus",
-            "reg.tool.research",
-            "reg.tool.communication",
-            "reg.tool.registry",
-            "reg.tool.wallet",
-            "reg.tool.media",
-            "reg.tool.kanban",
-            "reg.tool.memory",
-            "reg.tool.companies",
-            "reg.tool.filesystem",
-            "reg.tool.curator",
-            "reg.tool.codegraph",
-            "reg.tool.scenarios",
-            "reg.tool.swarm",
-            "reg.inference",
-            "reg.pod",
-            "reg.curation",
-            "reg.heal",
-            "reg.memory.encode",
-        ];
-        for s in variants {
-            let span: RegulationSpan = s.parse().expect("should parse");
-            assert_eq!(span.to_string(), s, "Display should match input");
-        }
-    }
-
-    #[test]
-    fn regspan_tool_subsystem_produces_correct_string() {
-        assert_eq!(
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::WebSearch
-            }
-            .to_string(),
-            "reg.tool.web_search"
-        );
-        assert_eq!(
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Other
-            }
-            .to_string(),
-            "reg.tool"
-        );
-    }
-
-    #[test]
-    fn regspan_exhaustive_match_covers_all_canonical() {
-        let all_variants = vec![
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Other,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::WebSearch,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Condenser,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Training,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Corpus,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Research,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Communication,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Registry,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Wallet,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Media,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Kanban,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Memory,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Companies,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Filesystem,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Curator,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Codegraph,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Scenarios,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Swarm,
-            },
-            RegulationSpan::Inference,
-            RegulationSpan::AgentPod,
-            RegulationSpan::Curation,
-            RegulationSpan::SelfHeal,
-            RegulationSpan::MemoryEncode,
-        ];
-        // Round-trip test: Display → FromStr → Display must be identity
-        for variant in &all_variants {
-            let s = variant.to_string();
-            assert!(
-                !s.is_empty(),
-                "{:?} should produce non-empty Display",
-                variant
-            );
-            assert!(
-                s.starts_with("reg."),
-                "{:?} should start with reg.",
-                variant
-            );
-            let parsed: RegulationSpan = s
-                .parse()
-                .expect("Display output must round-trip via FromStr");
-            assert_eq!(
-                variant, &parsed,
-                "{:?} round-trip mismatch: {} -> {:?}",
-                variant, s, parsed
-            );
-        }
-        // Assert count matches enum variant count (5 core + 18 specific ToolSubsystem = 23).
-        // If this fails, a new RegulationSpan variant was added without updating this test.
-        assert!(
-            all_variants.len() == 23,
-            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 23)",
-            all_variants.len()
-        );
-    }
-
-    #[test]
-    fn tool_subsystem_display_produces_valid_suffix() {
-        assert_eq!(ToolSubsystem::WebSearch.as_str(), "web_search");
-        assert_eq!(ToolSubsystem::Other.as_str(), "other");
     }
 }

@@ -186,4 +186,3 @@ fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, contex
     }
 }
 
-

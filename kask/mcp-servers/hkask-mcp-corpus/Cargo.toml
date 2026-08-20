@@ -16,7 +16,6 @@ hkask-bridge-ontology.workspace = true
 # OCR pipeline (from markitdown)
 hkask-inference.workspace = true
 
-
 image.workspace = true
 
 base64.workspace = true
@@ -50,7 +49,6 @@ tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 
-tempfile.workspace = true
 regex.workspace = true
 minijinja.workspace = true
 
@@ -76,10 +74,3 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
-[dev-dependencies]
-rand.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
-proptest.workspace = true
-tempfile.workspace = true
-serde_json.workspace = true
-dotenvy.workspace = true

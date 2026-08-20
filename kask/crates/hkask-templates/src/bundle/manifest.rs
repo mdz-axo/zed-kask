@@ -447,7 +447,6 @@ impl BundleManifest {
         let mut ordinals: Vec<u32> = self.steps.iter().map(|s| s.ordinal).collect();
         ordinals.sort();
         // Ordinals must be sequential. Two valid starting points:
-        //   - 0 (pre-processing step pattern, e.g., forecast_list, codegraph_stats)
         //   - 1 (standard sequential pattern)
         // Once the starting ordinal is determined, all subsequent ordinals must
         // be consecutive (no gaps, no duplicates).

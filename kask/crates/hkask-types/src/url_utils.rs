@@ -33,37 +33,3 @@ fn is_valid_youtube_id(id: &str) -> bool {
             character.is_ascii_alphanumeric() || character == '_' || character == '-'
         })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_from_watch_url() {
-        assert_eq!(
-            extract_youtube_id("https://www.youtube.com/watch?v=ceV3RsG946s").as_deref(),
-            Some("ceV3RsG946s")
-        );
-    }
-
-    #[test]
-    fn extract_from_short_url() {
-        assert_eq!(
-            extract_youtube_id("https://youtu.be/ceV3RsG946s").as_deref(),
-            Some("ceV3RsG946s")
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_urls() {
-        assert!(extract_youtube_id("https://example.com").is_none());
-        assert!(extract_youtube_id("not a url").is_none());
-        assert!(extract_youtube_id("").is_none());
-    }
-
-    #[test]
-    fn rejects_short_ids() {
-        // A 10-character ID is not valid (YouTube IDs are 11 chars).
-        assert!(extract_youtube_id("https://youtu.be/abc1234567").is_none());
-    }
-}

@@ -7,7 +7,6 @@
 //! impl that minijinja walks directly — no per-render materialization, and no
 //! clone-on-write to keep a parallel string-keyed mirror in sync.
 //! `store_result`/`snapshot_prev`/merge no longer deep-clone `Value`s into a
-//! second map. Protocol keys (`_rjoule`, `_convergence`,
 //! `convergence_signal`, `kata_brier`, `input_mapping`-injected bindings) live
 //! in `protocol`; step results live once in `results`; user inputs live once
 //! in `inputs`.
@@ -96,8 +95,7 @@ pub struct StepContext {
     /// from `populate`/`render` actions. Templates resolve these via `lookup`.
     named: HashMap<String, Arc<Value>>,
 
-    /// Protocol keys: `_rjoule`, `_convergence`, `convergence_signal`,
-    /// `kata_brier`, and `input_mapping`-injected bindings. This is the
+        /// `kata_brier`, and `input_mapping`-injected bindings. This is the
     /// manifest-author binding protocol, NOT a results duplication.
     protocol: HashMap<String, Value>,
 

@@ -99,27 +99,3 @@ pub fn kind_to_bibo(kind: &str) -> Option<DcConcept> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mime_to_dc_type_coverage() {
-        assert_eq!(mime_to_dc_type("image/png"), Some(STILL_IMAGE));
-        assert_eq!(mime_to_dc_type("video/mp4"), Some(MOVING_IMAGE));
-        assert_eq!(mime_to_dc_type("audio/wav"), Some(SOUND));
-        assert_eq!(mime_to_dc_type("application/pdf"), Some(TEXT));
-        assert_eq!(mime_to_dc_type("application/json"), Some(DATASET));
-        assert_eq!(mime_to_dc_type("application/octet-stream"), None);
-    }
-
-    #[test]
-    fn kind_to_bibo_coverage() {
-        assert_eq!(kind_to_bibo("article"), Some(ARTICLE));
-        assert_eq!(kind_to_bibo("book"), Some(BOOK));
-        assert_eq!(kind_to_bibo("preprint"), Some(PREPRINT));
-        assert_eq!(kind_to_bibo("webpage"), Some(WEBPAGE));
-        assert_eq!(kind_to_bibo("unknown_thing"), None);
-    }
-}

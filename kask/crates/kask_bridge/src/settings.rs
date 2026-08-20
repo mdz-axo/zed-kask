@@ -9,22 +9,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
-use settings_content::{
-    KaskCodegraphSettingsContent, KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
-    KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
-    KaskDataServiceSettingsContent, KaskGeneralSettingsContent,
-    KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
-    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
-    KaskSwarmSettingsContent, KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
-};
 
 use collections::HashMap;
 
 /// Kask-specific settings (the `"kask"` section in settings.json).
 ///
 /// Non-secret configuration for hKask features: MCP server load set,
-/// data-service toggles, curator/regulation/memory/condenser settings.
 /// API keys are stored in the keychain via `CredentialsProvider` (D9b).
 ///
 /// `Default` is the single source of truth for every subsection's defaults.
@@ -58,22 +48,14 @@ pub struct KaskSettings {
     /// Memory consolidation and recall configuration.
     pub memory: KaskMemorySettings,
 
-    /// Condenser configuration for context management in inference threads.
-    pub condenser: KaskCondenserSettings,
-
     /// Research MCP server configuration.
     pub research: KaskResearchSettings,
-
-    /// Codegraph MCP server configuration.
-    pub codegraph: KaskCodegraphSettings,
 
     /// Companies MCP server configuration.
     pub companies: KaskCompaniesSettings,
 
     /// Corpus MCP server configuration.
     pub corpus: KaskCorpusSettings,
-
-    /// Media MCP server configuration.
     pub media: KaskMediaSettings,
 
     /// Scenarios MCP server configuration.
@@ -346,7 +328,6 @@ pub struct KaskMemorySettings {
 
     /// Maximum tokens per turn for cascade short-term context. Each turn
     /// exceeding this budget is condensed via the local algorithmic
-    /// condenser (TF-IDF word-rank for conversation, flashrank for other
     /// content), then truncated to the token cap if still over. 0 disables
     /// condensation (raw turn text is passed verbatim). Default: 512.
     pub cascade_turn_token_cap: u32,
@@ -367,13 +348,10 @@ impl Default for KaskMemorySettings {
         }
     }
 }
-
-/// Condenser configuration for context management in inference threads.
 ///
 /// Controls how tool results are compressed before entering the message
 /// history, and what compression profile to use.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskCondenserSettings {
     /// Compression profile: "heavy", "normal", "soft", or "light".
     /// - Heavy: 10% retention, 30 max lines — aggressive compression
     /// - Normal: 20% retention, 80 max lines — balanced
@@ -386,7 +364,6 @@ pub struct KaskCondenserSettings {
     pub auto_compress_tool_results: bool,
 
     /// Persona keywords for saliency scoring (comma-separated in settings.json).
-    /// Used by the condenser's word_rank algorithm to prioritize lines
     /// relevant to the user's domain.
     pub persona_keywords: Vec<String>,
 
@@ -395,7 +372,6 @@ pub struct KaskCondenserSettings {
     pub saliency_window: u32,
 }
 
-impl Default for KaskCondenserSettings {
     fn default() -> Self {
         Self {
             profile: "normal".to_string(),
@@ -405,11 +381,7 @@ impl Default for KaskCondenserSettings {
         }
     }
 }
-
-/// Codegraph MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskCodegraphSettings {
-    /// Database path for the codegraph store. When empty, uses in-memory.
     pub db_path: String,
 }
 
@@ -485,15 +457,8 @@ impl Default for KaskCorpusSettings {
 fn default_embedding_model() -> String {
     hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
-
-/// Media MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMediaSettings {
-    /// TTS model override (provider-prefixed, e.g. "ollama/kokoro").
-    pub tts_model: String,
-
-    /// STT model override (provider-prefixed, e.g. "ollama/whisper-large-v3").
-    pub stt_model: String,
 
     /// Vision model override (e.g., "OpenRouter/qwen/qwen3-vl-235b-a22b-instruct").
     pub vision_model: String,
@@ -833,28 +798,15 @@ impl KaskSettings {
         // `Default` (the same drift class that silently disabled all 10 kask
         // MCP servers when `KaskMcpSettings::default()` disagreed with the
         // serde default).
-        let condenser_default = KaskCondenserSettings::default();
         let corpus_default = KaskCorpusSettings::default();
-
-        // ── Condenser ──
-        if !self.condenser.persona_keywords.is_empty() {
             env.insert(
-                "HKASK_CONDENSER_PERSONA_KEYWORDS".to_string(),
-                self.condenser.persona_keywords.join(","),
             );
         }
-        if self.condenser.saliency_window != condenser_default.saliency_window {
             env.insert(
                 "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
-                self.condenser.saliency_window.to_string(),
             );
         }
-
-        // ── Codegraph ──
-        if !self.codegraph.db_path.is_empty() {
             env.insert(
-                "HKASK_CODEGRAPH_DB".to_string(),
-                self.codegraph.db_path.clone(),
             );
         }
 
@@ -936,18 +888,10 @@ impl KaskSettings {
                 self.corpus.template_root.clone(),
             );
         }
-
-        // ── Media ──
-        if !self.media.tts_model.is_empty() {
             env.insert(
-                "HKASK_MEDIA_TTS_MODEL".to_string(),
-                self.media.tts_model.clone(),
             );
         }
-        if !self.media.stt_model.is_empty() {
             env.insert(
-                "HKASK_MEDIA_STT_MODEL".to_string(),
-                self.media.stt_model.clone(),
             );
         }
         if !self.media.vision_model.is_empty() {
@@ -1247,8 +1191,6 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
     }
 }
 
-impl From<KaskCondenserSettingsContent> for KaskCondenserSettings {
-    fn from(c: KaskCondenserSettingsContent) -> Self {
         let default = Self::default();
         Self {
             profile: c.profile.unwrap_or(default.profile),
@@ -1261,8 +1203,6 @@ impl From<KaskCondenserSettingsContent> for KaskCondenserSettings {
     }
 }
 
-impl From<KaskCodegraphSettingsContent> for KaskCodegraphSettings {
-    fn from(c: KaskCodegraphSettingsContent) -> Self {
         let default = Self::default();
         Self {
             db_path: c.db_path.unwrap_or(default.db_path),
@@ -1295,38 +1235,7 @@ impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
 impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
     fn from(c: KaskCorpusSettingsContent) -> Self {
         let default = Self::default();
-        // Treat 0 as "use default" — a user setting `embedding_dim: 0` would
-        // otherwise construct a zero-dimensional EmbeddingStore that silently
-        // rejects every vector (DimensionMismatch { expected: 0, ... }),
-        // disabling embedding-based recall with no startup signal.
-        // Mirrors the `dim > 0` guard in codegraph's `resolve_embedding_dim`.
-        Self {
-            embedding_dim: c
-                .embedding_dim
-                .filter(|&d| d > 0)
-                .unwrap_or(default.embedding_dim),
-            embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
-            // Treat 0 as "use default" — 0 concurrency would silently disable
-            // OCR (no pages processed in parallel).
-            ocr_concurrency: c
-                .ocr_concurrency
-                .filter(|&d| d > 0)
-                .unwrap_or(default.ocr_concurrency),
-            ocr_simple_max: c.ocr_simple_max.unwrap_or(default.ocr_simple_max),
-            ocr_moderate_max: c.ocr_moderate_max.unwrap_or(default.ocr_moderate_max),
-            ocr_sample_rate: c.ocr_sample_rate.unwrap_or(default.ocr_sample_rate),
-            ocr_tuneable: c.ocr_tuneable.unwrap_or(default.ocr_tuneable),
-            template_root: c.template_root.unwrap_or(default.template_root),
-        }
-    }
-}
-
-impl From<KaskMediaSettingsContent> for KaskMediaSettings {
-    fn from(c: KaskMediaSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            tts_model: c.tts_model.unwrap_or(default.tts_model),
-            stt_model: c.stt_model.unwrap_or(default.stt_model),
+        // Treat 0 as "        Self {
             vision_model: c.vision_model.unwrap_or(default.vision_model),
             image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
         }
@@ -1435,8 +1344,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             data_services: c.data_services.map(Into::into).unwrap_or_default(),
             curator: c.curator.map(Into::into).unwrap_or_default(),
             memory: c.memory.map(Into::into).unwrap_or_default(),
-            condenser: c.condenser.map(Into::into).unwrap_or_default(),
-            codegraph: c.codegraph.map(Into::into).unwrap_or_default(),
             research: c.research.map(Into::into).unwrap_or_default(),
             companies: c.companies.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
@@ -1455,59 +1362,6 @@ impl From<KaskSettingsContent> for KaskSettings {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Pins the `kask_bridge` half of the tool-router default-sync contract.
-    /// `LazyToolRouter::new()` in the `agent` crate hardcodes the same pair as a
-    /// fallback for settings-free construction, and `agent` cannot depend on
-    /// this crate (that would invert the D8 seam), so the invariant is pinned
-    /// from both sides against literals. Change one, change the other:
-    /// `crates/agent/src/tool_router.rs::default_thresholds_are_the_documented_values`.
-    #[test]
-    fn tool_router_defaults_match_agent_side_fallback() {
-        let default = KaskToolRouterSettings::default();
-        assert_eq!(
-            default.complex_word_threshold, 6,
-            "word threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
-        );
-        assert!(
-            (default.threshold - 0.30).abs() < f64::EPSILON,
-            "score threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
-        );
-    }
-
-    // Regression test for the silent `embedding_dim == 0` bug. A user
-    // setting `embedding_dim: 0` in their settings file would construct a
-    // zero-dimensional EmbeddingStore that rejects every vector with
-    // `DimensionMismatch { expected: 0, actual: N }`, silently disabling
-    // embedding-based recall. The `unwrap_or(1024)` default only fires for
-    // `None`, not for `Some(0)`. This test pins the fix: 0 is treated as
-    // "use default" (mirroring codegraph's `resolve_embedding_dim` guard).
-    #[test]
-    fn corpus_settings_treats_zero_embedding_dim_as_default() {
-        let content = KaskSettingsContent {
-            corpus: Some(KaskCorpusSettingsContent {
-                embedding_dim: Some(0),
-                embedding_model: None,
-                ocr_concurrency: None,
-                ocr_simple_max: None,
-                ocr_moderate_max: None,
-                ocr_sample_rate: None,
-                ocr_tuneable: None,
-                template_root: None,
-            }),
-            ..Default::default()
-        };
-        let settings = KaskSettings::from(content);
-        assert_eq!(
-            settings.corpus.embedding_dim, 1024,
-            "embedding_dim: 0 should fall back to the default (1024), \
-             not construct a zero-dimensional store"
-        );
-    }
 
     #[test]
     fn corpus_settings_treats_zero_ocr_concurrency_as_default() {
@@ -1657,10 +1511,7 @@ mod tests {
     }
 
     #[test]
-    fn condenser_settings_default_auto_compress_is_false() {
         assert!(
-            !KaskCondenserSettings::default().auto_compress_tool_results,
-            "KaskCondenserSettings::default() must return auto_compress_tool_results: false"
         );
     }
 
@@ -1675,8 +1526,6 @@ mod tests {
         assert_eq!(settings.curator.algedonic_threshold, 0.8);
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
-        assert!(!settings.condenser.auto_compress_tool_results);
-        assert_eq!(settings.condenser.profile, "normal");
         assert_eq!(settings.corpus.embedding_dim, 1024);
     }
 
@@ -1799,7 +1648,6 @@ mod tests {
         let settings = KaskSettings::default();
         let env = settings.mcp_env();
         // The only env vars that could appear for default settings are the
-        // corpus/condenser numeric defaults — all should be suppressed because
         // they match `Default`.
         assert!(
             !env.contains_key("HKASK_EMBEDDING_DIM"),

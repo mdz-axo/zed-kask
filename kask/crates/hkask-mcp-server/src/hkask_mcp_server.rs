@@ -107,10 +107,6 @@ macro_rules! impl_tool_context {
             fn webid(&self) -> &hkask_types::WebID {
                 &self.webid
             }
-
-            fn verification_store(&self) -> &std::sync::Arc<hkask_verification::VerificationStore> {
-                &self.verification_store
-            }
         }
     };
 }
@@ -146,12 +142,6 @@ macro_rules! mcp_server {
         $vis struct $name {
             /// Agent identity for capability tokens and ownership.
             pub webid: hkask_types::WebID,
-            /// Central grounding ledger — core-constructed, macro-injected.
-            /// Every tool output in every MCP server is grounded through
-            /// this store via `execute_tool_semantic`. This is the
-            /// unscrambling of the per-server opt-in: grounding is a core
-            /// capability, not a leaf-server opt-in.
-            pub verification_store: std::sync::Arc<hkask_verification::VerificationStore>,
             $(
                 $(#[$field_meta])*
                 $field_vis $field : $ty
@@ -161,10 +151,9 @@ macro_rules! mcp_server {
         impl $name {
             pub fn new(
                 webid: hkask_types::WebID,
-                verification_store: std::sync::Arc<hkask_verification::VerificationStore>,
                 $($field : $ty),*
             ) -> Self {
-                Self { webid, verification_store, $($field),* }
+                Self { webid, $($field),* }
             }
         }
 
@@ -180,27 +169,14 @@ macro_rules! mcp_server {
         $vis struct $name {
             /// Agent identity for capability tokens and ownership.
             pub webid: hkask_types::WebID,
-            /// Central grounding ledger — core-constructed, macro-injected.
-            pub verification_store: std::sync::Arc<hkask_verification::VerificationStore>,
         }
 
         impl $name {
-            pub fn new(
-                webid: hkask_types::WebID,
-                verification_store: std::sync::Arc<hkask_verification::VerificationStore>,
-            ) -> Self {
-                Self { webid, verification_store }
+            pub fn new(webid: hkask_types::WebID) -> Self {
+                Self { webid }
             }
         }
 
         $crate::impl_tool_context!($name);
     };
-}
-
-#[cfg(test)]
-mod tests {
-    // bootstrap_mcp_server and MCPBootstrap were removed along with the
-    // HKASK_MCP_HOST / userpod identity concept. MCP servers now derive
-    // agent identity solely from ServerContext.webid (resolved in transport.rs
-    // from HKASK_WEBID or anonymous fallback).
 }

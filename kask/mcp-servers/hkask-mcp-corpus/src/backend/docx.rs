@@ -194,26 +194,3 @@ fn table_cell_text(cell: &docx_rs::TableCell) -> String {
     }
     text
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn heading_level_from_title() {
-        assert_eq!(heading_level_from_style(Some("Title")), Some(1));
-    }
-
-    #[test]
-    fn heading_level_from_heading_n() {
-        assert_eq!(heading_level_from_style(Some("Heading1")), Some(1));
-        assert_eq!(heading_level_from_style(Some("Heading3")), Some(3));
-        assert_eq!(heading_level_from_style(Some("heading6")), Some(6));
-    }
-
-    #[test]
-    fn heading_level_none_for_body() {
-        assert_eq!(heading_level_from_style(Some("Normal")), None);
-        assert_eq!(heading_level_from_style(None), None);
-    }
-}

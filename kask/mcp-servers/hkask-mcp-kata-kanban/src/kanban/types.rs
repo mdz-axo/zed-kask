@@ -17,7 +17,6 @@ pub(crate) mod spawn;
 pub(crate) mod spend;
 pub(crate) mod task;
 pub(crate) mod task_spec;
-pub(crate) mod tests;
 pub(crate) mod verification;
 
 // Re-export all public types. `TaskStatus` lives in `hkask_types` (the shared

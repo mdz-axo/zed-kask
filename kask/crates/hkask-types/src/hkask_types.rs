@@ -34,8 +34,6 @@ pub mod tool_schema;
 
 pub mod url_utils;
 pub mod visibility;
-pub mod voice;
-
 #[cfg(feature = "sql")]
 pub mod sql_impls;
 
@@ -62,7 +60,6 @@ pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 
 pub use hmem_ontology::HMemOntology;
 pub use visibility::{Confidence, Dimension, Visibility};
-pub use voice::VoiceDesign;
 
 pub use ports::*;
 

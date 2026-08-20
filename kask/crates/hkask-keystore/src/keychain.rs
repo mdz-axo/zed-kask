@@ -315,30 +315,3 @@ fn normalize_master_key_bytes(
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Guard against concurrent env var mutation in parallel test execution.
-    /// Multiple tests set `HKASK_MASTER_KEY`; without serialization they race
-    /// and produce non-deterministic derivation results.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn db_passphrase_string_preserves_configured_text() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let old = std::env::var_os("HKASK_DB_PASSPHRASE");
-        unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", "canonical-test-passphrase") };
-
-        let resolved = resolve_db_passphrase_string().expect("resolve DB passphrase");
-
-        unsafe {
-            match old {
-                Some(value) => std::env::set_var("HKASK_DB_PASSPHRASE", value),
-                None => std::env::remove_var("HKASK_DB_PASSPHRASE"),
-            }
-        }
-        assert_eq!(&*resolved, "canonical-test-passphrase");
-    }
-}

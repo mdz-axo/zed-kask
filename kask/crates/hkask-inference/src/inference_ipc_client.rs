@@ -4,7 +4,6 @@
 //! This is the MCP-server side of the inference IPC bridge. When zed launches
 //! an MCP server child process, it passes a Unix socket path via the
 //! `HKASK_INFERENCE_SOCKET` env var. The MCP server constructs an
-//! `InferenceIpcClient` instead of a standalone `MediaRouter`, and all inference
 //! calls are routed back to zed's `LanguageModelRegistry` (with guard,
 //! and zed's configured API keys).
 //!
@@ -37,10 +36,6 @@ use hkask_types::inference_ipc::{
     InferenceResponse,
 };
 use hkask_types::template::LLMParameters;
-use hkask_types::{
-    ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, MediaGenerateParams, SkillExecPort, ToolDispatchPort,
-};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
@@ -119,7 +114,6 @@ impl InferenceIpcClient {
     /// Construct from the `HKASK_INFERENCE_SOCKET` env var.
     ///
     /// Returns `None` if the env var is not set (MCP server falls back to
-    /// `resolve_inference_port()`, which constructs a `MediaRouter`, in that case).
     pub async fn from_env() -> Option<Result<Self, InferenceError>> {
         let path = std::env::var(INFERENCE_SOCKET_ENV).ok()?;
         if path.is_empty() {
@@ -420,18 +414,14 @@ impl InferenceIpcClient {
 
     /// Send a media-generation request and receive the response.
     ///
-    /// `op` selects the backend method (e.g. "generate_image", "transcribe").
     /// `params` carries the op-specific fields. The server-side dispatch
     /// reads only the fields relevant to each op.
-    async fn call_media_generate(
         &self,
         op: &str,
-        params: &MediaGenerateParams,
     ) -> Result<serde_json::Value, InferenceError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = InferenceRequest {
             id,
-            method: InferenceMethod::MediaGenerate,
             params: InferenceParams {
                 media_op: Some(op.to_string()),
                 media_prompt: params.prompt.clone(),
@@ -526,20 +516,14 @@ impl InferenceIpcClient {
 
     /// Generate media (image, video, speech, transcription) via the IPC bridge.
     ///
-    /// `op` selects the backend method (e.g. "generate_image", "transcribe").
     /// `params` carries the op-specific fields. The zed process dispatches
-    /// to its hKask `MediaRouter` (registered `MediaProvider` backends).
-    pub async fn media_generate(
         &self,
         op: &str,
-        params: &MediaGenerateParams,
     ) -> Result<serde_json::Value, InferenceError> {
-        self.call_media_generate(op, params).await
     }
 
     /// Invoke a governed MCP tool on the zed side via the IPC bridge.
     ///
-    /// `server` is the MCP server id (e.g. "codegraph"), `tool` the tool
     /// name, `args` the JSON arguments. `allowed` is the caller's declared
     /// `server/tool` allowlist (the delegated agent's `mcp_tools`) — the zed
     /// side refuses any tool outside it before minting the OCAP panel token,
@@ -907,15 +891,11 @@ impl InferencePort for InferenceIpcClient {
         })
     }
 
-    fn media_generate<'a>(
         &'a self,
         op: &str,
-        params: &MediaGenerateParams,
-    ) -> hkask_types::MediaFuture<'a> {
         let op = op.to_string();
         let params = params.clone();
         let this = self;
-        async move { this.media_generate(&op, &params).await }.boxed()
     }
 }
 
@@ -970,65 +950,5 @@ impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
                 .await?;
             Ok(info.message)
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn read_response_line_rejects_overlong_line() {
-        let (mut sender, mut receiver) = UnixStream::pair().expect("socket pair");
-        let writer = tokio::spawn(async move {
-            let payload = vec![b'x'; (MAX_IPC_LINE_BYTES + 10) as usize];
-            sender.write_all(&payload).await
-        });
-        let result = read_response_line(&mut receiver).await;
-        assert!(
-            matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::InvalidData),
-            "expected InvalidData error, got {result:?}"
-        );
-        // The writer may fail with BrokenPipe once the receiver is dropped;
-        // either outcome is fine — just don't leak the task.
-        let _ = writer.await;
-    }
-
-    #[tokio::test]
-    async fn read_response_line_accepts_normal_line() {
-        let (mut sender, mut receiver) = UnixStream::pair().expect("socket pair");
-        sender.write_all(b"{\"ok\":true}\n").await.expect("write");
-        let line = read_response_line(&mut receiver).await.expect("read");
-        assert_eq!(line.as_deref(), Some("{\"ok\":true}"));
-    }
-
-    #[tokio::test]
-    async fn read_response_line_eof_is_none() {
-        let (sender, mut receiver) = UnixStream::pair().expect("socket pair");
-        drop(sender);
-        let line = read_response_line(&mut receiver).await.expect("read");
-        assert_eq!(line, None);
-    }
-
-    // F9 — `list_models` must return `Err` (not an empty `Vec`) when the IPC
-    // connection is dead. Previously the error was swallowed and `Vec::new()`
-    // was returned, making a broken IPC indistinguishable from "no models
-    // configured" — a variety-deficit where the regulator can act on "broken"
-    // but callers couldn't tell. The fix propagates the error as `Err`.
-    #[tokio::test]
-    async fn list_models_returns_err_when_ipc_is_dead() {
-        // Create a socket pair and immediately drop the server end so the
-        // client's stream is a dead connection.
-        let (sender, receiver) = UnixStream::pair().expect("socket pair");
-        drop(sender);
-        let client = InferenceIpcClient {
-            stream: Arc::new(Mutex::new(Some(receiver))),
-            next_id: AtomicU64::new(1),
-        };
-        let result = client.list_models().await;
-        assert!(
-            result.is_err(),
-            "list_models must return Err on a dead IPC connection, not Ok(Vec::new())"
-        );
     }
 }

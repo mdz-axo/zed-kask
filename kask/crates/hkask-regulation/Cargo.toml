@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 description = "Cybernetic Nervous System for hKask"
 
-
 [lib]
 path = "src/hkask_regulation.rs"
 
@@ -28,6 +27,3 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 [lints]
 workspace = true
 
-[dev-dependencies]
-proptest = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }

@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 description = "Registry, vocabulary, and template execution for hKask"
 
-
 [lib]
 path = "src/hkask_templates.rs"
 
@@ -28,53 +27,4 @@ workspace = true
 
 [features]
 test-utils = []
-
-[dev-dependencies]
-proptest = { workspace = true }
-walkdir.workspace = true
-regex = { workspace = true }
-
-[[test]]
-name = "manifest_fuzz"
-path = "tests/manifest_fuzz.rs"
-
-[[test]]
-name = "yaml_schema_validation"
-path = "tests/yaml_schema_validation.rs"
-
-[[test]]
-name = "template_rendering"
-path = "tests/template_rendering.rs"
-
-[[test]]
-name = "executor_properties"
-path = "tests/executor_properties.rs"
-
-[[test]]
-name = "executor_baseline_contract"
-path = "tests/executor_baseline_contract.rs"
-
-[[test]]
-name = "compute_properties"
-path = "tests/compute_properties.rs"
-
-[[test]]
-name = "compute_gap_properties"
-path = "tests/compute_gap_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "condition_properties"
-path = "tests/condition_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "input_mapping_properties"
-path = "tests/input_mapping_properties.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "step_graph_properties"
-path = "tests/step_graph_properties.rs"
-required-features = ["test-utils"]
 

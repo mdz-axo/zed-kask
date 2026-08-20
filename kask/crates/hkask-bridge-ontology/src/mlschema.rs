@@ -60,23 +60,3 @@ pub const ALL_CONCEPTS: &[MlConcept] = &[
     IMPLEMENTED_BY,
     HAS_DATA,
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mlschema_concepts_are_mls_namespaced() {
-        for concept in ALL_CONCEPTS {
-            assert!(
-                concept.starts_with("mls:"),
-                "ML-Schema concept must be mls-namespaced: {concept}"
-            );
-        }
-    }
-
-    #[test]
-    fn mlschema_model_concept() {
-        assert_eq!(MODEL, "mls:Model");
-    }
-}

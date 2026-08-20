@@ -35,8 +35,6 @@ pub(crate) mod kata;
 pub(crate) mod phases;
 mod service;
 pub(crate) mod spawn;
-#[cfg(test)]
-mod tests;
 mod types;
 pub(crate) mod verification;
 

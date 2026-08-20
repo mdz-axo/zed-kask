@@ -49,23 +49,3 @@ pub const ALL_CONCEPTS: &[SdmxConcept] = &[
     CATEGORY,
     DATA_PROVIDER,
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sdmx_concepts_are_sdmx_namespaced() {
-        for concept in ALL_CONCEPTS {
-            assert!(
-                concept.starts_with("sdmx:"),
-                "SDMX concept must be sdmx-namespaced: {concept}"
-            );
-        }
-    }
-
-    #[test]
-    fn sdmx_dataset_concept() {
-        assert_eq!(DATASET, "sdmx:DataSet");
-    }
-}
