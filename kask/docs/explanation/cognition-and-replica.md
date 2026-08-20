@@ -501,9 +501,7 @@ _Inlined from `docs/diagrams/sequence-classify-to-memory.md`_
 # Classification-to-Memory Sequence
 
 Full flow from source text through single-model classification, semantic
-extraction, and shared memory storage. (The former `ContentGuard` input/output
-scanning steps were removed with the `hkask-guard` crate on 2026-08-10;
-provider-side safety and refusal fallbacks remain.)
+extraction, and shared memory storage.
 
 Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
@@ -538,8 +536,6 @@ _Inlined from `docs/diagrams/flowchart-algo-classification.md`_
 
 How classification operates as a single-model extraction: the model's JSON
 extraction is normalized (dedup, diverging fields annotated) before storage.
-(The former guard input/output scans were removed with `hkask-guard` on
-2026-08-10.)
 
 Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 

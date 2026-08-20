@@ -118,14 +118,9 @@ Every MCP tool response is a `{"content": <value>}` envelope.
 `unwrap_tool_envelope` (`hkask-types/src/tool_response.rs:61-63`) is the
 single seam that extracts the inner value: if the payload is an object with
 a `content` key, it returns that key's value; otherwise it returns the
-payload unchanged. `parse_tool_response` composes JSON parse + unwrap. The
+`payload` unchanged. `parse_tool_response` composes JSON parse + unwrap. The
 property `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads
 `P` is pinned by proptest in `hkask-types/src/tool_response.rs`.
-
-> **Note (2026-08-20):** The former companion proptest in
-> `hkask-templates/tests/executor_properties.rs` was deleted with the
-> `hkask-templates` crate (commit `5f4cf5f10d`). The proptest in
-> `hkask-types/src/tool_response.rs` survives.
 
 ## Related
 

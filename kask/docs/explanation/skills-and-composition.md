@@ -10,7 +10,7 @@ mds_categories: [domain, composition, lifecycle, trust]
 
 # Skills and Composition
 
-Design, invoke, audit, publish, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor — there is no `ManifestExecutor`, no `StepMachine`, no PDCA cascade machinery. The prior manifest-driven cascade model (`hkask-templates`, `registry/manifests/`, `FlowDef`) was deleted (commit `5f4cf5f10d`).[^anthropic-skills]
+Design, invoke, audit, publish, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
 
 This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtins inside the editor and are launched as child processes over stdio by zed's `context_server` host (D3); the standalone `kask mcp start <id>` CLI is deleted.
 
@@ -38,7 +38,7 @@ When the agent invokes the `skill` tool with a skill name:
 4. The envelope is returned to the agent as the tool result (`SkillToolOutput::Found { rendered }`).
 5. The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
 
-There is no cascade, no convergence loop, no gas budget, no `StepMachine`. The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
+There is no cascade, no convergence loop, no gas budget. The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
 
 ### Two Supporting Tools
 
@@ -170,7 +170,7 @@ The agent panel routes this through `SkillTool::run` (D1), which:
 
 ## Invoking Skills
 
-Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:172`), which reads the `SKILL.md` body and injects it via `render_skill_envelope`. The former manifest-cascade model (`BridgeManifestExecutor`, `ManifestExecutor`, `StepMachine`) was deleted (commit `5f4cf5f10d`).[^mcp-spec-skill-invoke]
+Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:172`), which reads the `SKILL.md` body and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
 
 ### Via the Agent Panel
 
@@ -243,7 +243,7 @@ See [`skill-mcp-integration.md`](skill-mcp-integration.md) §Co-Evolution Patter
 
 Skill execution is bounded by the **per-agent call cap** (System A): every governed MCP tool call via `McpRuntime::invoke` charges one call against the agent's `CallCap` (`CallCapManager::charge_metered` → `CallMeterOutcome`). The cap resets to its ceiling each regulation tick. An agent with no registered cap is **auto-registered** at `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and the wiring gap is logged — a missing seed is a wiring omission, not an authorization decision (RR-0057).
 
-There is no per-cascade gas budget or rJoule tracking — the prior `BudgetTracker` and `gas`/`rjoule` manifest fields were deleted with the `hkask-templates` crate. Tool-call bounding is solely the per-agent `CallCap`.
+There is no per-cascade gas budget or rJoule tracking. Tool-call bounding is solely the per-agent `CallCap`.
 
 Gas/cost consumption is observable via Regulation spans. Query the in-process Regulation span surface (agent panel) and look for `reg.tool.invoked` (pre-invocation) and `reg.tool.completed` (post-invocation).
 

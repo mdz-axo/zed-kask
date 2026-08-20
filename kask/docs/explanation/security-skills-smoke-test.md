@@ -59,7 +59,7 @@ manifest_path: <path-to-Cargo.toml-or-workspace-root>
 - `select-surface` step (ordinal 1): discovers `Cargo.toml`, `Cargo.lock`, `deny.toml`
 - `probe` step (ordinal 2): reads manifest entries, checks version pinning, registry trust
 - `report` step (ordinal 3): proposes `surface: supply-chain` regression entries (if any findings)
-- `loop` step (ordinal 4): re-enters the audit cycle if convergence is not met; the `convergence_signal:` binding (finding count from `step_3_result`) feeds the `ConvergenceTracker`'s Cauchy check
+- `loop` step (ordinal 4): re-enters the audit cycle if convergence is not met; the `convergence_signal:` binding (finding count from `step_3_result`) feeds the convergence check
 
 **Validation:**
 

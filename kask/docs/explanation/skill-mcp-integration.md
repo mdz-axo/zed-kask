@@ -13,13 +13,10 @@ mds_categories: [composition, domain]
 > **Execution model (verified 2026-08-20):** Skills execute via upstream Zed body injection.
 > `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body and
 > injects it via `render_skill_envelope`. The model reads the body and follows the instructions.
-> There is no `ManifestExecutor`, no `StepMachine`, no FlowDef `action: execute` step. The prior
-> manifest-driven cascade model was deleted (commit `5f4cf5f10d`).
 >
 > **How skills invoke MCP tools:** A skill body instructs the model to call MCP tools via the
 > agent's tool-use loop. The model decides to call the tool, constructs the arguments, and
-> receives the result. This is the **agent-mediated** pattern. There is no longer a
-> flowdef-native `action: execute` pattern — that was deleted with the `hkask-templates` crate.
+> receives the result. This is the **agent-mediated** pattern.
 
 ## The agent-mediated pattern
 
@@ -58,20 +55,18 @@ The model reads this, emits a `tool_use` for `dcf_valuation` with the appropriat
 
 ## Why agent-mediated is the only pattern now
 
-The prior flowdef-native `action: execute` pattern (deleted with `hkask-templates`, commit `5f4cf5f10d`) allowed a manifest step to invoke an MCP tool directly — without the LLM deciding to call it. This was deterministic: the tool call happened at a known step ordinal with bound inputs.
+With body injection, the model reads the instructions and decides how to execute them. The trade-off:
 
-With body injection, there is no step ordinal and no bound inputs — the model reads the instructions and decides how to execute them. The trade-off:
+| Property | Agent-mediated (body injection) |
+|----------|--------------------------------|
+| Determinism | Model may forget to call the tool, or call it with wrong args |
+| Governance | Flows through the agent's tool-use loop |
+| Testability | Hard to test (depends on LLM behavior) |
+| Composability | Tool result is in the agent's context |
+| Cost | LLM round-trip to decide to call the tool |
+| Error handling | LLM may silently skip a failed tool |
 
-| Property | Agent-mediated (body injection) | Former flowdef-native (`action: execute`) |
-|----------|--------------------------------|------------------------------------------|
-| Determinism | Model may forget to call the tool, or call it with wrong args | Tool call happened at a known step ordinal with bound inputs |
-| Governance | Flows through the agent's tool-use loop | Flowed through `ToolPort::invoke` — same gas, same cap, same spans |
-| Testability | Hard to test (depends on LLM behavior) | Testable — manifest parse tests pinned the contract |
-| Composability | Tool result is in the agent's context | Tool result was in `step_{ordinal}_result`, available to all downstream steps |
-| Cost | LLM round-trip to decide to call the tool | No LLM round-trip — direct call |
-| Error handling | LLM may silently skip a failed tool | Step failure surfaced as a `TemplateError`, halted the cascade |
-
-The body-injection model accepts the determinism trade-off in exchange for simplicity: the skill body is prose the model reads, not a machine-executed manifest. The `lisp_eval` tool provides the deterministic scaffold for invariant checks and convergence signals that the prior `compute` step provided.
+The body-injection model accepts the determinism trade-off in exchange for simplicity: the skill body is prose the model reads, not a machine-executed manifest. The `lisp_eval` tool provides the deterministic scaffold for invariant checks and convergence signals.
 
 ## When to use `lisp_eval` vs. an MCP tool call
 

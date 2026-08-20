@@ -187,14 +187,7 @@ earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|segment
 
 ### (b) Listening template spec
 
-> **Note (2026-08-20):** The `kask/registry/manifests/` directory was deleted
-> with the `hkask-templates` crate (commit `5f4cf5f10d`). The listening
-> skill now ships as a `SKILL.md` body under `.agents/skills/listening/`
-> with companion `.j2` templates; there is no `listening.yaml` FlowDef
-> manifest. The schema design below is historical.
-
-A YAML/JSON schema versioned in-repo (formerly
-`kask/registry/manifests/listening.yaml`, now a `SKILL.md` + `.j2`
+A YAML/JSON schema versioned in-repo (a `SKILL.md` + `.j2`
 templates under `.agents/skills/listening/`). Each factor is anchored to the guidebook extraction + in-code
 fragments in A5 plus the operator's seam clarification — no invented factors.
 

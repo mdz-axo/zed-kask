@@ -16,9 +16,7 @@ on concrete storage backends, or on `hkask-capability` (which would create a
 dependency cycle). The foundation crate defines the contracts that mediate
 between these worlds: kask crates depend on abstractions, and `kask_bridge`,
 `hkask-storage`, and `hkask-regulation` provide the
-adapters. (The former `hkask-templates` crate was deleted, commit `5f4cf5f10d`;
-skill execution is now upstream-Zed body injection via `SkillTool::run` →
-`render_skill_envelope`.) This is the hexagonal architecture pattern applied at the crate
+adapters. This is the hexagonal architecture pattern applied at the crate
 boundary.[^cockburn]
 
 ## Source citations
@@ -270,4 +268,4 @@ strict provider.
 
 [^cockburn]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The ports-and-adapters pattern: core logic depends on traits, infrastructure provides implementations, and the composition root wires them together.
 
-[^owasp-llm]: OWASP Foundation. (2025). *OWASP Top 10 for LLM Applications.* <https://owasp.org/www-project-top-10-for-large-language-model-applications/>. LLM01 (Prompt Injection) and LLM06 (Sensitive Information Disclosure) define the threats the former `hkask-guard` layer over `InferencePort` was built to mitigate. That layer was removed 2026-08-10 (the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill cascade template rendering); provider-side safety and refusal fallbacks remain the active defense.
+[^owasp-llm]: OWASP Foundation. (2025). *OWASP Top 10 for LLM Applications.* <https://owasp.org/www-project-top-10-for-large-language-model-applications/>. LLM01 (Prompt Injection) and LLM06 (Sensitive Information Disclosure) define the threats the provider-side safety and refusal fallbacks mitigate.

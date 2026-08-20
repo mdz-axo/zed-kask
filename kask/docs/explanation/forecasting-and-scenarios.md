@@ -148,20 +148,15 @@ The Brier learning loop — Tetlock's record → score → recalibrate cycle —
 
 ## The `compute` action
 
-> **Note (2026-08-20):** The FlowDef executor and its `compute` step action
-> were removed with the `hkask-templates` crate (commit `5f4cf5f10d`).
-> Skill execution is now upstream-Zed body injection: `SkillTool::run` reads
-> the `SKILL.md` body and injects it via `render_skill_envelope`. The
-> deterministic `hkask_forecast::*` primitives are now invoked by the model
-> directly via the `lisp_eval` agent tool (wrapping
-> `hkask_lisp::eval_sandboxed_with_budget`) when a SKILL.md instructs it to.
-> The table below documents the **historical** FlowDef-based pipeline; the
-> same primitives survive in `hkask-forecast` and are reached via `lisp_eval`
-> in the current model.
+The deterministic `hkask_forecast::*` primitives are invoked by the model
+directly via the `lisp_eval` agent tool (wrapping
+`hkask_lisp::eval_sandboxed_with_budget`) when a SKILL.md instructs it to.
+The same primitives survive in `hkask-forecast` and are reached via `lisp_eval`
+in the current model.
 
-The former FlowDef executor supported a `compute` step action alongside
-`select` (LLM), `populate`, `execute` (MCP tool), `choice`, and `loop`. A
-`compute` step invoked a canonical `hkask_forecast::*` primitive
+The table below documents the historical pipeline; the same primitives survive
+in `hkask-forecast` and are reached via `lisp_eval` in the current model.
+A `compute` step invoked a canonical `hkask_forecast::*` primitive
 deterministically — no LLM round-trip, no MCP call, no inference
  cost.[^deming-pdca-compute]
 

@@ -11,19 +11,11 @@ mds_categories: [domain, composition, trust]
 # Agent Bestiary World (ABW) Swarm Intelligence — Design & Current State
 
 > **⚠️ Partially deprecated 2026-08-20.** The ABW substrate, tool surface,
-> consent gate, and local runtime described here remain current. However,
-> several integration details reference deleted subsystems:
-> - The `ManifestExecutor` / IPC `SkillExecute` skill-cascade path was
->   removed with `hkask-templates` (commit `5f4cf5f10d`). Declared
->   `capabilities.skills` now execute via upstream-Zed body injection
->   (`SkillTool::run` → `render_skill_envelope`) — there is no
->   `ManifestExecutor` and no IPC `SkillExecute` method.
-> - The `hkask-guard` input/output guard scanning was removed
->   (2026-08-10); skill outputs are no longer guard-scanned.
-> - The `hkask-verification` grounding enforcement was removed
->   (commit `9e9c41ef3c`); `enforce_grounding` is no longer wired.
+> consent gate, and local runtime described here remain current. Declared
+> `capabilities.skills` execute via upstream-Zed body injection
+> (`SkillTool::run` → `render_skill_envelope`).
 >
-> Claims below that reference these subsystems are historical. The ABW
+> Claims below that reference deleted subsystems are historical. The ABW
 > REST client, consent store, spend gate, local agent registry, and
 > `LocalSwarmRuntime` survive.
 
@@ -266,9 +258,8 @@ substrate; both tool sets remain registered.
   overrides). Reloaded on every list/get so operator-added cards appear
   without a server restart.
 - `LocalSwarmRuntime` — `hkask-ledger` (SQLite, operator-funded), `hkask-inference`
-  (zed IPC bridge or MediaRouter fallback). (The former `hkask-guard` mandatory
-  scanners were removed with the `hkask-guard` crate on 2026-08-10.)
-  Lazily initialized (OnceCell) on first local tool call.
+  (zed IPC bridge or MediaRouter fallback). Lazily initialized (OnceCell) on
+  first local tool call.
 - Ledger — operator-funded (`swarm_fund_local`); unfunded delegation returns
   `PaymentRequired`. No auto-replenishment: the corrective signal must be real.
   Transaction history is queryable via `swarm_local_history` (the local-mode
@@ -286,13 +277,10 @@ bridge's `ToolInvoke` method (governed `McpRuntime` on the zed side, panel
 token). Tool calls are allowlisted to the card's declared tools AND the
 allowlist is enforced zed-side at the dispatch boundary (the qualified
 `server/tool` list travels with every `tool_invoke` request). Declared
-`skills` are executed against the task through the zed-side `ManifestExecutor`
-(IPC `SkillExecute` method, capped at 3 per delegation) **before** the LLM
-call; each cascade's output is guard-scanned and injected into the prompt as
-context. A missing/failed skill is recorded (`executed_skills` in the
-response) and the delegation proceeds; a skill output that trips the input
-
-guard rejects the delegation (an injection from a skill is a finding).
+`skills` are executed via upstream-Zed body injection (`SkillTool::run` →
+`render_skill_envelope`) **before** the LLM call; each skill's output is
+injected into the prompt as context. A missing/failed skill is recorded
+(`executed_skills` in the response) and the delegation proceeds.
 
 Local cards are removed with `swarm_remove_local` (the local counterpart of
 firing — deletes the card directory; a synced card's ABW agent is untouched)

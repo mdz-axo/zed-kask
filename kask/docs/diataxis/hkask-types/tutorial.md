@@ -48,9 +48,7 @@ so downstream crates import `InferencePort` or `MemoryPort` directly from
 The crate forbids `unsafe` code (`#![forbid(unsafe_code)]` at
 `hkask_types.rs:1`) and declares no implementations of its own port traits.
 It defines abstractions; implementations live in `kask_bridge`,
-`hkask-storage`, and `hkask-regulation`. (The former `hkask-templates` crate
-was deleted, commit `5f4cf5f10d`; skill execution is now upstream-Zed body
-injection via `SkillTool::run` → `render_skill_envelope`.)
+`hkask-storage`, and `hkask-regulation`.
 
 ## Step 2: Read agent_paths.rs
 
