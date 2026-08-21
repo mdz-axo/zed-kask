@@ -5,7 +5,7 @@
 
 pub mod agent_paths;
 pub mod corpus;
-pub mod crypto;
+
 pub mod curator;
 pub mod document;
 pub mod error;
@@ -35,7 +35,6 @@ pub mod visibility;
 
 // ── Essential re-exports (used by ≥3 downstream crates) ─────────────────
 
-pub use crypto::{Ed25519PublicKey, Ed25519Signature};
 pub use curator::{CurationThresholdConfig, CuratorDirective, EscalationSeverity};
 pub use document::{Block, DocStructure, Page};
 pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};

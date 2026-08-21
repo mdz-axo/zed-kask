@@ -439,10 +439,6 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &zed_actions::assistant::OpenSkillCreator, cx| {
         open_skill_creator(pages::SkillCreatorOpenMode::Form, None, cx);
     });
-    cx.on_action(|_: &zed_actions::assistant::CreateSkillFromUrl, cx| {
-        let initial_url = pages::skill_url_from_clipboard(cx);
-        open_skill_creator(pages::SkillCreatorOpenMode::Url { initial_url }, None, cx);
-    });
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
@@ -486,17 +482,6 @@ pub fn init(cx: &mut App) {
                 |_, _: &zed_actions::assistant::OpenSkillCreator, window, cx| {
                     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                     open_skill_creator(pages::SkillCreatorOpenMode::Form, window_handle, cx);
-                },
-            )
-            .register_action(
-                |_, _: &zed_actions::assistant::CreateSkillFromUrl, window, cx| {
-                    let window_handle = window.window_handle().downcast::<MultiWorkspace>();
-                    let initial_url = pages::skill_url_from_clipboard(cx);
-                    open_skill_creator(
-                        pages::SkillCreatorOpenMode::Url { initial_url },
-                        window_handle,
-                        cx,
-                    );
                 },
             );
     })
@@ -4282,14 +4267,11 @@ impl SettingsWindow {
 
         self.push_sub_page(sub_page_link, "Agent".into(), window, cx);
 
-        let creating_from_url = !matches!(open_mode, pages::SkillCreatorOpenMode::Url { .. });
         page.update(cx, |page, cx| {
             page.apply_open_mode(open_mode, window, cx);
         });
-        if creating_from_url {
-            let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
-            window.focus(&name_editor_focus_handle, cx);
-        }
+        let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
+        window.focus(&name_editor_focus_handle, cx);
     }
 
     pub fn navigate_to_skill_creator(

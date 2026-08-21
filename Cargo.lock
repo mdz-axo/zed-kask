@@ -9215,7 +9215,6 @@ name = "hkask-keystore"
 version = "0.36.0"
 dependencies = [
  "argon2",
- "ed25519-dalek",
  "hex",
  "hkask-types",
  "hmac",

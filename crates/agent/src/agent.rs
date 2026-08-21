@@ -40,8 +40,8 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
     SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary,
-    global_skills_dir, load_marketplace_skills, load_skills_from_directory,
-    parse_skill_frontmatter, project_skills_relative_path, seed_shipped_skills,
+    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -1195,25 +1195,14 @@ impl NativeAgent {
         //    catalog as `/:<name>` in every project.
         let global_skills_task = {
             let global_skills_dir = global_skills_dir();
-            let marketplace_skills_dir = global_skills_dir.join("_marketplace");
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
-                let disk_globals = load_skills_from_directory(
+                load_skills_from_directory(
                     &global_skills_fs,
                     &global_skills_dir,
                     SkillSource::Global,
                 )
-                .await;
-                // zed-kask: Load marketplace-installed skills from
-                // `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/`.
-                // These are `SkillSource::Public` — precedence is lower than
-                // `Global` so a local skill of the same name wins (plan §2.3).
-                let marketplace_skills =
-                    load_marketplace_skills(&global_skills_fs, &marketplace_skills_dir).await;
-                // Disk globals first so they win ties in `apply_skill_overrides`.
-                let mut all_globals = disk_globals;
-                all_globals.extend(marketplace_skills);
-                all_globals
+                .await
             })
         };
 
@@ -1617,7 +1606,7 @@ impl NativeAgent {
         for state in self.projects.values() {
             for skill in state.skills.iter() {
                 match &skill.source {
-                    SkillSource::Global | SkillSource::Public { .. } => {
+                    SkillSource::Global => {
                         if !seen_global {
                             global_skills.push(skill.clone());
                         }
@@ -4247,7 +4236,7 @@ pub fn skill_body_resolver_for_project(
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
-        SkillSource::Global | SkillSource::Public { .. } => {
+        SkillSource::Global => {
             let fs = fs.clone();
             cx.background_spawn(async move {
                 agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)

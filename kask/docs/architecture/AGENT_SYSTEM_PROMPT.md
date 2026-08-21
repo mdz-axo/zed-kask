@@ -250,7 +250,7 @@ vendors are explicit about where such enforcement does *not* apply[^augment-perm
 
 `:251` retains the no-body fallback for skills with no `SKILL.md` file. It is
 unreachable for shipped skills — 60 SKILL.md directories exist in `.agents/skills/`
-— but still live for a user-authored or marketplace skill with no body
+— but still live for a user-authored skill with no body
 (`skill_tool.rs:544`).
 
 **Pinned by** `test_system_prompt_skills_section_describes_body_injection`,

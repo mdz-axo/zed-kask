@@ -103,26 +103,6 @@ Federation, multiplayer, and sign-in ride on Zed's existing collaboration and id
 
 ---
 
-## Developing
-
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
-
-The Kask side builds as part of the same workspace — the `kask/` crates are workspace members. Kask conforms to Zed's dependency versions where there are package conflicts; do not bump Zed's workspace deps to accommodate Kask.
-
-For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/docs/README.md`](./kask/docs/README.md). Per-crate documentation (tutorial, how-to, reference, explanation) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md) — 36 artifacts across 10 cross-cutting crate sets. See [CONTRIBUTING.md](./CONTRIBUTING.md) for general contribution guidelines.
-
----
-
-## Releases
-
-Releases are cut by pushing a `v*` tag (e.g. `v0.233.10`). The release workflow publishes the source-build installer scripts (tag-pinned, checksum-verified) and a `SHA256SUMS` file, and opens a GitHub Release with auto-generated notes. There are no prebuilt binary archives yet — install via the source-build installer above.
-
-See the [releases page](https://github.com/mdz-axo/zed-kask/releases) for all published versions.
-
----
-
 ## License
 
 Zed-Kask inherits Zed's licensing: GPL-3.0-or-later primarily, with Apache-2.0 components where marked. License information for third-party dependencies must be correctly provided for CI to pass; see [`script/licenses/zed-licenses.toml`](./script/licenses/zed-licenses.toml) and the [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) configuration for details.

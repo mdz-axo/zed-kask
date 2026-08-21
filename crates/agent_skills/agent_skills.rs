@@ -82,10 +82,10 @@ pub fn is_core_skill(name: &str) -> bool {
 /// Returns `true` if the given skill name is reserved — i.e. it is the name
 /// of a core skill and cannot be used by a user-authored skill. A user
 /// skill (frontmatter `core: false` or missing) whose name is reserved is
-/// refused at load time and at save time, so a hand-edited or
-/// marketplace-installed file can never usurp a core skill's identity.
-/// Legitimate core skills (frontmatter `core: true`) are exempt — they
-/// are the only skills allowed to bear a reserved name.
+/// refused at load time and at save time, so a hand-edited file can never
+/// usurp a core skill's identity. Legitimate core skills (frontmatter
+/// `core: true`) are exempt — they are the only skills allowed to bear a
+/// reserved name.
 pub fn is_reserved_skill_name(name: &str) -> bool {
     is_core_skill(name)
 }
@@ -177,36 +177,20 @@ pub enum SkillSource {
         worktree_id: SkillScopeId,
         worktree_root_name: Arc<str>,
     },
-    /// Installed from the kask marketplace. Lives under
-    /// `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/` so it
-    /// never overwrites a locally-authored skill of the same name. The
-    /// `original_skill_id` is the canonical id (`{source_user}/{skill_name}`)
-    /// the marketplace catalog indexes it under.
-    // zed-kask: marketplace-installed skills are a new source variant distinct
-    // from `Global`. Precedence is intentionally *lower* than `Global` so a
-    // user's locally-authored skill of the same name shadows the marketplace
-    // copy (see `test_skill_source_public_precedence_between_built_in_and_global`).
-    Public {
-        source_user: Arc<str>,
-        original_skill_id: Arc<str>,
-    },
 }
 
 impl SkillSource {
     /// Precedence for resolving same-named skills. Higher values shadow
-    /// lower ones: `ProjectLocal` > `Global` > `Public`. Two sources
-    /// returning equal precedence (e.g. two project-local skills from
-    /// different worktrees) leave the winner up to the caller, which by
-    /// convention keeps the first one in iteration order.
+    /// lower ones: `ProjectLocal` > `Global`. Two sources returning equal
+    /// precedence (e.g. two project-local skills from different worktrees)
+    /// leave the winner up to the caller, which by convention keeps the
+    /// first one in iteration order.
     ///
     /// Adding a new `SkillSource` variant should be a one-line change
     /// here — every consumer routes through this method so the hierarchy
     /// stays in sync.
-    // zed-kask: `Public` (marketplace-installed) sits below `Global` so a
-    // local skill of the same name wins.
     pub fn precedence(&self) -> u8 {
         match self {
-            Self::Public { .. } => 1,
             Self::Global => 2,
             Self::ProjectLocal { .. } => 3,
         }
@@ -216,7 +200,7 @@ impl SkillSource {
     /// syntax that the autocomplete popup inserts. Global skills use
     /// an empty prefix (so the inserted text is `/:<name>`), and
     /// project-local skills use their worktree root name (so the
-    /// inserted text is `/<worktree>:<name>`).
+    /// inserted text is `/<worktree>:<name>`.
     ///
     /// Using an empty prefix for globals rather than a literal
     /// `global` means a worktree literally named `global` is no
@@ -226,25 +210,18 @@ impl SkillSource {
     /// inserted text.
     /// Human-readable label for this source, used in the UI to
     /// distinguish skills from different origins.
-    //
-    // zed-kask: `Public` returns the namespaced `"{source_user}/{skill_name}"`
-    // form so the marketplace listing identity is preserved on installed
-    // skills. Pinned by `test_skill_source_public_display_label_is_namespaced`.
     pub fn display_label(&self) -> &str {
         match self {
             Self::Global => "global",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
-            Self::Public {
-                original_skill_id, ..
-            } => original_skill_id.as_ref(),
         }
     }
 
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::Global | Self::Public { .. } => "",
+            Self::Global => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -261,12 +238,9 @@ impl SkillSource {
     /// named `global` and fails if none exists. The popup always
     /// inserts the unambiguous form (`/:<name>` for globals), so this
     /// strictness only affects users typing by memory.
-    // zed-kask: `Public` (marketplace-installed) skills behave like `Global`
-    // for slash-command scoping — they use the empty prefix and match the
-    // empty scope. Pinned by `test_skill_source_public_matches_empty_scope`.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::Global | Self::Public { .. } => scope.is_empty(),
+            Self::Global => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
@@ -274,7 +248,7 @@ impl SkillSource {
     }
 }
 
-/// App-wide index of loaded skills, published by NativeAgent and read
+/// App-wide index of loaded skills, populated by NativeAgent and read
 /// by any UI that needs to display the skill list (e.g. Settings UI).
 #[derive(Default, Clone)]
 pub struct SkillIndex {
@@ -431,8 +405,8 @@ fn parse_skill_file_content_for_loading(
         validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
 
     // zed-kask: enforce that `core: true` frontmatter is honored only for
-    // skills whose name is in `CORE_SKILL_NAMES`. A marketplace-installed or
-    // hand-edited skill declaring `core: true` with a non-reserved name would
+    // skills whose name is in `CORE_SKILL_NAMES`. A hand-edited skill
+    // declaring `core: true` with a non-reserved name would
     // otherwise be treated as core (sovereign, not overwritten on seed, hidden
     // edit/delete controls) — a backdoor around the core-skill
     // contract. `is_reserved_skill_name` already refuses a non-core skill from
@@ -656,7 +630,7 @@ pub fn validate_name(name: &str) -> Result<(), &'static str> {
 }
 
 /// Validate a skill description against the strict rules enforced by the
-/// create-skill UI and imported/shared skill parsing.
+/// create-skill UI and skill file parsing.
 pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
@@ -707,76 +681,6 @@ pub async fn load_skills_from_directory(
     results
 }
 
-/// zed-kask: Load marketplace-installed skills from
-/// `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/`.
-///
-/// The marketplace directory has a two-level namespace: `_marketplace/`
-/// contains `{source_user}/` directories, each of which contains
-/// `{skill_name}/` directories, each of which contains `SKILL.md`.
-/// This function scans both levels and loads each skill with
-/// `SkillSource::Public { source_user, original_skill_id }`.
-pub async fn load_marketplace_skills(
-    fs: &Arc<dyn Fs>,
-    marketplace_dir: &Path,
-) -> Vec<Result<Skill, SkillLoadError>> {
-    if !fs.is_dir(marketplace_dir).await {
-        return Vec::new();
-    }
-
-    let mut all_results = Vec::new();
-
-    // List source_user directories.
-    let Ok(mut user_entries) = fs.read_dir(marketplace_dir).await else {
-        log::warn!(
-            "Failed to read marketplace directory: {} — returning empty skill list",
-            marketplace_dir.display()
-        );
-        return Vec::new();
-    };
-    while let Some(Ok(user_path)) = user_entries.next().await {
-        if !fs.is_dir(&user_path).await {
-            continue;
-        }
-        let source_user = user_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        // List skill_name directories under each source_user.
-        let Ok(mut skill_entries) = fs.read_dir(&user_path).await else {
-            log::warn!(
-                "Failed to read marketplace user directory: {} — skipping",
-                user_path.display()
-            );
-            continue;
-        };
-        while let Some(Ok(skill_path)) = skill_entries.next().await {
-            if !fs.is_dir(&skill_path).await {
-                continue;
-            }
-            let skill_name = skill_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let skill_file = skill_path.join("SKILL.md");
-            if !fs.is_file(&skill_file).await {
-                continue;
-            }
-
-            let original_skill_id = format!("{}/{}", source_user, skill_name);
-            let source = SkillSource::Public {
-                source_user: Arc::from(source_user.as_str()),
-                original_skill_id: Arc::from(original_skill_id.as_str()),
-            };
-            let result = load_skill_frontmatter(fs.clone(), skill_file, source).await;
-            all_results.push(result);
-        }
-    }
-
-    all_results
-}
 ///
 /// Discovery is intentionally one level deep: a skill is the immediate
 /// child directory of the skills root, and `SKILL.md` is the file that
@@ -1095,14 +999,9 @@ mod tests {
 
     #[test]
     fn test_skill_source_precedence_is_total_and_ordered() {
-        // Pin the hierarchy: project-local > global > public (marketplace).
+        // Pin the hierarchy: project-local > global.
         // Every override and conflict-resolution site routes through this,
         // so the rest of the codebase relies on it being correct.
-        let public = SkillSource::Public {
-            source_user: "alice".into(),
-            original_skill_id: "alice/bug-hunt".into(),
-        }
-        .precedence();
         let global = SkillSource::Global.precedence();
         let project = SkillSource::ProjectLocal {
             worktree_id: SkillScopeId(1),
@@ -1110,7 +1009,6 @@ mod tests {
         }
         .precedence();
 
-        assert!(public < global, "global must shadow public (marketplace)");
         assert!(global < project, "project-local must shadow global");
 
         // Two project-local skills from different worktrees tie. The
@@ -1125,59 +1023,9 @@ mod tests {
         assert_eq!(project, other_project);
     }
 
-    // zed-kask: `SkillSource::Public` (marketplace-installed) precedence sits
-    // below `Global` so a locally-authored skill of the same name shadows the
-    // marketplace copy. This is the core deviation from upstream (which has no
-    // marketplace source variant). Pinned here so a future refactor that
-    // reorders the precedence match arms fails loudly.
-    #[test]
-    fn test_skill_source_public_precedence_below_global() {
-        let public = SkillSource::Public {
-            source_user: "alice".into(),
-            original_skill_id: "alice/bug-hunt".into(),
-        }
-        .precedence();
-        let global = SkillSource::Global.precedence();
-
-        assert!(
-            public < global,
-            "Public must sit strictly below Global: public={}, global={}",
-            public,
-            global
-        );
-    }
-
-    // zed-kask: `SkillSource::Public::display_label` returns the namespaced
-    // `{source_user}/{skill_name}` form so the marketplace listing identity
-    // is preserved on installed skills. Upstream has no `Public` variant.
-    #[test]
-    fn test_skill_source_public_display_label_is_namespaced() {
-        let source = SkillSource::Public {
-            source_user: "alice".into(),
-            original_skill_id: "alice/bug-hunt".into(),
-        };
-        assert_eq!(source.display_label(), "alice/bug-hunt");
-    }
-
-    // zed-kask: `SkillSource::Public` behaves like `Global` for slash-command
-    // scoping — empty prefix, matches the empty scope. This means a
-    // marketplace-installed skill is invoked as `/:<name>`, same as a global.
-    // Upstream has no `Public` variant.
-    #[test]
-    fn test_skill_source_public_matches_empty_scope() {
-        let source = SkillSource::Public {
-            source_user: "alice".into(),
-            original_skill_id: "alice/bug-hunt".into(),
-        };
-        assert_eq!(source.scope_prefix(), "");
-        assert!(source.matches_scope(""));
-        assert!(!source.matches_scope("alice"));
-        assert!(!source.matches_scope("global"));
-    }
-
     // zed-kask: A skill declaring `core: true` with a non-reserved name must
-    // be refused at load time. This closes the backdoor where a marketplace-
-    // installed or hand-edited skill claims core status to gain sovereignty
+    // be refused at load time. This closes the backdoor where a hand-edited
+    // skill claims core status to gain sovereignty
     // (never overwritten on seed) and hidden edit/delete controls.
     // The symmetric case (a non-core skill bearing a core *name*) is already
     // refused by `is_reserved_skill_name`; this pins the status side.

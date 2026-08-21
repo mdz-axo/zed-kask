@@ -132,8 +132,7 @@ fn render_skill_row(
         .ml(rems_from_px(-22.0_f32))
         .gap_1()
         // Core skills: show a shield icon with "Core skill" tooltip instead
-        // of the share link and visibility toggle. Core skills cannot be
-        // shared, published, edited, or deleted.
+        // of the visibility toggle. Core skills cannot be edited or deleted.
         .when(is_core, |this| {
             this.child(
                 IconButton::new(

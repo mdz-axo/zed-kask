@@ -193,7 +193,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
 | Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |
 
-| Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/publish/validate | `Skill` |
+| Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/validate | `Skill` |
 | MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + in-process wiring | *(stringly-typed)* |
 | Kata coaching | `reg.kata` | 20 | ✅ PDCA cycles, automaticity | `Kata` |
 | Agent pod | `reg.agent_pod` | — | ~~✅ revert, spawn_agent (via PodBackupOps)~~ **Removed (v0.31.1):** `hkask-pods` deleted; `PodBackupOps` and the `AgentPod` variant removed. Per-user data directory replaces the pod abstraction. | ~~`AgentPod`~~ (deleted) |

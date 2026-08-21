@@ -20,7 +20,6 @@ thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 hex.workspace = true
-ed25519-dalek = { workspace = true, features = ["zeroize"] }
 
 [lints]
 workspace = true

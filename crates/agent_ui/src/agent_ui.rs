@@ -825,10 +825,7 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let manage_skills_action = [TypeId::of::<zed_actions::assistant::ManageSkills>()];
-        let skill_creator_actions = [
-            TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
-            TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
-        ];
+        let skill_creator_actions = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -1052,10 +1049,6 @@ mod tests {
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
                 "OpenSkillCreator should be visible by default"
-            );
-            assert!(
-                !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
-                "CreateSkillFromUrl should be visible by default"
             );
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),

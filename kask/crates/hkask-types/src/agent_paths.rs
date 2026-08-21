@@ -30,7 +30,6 @@ pub const MCP_DIR: &str = "mcp";
 
 /// Root directory for user skills (D28 — Standardized Artifact Storage).
 /// Each skill owns a subtree: `skills/{skill_name}/`.
-/// Marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`.
 pub const SKILLS_DIR: &str = "skills";
 
 /// Default filename for the primary hKask database.

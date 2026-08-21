@@ -23,9 +23,7 @@ pub mod error;
 pub mod keychain;
 pub mod keychain_keys;
 pub mod master_key;
-pub mod signing;
 
 pub use encryption::derive_key;
 pub use error::KeystoreError;
 pub use keychain::{Keychain, KeychainError, resolve};
-pub use signing::{sign, verify};

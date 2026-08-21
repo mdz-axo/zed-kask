@@ -10,7 +10,7 @@ mds_categories: [domain, composition, lifecycle, trust]
 
 # Skills and Composition
 
-Design, invoke, audit, publish, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
+Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
 
 This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtins inside the editor and are launched as child processes over stdio by zed's `context_server` host (D3); the standalone `kask mcp start <id>` CLI is deleted.
 

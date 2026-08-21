@@ -48,14 +48,9 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
     let source = match &skill.source {
         agent_skills::SkillSource::Global => "global",
         agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
-        // zed-kask: marketplace-installed skills are labeled with their
-        // namespaced id (e.g. `alice/bug-hunt`) via `display_label`, but the
-        // envelope source tag uses a stable literal so the model can pattern-match
-        // it. Pinned by `test_skill_source_public_matches_empty_scope`.
-        agent_skills::SkillSource::Public { .. } => "marketplace",
     };
     let worktree = match &skill.source {
-        agent_skills::SkillSource::Global | agent_skills::SkillSource::Public { .. } => None,
+        agent_skills::SkillSource::Global => None,
         agent_skills::SkillSource::ProjectLocal {
             worktree_root_name, ..
         } => Some(worktree_root_name.clone()),
@@ -836,42 +831,6 @@ mod tests {
         assert!(
             matches!(result, Err(SkillToolOutput::Error { .. })),
             "expected denial to surface as an error: {result:?}"
-        );
-    }
-
-    // zed-kask: `render_skill_envelope` emits `<source>marketplace</source>` for
-    // `SkillSource::Public` skills (not the namespaced id, which is in
-    // `display_label`). This pins the stable literal the model pattern-matches
-    // against; upstream has no `Public` variant.
-    #[test]
-    fn test_render_skill_envelope_public_source_label_is_marketplace() {
-        let skill = Skill {
-            name: "bug-hunt".to_string(),
-            description: "Bug hunting skill.".to_string(),
-            source: SkillSource::Public {
-                source_user: "alice".into(),
-                original_skill_id: "alice/bug-hunt".into(),
-            },
-            directory_path: agent_skills::global_skills_dir().join("_marketplace/alice/bug-hunt"),
-            skill_file_path: agent_skills::global_skills_dir()
-                .join("_marketplace/alice/bug-hunt/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            dependencies: Vec::new(),
-            core: false,
-        };
-        let rendered = render_skill_envelope(&skill, "body content");
-        assert!(
-            rendered.contains("<source>marketplace</source>"),
-            "Public source must render as 'marketplace' in the envelope: {rendered}"
-        );
-        assert!(
-            !rendered.contains("<source>alice/bug-hunt</source>"),
-            "Namespaced id must not appear in the source tag (it's in display_label, not the envelope): {rendered}"
-        );
-        assert!(
-            !rendered.contains("<worktree>"),
-            "Public skills have no worktree: {rendered}"
         );
     }
 }

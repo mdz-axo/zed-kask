@@ -58,7 +58,7 @@ erDiagram
 | Artifact class | Root | Subdir pattern | Naming rule | Programmatic contract |
 |---|---|---|---|---|
 | MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |
-| User skills | `{data_dir}` | `skills/{skill_name}/` (marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`) | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
+| User skills | `{data_dir}` | `skills/{skill_name}/` | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
 | User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 
@@ -151,7 +151,7 @@ under `mcp/{server_id}/`.
 | Class | Decision | Rationale |
 |---|---|---|
 | MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials (`mcp_servers.rs:67-107`); server-ID segment enables browse-by-server. |
-| User skills | Shared (flat `skills/{skill_name}/`) | Skills are consumed across servers and the skill tool (`HKASK_SKILLS_DIR` is shared, `settings.rs:946-952`). Marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/` — a provenance partition within the class, not a separate class. |
+| User skills | Shared (flat `skills/{skill_name}/`) | Skills are consumed across servers and the skill tool (`HKASK_SKILLS_DIR` is shared, `settings.rs:946-952`). |
 | User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:79-81`). |
 | Archived chat threads | Shared (flat `threads/`) | Threads are user chat history, not server-scoped. |
 
