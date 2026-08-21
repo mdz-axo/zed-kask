@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn compact_drops_old_rollouts_keeps_recent_at_boundary() {
-        :        let _guard = CLOCK_TEST_GUARD
+        let _guard = CLOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Two rollouts written at distinct instants; the cutoff falls exactly
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn strip_bodies_strips_old_keeps_recent_at_boundary() {
-        :        let _guard = CLOCK_TEST_GUARD
+        let _guard = CLOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // One model_request before the cutoff (stripped), one after (kept).
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn query_surfaces_corrupt_payload_as_error_not_null() {
-        :        let _guard = CLOCK_TEST_GUARD
+        let _guard = CLOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // A row whose payload column is not valid JSON is corruption, not a
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn cursor_is_none_on_empty_then_some_with_exact_max_after_appends() {
-        :        let _guard = CLOCK_TEST_GUARD
+        let _guard = CLOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // `cursor` returns Ok(None) on an empty log and Ok(Some(max_position))

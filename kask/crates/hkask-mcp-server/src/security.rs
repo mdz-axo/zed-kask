@@ -87,14 +87,15 @@ fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
         return Err(SecurityError::EmbeddedCredentials(raw_url.to_string()));
     }
 
-    let host = host_part.split(':').next().unwrap_or(host_part);
-    let bracket_close = host.rfind(']');
-    let hostname = if host.starts_with('[') {
-        bracket_close
-            .map(|i| &host[1..i])
-            .ok_or_else(|| SecurityError::InvalidUrl("Malformed IPv6 address".to_string()))?
+    // Bracketed IPv6 (e.g. `[::1]:8080`) must be extracted before stripping the
+    // port — splitting on ':' first would truncate to "[" and lose the address.
+    let hostname = if let Some(rest) = host_part.strip_prefix('[') {
+        let bracket_close = rest
+            .find(']')
+            .ok_or_else(|| SecurityError::InvalidUrl("Malformed IPv6 address".to_string()))?;
+        &rest[..bracket_close]
     } else {
-        host
+        host_part.split(':').next().unwrap_or(host_part)
     };
 
     Ok((scheme, hostname))

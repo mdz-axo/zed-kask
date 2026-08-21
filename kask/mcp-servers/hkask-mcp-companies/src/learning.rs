@@ -10,7 +10,6 @@
 
 use crate::Provider;
 use crate::data_quality::TemporalSnapshot;
-use hkask_types::time::now_rfc3339;
 
 /// Flaky provider threshold: P(success) below this with sufficient observations → flaky.
 const FLAKY_PROBABILITY_THRESHOLD: f64 = 0.70;

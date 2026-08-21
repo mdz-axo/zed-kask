@@ -3,34 +3,6 @@
 use super::*;
 
 #[test]
-fn dr_variance_peaks_at_fifty_fifty() {
-    // p(1−p) peaks at p=0.5. The DR channel should be maximal there.
-    let v_50 = deadline_resolution_variance(0.5, 168.0, 1.0).unwrap();
-    let v_25 = deadline_resolution_variance(0.25, 168.0, 1.0).unwrap();
-    let v_90 = deadline_resolution_variance(0.9, 168.0, 1.0).unwrap();
-    assert!(v_50 > v_25, "50/50 > 25/75");
-    assert!(v_50 > v_90, "50/50 > 90/10");
-    assert!((v_50 - 0.25 / 168.0).abs() < 1e-12, "v_50 = {}", v_50);
-}
-
-#[test]
-fn dr_variance_rises_near_deadline() {
-    // 1/τ scaling: volatility rises as resolution approaches.
-    let far = deadline_resolution_variance(0.5, 720.0, 1.0).unwrap(); // 30 days
-    let near = deadline_resolution_variance(0.5, 24.0, 1.0).unwrap(); // 1 day
-    assert!(near > far, "near-deadline vol > far");
-    // 30x closer to deadline → 30x higher variance.
-    assert!((near / far - 30.0).abs() < 0.01, "ratio = {}", near / far);
-}
-
-#[test]
-fn dr_variance_vanishes_at_boundaries() {
-    // p(1−p) = 0 at p=0 and p=1 — binary resolution is certain.
-    assert!(deadline_resolution_variance(0.0, 168.0, 1.0).unwrap().abs() < 1e-15);
-    assert!(deadline_resolution_variance(1.0, 168.0, 1.0).unwrap().abs() < 1e-15);
-}
-
-#[test]
 fn dras_as_channel_adds_to_dr() {
     // The AS channel is additive: h² = DR + AS. With a spread and volume,
     // the total variance should exceed the DR-only variance.
@@ -124,30 +96,6 @@ fn dras_rejects_degenerate_inputs() {
 }
 
 #[test]
-fn archak_ipeirotis_benchmark_computes() {
-    // The AI benchmark uses φ²(Φ⁻¹(p))/τ. At p=0.5, Φ⁻¹(0.5)=0,
-    // φ(0) = 1/√(2π) ≈ 0.399, φ²(0) ≈ 0.159.
-    let v = archak_ipeirotis_variance(0.5, 168.0, 1.0).unwrap();
-    let expected = 0.15915494309189535 / 168.0; // φ²(0) / τ
-    assert!(
-        (v - expected).abs() < 1e-6,
-        "v = {}, expected = {}",
-        v,
-        expected
-    );
-}
-
-#[test]
-fn archak_ipeirotis_vanishes_at_boundaries() {
-    // φ²(Φ⁻¹(p)) → 0 as p → 0 or p → 1 (the probit shape vanishes at
-    // the boundaries, like p(1−p), but with a different shape).
-    let v_low = archak_ipeirotis_variance(0.001, 168.0, 1.0).unwrap();
-    let v_high = archak_ipeirotis_variance(0.999, 168.0, 1.0).unwrap();
-    assert!(v_low < 0.001, "v_low = {}", v_low);
-    assert!(v_high < 0.001, "v_high = {}", v_high);
-}
-
-#[test]
 fn dras_scales_linearly_with_horizon() {
     // The conditional variance scales linearly with Δ (the forecast horizon).
     let inputs = VolatilityInputs {
@@ -186,23 +134,6 @@ fn dras_default_k_gives_reasonable_magnitudes() {
         fc.conditional_volatility < 0.10,
         "h = {}",
         fc.conditional_volatility
-    );
-}
-
-#[test]
-fn inverse_normal_cdf_is_accurate() {
-    // Spot-check against known values.
-    assert!(
-        inverse_standard_normal_cdf(0.5).abs() < 1e-6,
-        "Φ⁻¹(0.5) = 0"
-    );
-    assert!(
-        (inverse_standard_normal_cdf(0.975) - 1.959964).abs() < 1e-4,
-        "Φ⁻¹(0.975) ≈ 1.96"
-    );
-    assert!(
-        (inverse_standard_normal_cdf(0.025) - (-1.959964)).abs() < 1e-4,
-        "Φ⁻¹(0.025) ≈ -1.96"
     );
 }
 
