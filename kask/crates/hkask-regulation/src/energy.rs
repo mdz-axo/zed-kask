@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Alert threshold ratio (used/ceiling) above which the regulation loop throttles.
-pub const DEFAULT_CALL_CAP_ALERT_THRESHOLD: f64 = 0.8;
+pub(crate) const DEFAULT_CALL_CAP_ALERT_THRESHOLD: f64 = 0.8;
 
 /// Per-tick call ceiling applied to an agent the composition root never
 /// registered.
@@ -119,7 +119,7 @@ impl CallCap {
 
 /// Read-only status snapshot for sensors and status queries.
 #[derive(Debug, Clone, Copy)]
-pub struct AgentCallCapStatus {
+pub(crate) struct AgentCallCapStatus {
     pub ceiling: u32,
     pub remaining: u32,
     pub usage_ratio: f64,
@@ -136,7 +136,7 @@ impl From<&CallCap> for AgentCallCapStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum CallCapError {
+pub(crate) enum CallCapError {
     #[error("call cap exceeded: remaining {remaining}, ceiling {ceiling}")]
     Exceeded { remaining: u32, ceiling: u32 },
     #[error("persistence: {0}")]
@@ -158,7 +158,7 @@ struct OverrideRecord {
 /// `&self` async methods — matching the prior budget manager shape callers
 /// depend on. Agents without a registered cap are denied (fail-closed); the
 /// composition root must seed a cap for every agent making governed tool calls.
-pub struct CallCapManager {
+pub(crate) struct CallCapManager {
     caps: Arc<RwLock<HashMap<WebID, CallCap>>>,
     overrides: Arc<RwLock<HashMap<WebID, OverrideRecord>>>,
 }

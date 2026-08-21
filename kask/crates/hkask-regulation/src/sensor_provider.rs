@@ -34,7 +34,7 @@ use std::sync::Arc;
 /// `Signal`. If the sensor has nothing to report (metric is healthy),
 /// it returns `None`.
 #[async_trait::async_trait]
-pub trait Sensor: Send + Sync {
+pub(crate) trait Sensor: Send + Sync {
     /// Sense the current state and produce a signal if the metric is
     /// in a reportable state. Returns `None` if nothing to report.
     async fn sense(&self) -> Option<Signal>;
@@ -66,7 +66,7 @@ pub trait Sensor: Send + Sync {
 /// Order doesn't matter — each provider independently decides whether
 /// to emit a signal. The bus aggregates their signals into a single
 /// `Vec<Signal>` for the loop's `sense()` phase.
-pub struct SensorBus {
+pub(crate) struct SensorBus {
     providers: Mutex<Vec<Arc<dyn Sensor>>>,
 }
 
@@ -148,7 +148,7 @@ impl Default for SensorBus {
 /// Each loop's `sense()` method calls `registry.sense_all(loop_id)` instead
 /// of containing inline sensing logic. Sensors are registered at startup
 /// via `registry.register_for(loop_id, provider)`.
-pub struct SensorRegistry {
+pub(crate) struct SensorRegistry {
     /// Per-loop sensor buses. Each loop owns its own bus.
     registries: Mutex<HashMap<LoopId, SensorBus>>,
 }
@@ -243,7 +243,7 @@ impl Clone for SensorBus {
 /// Senses energy budget remaining ratios across all agents.
 ///
 /// Data source: `CallCapManager`. Produces a signal per agent.
-pub struct EnergyBudgetSensor {
+pub(crate) struct EnergyBudgetSensor {
     cap_manager: Arc<tokio::sync::RwLock<super::energy::CallCapManager>>,
     set_point: f64,
 }
@@ -290,7 +290,7 @@ impl Sensor for EnergyBudgetSensor {
 /// Senses variety deficit from the Regulation runtime.
 ///
 /// Data source: `RegulationLedger`. Produces a single aggregate signal.
-pub struct VarietySensor {
+pub(crate) struct VarietySensor {
     ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
     set_point: f64,
 }
@@ -328,7 +328,7 @@ impl Sensor for VarietySensor {
 }
 
 /// Senses tool reliability across all MCP tools.
-pub struct ToolReliabilitySensor {
+pub(crate) struct ToolReliabilitySensor {
     tool_stats: Arc<crate::tool_stats::ToolStats>,
     threshold: f64,
 }
@@ -381,7 +381,7 @@ impl Sensor for ToolReliabilitySensor {
 /// inputs). See `tool_stats::read_count_field` for the canonical warn-then-
 /// fallback pattern this mirrors.
 #[derive(Debug, thiserror::Error)]
-pub enum MetricsLocateError {
+pub(crate) enum MetricsLocateError {
     /// The trace directory itself could not be read (missing, permission
     /// denied, not a directory). The sensor cannot determine whether any run
     /// has metrics — this is a broken sensor, not an empty one.
@@ -414,7 +414,7 @@ pub enum MetricsLocateError {
 /// closes the byte-identical duplication and gives one place to enforce the
 /// error-classification contract. Public so the error-classification contract
 /// can be pinned by integration tests.
-pub fn latest_run_metrics(
+pub(crate) fn latest_run_metrics(
     trace_dir: &std::path::Path,
 ) -> Result<Option<std::path::PathBuf>, MetricsLocateError> {
     let entries =
@@ -446,7 +446,7 @@ pub fn latest_run_metrics(
 ///
 /// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
 /// Produces a signal only when `coverage_pct` is below the coverage floor.
-pub struct TestCoverageSensor {
+pub(crate) struct TestCoverageSensor {
     trace_dir: std::path::PathBuf,
     set_point: f64,
 }
@@ -527,7 +527,7 @@ impl Sensor for TestCoverageSensor {
 ///
 /// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
 /// Produces a signal only when `mutation_score` is below the mutation score floor.
-pub struct MutationScoreSensor {
+pub(crate) struct MutationScoreSensor {
     trace_dir: std::path::PathBuf,
     set_point: f64,
 }

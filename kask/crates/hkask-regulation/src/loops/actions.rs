@@ -4,7 +4,7 @@ use super::core::LoopId;
 
 /// Budget option presented to the Curator during budget guard escalation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BudgetOption {
+pub(crate) struct BudgetOption {
     pub id: String,
     pub label: String,
 }
@@ -16,7 +16,7 @@ pub struct BudgetOption {
 /// with consumers that inspect the `reason` field.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
-pub enum RegulationData {
+pub(crate) enum RegulationData {
     /// Energy budget below set-point (Autonomous mode).
     EnergyBudgetLow {
         remaining_ratio: f64,
@@ -176,7 +176,7 @@ impl RegulationData {
 /// regulator learns whether its actions are effective, but not whether
 /// its *model* is correct.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RegulatoryActionParams {
+pub(crate) struct RegulatoryActionParams {
     /// Human-readable reason for the action (required for observability).
     pub reason: String,
     /// Typed regulation data (non-regulation actions use `RegulationData::NoData`).

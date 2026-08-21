@@ -19,6 +19,5 @@ pub use inference_types::{
     InferenceStreamChunk, InferenceUsage, StructuredToolCall,
 };
 pub use inference_types::{TokenProb, TokenProbability};
-pub(crate) use memory_port::MemoryFuture;
 pub use memory_port::{MemoryError, MemoryPort, MemorySnippet, TurnRecord};
 pub use regulation::{ConsolidationOutcome, ConsolidationRequest};

@@ -49,7 +49,7 @@ use tracing;
 /// the structured payload so `query_skill_feedback` can return it to the
 /// next skill invocation.
 #[derive(Debug, Clone)]
-pub struct StoredSkillSpan {
+pub(crate) struct StoredSkillSpan {
     /// Full namespace: `reg.skill.<skill-id>.<phase>`
     pub namespace: String,
     /// Skill ID extracted from the namespace (e.g., "lora-training").
@@ -299,7 +299,7 @@ impl Default for OutcomeTracker {
 ///     → [emit_critical_depletion()] → (agent behavior change)
 /// ```
 #[derive(Debug)]
-pub struct VarietyMonitor {
+pub(crate) struct VarietyMonitor {
     counters: HashMap<String, VarietyTracker>,
 }
 
@@ -385,7 +385,7 @@ impl Default for VarietyMonitor {
 /// detected, actions produced, impact verified, decisions classified.
 /// Enables post-hoc analysis of regulation effectiveness.
 #[derive(Debug, Clone)]
-pub struct RegulationCycleEntry {
+pub(crate) struct RegulationCycleEntry {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// Count of afferent signals from sense phase.
     pub signals: u64,

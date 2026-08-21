@@ -17,7 +17,7 @@ use super::open_regulation_archive;
 /// Resolve the curator's sovereign `curator.db` path (same resolution as
 /// `open_curator_store`): `HKASK_CURATOR_DB` if set, else
 /// `agents/curator/curator.db` under the hKask data dir.
-pub fn curator_db_path() -> String {
+pub(crate) fn curator_db_path() -> String {
     std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
         let p = hkask_types::agent_paths::agent_db("curator");
         let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);

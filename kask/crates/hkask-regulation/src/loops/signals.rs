@@ -11,7 +11,7 @@ use super::core::LoopId;
 /// (Fowler H7: Replace Type Code with Strategy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SignalMetric {
+pub(crate) enum SignalMetric {
     /// Fraction of energy budget remaining (Cybernetics Loop 6)
     EnergyRemaining,
     /// Raw variety deficit count (Cybernetics Loop 6)
@@ -256,7 +256,7 @@ impl Signal {
 
 /// Deviation detected when comparing a signal against its set-point.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Deviation {
+pub(crate) struct Deviation {
     pub signal: Signal,
     pub magnitude: f64,
     pub direction: DeviationDirection,
@@ -282,7 +282,7 @@ impl Deviation {
 
 /// Direction of a deviation relative to the set-point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum DeviationDirection {
+pub(crate) enum DeviationDirection {
     AboveSetPoint,
     BelowSetPoint,
 }

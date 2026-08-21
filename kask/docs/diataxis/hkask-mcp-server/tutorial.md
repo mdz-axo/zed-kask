@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Tutorial: Build Your First MCP Server"
 audience: [developers new to hKask MCP servers]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [lifecycle]
@@ -34,8 +34,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-001
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:40-69
+verified_date: 2026-08-20
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:43-72
 status: VERIFIED
 -->
 
@@ -86,14 +86,14 @@ let credentials = vec![
 (`context.rs:32-38`); `optional` returns one with `required = false`
 (`context.rs:47-53`). If a required credential is missing, the bootstrap
 returns `McpError::MissingCredentials` and the server never starts
-(`transport.rs:118-131`).
+(`transport.rs:126-131`).
 
 ## Step 3: Define the server struct
 
 The `mcp_server!` macro generates a struct with a mandatory `webid` field
 plus your domain-specific fields, a `new()` constructor, and a `ToolContext`
 impl. This is the standard pattern for all hKask MCP servers
-(`hkask_mcp_server.rs:113-127`).
+(`hkask_mcp_server.rs:132-184`).
 
 ```rust
 use hkask_mcp_server::mcp_server;
@@ -107,17 +107,17 @@ mcp_server!(struct IssuesServer {
 This expands to a struct with `webid, github_token`, a `new(webid, github_token)`
 constructor, and `impl ToolContext for IssuesServer` (which exposes `webid()`
 for Regulation span attribution). The macro has a no-custom-fields variant too
-(`hkask_mcp_server.rs:162-180`).
+(`hkask_mcp_server.rs:165-183`).
 
 The `webid` field is `hkask_types::WebID` and is the agent identity for
-capability tokens and ownership (`hkask_mcp_server.rs:142-143`).
+capability tokens and ownership (`hkask_mcp_server.rs:146`).
 
 ## Step 4: Register tools with `execute_tool`
 
 Each tool is an `async fn` annotated with rmcp's `#[tool]` attribute. The
 tool body returns `Result<serde_json::Value, McpToolError>`; the framework
 wraps it in a `ToolSpanGuard` that emits a `reg.tool` span on drop
-(`tool_span.rs:185-193`).
+(`tool_span.rs:187-195`).
 
 ```rust
 use hkask_mcp_server::{execute_tool, McpToolError, validate_field};
@@ -134,7 +134,7 @@ impl IssuesServer {
             let req = params.as_json()?;
 
             // Validate inputs — the validate_field! macro returns early on error
-            // (hkask_mcp_server.rs:84-91)
+            // (hkask_mcp_server.rs:88-94)
             // validate_field!(span, "owner", &owner, 256);
 
             // ... business logic ...
@@ -145,14 +145,14 @@ impl IssuesServer {
 ```
 
 `execute_tool` creates the span, awaits your future, and calls `span.finish(result)`
-which routes `Ok` → `ok_json` and `Err` → `error(kind, …)` (`tool_span.rs:111-116`).
+which routes `Ok` → `ok_json` and `Err` → `error(kind, …)` (`tool_span.rs:113-118`).
 The returned `String` is the MCP wire-format JSON.
 
 For tools that participate in ontology-aware feedback routing, use
 `execute_tool_semantic` with a `&'static str` concept from `hkask-bridge-ontology`
 (e.g. `pko:ChangeOfStatus`). Passing `None` emits a `tracing::warn!` naming the
 tool — the algedonic signal that a registered tool lacks an ontology anchor
-(`tool_span.rs:203-223`).
+(`tool_span.rs:205-225`).
 
 ## Step 5: Call `run_server` in `main`
 
@@ -160,7 +160,7 @@ tool — the algedonic signal that a registered tool lacks an ontology anchor
 `run_stdio_server`, which sets up the tracing subscriber, resolves
 credentials, derives the WebID, detects the capability tier, constructs
 the `ServerContext`, calls your factory, and serves over rmcp stdio
-(`hkask_mcp_server.rs:35-52`, `transport.rs:84-192`).
+(`hkask_mcp_server.rs:38-55`, `transport.rs:84-191`).
 
 ```rust
 #[tokio::main]
@@ -179,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 The factory closure receives a `ServerContext` with `credentials`,
-`webid`, and `capability_tier` (`context.rs:134-142`). There is no ambient
+`webid`, and `capability_tier` (`context.rs:123-131`). There is no ambient
 authority via `std::env::var` — all deps are injected here
 (`transport.rs:19-22`).
 
@@ -187,25 +187,25 @@ authority via `std::env::var` — all deps are injected here
 
 The server speaks MCP over stdin/stdout. Logs go to stderr via the
 tracing subscriber initialized in `run_stdio_server_impl`
-(`transport.rs:95-101`). The hKask runtime (or any MCP client) spawns the
+(`transport.rs:95-99`). The hKask runtime (or any MCP client) spawns the
 binary and communicates over stdio; the server blocks on
 `running.waiting().await` until the client disconnects
-(`transport.rs:187-191`).
+(`transport.rs:191`).
 
 To test locally, point an MCP client at the binary. Set `HKASK_WEBID` to a
 valid UUID for P12-compliant attribution; if unset, the server starts with
-an anonymous identity and logs a warning (`transport.rs:148-166`).
+an anonymous identity and logs a warning (`transport.rs:150,163`).
 
 ## What you learned
 
 - The framework's entry point is `run_server` → `run_stdio_server`
-  (`hkask_mcp_server.rs:40-52`).
+  (`hkask_mcp_server.rs:43-55`).
 - Credentials are declared via `CredentialRequirement` and resolved before
-  the server struct is constructed (`context.rs:13-22`, `transport.rs:103-131`).
+  the server struct is constructed (`context.rs:14-22`, `transport.rs:105-131`).
 - The `mcp_server!` macro generates the struct, constructor, and
-  `ToolContext` impl (`hkask_mcp_server.rs:128-181`).
+  `ToolContext` impl (`hkask_mcp_server.rs:132-184`).
 - Tools return `Result<Value, McpToolError>`; `execute_tool` emits the
-  Regulation span and serializes the result (`tool_span.rs:185-193`).
+  Regulation span and serializes the result (`tool_span.rs:187-195`).
 - Agent identity comes from `ServerContext.webid`, resolved from
   `HKASK_WEBID` → anonymous (`transport.rs:133-166`).
 
@@ -213,15 +213,15 @@ an anonymous identity and logs a warning (`transport.rs:148-166`).
 
 | Claim | File:line |
 |-------|-----------|
-| `run_server` delegates to `run_stdio_server` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:40-52` |
-| `run_server_with_preloaded` variant | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:56-69` |
+| `run_server` delegates to `run_stdio_server` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:43-55` |
+| `run_server_with_preloaded` variant | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:59-72` |
 | Canonical registry lives in `kask_bridge` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:13-17` |
-| `mcp_server!` macro expansion | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:128-181` |
-| `validate_field!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:84-91` |
-| `impl_tool_context!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:102-111` |
+| `mcp_server!` macro expansion | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:132-184` |
+| `validate_field!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:88-94` |
+| `impl_tool_context!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:106-114` |
 | `CredentialRequirement::required` / `optional` | `kask/crates/hkask-mcp-server/src/server/context.rs:32-53` |
-| `ServerContext` fields | `kask/crates/hkask-mcp-server/src/server/context.rs:134-142` |
-| Bootstrap: tracing, credentials, webid, serve | `kask/crates/hkask-mcp-server/src/server/transport.rs:84-192` |
-| `execute_tool` framework function | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:185-193` |
-| `execute_tool_semantic` with ontology warn | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:203-223` |
-| `ToolSpanGuard::finish` result routing | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:111-116` |
+| `ServerContext` fields | `kask/crates/hkask-mcp-server/src/server/context.rs:123-131` |
+| Bootstrap: tracing, credentials, webid, serve | `kask/crates/hkask-mcp-server/src/server/transport.rs:84-191` |
+| `execute_tool` framework function | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:187-195` |
+| `execute_tool_semantic` with ontology warn | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:205-225` |
+| `ToolSpanGuard::finish` result routing | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:113-118` |

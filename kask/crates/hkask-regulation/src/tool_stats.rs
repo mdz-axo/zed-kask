@@ -32,7 +32,7 @@ const MAX_COST_OBSERVATIONS: usize = 200;
 const MIN_OBSERVATIONS_FOR_FIT: usize = 10;
 
 /// Default success probability threshold for reliability alerts.
-pub const DEFAULT_RELIABILITY_THRESHOLD: f64 = 0.80;
+pub(crate) const DEFAULT_RELIABILITY_THRESHOLD: f64 = 0.80;
 
 /// Statistical state for a single MCP tool.
 #[derive(Debug, Clone, Default)]
@@ -47,7 +47,7 @@ pub(crate) struct ToolState {
 
 /// A fitted cost distribution for reserve estimation.
 #[derive(Debug, Clone)]
-pub struct CostDistribution {
+pub(crate) struct CostDistribution {
     /// 90th percentile — recommended reserve point.
     pub p90: f64,
     /// Number of observations used for the fit.
@@ -58,7 +58,7 @@ pub struct CostDistribution {
 
 /// Per-tool reliability alert, emitted when success probability drops.
 #[derive(Debug, Clone)]
-pub struct ToolReliabilityAlert {
+pub(crate) struct ToolReliabilityAlert {
     pub tool_name: String,
     pub success_probability: f64,
     pub threshold: f64,

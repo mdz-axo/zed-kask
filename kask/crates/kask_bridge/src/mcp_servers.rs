@@ -343,7 +343,7 @@ pub fn builtin_mcp_server_pairs() -> Vec<(&'static str, &'static str)> {
 
 /// Look up a server by ID.
 #[must_use]
-pub fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
+pub(crate) fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
     BUILT_IN_MCP_SERVERS.iter().find(|s| s.id == id)
 }
 
@@ -468,7 +468,7 @@ pub async fn build_mcp_server_env(
 /// This prevents the curator's email config (`HKASK_SMTP_USERNAME`,
 /// `HKASK_MXROUTE_SERVER`, etc.) from being injected into servers that don't
 #[must_use]
-pub fn filter_config_env_for_server(
+pub(crate) fn filter_config_env_for_server(
     server_id: &str,
     config_env: &std::collections::HashMap<String, String>,
 ) -> std::collections::HashMap<String, String> {

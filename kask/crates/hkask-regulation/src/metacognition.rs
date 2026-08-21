@@ -39,7 +39,7 @@ use crate::loops::CurationInput;
 use crate::runtime::{RegulationLedger, StoredSkillSpan};
 
 /// Default tick interval for the metacognition loop (30 seconds).
-pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
+pub(crate) const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Default variety deficit threshold for escalation.
 const DEFAULT_VARIETY_DEFICIT_THRESHOLD: u64 = 100;
@@ -110,7 +110,7 @@ pub struct EscalationAlert {
 
 /// What triggered an escalation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EscalationTrigger {
+pub(crate) enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
     LowEffectiveness,
@@ -123,7 +123,7 @@ pub enum EscalationTrigger {
 
 /// Metacognition loop configuration.
 #[derive(Debug, Clone)]
-pub struct MetacognitionConfig {
+pub(crate) struct MetacognitionConfig {
     pub tick_interval: Duration,
     pub variety_deficit_threshold: u64,
     pub critical_alert_threshold: usize,

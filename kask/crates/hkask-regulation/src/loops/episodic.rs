@@ -3,7 +3,7 @@
 /// Classification of an episodic experience for encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExperienceClassification {
+pub(crate) enum ExperienceClassification {
     Success,
     Failure,
 }

@@ -40,15 +40,16 @@ pub mod core;
 pub mod episodic;
 pub mod signals;
 
-pub use actions::{
-    ActionType, BudgetOption, RegulationData, RegulatoryAction, RegulatoryActionParams,
-};
-pub use channels::{
+pub use actions::{ActionType, RegulatoryAction};
+pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
+pub(crate) use channels::{
     CommunicationEvent, CurationInput, GoalLifecycle, GoalTransitionEvent, ToolConsumptionEvent,
 };
-pub use core::{ActionDecision, ImpactReport, LoopId, LoopMetrics, TriggerOrigin};
-pub use episodic::ExperienceClassification;
-pub use signals::{Deviation, DeviationDirection, Signal, SignalMetric};
+pub use core::ImpactReport;
+pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
+pub(crate) use episodic::ExperienceClassification;
+pub use signals::Signal;
+pub(crate) use signals::{Deviation, DeviationDirection, SignalMetric};
 
 // Backward-compatible re-export — CuratorDirective was previously re-exported
 // from here but lives in hkask_types::curator.

@@ -21,7 +21,7 @@ use super::signals::{Deviation, DeviationDirection, SignalMetric};
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum LoopId {
+pub(crate) enum LoopId {
     Inference,
     Episodic,
     Semantic,
@@ -47,7 +47,7 @@ impl std::fmt::Display for LoopId {
 /// enables Regulation to correlate trigger type with regulatory effectiveness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TriggerOrigin {
+pub(crate) enum TriggerOrigin {
     /// Regular scheduled tick (timer-driven).
     Scheduled,
     /// Triggered by an incoming algedonic alert.
@@ -163,7 +163,7 @@ impl ImpactReport {
 /// - Block threshold: 20% relative worsening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ActionDecision {
+pub(crate) enum ActionDecision {
     /// Action was effective or within noise tolerance. Continue.
     Accept,
     /// Action was moderately ineffective — worth reviewing. Escalate as Warning.
@@ -179,7 +179,7 @@ pub enum ActionDecision {
 /// quickly enough? Is it producing appropriate actions for detected deviations?
 /// Are those actions actually effective?
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct LoopMetrics {
+pub(crate) struct LoopMetrics {
     /// Milliseconds between sense start and act completion (loop latency).
     pub delay_ms: u64,
     /// Ratio of actions produced to deviations detected (responsiveness).

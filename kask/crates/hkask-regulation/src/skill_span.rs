@@ -31,7 +31,7 @@ use hkask_types::ObservableSpan;
 /// evidence or operator feedback becomes available. They close the feedback
 /// loop for self-improvement (extrinsic exploratory experience, τ_t).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SkillFeedbackSpan {
+pub(crate) enum SkillFeedbackSpan {
     /// After step 1 (classify) — the skill has determined what kind of
     /// artifact to produce. Carries: domain, conservation_mode,
     /// ontology_anchor, candidate_node_count.
