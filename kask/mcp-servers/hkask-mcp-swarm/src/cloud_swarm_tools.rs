@@ -835,8 +835,7 @@ impl SwarmServer {
                             .map(|d| d.with_timezone(&chrono::Utc))
                             .unwrap_or(chrono::Utc::now());
                         if sender == req.agent_name && msg_time > post_time {
-                            let content =
-                                sanitize_abw_response(unwrap_abw_envelope(msg));
+                            let content = sanitize_abw_response(unwrap_abw_envelope(msg));
                             agent_response = Some(serde_json::json!({
                                 "content": content,
                                 "created_at": msg_time_str,

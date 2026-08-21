@@ -28,8 +28,8 @@ pub mod salience;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;
-pub use memory_store::{MemoryStore, MemoryStoreError};
 pub use memory_store::CentroidResult;
+pub use memory_store::{MemoryStore, MemoryStoreError};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
 // ── Canonical span namespace (hoisted from 5 per-call .expect() sites) ──

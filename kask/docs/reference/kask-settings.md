@@ -122,7 +122,6 @@ for local dev; S3 is only required for publish/download/vote.
 | `database_url` | `String` | `"sqlite:kask_marketplace.db?mode=rwc"` | SQLite connection string |
 | `http_port` | `u16` | `3000` | HTTP port the collab server listens on |
 | `zed_environment` | `String` | `"development"` | `development`, `staging`, or `production` |
-| `marketplace_url` | `String` | `"http://localhost:3000"` | Marketplace base URL the extensions panel uses; when set and non-empty, overrides `server_url`-based resolution |
 
 ## Curator (`KaskCuratorSettings`)
 

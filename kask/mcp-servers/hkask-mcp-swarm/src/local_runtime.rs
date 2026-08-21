@@ -607,10 +607,7 @@ impl LocalSwarmRuntime {
 /// labels resolve to registered types; runtime bind matching against
 /// those labels is the typing layer's unfinished transition, not this
 /// function's job.
-pub fn check_bind(
-    card: &crate::local_registry::LocalAgentCard,
-    _task: &str,
-) -> Option<bool> {
+pub fn check_bind(card: &crate::local_registry::LocalAgentCard, _task: &str) -> Option<bool> {
     if card.accepts.is_empty() {
         return None;
     }

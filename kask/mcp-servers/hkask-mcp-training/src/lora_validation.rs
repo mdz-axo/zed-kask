@@ -41,7 +41,9 @@ pub(crate) use param_gates::{
 
 // ── Dataset-format validation (G-D0) — extracted to `lora_validation/dataset_format.rs`
 mod dataset_format;
-pub(crate) use dataset_format::{DatasetFormatResult, DatasetFormatVerdict, validate_dataset_format};
+pub(crate) use dataset_format::{
+    DatasetFormatResult, DatasetFormatVerdict, validate_dataset_format,
+};
 
 /// G-R1: Runtime alert gate — validates runtime metrics for training instability.
 ///

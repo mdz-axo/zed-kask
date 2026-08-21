@@ -16,7 +16,6 @@
 //! the shared credential-cache helpers, shared constants, and `mod` declarations
 //! for the per-sub-page render modules under `kask_page/`.
 
-mod collab;
 mod companies;
 mod condenser;
 mod curator;
@@ -24,8 +23,8 @@ mod data_services;
 mod general;
 mod inference_providers;
 pub(crate) use {
-    collab::render_collab_page, companies::render_companies_page, condenser::render_condenser_page,
-    corpus::render_corpus_page, curator::render_curator_email_page, curator::render_curator_page,
+    companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
+    curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
     media::render_media_page, memory::render_memory_page, models::render_models_page,
@@ -363,18 +362,6 @@ pub(crate) fn kask_string_input(
                             }
                             ("models", "ocr_model") => {
                                 kask.models.get_or_insert_default().ocr_model =
-                                    Some(parsed.clone());
-                            }
-                            ("collab", "database_url") => {
-                                kask.collab.get_or_insert_default().database_url =
-                                    Some(parsed.clone());
-                            }
-                            ("collab", "zed_environment") => {
-                                kask.collab.get_or_insert_default().zed_environment =
-                                    Some(parsed.clone());
-                            }
-                            ("collab", "marketplace_url") => {
-                                kask.collab.get_or_insert_default().marketplace_url =
                                     Some(parsed.clone());
                             }
                             ("condenser", "persona_keywords") => {
@@ -724,30 +711,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_models_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Collab Server".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.collab"),
-            description: Some(
-                "Configure the local kask marketplace server. When enabled, \
-                 zed-kask launches a local collab server at startup so the kask \
-                 extensions panel can fetch skills without depending on the \
-                 deployed zed.dev server. Uses SQLite — no Postgres or S3 \
-                 required for browsing."
-                    .into(),
-            ),
-            search_aliases: &[
-                "collab",
-                "marketplace",
-                "server",
-                "sqlite",
-                "local",
-                "kask-skills",
-            ],
-            in_json: true,
-            files: USER,
-            render: render_collab_page,
         }),
     ];
 

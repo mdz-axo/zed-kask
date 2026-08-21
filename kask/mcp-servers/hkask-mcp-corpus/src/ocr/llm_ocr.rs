@@ -151,7 +151,6 @@ impl LlmOcrExecutor {
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
         }
     }
-
 }
 #[async_trait]
 impl OcrExecutor for LlmOcrExecutor {

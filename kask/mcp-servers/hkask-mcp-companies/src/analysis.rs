@@ -51,7 +51,11 @@ pub(crate) enum MoatRating {
     InsufficientData,
 }
 
-pub(crate) fn classify_moat(margin_stability: f64, wc_spread: f64, data_periods: usize) -> MoatRating {
+pub(crate) fn classify_moat(
+    margin_stability: f64,
+    wc_spread: f64,
+    data_periods: usize,
+) -> MoatRating {
     if data_periods < 3 {
         return MoatRating::InsufficientData;
     }

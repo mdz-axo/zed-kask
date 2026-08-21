@@ -41,11 +41,8 @@ pub use types::{
 };
 
 #[allow(unused_imports)]
-pub use types::{
-    MAX_IMPORT_REQUEST_BYTES, MAX_IMPORT_TRANSACTION_COUNT, check_request_size,
-};
+pub use types::{MAX_IMPORT_REQUEST_BYTES, MAX_IMPORT_TRANSACTION_COUNT, check_request_size};
 
 pub mod server;
 
 pub use server::{map_portfolio_error, run};
-
