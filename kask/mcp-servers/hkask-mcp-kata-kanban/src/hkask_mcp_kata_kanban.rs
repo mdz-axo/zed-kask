@@ -8,15 +8,19 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
-pub(crate) mod idempotency;
-pub(crate) mod kanban;
+pub mod idempotency;
+pub mod kanban;
 pub(crate) mod pko;
-pub(crate) mod types;
+pub mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
+// `KanbanService` is `pub` so external tool-behavior contract tests (tests/) can construct
+// a service over an in-memory driver and drive the real `Parameters<T>` tool seam — the
+// testing standard (docs/reference/mcp-servers/README.md §Testing standard) requires this.
+pub use kanban::KanbanService;
 pub(crate) use kanban::{
-    ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
-    TaskStatus, VerificationCriterion,
+    ColumnDef, KanbanError, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
+    VerificationCriterion,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)

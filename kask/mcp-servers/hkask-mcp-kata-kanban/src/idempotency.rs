@@ -90,7 +90,7 @@ pub enum Reservation {
 /// passphrase is configured, in-memory otherwise. [`Self::is_durable`] reports
 /// which, because an in-memory store cannot dedupe across a restart and callers
 /// must not advertise protection it does not have.
-pub(crate) struct IdempotencyStore {
+pub struct IdempotencyStore {
     inner: Inner,
 }
 
@@ -143,7 +143,7 @@ impl IdempotencyStore {
     ///
     /// Rejects empty and over-long keys. A whitespace-only key is a client bug
     /// that would otherwise collapse distinct gestures onto one reservation.
-    pub fn validate_key(key: &str) -> Result<(), IdempotencyKeyError> {
+    pub(crate) fn validate_key(key: &str) -> Result<(), IdempotencyKeyError> {
         if key.trim().is_empty() {
             return Err(IdempotencyKeyError::Empty);
         }

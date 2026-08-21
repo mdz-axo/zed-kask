@@ -37,7 +37,7 @@ pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 
 pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
 pub(crate) use ranking::{apply_rerank, rrf_score};
-pub(crate) use rate_limiter::RateLimiter;
+pub use rate_limiter::RateLimiter;
 pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 
 // ── Request types ──
@@ -53,13 +53,13 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FindSimilarRequest {
+pub struct FindSimilarRequest {
     pub url: String,
     pub num_results: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ExtractRequest {
+pub struct ExtractRequest {
     pub url: String,
     pub format: Option<String>,
     pub json_prompt: Option<String>,
@@ -75,7 +75,7 @@ pub(crate) struct ExtractRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct BrowseRequest {
+pub struct BrowseRequest {
     pub url: String,
     pub instruction: Option<String>,
     pub timeout_secs: Option<u64>,
@@ -142,7 +142,7 @@ pub struct SearchResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ExtractedContent {
+pub struct ExtractedContent {
     pub url: String,
     pub content: String,
     pub format: String,
@@ -150,7 +150,7 @@ pub(crate) struct ExtractedContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct BrowseResult {
+pub struct BrowseResult {
     pub url: String,
     pub content: String,
     pub instruction: Option<String>,
@@ -163,11 +163,11 @@ pub struct SearchQuery {
     pub num_results: u32,
     pub include_domains: Vec<String>,
     pub exclude_domains: Vec<String>,
-    pub freshness: Option<Freshness>,
+    pub(crate) freshness: Option<Freshness>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ExtractOptions {
+pub struct ExtractOptions {
     pub format: String,
     pub json_prompt: Option<String>,
     pub json_schema: Option<serde_json::Value>,
@@ -221,7 +221,7 @@ impl From<WebError> for McpToolError {
 // ── Capability / provider types ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum SearchCapability {
+pub enum SearchCapability {
     Keyword,
     News,
     Freshness,
@@ -230,7 +230,7 @@ pub(crate) enum SearchCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RankedResult {
+pub struct RankedResult {
     pub title: String,
     pub url: String,
     pub description: Option<String>,
@@ -247,26 +247,26 @@ pub(crate) struct RankedResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AnswerBox {
+pub struct AnswerBox {
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProviderInfo {
+pub struct ProviderInfo {
     pub kind: String,
     pub capabilities: Vec<SearchCapability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProviderFailureRecord {
+pub struct ProviderFailureRecord {
     pub kind: String,
     pub error: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CompoundSearchResult {
+pub struct CompoundSearchResult {
     pub query: String,
     pub strategy: String,
     pub results: Vec<RankedResult>,
@@ -283,7 +283,7 @@ pub(crate) struct CompoundSearchResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum SearchStrategy {
+pub enum SearchStrategy {
     Quick,
     Web,
     News,
@@ -291,7 +291,7 @@ pub(crate) enum SearchStrategy {
 }
 
 impl SearchStrategy {
-    pub fn provider_filter(&self) -> ProviderFilter {
+    pub(crate) fn provider_filter(&self) -> ProviderFilter {
         match self {
             Self::Quick => ProviderFilter::Capabilities(vec![SearchCapability::Keyword]),
             Self::Web => ProviderFilter::All,
@@ -446,7 +446,7 @@ pub(crate) struct BrowseOutput {
 // ── Health / ping types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProviderHealthEntry {
+pub struct ProviderHealthEntry {
     pub kind: String,
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

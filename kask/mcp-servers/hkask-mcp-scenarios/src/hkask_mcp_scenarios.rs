@@ -44,7 +44,13 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) mod superforecast;
 pub(crate) mod templates;
-pub(crate) mod types;
+pub mod types;
+
+// Re-export the forecast store so external tool-behavior contract tests (tests/)
+// can construct a server over an in-memory store and drive the real
+// `Parameters<T>` tool seam — the testing standard
+// (docs/reference/mcp-servers/README.md §Testing standard) requires this.
+pub use superforecast::ForecastStore;
 
 use types::*;
 
@@ -91,7 +97,7 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
     }
 }
 
-mod requests;
+pub mod requests;
 pub(crate) use requests::*;
 
 // ── Server struct ──────────────────────────────────────────────────────────

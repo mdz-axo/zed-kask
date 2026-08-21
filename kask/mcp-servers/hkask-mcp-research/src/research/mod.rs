@@ -4,14 +4,14 @@
 //! provider pool with RRF fusion, content extraction, headless browsing,
 //! RSS feed management, response caching, and rate limiting.
 
-pub(crate) mod cache;
-pub(crate) mod db;
+pub mod cache;
+pub mod db;
 pub(crate) mod feed;
-pub(crate) mod providers;
-pub(crate) mod rss_types;
+pub mod providers;
+pub mod rss_types;
 pub(crate) mod strip_html;
 pub(crate) mod synthetic;
-pub(crate) mod types;
+pub mod types;
 
 use std::collections::HashMap;
 

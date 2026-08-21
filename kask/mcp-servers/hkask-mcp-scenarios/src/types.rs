@@ -138,7 +138,7 @@ pub(crate) enum UseCase {
 /// Planning horizon for scenario construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TimeHorizon {
+pub enum TimeHorizon {
     /// 12–18 months: near-term opportunities and challenges
     Tactical,
     /// 3–5 years: investment thesis validation
@@ -161,7 +161,7 @@ impl TimeHorizon {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ScenarioType {
+pub enum ScenarioType {
     /// Quarterly or periodic company updates
     CompanyUpdate,
     /// Investment thesis construction
@@ -216,7 +216,7 @@ impl CertaintyTier {
 
 /// A binomial scenario event — a yes/no question with a deadline.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ScenarioEvent {
+pub struct ScenarioEvent {
     /// Unique event identifier
     pub id: String,
     /// Short descriptive name
@@ -269,7 +269,7 @@ pub(crate) struct ScenarioEvent {
 ///
 /// `conditionals.len()` must equal 2^`parent_event_ids.len()`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct EventDependency {
+pub struct EventDependency {
     /// IDs of parent events that jointly condition this event's probability.
     pub parent_event_ids: Vec<String>,
     /// Full joint conditional table P(this_event | parent truth assignment),
@@ -281,7 +281,7 @@ pub(crate) struct EventDependency {
 
 /// A sub-question from Fermi decomposition.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct SubQuestion {
+pub struct SubQuestion {
     /// The sub-question text
     pub question: String,
     /// Best estimate for this sub-question (0.0–1.0)
@@ -604,7 +604,7 @@ pub struct CrossValidation {
     /// Threshold used (default 0.15)
     pub review_threshold: f64,
     /// Which sub-questions diverge most between the two estimates?
-    pub sub_question_divergences: Vec<SubQuestionDivergence>,
+    pub(crate) sub_question_divergences: Vec<SubQuestionDivergence>,
     /// Recommended action
     pub recommendation: String,
     /// Concrete Socratic questions for grill-me skill interrogation.
@@ -636,7 +636,7 @@ impl ScenarioEvent {
     }
 
     /// Validate probability is in [0, 1] and finite (no NaN).
-    pub fn validate(&self) -> Result<(), ScenarioError> {
+    pub(crate) fn validate(&self) -> Result<(), ScenarioError> {
         if !self.probability.is_finite() || !(0.0..=1.0).contains(&self.probability) {
             return Err(ScenarioError::InvalidProbability(
                 self.name.clone(),

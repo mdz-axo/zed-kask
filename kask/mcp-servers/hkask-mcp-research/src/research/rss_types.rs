@@ -4,29 +4,29 @@ use serde::{Deserialize, Serialize};
 // Request types
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SubscribeRequest {
+pub struct SubscribeRequest {
     pub url: String,
     pub label: Option<String>,
     pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct UnsubscribeRequest {
+pub struct UnsubscribeRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ListSubscriptionsRequest {
+pub struct ListSubscriptionsRequest {
     pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FetchRequest {
+pub struct FetchRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetEntriesRequest {
+pub struct GetEntriesRequest {
     pub stream_id: String,
     pub unread_only: Option<bool>,
     pub starred_only: Option<bool>,
@@ -35,12 +35,12 @@ pub(crate) struct GetEntriesRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MarkReadRequest {
+pub struct MarkReadRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct UnreadCountRequest {
+pub struct UnreadCountRequest {
     pub stream_id: String,
 }
 
@@ -51,7 +51,7 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ImportOpmlRequest {
+pub struct ImportOpmlRequest {
     pub opml_content: String,
 }
 
@@ -61,7 +61,7 @@ pub struct DiscoverRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EditTagRequest {
+pub struct EditTagRequest {
     pub entry_ids: Vec<i64>,
     pub add_read: Option<bool>,
     pub add_starred: Option<bool>,

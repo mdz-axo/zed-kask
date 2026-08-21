@@ -46,7 +46,7 @@ pub(crate) use assess::{
 // concern — journal + snapshot compaction — is independent of the forecast
 // math and composition concerns that remain in this file).
 mod store;
-pub(crate) use store::ForecastStore;
+pub use store::ForecastStore;
 
 // ── Bridge: cross-validation + companies/market conversion ────────────────
 // Extracted to `superforecast/bridge.rs` (deep-module split: adapting external

@@ -48,3 +48,9 @@ scraper.workspace = true
 jsonpath-rust.workspace = true
 mediatype.workspace = true
 pdf-extract.workspace = true
+
+[dev-dependencies]
+# tool_behavior.rs drives the real tool surface through Parameters<T>:
+# web_ping happy path, web_* invalid-argument and credential-missing error
+# paths, and RSS DB in-process paths.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

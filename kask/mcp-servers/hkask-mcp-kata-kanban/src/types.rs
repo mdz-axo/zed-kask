@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 // ── Board tools ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BoardCreateRequest {
+pub struct BoardCreateRequest {
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
     /// Opaque client-generated key making this create replay-safe.
@@ -25,7 +25,7 @@ pub(crate) struct BoardCreateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ColumnDefInput {
+pub struct ColumnDefInput {
     pub name: String,
     pub status: String,
     /// Optional WIP (work-in-progress) limit for this column.
@@ -57,7 +57,7 @@ pub struct ColumnInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BoardListRequest {}
+pub struct BoardListRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardListResponse {
@@ -82,7 +82,7 @@ pub struct BoardInfo {
 // ── Task tools ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskCreateRequest {
+pub struct TaskCreateRequest {
     pub board_id: String,
     pub title: String,
     pub description: Option<String>,
@@ -109,7 +109,7 @@ pub(crate) struct TaskCreateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskListRequest {
+pub struct TaskListRequest {
     pub board_id: String,
     pub status: Option<String>,
 }
@@ -344,7 +344,7 @@ pub(crate) struct TaskKataResponse {
 // ── Spawn ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskSpawnRequest {
+pub struct TaskSpawnRequest {
     pub task_id: String,
     /// Opaque client-generated key making this spawn replay-safe.
     ///

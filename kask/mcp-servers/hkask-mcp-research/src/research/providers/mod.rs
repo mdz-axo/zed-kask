@@ -42,7 +42,7 @@ pub(super) fn provider_http_client() -> Result<reqwest::Client, WebError> {
 }
 
 #[derive(Default)]
-pub(crate) struct ProviderSearchOutput {
+pub struct ProviderSearchOutput {
     pub results: Vec<SearchResult>,
     pub answer_box: Option<AnswerBox>,
     pub related_questions: Vec<String>,
@@ -89,7 +89,7 @@ pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError
 /// adapter. This keeps provider-specific details (like `pool.exa` direct
 /// access) out of the tool layer.
 #[async_trait]
-pub(crate) trait WebSearchPort: Send + Sync {
+pub trait WebSearchPort: Send + Sync {
     async fn search(
         &self,
         query: &SearchQuery,

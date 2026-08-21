@@ -3,20 +3,25 @@
 #
 # Institutionalizes the .rules trap "A CI gate must be shown to fail before its
 # status: enforced is trusted" — applied to check-version-sync.sh per CI gate
-# sweep follow-up issue #6. The gate's "0 = 0" failure mode (zero manifests in
-# MANIFEST_DIR → zero drift found → trivially passes) was flagged in the sweep.
+# sweep follow-up issue #6. The gate's "0 = 0" failure mode (zero drift
+# candidates → zero drift found → trivially passes) was flagged in the sweep.
 # This self-test pins both failure modes:
-#   1. Drift: a manifest whose `version:` field does NOT match the workspace
+#   1. Drift: a README whose `**Version:` line does NOT match the workspace
 #      version — the canonical drift case the gate exists for.
-#   2. Empty: a MANIFEST_DIR with zero manifests must still exit 0 (no drift
-#      to find) without crashing — pinning the silent-disconnection path so a
-#      future change can't invert it (e.g. exit 1 on empty, hiding a real
-#      disconnection behind a different failure mode).
+#   2. Clean: a tree with no drift must exit 0 ("in sync") without crashing —
+#      pinning the trivial-pass path so a future change can't invert it (e.g.
+#      exit 1 on empty, hiding a real disconnection behind a different failure
+#      mode).
 #
-# Design: temp CARGO_TOML, MANIFEST_DIR, MCP_SERVERS_DIR, and KASK_ROOT are
-# populated with minimal content, and the gate is invoked with the env vars
-# pointed at the temp tree. Each case asserts the gate exits with the expected
-# code and keyword.
+# History: this self-test previously pinned manifest-dir drift and an empty
+# manifest dir. The manifest registry was removed in 5f4cf5f10d, so the gate's
+# manifest checks were deleted; the cases were re-based onto the two live
+# checks (MCP provenance literals + README version lines).
+#
+# Design: temp CARGO_TOML, MCP_SERVERS_DIR, and KASK_ROOT are populated with
+# minimal content, and the gate is invoked with the env vars pointed at the
+# temp tree. Each case asserts the gate exits with the expected code and
+# keyword.
 #
 # Exit codes:
 #   0 — all cases behaved as expected (gate is alive)
@@ -54,35 +59,24 @@ version = "$WORKSPACE_VERSION"
 edition = "2021"
 EOF
 
-# A temp kask root containing only a README whose **Version:** matches, so the
-# README scan (step 5) does not produce a false positive in the drift case.
-mkdir -p "$TMPDIR/kask"
-cat > "$TMPDIR/kask/README.md" <<EOF
-# selftest kask
-**Version:** v$WORKSPACE_VERSION
-EOF
-
-# An empty mcp-servers dir so the provenance-literal scan (step 4) finds nothing.
+# An empty mcp-servers dir so the provenance-literal scan (step 1) finds nothing.
+# Both cases share this; drift is introduced via the README tree only.
 mkdir -p "$TMPDIR/mcp-servers"
 
 # ──────────────────────────────────────────────────────────────────────────
-# Case 1: drift — a manifest whose `version:` field does NOT match the
+# Case 1: drift — a README whose `**Version:**` line does NOT match the
 # workspace version. The gate must exit 1 with "DRIFT".
 # ──────────────────────────────────────────────────────────────────────────
-mkdir -p "$TMPDIR/manifests-drift"
-cat > "$TMPDIR/manifests-drift/selftest.yaml" <<EOF
-manifest:
-  id: selftest
-  version: "0.0.0-wrong"
-ledger:
-  span_namespace: reg.skill.selftest
+mkdir -p "$TMPDIR/kask-drift"
+cat > "$TMPDIR/kask-drift/README.md" <<EOF
+# selftest kask (drift)
+**Version:** v0.0.0-wrong
 EOF
 
 set +e
 CASE1_OUT=$(CARGO_TOML="$TMPDIR/Cargo.toml" \
-  MANIFEST_DIR="$TMPDIR/manifests-drift" \
   MCP_SERVERS_DIR="$TMPDIR/mcp-servers" \
-  KASK_ROOT="$TMPDIR/kask" \
+  KASK_ROOT="$TMPDIR/kask-drift" \
   bash "$GATE" 2>&1)
 CASE1_RC=$?
 set -e
@@ -96,41 +90,45 @@ elif ! printf '%s\n' "$CASE1_OUT" | grep -q "DRIFT"; then
   printf '%s\n' "$CASE1_OUT" | sed 's/^/    /'
   failures=$((failures + 1))
 else
-  echo "OK (case 1 — drift): gate detected the manifest version drift"
+  echo "OK (case 1 — drift): gate detected the README version drift"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────
-# Case 2: empty MANIFEST_DIR — zero manifests must exit 0 (no drift to find)
-# without crashing. This pins the silent-disconnection path: 0 manifests = 0
-# drift is the correct verdict here, NOT a vacuous pass. The gate must not
-# crash or invert to exit 1.
+# Case 2: clean tree — a README whose `**Version:**` matches the workspace
+# version and no MCP provenance literals. The gate must exit 0 ("in sync")
+# without crashing. This pins the trivial-pass path: zero drift = exit 0 is
+# the correct verdict here, NOT a vacuous pass, and the gate must not invert
+# to exit 1.
 # ──────────────────────────────────────────────────────────────────────────
-mkdir -p "$TMPDIR/manifests-empty"
+mkdir -p "$TMPDIR/kask-clean"
+cat > "$TMPDIR/kask-clean/README.md" <<EOF
+# selftest kask (clean)
+**Version:** v$WORKSPACE_VERSION
+EOF
 
 set +e
 CASE2_OUT=$(CARGO_TOML="$TMPDIR/Cargo.toml" \
-  MANIFEST_DIR="$TMPDIR/manifests-empty" \
   MCP_SERVERS_DIR="$TMPDIR/mcp-servers" \
-  KASK_ROOT="$TMPDIR/kask" \
+  KASK_ROOT="$TMPDIR/kask-clean" \
   bash "$GATE" 2>&1)
 CASE2_RC=$?
 set -e
 
 if [ "$CASE2_RC" -ne 0 ]; then
-  echo "FAIL (case 2 — empty): expected exit 0, got $CASE2_RC"
+  echo "FAIL (case 2 — clean): expected exit 0, got $CASE2_RC"
   printf '%s\n' "$CASE2_OUT" | sed 's/^/    /'
   failures=$((failures + 1))
 elif ! printf '%s\n' "$CASE2_OUT" | grep -q "in sync"; then
-  echo "FAIL (case 2 — empty): exit 0 but 'in sync' not in output"
+  echo "FAIL (case 2 — clean): exit 0 but 'in sync' not in output"
   printf '%s\n' "$CASE2_OUT" | sed 's/^/    /'
   failures=$((failures + 1))
 else
-  echo "OK (case 2 — empty): gate exited 0 on empty manifest dir"
+  echo "OK (case 2 — clean): gate exited 0 on a clean tree"
 fi
 
 if [ "$failures" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: version-sync gate is alive (drift detected, empty path pinned)"
+  echo "SELFTEST OK: version-sync gate is alive (drift detected, clean path pinned)"
   exit 0
 else
   echo ""

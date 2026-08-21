@@ -21,7 +21,7 @@ pub(crate) struct BuildEventsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct BrainstormRequest {
+pub struct BrainstormRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Time horizon: "tactical", "strategic", or "long_term"
@@ -187,7 +187,7 @@ pub(crate) struct CrossValidateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct QuantifyRequest {
+pub struct QuantifyRequest {
     /// Events to quantify
     pub events: Vec<ScenarioEvent>,
 }
@@ -262,7 +262,7 @@ pub(crate) struct CalibrationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct TriageRequest {
+pub struct TriageRequest {
     /// The forecasting question to triage
     pub question: String,
     /// Does the question have a specific deadline?

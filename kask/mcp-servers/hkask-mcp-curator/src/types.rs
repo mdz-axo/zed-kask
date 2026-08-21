@@ -4,28 +4,28 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PingRequest {}
+pub struct PingRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EscalationResolveRequest {
+pub struct EscalationResolveRequest {
     pub id: String,
     pub resolution: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EscalationDismissRequest {
+pub struct EscalationDismissRequest {
     pub id: String,
     pub reason: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SemanticSearchRequest {
+pub struct SemanticSearchRequest {
     pub query: String,
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RegQueryRequest {
+pub struct RegQueryRequest {
     /// Regulation namespace prefix to filter by (e.g., "reg.sovereignty", "reg.contract")
     pub namespace: Option<String>,
     /// Lookback window in seconds (default: 3600 = 1 hour)
@@ -35,7 +35,7 @@ pub(crate) struct RegQueryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MemoryRecallRequest {
+pub struct MemoryRecallRequest {
     pub entity: String,
     pub memory_type: Option<String>,
     /// Optional ontology axis to recall along instead of the entity (P5.4).
@@ -48,7 +48,7 @@ pub(crate) struct MemoryRecallRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct AlgedonicLogRequest {
+pub struct AlgedonicLogRequest {
     pub hours: Option<u32>,
 }
 
@@ -62,7 +62,7 @@ pub(crate) struct AlgedonicLogRequest {
 /// which lives in the zed process, not in this MCP server. The tool's
 /// description makes this clear so the calling agent knows what it gets.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CuratorConsultRequest {
+pub struct CuratorConsultRequest {
     /// The question or topic to consult the curator about.
     pub query: String,
     /// Maximum number of memory fragments to return per store (default: 5).
@@ -79,7 +79,7 @@ pub(crate) struct CuratorConsultRequest {
 /// with entity `skill_use_issue:<skill_name>` so it is queryable via
 /// `curator_memory_recall` and `curator_semantic_search`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ReportSkillUseIssueRequest {
+pub struct ReportSkillUseIssueRequest {
     /// The skill manifest ID (e.g. "superforecasting", "scenario-builder").
     pub skill_name: String,
     /// The MCP tool name that failed or produced unexpected output

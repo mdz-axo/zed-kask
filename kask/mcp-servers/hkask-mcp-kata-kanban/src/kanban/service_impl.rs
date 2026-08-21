@@ -34,5 +34,5 @@ mod service;
 pub(crate) mod spawn;
 mod types;
 
-pub(crate) use service::KanbanService;
+pub use service::KanbanService;
 pub(crate) use types::KanbanError;

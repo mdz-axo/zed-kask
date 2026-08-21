@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
 
-pub(crate) mod research;
+pub mod research;
 
 // Re-export service crate modules for test compatibility
-pub(crate) use crate::research::db;
+pub use crate::research::db;
 
 use std::sync::Arc;
 use std::time::Duration;

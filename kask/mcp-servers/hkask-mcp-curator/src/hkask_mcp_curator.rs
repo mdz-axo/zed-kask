@@ -12,7 +12,7 @@
 //! and algedonic event history.
 
 pub(crate) mod governance;
-pub(crate) mod types;
+pub mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
@@ -46,7 +46,7 @@ const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 /// adding or reordering a store cannot silently rebind a `..` destructuring
 /// to the wrong store.
 #[derive(Clone)]
-pub(crate) struct CuratorStores {
+pub struct CuratorStores {
     pub escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
     pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
     /// The curator's unified memory. One store holds both the curator's
@@ -104,7 +104,7 @@ impl CuratorStores {
 /// silent: construction failure logs `error!`, each failed heal attempt
 /// warns once per outage round (re-armed on heal), a successful heal logs
 /// `info!`.
-pub(crate) struct CuratorDb {
+pub struct CuratorDb {
     stores: RwLock<CuratorStores>,
     db_path: Option<String>,
     passphrase: Option<String>,
@@ -190,6 +190,24 @@ impl CuratorDb {
     /// case a re-open can fix. Partial degradation (a per-store `from_driver`
     /// failure leaving some stores `Some`) is NOT healable by re-open and
     /// must not churn re-opens on every tool call.
+    /// Construct a `CuratorDb` directly from pre-built stores — the test
+    /// seam. Healing is disabled (no path, no passphrase), mirroring the
+    /// "tests construct handles with no valid path" contract noted on
+    /// `heal_enabled`. `#[doc(hidden)]` because this exists for the
+    /// `tests/tool_behavior.rs` integration suite, not for downstream
+    /// consumers — the production path is `from_context`.
+    #[doc(hidden)]
+    pub fn from_stores(stores: CuratorStores) -> Self {
+        Self {
+            stores: RwLock::new(stores),
+            db_path: None,
+            passphrase: None,
+            heal_attempt_logged: AtomicBool::new(false),
+            heal_enabled: false,
+            last_heal_attempt: std::sync::Mutex::new(None),
+        }
+    }
+
     fn db_level_down(stores: &CuratorStores) -> bool {
         stores.all_none()
     }

@@ -21,9 +21,9 @@ const JOURNAL_COMPACT_THRESHOLD: usize = 100;
 /// snapshot is loaded first, then journal entries are replayed on top (last write wins).
 /// After JOURNAL_COMPACT_THRESHOLD entries, the journal is compacted into a full snapshot.
 #[derive(Debug, Default)]
-pub(crate) struct ForecastStore {
-    pub records: HashMap<String, StoredForecastRecord>,
-    pub data_path: Option<PathBuf>,
+pub struct ForecastStore {
+    pub(crate) records: HashMap<String, StoredForecastRecord>,
+    pub(crate) data_path: Option<PathBuf>,
     journal_path: Option<PathBuf>,
     journal_count: usize,
 }
@@ -101,7 +101,7 @@ impl ForecastStore {
     }
 
     /// Insert a record and persist via single-entry journal append.
-    pub fn insert(&mut self, key: String, record: StoredForecastRecord) {
+    pub(crate) fn insert(&mut self, key: String, record: StoredForecastRecord) {
         self.save_entry(&key, &record);
         self.records.insert(key, record);
         self.journal_count += 1;
@@ -110,7 +110,7 @@ impl ForecastStore {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<&StoredForecastRecord> {
+    pub(crate) fn get(&self, key: &str) -> Option<&StoredForecastRecord> {
         self.records.get(key)
     }
 
@@ -144,11 +144,11 @@ impl ForecastStore {
         self.records.len()
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &StoredForecastRecord> {
+    pub(crate) fn values(&self) -> impl Iterator<Item = &StoredForecastRecord> {
         self.records.values()
     }
 
-    pub fn resolved(&self) -> Vec<&StoredForecastRecord> {
+    pub(crate) fn resolved(&self) -> Vec<&StoredForecastRecord> {
         self.records
             .values()
             .filter(|r| r.outcome.is_some())
@@ -159,7 +159,7 @@ impl ForecastStore {
     /// substring match, mirroring the old `domain_bias_delta` matcher).
     /// Used by per-domain calibration: the bias for a category is computed
     /// only from resolved forecasts in that category.
-    pub fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
+    pub(crate) fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
         let normalized = category.to_ascii_lowercase();
         self.records
             .values()

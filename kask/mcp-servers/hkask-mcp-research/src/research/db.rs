@@ -18,7 +18,7 @@ use hkask_types::time::now_rfc3339;
 /// `journal_mode = WAL`. See `hkask_storage::database::init_wal_pragmas` for the
 /// shared helper (not used here because this is a const DDL string, not
 /// a function call, and the PRAGMAs are embedded in the DDL).
-pub(crate) const RSS_SCHEMA_DDL: &str = "
+pub const RSS_SCHEMA_DDL: &str = "
     PRAGMA busy_timeout=5000;
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
