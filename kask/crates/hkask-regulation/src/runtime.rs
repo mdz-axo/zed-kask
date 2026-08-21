@@ -21,7 +21,6 @@ use crate::algedonic::{
     AlgedonicManager, DEFAULT_EXPECTED_VARIETY, RuntimeAlert, reg_health_check,
 };
 use crate::set_points::DEFAULT_VARIETY_MAX_DEFICIT;
-use crate::tool_stats::ToolStats;
 
 use hkask_types::event::{RegulationRecord, RegulationSink, SpanNamespace};
 use hkask_types::regulation::{LedgerHealth, RegulationHealth};
@@ -49,6 +48,7 @@ use tracing;
 /// the structured payload so `query_skill_feedback` can return it to the
 /// next skill invocation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StoredSkillSpan {
     /// Full namespace: `reg.skill.<skill-id>.<phase>`
     pub namespace: String,
@@ -385,6 +385,7 @@ impl Default for VarietyMonitor {
 /// detected, actions produced, impact verified, decisions classified.
 /// Enables post-hoc analysis of regulation effectiveness.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RegulationCycleEntry {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// Count of afferent signals from sense phase.
@@ -411,7 +412,6 @@ struct RegState {
     regulation_health: RegulationHealth,
     regulation_history: VecDeque<RegulationCycleEntry>,
     max_regulation_history: usize,
-    tool_stats: Arc<ToolStats>,
     skill_spans: SkillSpanStore,
 }
 
@@ -440,7 +440,6 @@ impl RegState {
         let outcome = HashMap::new();
         let regulation_health = RegulationHealth::default();
         let regulation_history = VecDeque::with_capacity(max_regulation_history);
-        let tool_stats = Arc::new(ToolStats::new());
         let skill_spans = SkillSpanStore::with_capacity(max_skill_span_history);
 
         Self {
@@ -450,7 +449,6 @@ impl RegState {
             regulation_health,
             regulation_history,
             max_regulation_history,
-            tool_stats,
             skill_spans,
         }
     }
@@ -571,36 +569,6 @@ impl RegulationLedger {
     }
 
     /// Get the last N regulation cycle entries for detailed analysis.
-    ///
-    /// Returns up to `n` most recent cycles, newest first.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — history enables trend analysis for loop tuning
-    /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
-    /// post: returns up to n entries, newest first; never exceeds the configured history cap
-    pub(crate) async fn regulation_history(&self, n: usize) -> Vec<RegulationCycleEntry> {
-        let state = self.state.read().await;
-        state
-            .regulation_history
-            .iter()
-            .rev()
-            .take(n)
-            .cloned()
-            .collect()
-    }
-
-    /// Access the tool stats learner for recording and querying tool distributions.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — tool stats inform energy and reliability decisions
-    /// \[P8\] Constraining: Semantic Grounding — LogNormal distributions are computed from measured data
-    /// post: returns `Arc<ToolStats>` shared reference
-    pub(crate) async fn tool_stats(&self) -> Arc<ToolStats> {
-        let state = self.state.read().await;
-        Arc::clone(&state.tool_stats)
-    }
-
-    /// Get all alerts.
     ///
     /// expect: "I can retrieve all active runtime alerts for loop response"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — alert retrieval enables loop response

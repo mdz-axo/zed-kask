@@ -104,14 +104,13 @@ pub trait RolloutEventSource: Send + Sync {
         decision: &str,
     ) -> Result<(), RolloutEventError>;
 }
-use crate::energy::{CallCapError, CallCapManager, CallMeterOutcome};
+use crate::energy::{CallCapManager, CallMeterOutcome};
+use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, VarietySensor};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
-use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
 use crate::set_points::SetPoints;
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
-use crate::tool_stats::ToolStats;
 
 use crate::loops::RegulationData;
 use crate::loops::{
@@ -179,7 +178,6 @@ pub struct CyberneticsLoop {
     /// Pluggable metric sensors (Fermi Extractor pattern).
     sensor_registry: Arc<SensorBus>,
     /// Statistical learner for per-tool cost distributions and reliability.
-    tool_stats: Option<Arc<ToolStats>>,
     /// Multi-model strategy evaluator (Fermi improvement-loop pattern).
     strategy_evaluator: Mutex<StrategyEvaluator>,
     /// Predictive simulator for anticipatory regulation (Fermi dynamics pattern).
@@ -270,7 +268,6 @@ impl CyberneticsLoop {
             stagnation_detector,
             sensor_registry,
 
-            tool_stats: None,
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
             simulator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
@@ -370,18 +367,6 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Set tool stats on an already-constructed loop (post-build wiring).
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    pub(crate) fn set_tool_stats(&mut self, stats: Arc<ToolStats>) {
-        self.sensor_registry
-            .register(Arc::new(ToolReliabilitySensor::new(
-                Arc::clone(&stats),
-                crate::tool_stats::DEFAULT_RELIABILITY_THRESHOLD,
-            )));
-        self.tool_stats = Some(stats);
-    }
-
     /// Submit a rollout impact check for the next `verify_impact` pass.
     ///
     /// This is the producer side of the event-substrate phase 6 seam: a
@@ -455,13 +440,6 @@ impl CyberneticsLoop {
     /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn can_proceed(&self, agent: &WebID) -> bool {
         self.call_cap_manager.read().await.can_proceed(agent).await
-    }
-
-    /// Consume one call. Returns `Err` if the agent has no cap or it is exhausted.
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub(crate) async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
-        self.call_cap_manager.read().await.charge(agent).await
     }
 
     /// Meter one governed tool call, auto-registering an unknown agent at the

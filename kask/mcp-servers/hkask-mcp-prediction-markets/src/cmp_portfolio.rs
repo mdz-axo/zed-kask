@@ -334,14 +334,6 @@ pub fn maturity_window(target_days: u32, config: &CmpConfig) -> (f64, f64) {
     (target - half, target + half)
 }
 
-fn tier_rank(tier: ReliabilityTier) -> u8 {
-    match tier {
-        ReliabilityTier::High => 2,
-        ReliabilityTier::Medium => 1,
-        ReliabilityTier::Low => 0,
-    }
-}
-
 // ── Portfolio weighting ─────────────────────────────────────────────────────
 
 /// One eligible constituent with its maturity and probability.

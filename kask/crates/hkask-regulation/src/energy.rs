@@ -61,11 +61,6 @@ impl CallCap {
         self.ceiling
     }
 
-    #[must_use]
-    pub fn remaining(&self) -> u32 {
-        self.remaining
-    }
-
     /// True if at least one call is still available.
     #[must_use]
     pub fn can_proceed(&self) -> bool {
@@ -101,17 +96,7 @@ impl CallCap {
         }
     }
 
-    /// Ratio of the ceiling that has been consumed (0.0 = full, 1.0 = empty).
-    #[must_use]
-    pub fn usage_ratio(&self) -> f64 {
-        1.0 - self.remaining as f64 / self.ceiling.max(1) as f64
-    }
 
-    /// Ratio of the ceiling still remaining (1.0 = full, 0.0 = empty).
-    #[must_use]
-    pub fn remaining_ratio(&self) -> f64 {
-        self.remaining as f64 / self.ceiling.max(1) as f64
-    }
 }
 
 /// Read-only status snapshot for sensors and status queries.
@@ -128,14 +113,6 @@ impl From<&CallCap> for AgentCallCapStatus {
             remaining: cap.remaining,
         }
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum CallCapError {
-    #[error("call cap exceeded: remaining {remaining}, ceiling {ceiling}")]
-    Exceeded { remaining: u32, ceiling: u32 },
-    #[error("persistence: {0}")]
-    Persistence(String),
 }
 
 /// A curation override: remembers the agent's original ceiling so `clear_override`
@@ -186,23 +163,6 @@ impl CallCapManager {
             .get(agent)
             .is_some_and(CallCap::can_proceed)
     }
-
-    /// Consume one call. Returns `Err` if the agent has no cap or it is empty.
-    pub async fn charge(&self, agent: &WebID) -> Result<(), CallCapError> {
-        let mut caps = self.caps.write().await;
-        let cap = caps.get_mut(agent).ok_or_else(|| {
-            CallCapError::Persistence(format!("no call cap registered for agent {agent}"))
-        })?;
-        if cap.charge() {
-            Ok(())
-        } else {
-            Err(CallCapError::Exceeded {
-                remaining: cap.remaining(),
-                ceiling: cap.ceiling(),
-            })
-        }
-    }
-
     /// Meter one call, auto-registering an unknown agent at
     /// [`DEFAULT_RUNAWAY_CALL_CEILING`].
     ///

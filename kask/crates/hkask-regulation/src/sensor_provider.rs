@@ -144,46 +144,6 @@ impl Sensor for VarietySensor {
     }
 }
 
-/// Senses tool reliability across all MCP tools.
-pub(crate) struct ToolReliabilitySensor {
-    tool_stats: Arc<crate::tool_stats::ToolStats>,
-    threshold: f64,
-}
-
-impl ToolReliabilitySensor {
-    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
-    pub fn new(tool_stats: Arc<crate::tool_stats::ToolStats>, threshold: f64) -> Self {
-        Self {
-            tool_stats,
-            threshold,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Sensor for ToolReliabilitySensor {
-    async fn sense(&self) -> Option<Signal> {
-        let alerts = self.tool_stats.reliability_alerts().await;
-        if alerts.is_empty() {
-            return None;
-        }
-        let worst = alerts
-            .iter()
-            .map(|a| a.success_probability)
-            .fold(1.0, f64::min);
-        Some(Signal::new(
-            LoopId::Cybernetics, // placeholder — registry backfills
-            SignalMetric::ToolReliability,
-            worst,
-            self.threshold,
-        ))
-    }
-}
-
-/// Error classifying why a trace-run metrics file could not be located.
-///
-/// Distinguishes I/O failures (the trace dir or a `metrics.json` is unreadable
-/// — a broken sensor) from the legitimate "no run has produced metrics yet"
 /// case, which is `Ok(None)`. Collapsing these into a single `None` masked
 /// DB outages and permission errors as "no deviation," blinding the
 /// regulation loop (the `.rules` `unwrap_or(0)` / `.ok()?` trap on sense

@@ -101,6 +101,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. This generalizes to: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line. If no enforcement point exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
+* MCP servers are leaf crates (zero external dependents). `pub mod` → `pub(crate) mod` tightening in leaf crates is churn — no external crate can observe the difference. Focus dead-code hunts on truly unused items (zero references anywhere, including `tests/`), not visibility tightening. Check `tests/` before declaring an item dead — test seams (`#[doc(hidden)] pub fn from_stores`) are alive even with zero `src/` callers.
 
 ## Other traps
 
@@ -109,3 +110,4 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — run `check-desktop-no-collision.sh` before committing.
 * Stale diagnostics after bulk edits: the crate's lib root is authoritative, not individual-file diagnostics. Don't retry stale diagnostics or fix phantom errors.
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
+* `read_file` can return stale content for files modified in prior sessions or by parallel processes. Before acting on `read_file` content for files that might have changed, verify with `git show HEAD:path` or `git diff --name-only`. If the file doesn't appear in `git diff`, the `read_file` content may be stale — re-read or use `terminal` (`sed`/`cat`) instead.
