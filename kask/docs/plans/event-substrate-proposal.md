@@ -167,9 +167,10 @@ was the metric before action A and after it?"
    wrong. Budget: `hkask-event-store` ≤ ~500 lines including tests.
 7. **Dead-surface cleanup is part of this work, not separate.** The
    always-`None` envelope path (`local_runtime.rs:438`, consumed at
-   `local_tools.rs:347-352`) and the unreachable `Grounding*` alert arms
-   (`cybernetics_loop.rs:1166-1184`) get removed in the same PR series —
-   dead surface is lying documentation.
+   `local_tools.rs:347-352`) was removed in the same PR series —
+   dead surface is lying documentation. (The `Grounding*` alert arms
+   previously at `cybernetics_loop.rs:1166-1184` were also removed —
+   the `GroundingSensor` was deleted with the manifest executor.)
 
 ## Build order
 

@@ -151,8 +151,7 @@ Only the *provably unreachable* form survives as Category 4.
   mis-application because the (a) check is easy to fake by pointing at a
   constructor that is never read.
 - **Anchoring evidence:** `DIVERGENCE.md` D1 L22 (catalog budget + description
-  length warnings disabled — "skills execute via manifests, not prompt
-  injection"; pinned by `test_select_catalog_skills_*` in
+  length warnings disabled — "skills execute via body injection"; pinned by `test_select_catalog_skills_*` in
   `crates/agent/src/agent.rs:4966,5010` and `test_parse_description_too_long_loads_with_warning`
   in `crates/agent_skills/agent_skills.rs:1733`); `DIVERGENCE.md` D3 L24
   ("Daemon transport deleted; identity from `ServerContext.webid`"); D10 L31

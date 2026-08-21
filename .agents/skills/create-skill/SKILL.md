@@ -47,18 +47,24 @@ The SKILL.md contains:
 
 ### .j2 templates — prompt resources
 
-Templates are `.j2` files in the skill directory. The agent reads them via
-`read_file` when the SKILL.md instructs it to use a template for a reasoning
-step. The template defines:
+Templates are `.j2` files. There are two ways to use them:
+
+1. **`render_template`** — the built-in rendering tool. Pass the template
+   name (relative to the registry templates base path) and a `variables`
+   map. The tool renders the Jinja2 template with minijinja and returns the
+   rendered string. Use this when the template has Jinja2 variables that
+   should be substituted from prior step results.
+
+2. **`read_file`** — when the template is a *prompt specification* the agent
+   reads to understand an expected output shape, not a template to render.
+   The agent reads it, internalizes the structure, and produces output
+   following that guidance.
+
+The template defines:
 
 - The prompt structure (system prompt, output schema)
 - Jinja2 variables that the agent fills from prior step results
 - The expected JSON output shape
-
-The agent reads the template, understands the expected output format, and
-produces the analysis following the template's guidance. The template is a
-*resource* — the agent uses it as a prompt specification, not as code to
-execute.
 
 ## Core principle: idiosyncratic, not generalized
 
@@ -191,8 +197,9 @@ Each instruction step should be concrete and tool-oriented:
 ```
 ### Phase 3 — Analyze
 
-1. Call `read_file` to load the analysis template:
-   path: `.agents/skills/my-skill/analyze.j2`
+1. Call `render_template` to render the analysis template:
+   template: `my-skill/analyze.j2`
+   variables: { "target": "{{ target }}", "prior_results": <step 2 output> }
 
 2. Following the template's output schema, analyze the research from
    step 2. Produce a JSON object with the fields specified in the template.

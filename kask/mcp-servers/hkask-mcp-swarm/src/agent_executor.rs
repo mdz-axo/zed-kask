@@ -47,6 +47,34 @@ pub(crate) struct CapturedInference {
     pub total_tokens: i64,
     pub tool_calls: usize,
     pub round: usize,
+    /// The request body (the full message array sent to the model).
+    /// Retained for the training bridge — a dataset needs the bodies, not
+    /// just the shape. Capped at `MAX_BODY_BYTES` before capture so a huge
+    /// prompt cannot flood the channel or the store.
+    pub request_body: String,
+    /// The response body (the model's final text for this round). Same
+    /// retention rationale and cap as `request_body`.
+    pub response_body: String,
+}
+
+/// Cap on retained request/response bodies per event. Bodies are training
+/// data, not forensic records — a truncated body is still a usable example,
+/// and an unbounded one would let a single large context blow the channel
+/// budget (256 captures × body size).
+pub(crate) const MAX_BODY_BYTES: usize = 64 * 1024;
+
+fn cap_body(body: &str) -> String {
+    if body.len() <= MAX_BODY_BYTES {
+        body.to_string()
+    } else {
+        // Truncate at a char boundary — `body.len()` is byte length and a
+        // mid-char cut would produce invalid UTF-8.
+        let mut end = MAX_BODY_BYTES;
+        while !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        body[..end].to_string()
+    }
 }
 
 /// The executor's event sink — a bounded, non-blocking channel. The executor
@@ -198,6 +226,15 @@ impl AgentExecutor {
         let rollout_id = format!("delegation-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
         for round in 0..MAX_TOOL_ROUNDS {
             let inference_started = std::time::Instant::now();
+            // Snapshot the request body before the call — the messages array
+            // is mutated by the tool loop after the call returns.
+            let request_body = serde_json::to_string(
+                &messages
+                    .iter()
+                    .map(|m| (m.role.clone(), m.content.clone()))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default();
             let result = self
                 .inference
                 .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
@@ -213,6 +250,8 @@ impl AgentExecutor {
                         total_tokens: 0,
                         tool_calls: 0,
                         round,
+                        request_body: cap_body(&request_body),
+                        response_body: String::new(),
                     });
                     LocalSwarmError::Unavailable(format!("local inference failed: {e}"))
                 })?;
@@ -224,6 +263,8 @@ impl AgentExecutor {
                 total_tokens: i64::from(result.usage.total_tokens),
                 tool_calls: result.tool_calls.len(),
                 round,
+                request_body: cap_body(&request_body),
+                response_body: cap_body(&result.text),
             });
             total_tokens += i64::from(result.usage.total_tokens);
             final_model = result.model.clone();
@@ -343,6 +384,8 @@ mod tests {
             total_tokens: 1,
             tool_calls: 0,
             round: 0,
+            request_body: String::new(),
+            response_body: String::new(),
         });
         // No panic, no channel error — inert by construction.
     }
@@ -362,10 +405,13 @@ mod tests {
             total_tokens: 2,
             tool_calls: 0,
             round: 0,
+            request_body: "[]".into(),
+            response_body: "stub".into(),
         });
         let captured = rx.recv().await.expect("capture must arrive");
         assert_eq!(captured.rollout_id, "rollout-a");
         assert_eq!(captured.status, "ok");
+        assert_eq!(captured.response_body, "stub");
     }
 
     struct StubInference;

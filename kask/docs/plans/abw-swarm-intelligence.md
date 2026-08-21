@@ -207,7 +207,7 @@ dispatch).
 Mode-aware (v2 §15): SENSE/ACT/CHECK branch on `{{ mode }}` ("abw" | "local").
 The mode + `swarm_id` reach the cascade through the `skill` tool's `context`
 argument (`SkillToolInput.context`, merged into the cascade context before
-`task`). Missing `mode` defaults to `"abw"` (manifest input_mapping
+`task`). Missing `mode` defaults to `"abw"` (skill-body Jinja default
 `{{ mode | default('abw') }}`). The Steer system prompt carries the current
 mode and instructs the curator to pass it.
 

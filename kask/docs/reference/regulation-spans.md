@@ -161,8 +161,11 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 > **Ownership note (v0.32.0; updated 2026-08-20):** Skill execution is upstream-Zed
 > body injection: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`)
 > reads the `SKILL.md` body via `agent_skills::read_skill_body` and injects it via
-> `render_skill_envelope`. The D1 seam is direct. The span
-> emission points are unchanged; only the emitting crate moved.
+> `render_skill_envelope`. The D1 seam is direct. The `reg.skill.cascade.*` and
+> `reg.skill.convergence.*` sub-namespaces are **retained-but-unemitted** under
+> body injection — their emitters were the deleted manifest-executor machinery
+> (`StepMachine`/`ConvergenceTracker`). They remain in `CANONICAL_NAMESPACES` for
+> tracing-target stability, mirroring the `reg.wallet.*` retention pattern below.
 
 | Namespace group | Sub-namespaces | Emitted When |
 |---|---|---|

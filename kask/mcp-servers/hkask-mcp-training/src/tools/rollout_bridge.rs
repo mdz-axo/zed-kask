@@ -43,7 +43,7 @@ pub struct BridgeRolloutsRequest {
 #[tool_router(router = rollout_bridge_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
-        description = "Survey verdict-labeled rollouts in the swarm event store and emit a bridge MANIFEST (counts of SFT candidates from passed rollouts and DPO preference-pair candidates from passed+failed on the same task), written to a JSON file. Does NOT emit training examples yet — the event store retains request shape, not bodies; body retention is the next store capability. Use this to size a future dataset before assembling it."
+        description = "Bridge verdict-labeled rollouts from the swarm event store into training datasets. Emits ChatML JSONL for SFT (passed rollouts) and/or DPO preference pairs (passed+failed on the same task), using the request/response bodies retained on model_request events. Rollouts without retained bodies are skipped and counted in skipped_no_bodies. Reads the event store (mcp/swarm/events.db); writes datasets under the contained write root."
     )]
     pub async fn training_bridge_rollouts(
         &self,
@@ -145,44 +145,165 @@ impl TrainingServer {
                     }
                 }
 
-                // The event store deliberately does not retain full request
-                // and response bodies (retention risk 4 in the proposal:
-                // request shape, not body). A dataset needs the bodies. The
-                // bridge therefore reports what it found and emits a manifest
-                // the operator can act on — it does NOT fabricate training
-                // examples from ids alone (never fabricate: the dataset would
-                // look complete while being empty of content).
-                let sft_candidates: usize = by_task.values().map(|t| t.passed.len()).sum();
-                let preference_candidates: usize = by_task
-                    .values()
-                    .map(|t| t.passed.len().min(t.failed.len()))
-                    .sum();
+                // Fetch the bodies: one query per rollout group, keyed by
+                // rollout id. The FINAL model_request of a rollout carries
+                // the terminal request/response pair — the training example.
+                // Rollouts without bodies (captured before body retention
+                // landed, or dropped captures) are skipped and COUNTED —
+                // never fabricated, never silently omitted.
+                let mut rollout_bodies: std::collections::HashMap<String, (String, String)> =
+                    std::collections::HashMap::new();
+                for event in store
+                    .query(&hkask_event_store::EventFilter {
+                        kind: Some("model_request".to_string()),
+                        limit: Some(limit * 8),
+                        ..hkask_event_store::EventFilter::default()
+                    })
+                    .map_err(|e| McpToolError::internal(format!("event store query failed: {e}")))?
+                {
+                    let request_body = event
+                        .payload
+                        .get("request_body")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let response_body = event
+                        .payload
+                        .get("response_body")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if response_body.is_empty() {
+                        continue;
+                    }
+                    // Later positions overwrite earlier ones — the LAST
+                    // model_request of a rollout is the terminal exchange.
+                    rollout_bodies.insert(
+                        event.rollout_id.clone(),
+                        (request_body.to_string(), response_body.to_string()),
+                    );
+                }
+
+                // Emit the datasets. SFT: one ChatML line per passed rollout
+                // with bodies. Preference: one DPO line per (passed, failed)
+                // pair on the same task, both with bodies.
+                let mut sft_lines: Vec<String> = Vec::new();
+                let mut preference_lines: Vec<String> = Vec::new();
+                let mut skipped_no_bodies = 0usize;
+                for task_rollouts in by_task.values() {
+                    let passed_with_bodies: Vec<&(String, String)> = task_rollouts
+                        .passed
+                        .iter()
+                        .filter_map(|id| rollout_bodies.get(id))
+                        .collect();
+                    skipped_no_bodies += task_rollouts.passed.len() - passed_with_bodies.len();
+                    if mode == "sft" || mode == "both" {
+                        for (request_body, response_body) in &passed_with_bodies {
+                            // The request body is the JSON-serialized message
+                            // array the executor captured: [[role, content], ...].
+                            // The ChatML example is the user turn (the task)
+                            // and the assistant turn (the response).
+                            let messages = parse_message_pairs(request_body);
+                            if let Some(user_task) = messages
+                                .iter()
+                                .find(|(role, _)| role == "user")
+                                .map(|(_, content)| content.clone())
+                            {
+                                let example = serde_json::json!({
+                                    "messages": [
+                                        { "role": "user", "content": user_task },
+                                        { "role": "assistant", "content": response_body },
+                                    ]
+                                });
+                                sft_lines.push(example.to_string());
+                            }
+                        }
+                    }
+                    if mode == "preference" || mode == "both" {
+                        let failed_with_bodies: Vec<&(String, String)> = task_rollouts
+                            .failed
+                            .iter()
+                            .filter_map(|id| rollout_bodies.get(id))
+                            .collect();
+                        skipped_no_bodies += task_rollouts.failed.len() - failed_with_bodies.len();
+                        for (chosen, rejected) in
+                            passed_with_bodies.iter().zip(failed_with_bodies.iter())
+                        {
+                            let chosen_messages = parse_message_pairs(&chosen.0);
+                            let rejected_messages = parse_message_pairs(&rejected.0);
+                            let prompt = chosen_messages
+                                .iter()
+                                .find(|(role, _)| role == "user")
+                                .map(|(_, content)| content.clone());
+                            if let Some(prompt) = prompt {
+                                let example = serde_json::json!({
+                                    "prompt": prompt,
+                                    "chosen": chosen.1,
+                                    "rejected": rejected.1,
+                                });
+                                preference_lines.push(example.to_string());
+                            }
+                        }
+                    }
+                }
+
                 let output = contain_for_write(&req.output_path)?;
-                let manifest = serde_json::json!({
+                let mut written = serde_json::Map::new();
+                if mode == "sft" || mode == "both" {
+                    let sft_path = output.with_extension("sft.jsonl");
+                    std::fs::write(&sft_path, sft_lines.join("\n") + "\n").map_err(|e| {
+                        hkask_mcp_server::map_io_error(
+                            e,
+                            &format!("Failed to write SFT dataset '{}'", sft_path.display()),
+                        )
+                    })?;
+                    written.insert(
+                        "sft_path".into(),
+                        serde_json::json!(sft_path.display().to_string()),
+                    );
+                    written.insert("sft_examples".into(), serde_json::json!(sft_lines.len()));
+                }
+                if mode == "preference" || mode == "both" {
+                    let pref_path = output.with_extension("preference.jsonl");
+                    std::fs::write(&pref_path, preference_lines.join("\n") + "\n").map_err(
+                        |e| {
+                            hkask_mcp_server::map_io_error(
+                                e,
+                                &format!(
+                                    "Failed to write preference dataset '{}'",
+                                    pref_path.display()
+                                ),
+                            )
+                        },
+                    )?;
+                    written.insert(
+                        "preference_path".into(),
+                        serde_json::json!(pref_path.display().to_string()),
+                    );
+                    written.insert(
+                        "preference_examples".into(),
+                        serde_json::json!(preference_lines.len()),
+                    );
+                }
+                let mut report = serde_json::json!({
                     "mode": mode,
                     "events_path": events_path,
                     "verdicts_read": verdicts.len(),
                     "tasks_with_verdicts": by_task.len(),
-                    "sft_candidates": sft_candidates,
-                    "preference_candidates": preference_candidates,
-                    "output_path": output.display().to_string(),
-                    "note": "the event store retains request shape, not bodies — pair this \
-                             manifest with the harness report to assemble the dataset; \
-                             body retention is the next store capability",
+                    "skipped_no_bodies": skipped_no_bodies,
                 });
-                std::fs::write(
-                    &output,
-                    serde_json::to_string_pretty(&manifest).unwrap_or_default(),
-                )
-                .map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("Failed to write bridge manifest '{}'", output.display()),
-                    )
-                })?;
-                Ok(manifest)
+                if let serde_json::Value::Object(map) = &mut report {
+                    map.extend(written);
+                }
+                Ok(report)
             },
         )
         .await
     }
+}
+
+/// Parse the executor's captured request body — a JSON array of
+/// `[role, content]` pairs — into owned `(String, String)` tuples. Returns
+/// an empty vec on a parse failure (the caller skips the example; a
+/// malformed capture is not a training example).
+fn parse_message_pairs(request_body: &str) -> Vec<(String, String)> {
+    serde_json::from_str::<Vec<(String, String)>>(request_body).unwrap_or_default()
 }

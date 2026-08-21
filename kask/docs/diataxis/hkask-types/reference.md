@@ -197,18 +197,6 @@ classDiagram
         +recall_context(query, limit) MemoryFuture
         +recall_thread(thread_id, limit) MemoryFuture
     }
-    class SkillRegistryIndex {
-        <<interface>>
-        +register_skill(skill) Result
-        +get_skill(id) Option~Skill~
-        +list_skills() Vec~Skill~
-        +list_skills_visible_to(visibility) Vec~Skill~
-    }
-    class RegistryIndex {
-        <<interface>>
-        +list(domain_hint) Vec~RegistryEntry~
-        +get(id) Result~RegistryEntry~
-    }
     class RegulationSink {
         <<interface>>
         +persist(event) Result
@@ -226,7 +214,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-006
 verified_date: 2026-08-13
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:94,174,200,212; kask/crates/hkask-types/src/ports/memory_port.rs:113; kask/crates/hkask-types/src/ports/registry.rs:286,309; kask/crates/hkask-types/src/event.rs:839; kask/crates/hkask-types/src/observable_span.rs:55
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:94,174,200,212; kask/crates/hkask-types/src/ports/memory_port.rs:113; kask/crates/hkask-types/src/event.rs:839; kask/crates/hkask-types/src/observable_span.rs:55
 status: VERIFIED
 -->
 
@@ -252,15 +240,14 @@ snippet recall. `ingest_turn` is required; `recall_context` and
 (`memory_port.rs:29`), `MemorySnippet` (`memory_port.rs:80`), `MemoryError`
 (`memory_port.rs:93`), `MemoryFuture` (`memory_port.rs:101`).
 
-### Registry cluster
+### Registry cluster (removed)
 
-`SkillRegistryIndex` (`ports/registry.rs:286`) and `RegistryIndex`
-(`ports/registry.rs:309`) abstract the skill and template registry.
-`list_skills_visible_to` (`registry.rs:295`) implements the P2 affirmative-
-consent default-deny: private context sees all skills; public/shared context
-sees only Public or Shared. Companion types: `Skill` (`registry.rs:99`),
-`RegistryEntry` (`registry.rs:9`), `SkillZone` (`registry.rs:57`),
-`RegistryError` (`registry.rs:269`).
+`SkillRegistryIndex` and `RegistryIndex` (`ports/registry.rs`) were **deleted** —
+the skill-visibility chain they advertised (`list_skills_visible_to`) was never
+enforced (zero callers outside the trait definition), so the entire
+`ports/registry.rs` file was removed per the advertised-invariant rule. The
+`Visibility` enum itself is retained in `visibility.rs` (live via `AccessControl`/
+`HMem`). See `DIVERGENCE.md` for the removal record.
 
 ### Regulation cluster
 

@@ -320,7 +320,6 @@ pub struct SkillMetadata {
     pub core: bool,
 }
 
-
 /// Minimal skill info for system prompt.
 ///
 /// `Serialize` is required for handlebars rendering of the system prompt
@@ -1257,8 +1256,6 @@ Do the thing.
         assert!(!skill.disable_model_invocation);
     }
 
-
-
     #[test]
     fn test_parse_skill_file_content_returns_body() {
         let content = r#"---
@@ -2178,7 +2175,6 @@ description: A skill with no body content
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
 
         let summary = SkillSummary::from(&skill);
