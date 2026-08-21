@@ -68,8 +68,6 @@ pub(crate) struct EmbeddingSection {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RetrievalSection {
-    #[serde(default = "default_k_min")]
-    pub k_min: usize,
     #[serde(default = "default_k_max")]
     pub k_max: usize,
     #[serde(default = "default_distance_threshold")]
@@ -85,7 +83,6 @@ pub(crate) struct RetrievalSection {
 impl Default for RetrievalSection {
     fn default() -> Self {
         Self {
-            k_min: default_k_min(),
             k_max: default_k_max(),
             distance_threshold: default_distance_threshold(),
             salience_min: 0.0,
@@ -94,9 +91,6 @@ impl Default for RetrievalSection {
     }
 }
 
-fn default_k_min() -> usize {
-    3
-}
 fn default_k_max() -> usize {
     7
 }
@@ -141,8 +135,7 @@ pub(crate) struct ComposeResult {
 pub(crate) struct CentroidValidation {
     /// Cosine distance between generated prose and style centroid.
     pub distance: f64,
-    /// Maximum allowed distance threshold.
-    pub threshold: f64,
+
     /// Whether the prose passes validation (distance <= threshold).
     pub passed: bool,
 }
@@ -405,7 +398,6 @@ impl ComposeService {
                     let threshold = request.cognition.validation.centroid_distance_max;
                     Some(CentroidValidation {
                         distance,
-                        threshold,
                         passed: distance <= threshold,
                     })
                 }
@@ -486,8 +478,3 @@ fn generic_system_prompt(
     parts.push(format!("\n## Task\n{prompt}"));
     parts.join("")
 }
-
-// ── Utility ─────────────────────────────────────────────────────────────
-// `cosine_distance` moved to `helpers.rs` (unified with `cosine_similarity`).
-// Re-exported here for existing callers that import from `compose`.
-pub(crate) use crate::helpers::cosine_distance;

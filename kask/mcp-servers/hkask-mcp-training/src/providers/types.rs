@@ -49,20 +49,7 @@ pub(crate) enum TrainingHarnessId {
     Ludwig,
 }
 
-impl TrainingHarnessId {
-    /// Parse from a config string (case-insensitive).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "axolotl" => Some(Self::Axolotl),
-            "trl" => Some(Self::Trl),
-            "ludwig" => Some(Self::Ludwig),
-            _ => None,
-        }
-    }
-}
-
-// ── TRL trainer identifiers ───────────────────────────────────────────────
+// ── TRL trainer identifiers ───────────────────────────────────────────────────
 
 /// TRL trainer selection — only meaningful when `harness = Trl`.
 ///
@@ -109,19 +96,6 @@ pub(crate) enum TrlTrainer {
 }
 
 impl TrlTrainer {
-    /// Parse from a config string (case-insensitive).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "sft" => Some(Self::Sft),
-            "dpo" => Some(Self::Dpo),
-            "kto" => Some(Self::Kto),
-            "orpo" => Some(Self::Orpo),
-            "reward" => Some(Self::Reward),
-            _ => None,
-        }
-    }
-
     /// The TRL trainer class name (e.g., `"SFTTrainer"`).
     pub fn trainer_class(&self) -> &'static str {
         match self {
@@ -237,32 +211,6 @@ pub(crate) struct TrainingJob {
     /// Immutable input/output artifacts for RunPod training.
     #[serde(default)]
     pub artifacts: Option<TrainingArtifacts>,
-}
-
-impl TrainingJob {
-    pub fn new(
-        dataset_path: PathBuf,
-        base_model: String,
-        params: TrainingParams,
-        host: TrainingHostId,
-        harness: TrainingHarnessId,
-    ) -> Self {
-        let cost = estimate_training_cost_urj(&host, params.num_epochs, &base_model);
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            dataset_path,
-            base_model,
-            params,
-            status: TrainingJobStatus::Queued,
-            created_at: chrono::Utc::now(),
-            host,
-            harness,
-            owner: None,
-            skill_name: None,
-            estimated_cost_urj: cost,
-            artifacts: None,
-        }
-    }
 }
 
 /// Estimate training cost in micro-rJoules (µrJ) from host provider pricing.

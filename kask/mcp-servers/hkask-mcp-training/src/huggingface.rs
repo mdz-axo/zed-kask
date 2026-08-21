@@ -13,18 +13,8 @@ use sha2::{Digest, Sha256};
 // ── HuggingFace error ─────────────────────────────────────────────────────
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HuggingFaceError {
-    #[error("HuggingFace API error: {0}")]
-    Api(String),
     #[error("Model not found: {0}")]
     ModelNotFound(String),
-    #[error("Adapter not found: {0}")]
-    AdapterNotFound(String),
-    #[error("Dataset not found: {0}")]
-    DatasetNotFound(String),
-    #[error("Download failed: {0}")]
-    Download(String),
-    #[error("Authentication failed (set HF_TOKEN)")]
-    AuthRequired,
 }
 
 // ── Model provenance ──────────────────────────────────────────────────────
@@ -78,13 +68,9 @@ impl LocalModelResolver {
             is_gated: gated,
         })
     }
-
-    pub fn validate(&self, model_id: &str) -> bool {
-        self.resolve(model_id).is_ok()
-    }
 }
 
-// ── Training artifacts ─────────────────────────────────────────────────────
+// ── Training artifacts ────────────────────────────────────────────────────────
 
 /// An immutable artifact published for a remote training job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

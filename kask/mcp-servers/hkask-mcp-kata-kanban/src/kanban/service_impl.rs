@@ -36,4 +36,4 @@ pub(crate) mod spawn;
 mod types;
 
 pub(crate) use service::KanbanService;
-pub(crate) use types::{KanbanError, UnjamFix, UnjamItem};
+pub(crate) use types::KanbanError;

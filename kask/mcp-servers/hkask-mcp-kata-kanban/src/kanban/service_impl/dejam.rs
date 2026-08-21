@@ -1,102 +1,6 @@
 use super::*;
 
 impl KanbanService {
-    /// Auto-resolve jammed tasks: unassign idle, reopen unverified, rJoule-exhaust.
-    pub fn unjam_fix(&self, board_id: BoardId) -> Result<Vec<UnjamFix>, KanbanError> {
-        let tasks = self.task_list(board_id, TaskFilter::all())?;
-        let now = chrono::Utc::now();
-        let mut fixes = Vec::new();
-
-        for task in &tasks {
-            // Unassign tasks idle > 24h
-            if task.assignee.is_some()
-                && (task.status == TaskStatus::Backlog || task.status == TaskStatus::Ready)
-            {
-                let elapsed = (now - task.updated_at).num_hours();
-                if elapsed > 24 {
-                    match self.task_unassign(task.id, task.owner) {
-                        Ok(_) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: format!("Unassigned after {}h idle", elapsed),
-                        }),
-                        Err(e) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: format!("Unassign failed: {}", e),
-                        }),
-                    }
-                }
-            }
-
-            // Reopen Done tasks without verification
-            if task.status == TaskStatus::Done && task.verification.is_none() {
-                match self.task_reopen(task.id, task.owner) {
-                    Ok(_) => fixes.push(UnjamFix {
-                        task_id: task.id,
-                        task_title: task.title.clone(),
-                        action: "Reopened (was Done without verification)".into(),
-                    }),
-                    Err(e) => fixes.push(UnjamFix {
-                        task_id: task.id,
-                        task_title: task.title.clone(),
-                        action: format!("Reopen failed: {}", e),
-                    }),
-                }
-            }
-
-            // rJoule exhaustion: same logic, separate budget.
-            // `task_rjoule_exhaust`, which stamps an rJoule-specific verification
-            // reason.
-            if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
-                && let Some(remaining) = task.rjoule_remaining
-                && remaining == 0
-            {
-                self.push_exhaust_fix(
-                    task,
-                    now,
-                    &mut fixes,
-                    |id| self.task_rjoule_exhaust(id),
-                    "Auto-completed (rJoules exhausted, no response)",
-                    "rJoule-exhaust failed",
-                );
-            }
-        }
-
-        Ok(fixes)
-    }
-
-    /// Shared branch for the rJoule exhaustion auto-complete in `unjam_fix`:
-    /// if the task has been at zero budget for > 1 hour (grace period for the
-    /// delegator to respond), call `exhaust` and push an `UnjamFix` recording
-    /// the outcome. `ok_action` is the success label; `err_prefix` prefixes the
-    /// failure label (followed by `: {error}`).
-    fn push_exhaust_fix<E>(
-        &self,
-        task: &Task,
-        now: chrono::DateTime<chrono::Utc>,
-        fixes: &mut Vec<UnjamFix>,
-        exhaust: impl Fn(TaskId) -> Result<Task, E>,
-        ok_action: &'static str,
-        err_prefix: &'static str,
-    ) where
-        E: std::fmt::Display,
-    {
-        let idle = (now - task.updated_at).num_minutes();
-        if idle <= 60 {
-            return;
-        }
-        let action = match exhaust(task.id) {
-            Ok(_) => ok_action.to_string(),
-            Err(error) => format!("{}: {}", err_prefix, error),
-        };
-        fixes.push(UnjamFix {
-            task_id: task.id,
-            task_title: task.title.clone(),
-            action,
-        });
-    }
-
     /// Mark a task as Done due to rJoule exhaustion.
     ///
     /// rJoule exhaustion is a completion path: subagents burn rJoules (inference
@@ -107,7 +11,8 @@ impl KanbanService {
     /// Internal authority: called only by the regulation/unjam loop, not
     /// exposed as an MCP tool. Must not be exposed as a tool without an
     /// actor/authority check.
-    pub fn task_rjoule_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
+    #[allow(dead_code)]
+    pub(crate) fn task_rjoule_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
         self.exhaust_task(
             task_id,
             "rJoules exhausted — inference budget consumed.",
@@ -119,6 +24,7 @@ impl KanbanService {
     /// `Verification`, set `Done`, and emit the `REG` span. The `reason`
     /// is the verification record; `operation` distinguishes them in the
     /// tracing span.
+    #[allow(dead_code)]
     fn exhaust_task(
         &self,
         task_id: TaskId,
@@ -142,33 +48,5 @@ impl KanbanService {
         );
 
         Ok(task)
-    }
-
-    /// Deduct rJoules from a task's inference/API budget.
-    ///
-    /// Called by the inference accounting path after each inference step.
-    /// (250k rJoules ≈ $1 inference spend). Logs a SpendEntry with kind
-    /// "rjoule_spend".
-    ///
-    /// Internal authority: called only by the inference accounting path, not
-    /// exposed as an MCP tool. Must not be exposed as a tool without an
-    /// actor/authority check.
-    pub fn task_consume_rjoules(
-        &self,
-        task_id: TaskId,
-        amount: u64,
-        reason: &str,
-    ) -> Result<u64, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-
-        let remaining = task.rjoule_remaining.unwrap_or(0);
-        let new_remaining = remaining.saturating_sub(amount);
-        task.rjoule_remaining = Some(new_remaining);
-        task.spend_log
-            .push(SpendEntry::rjoule_spend(amount, reason.to_string()));
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-
-        Ok(new_remaining)
     }
 }

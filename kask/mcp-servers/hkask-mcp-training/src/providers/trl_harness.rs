@@ -48,15 +48,6 @@ impl HarnessAdapter for TrlHarness {
         // is harness-agnostic (/workspace/outputs/{job_id}).
         PathBuf::from(format!("/workspace/outputs/{}", job_id))
     }
-
-    fn completion_marker(&self, job_id: &str) -> PathBuf {
-        // TRL + PEFT saves adapter_model.safetensors (same as axolotl).
-        self.output_dir(job_id).join("adapter_model.safetensors")
-    }
-
-    fn harness_id(&self) -> TrainingHarnessId {
-        TrainingHarnessId::Trl
-    }
 }
 
 impl TrlHarness {

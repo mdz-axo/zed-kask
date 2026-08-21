@@ -19,7 +19,7 @@ pub struct Board {
     /// Columns in display order (position-sorted).
     pub columns: Vec<ColumnDef>,
     /// Project phases for work grouping and reassembly.
-    pub phases: Vec<KanbanPhase>,
+    pub(crate) phases: Vec<KanbanPhase>,
     /// When the board was created.
     pub created_at: DateTime<Utc>,
 }

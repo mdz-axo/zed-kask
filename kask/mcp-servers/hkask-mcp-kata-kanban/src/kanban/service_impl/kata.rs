@@ -25,7 +25,7 @@ impl KanbanService {
     /// Gathers the task's target (criteria or title) and actual condition
     /// (status, assignee, deliverables, comments), then references the
     /// `kata-coaching` skill for the 5-question methodology.
-    pub fn task_coaching_prompt(&self, task_id: TaskId) -> Result<String, KanbanError> {
+    pub(crate) fn task_coaching_prompt(&self, task_id: TaskId) -> Result<String, KanbanError> {
         let task = self.require_task(task_id)?;
 
         let target = if task.criteria.is_empty() {
@@ -69,7 +69,7 @@ The 5-question Coaching Kata methodology (Q1 Target → Q2 Actual → Q3 Obstacl
     /// Gathers the task's direction (description or title) and current
     /// condition (status, deliverables, comments), then references the
     /// `kata-improvement` skill for the 4-step PDCA methodology.
-    pub fn task_improvement_prompt(&self, task_id: TaskId) -> Result<String, KanbanError> {
+    pub(crate) fn task_improvement_prompt(&self, task_id: TaskId) -> Result<String, KanbanError> {
         let task = self.require_task(task_id)?;
 
         let direction = task.description.as_deref().unwrap_or(&task.title);
@@ -108,7 +108,7 @@ guided cycle.",
     /// Gathers the task's current state and frames the `sub_problem` as the
     /// focus for an observation drill, then references the `kata-improvement`
     /// skill's beginner_mode drills.
-    pub fn task_practice_prompt(
+    pub(crate) fn task_practice_prompt(
         &self,
         task_id: TaskId,
         sub_problem: &str,

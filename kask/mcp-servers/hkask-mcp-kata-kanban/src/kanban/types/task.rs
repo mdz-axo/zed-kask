@@ -22,7 +22,7 @@ pub struct Task {
     /// The agent assigned to work on this task (requires consent).
     pub assignee: Option<WebID>,
     /// Acceptance criteria for task completion.
-    pub criteria: Vec<VerificationCriterion>,
+    pub(crate) criteria: Vec<VerificationCriterion>,
     /// Verification result, if the task has been verified.
     pub verification: Option<Verification>,
     /// Story points (relative sizing, agile convention).
@@ -46,7 +46,7 @@ pub struct Task {
     /// rJoules remaining for inference/API calls (250k ≈ $1 spend).
     pub rjoule_remaining: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spend_log: Vec<SpendEntry>,
+    pub(crate) spend_log: Vec<SpendEntry>,
     /// The swarm this task belongs to, when the task is coordinated via a
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable
@@ -77,7 +77,7 @@ impl Task {
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  board_id is a valid BoardId; spec contains non-empty title; owner is valid
     /// post: returns a new Task with status=Backlog, created_at=now, updated_at=now
-    pub fn new(board_id: BoardId, spec: TaskSpec, owner: WebID) -> Self {
+    pub(crate) fn new(board_id: BoardId, spec: TaskSpec, owner: WebID) -> Self {
         let now = Utc::now();
         Self {
             id: TaskId::new(),

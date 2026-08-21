@@ -15,8 +15,8 @@ pub(crate) mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
 pub(crate) use kanban::{
-    Board, ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
-    TaskStatus, UnjamFix, UnjamItem, Verification, VerificationCriterion,
+    ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
+    TaskStatus, VerificationCriterion,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)

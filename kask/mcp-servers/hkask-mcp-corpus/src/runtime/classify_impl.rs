@@ -20,18 +20,8 @@ use std::time::Duration;
 pub(crate) struct ClassifyResult {
     /// The classified section type.
     pub category: String,
-    /// Number of prompt (input) tokens consumed.
-    pub prompt_tokens: u64,
-    /// Number of completion (output) tokens consumed.
-    pub completion_tokens: u64,
-    /// Number of cached prompt tokens (billed at discounted rate).
-    pub cached_tokens: u64,
-    /// Actual API cost in micro-rJoules (µrJ).
-    pub cost_urj: u64,
     /// True if the API call failed but token/cost data was recovered.
     pub failed: bool,
-    /// Provider that served this classification (e.g., "openrouter").
-    pub provider: String,
 }
 
 /// Semantic h_mem extraction result for a single passage.
@@ -63,7 +53,6 @@ pub(crate) struct ClassifierYaml {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ClassifierDef {
-    pub name: String,
     /// Provider-prefixed model id (e.g. `OpenRouter/z-ai/glm-5.2`)
     /// passed as `model_override` to `InferencePort::generate_with_model`, which
     /// forwards it to zed's `LanguageModelRegistry` via the IPC bridge. When empty,
@@ -81,17 +70,8 @@ pub(crate) struct ClassifierDef {
     pub temperature: f64,
     #[serde(default = "default_fallback")]
     pub fallback_category: String,
-    /// API input token cost in nano-rJ per token (e.g., 30,000 at $0.03/M).
-    /// 1 µrJ = 1,000 nJ. Zero means cost tracking disabled.
-    #[serde(default)]
-    pub cost_input_nj_per_token: u64,
-    /// API output token cost in nano-rJ per token (e.g., 60,000 at $0.06/M).
-    #[serde(default)]
-    pub cost_output_nj_per_token: u64,
-    /// API cached input token read cost in nano-rJ per token.
-    /// Only charged if the provider supports prompt caching.
-    #[serde(default)]
-    pub cost_cache_read_nj_per_token: u64,
+    #[serde(default = "default_fallback")]
+    pub fallback_category: String,
     /// Disable the model's thinking/reasoning mode for this classifier.
     #[serde(default = "default_disable_thinking")]
     pub disable_thinking: bool,
@@ -100,7 +80,6 @@ pub(crate) struct ClassifierDef {
 impl Default for ClassifierDef {
     fn default() -> Self {
         Self {
-            name: String::new(),
             model: String::new(),
             provider: String::new(),
             concurrency: 1,
@@ -108,9 +87,6 @@ impl Default for ClassifierDef {
             system_prompt: String::new(),
             temperature: 0.0,
             fallback_category: "Statement".to_string(),
-            cost_input_nj_per_token: 0,
-            cost_output_nj_per_token: 0,
-            cost_cache_read_nj_per_token: 0,
             disable_thinking: true,
         }
     }
@@ -168,31 +144,14 @@ pub struct ClassifierConfig {
     pub model: String,
     pub system_prompt: String,
     pub concurrency: usize,
-    pub timeout: Duration,
     pub temperature: f64,
     pub fallback_category: String,
-    pub cost_input_nj_per_token: u64,
-    pub cost_output_nj_per_token: u64,
-    pub cost_cache_read_nj_per_token: u64,
     pub disable_thinking: bool,
 }
 
 impl ClassifierConfig {
     /// Build from a ClassifierDef, resolving the canonical model and auto-deriving token costs.
     pub fn from_def(def: &ClassifierDef) -> Self {
-        // Per-token cost rates come from the classifier config
-        // (`cost_input_nj_per_token` / `cost_output_nj_per_token`). There is no
-        // hardcoded provider price fallback — fabricating per-token rates is the
-        // operator-priced anti-pattern; unconfigured classifiers get (0, 0) and
-        // their cost tracking is disabled (a warn makes the gap visible).
-        let (input_nj, output_nj) = (def.cost_input_nj_per_token, def.cost_output_nj_per_token);
-        if input_nj == 0 && output_nj == 0 {
-            tracing::warn!(
-                target: "hkask.classify",
-                provider = %def.provider,
-                "Classifier cost tracking disabled — no cost_input_nj_per_token / cost_output_nj_per_token set in the classifier config. Set them to enable nano-rJ cost accounting."
-            );
-        }
         // Canonical model resolution: an empty `model:` in the YAML defers to
         // `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. The full
         // provider-prefixed model string is passed as `model_override` to
@@ -208,12 +167,8 @@ impl ClassifierConfig {
             model,
             system_prompt: def.system_prompt.clone(),
             concurrency: def.concurrency,
-            timeout: Duration::from_secs(def.timeout_secs),
             temperature: def.temperature,
             fallback_category: def.fallback_category.clone(),
-            cost_input_nj_per_token: input_nj,
-            cost_output_nj_per_token: output_nj,
-            cost_cache_read_nj_per_token: 0,
             disable_thinking: def.disable_thinking,
         }
     }
@@ -246,12 +201,7 @@ async fn classify_one(
             );
             return Ok(ClassifyResult {
                 category: config.fallback_category.clone(),
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                cached_tokens: 0,
-                cost_urj: 0,
                 failed: true,
-                provider: config.model.clone(),
             });
         }
     };
@@ -277,21 +227,9 @@ async fn classify_one(
         }
     };
 
-    let prompt_tokens = u64::from(result.usage.prompt_tokens);
-    let completion_tokens = u64::from(result.usage.completion_tokens);
-    // The IPC bridge does not surface cached-token breakdown; cost is computed
-    // from the totals at the configured input rate.
-    let input_cost = (prompt_tokens * config.cost_input_nj_per_token) / 1_000_000;
-    let output_cost = (completion_tokens * config.cost_output_nj_per_token) / 1_000_000;
-
     Ok(ClassifyResult {
         category,
-        prompt_tokens,
-        completion_tokens,
-        cached_tokens: 0,
-        cost_urj: input_cost + output_cost,
         failed: false,
-        provider: config.model.clone(),
     })
 }
 
@@ -358,33 +296,47 @@ pub async fn classify_batch(
 
     if config.model.is_empty() {
         let fallback = config.fallback_category.clone();
-        return Ok(texts.iter().map(|_| ClassifyResult {
-            category: fallback.clone(),
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            cached_tokens: 0,
-            cost_urj: 0,
-            failed: false,
-            provider: String::new(),
-        }).collect());
+        return Ok(texts
+            .iter()
+            .map(|_| ClassifyResult {
+                category: fallback.clone(),
+                failed: false,
+            })
+            .collect());
     }
 
-    let results = batch_classify(texts, &config, Arc::clone(&inference_port), |port, cfg, text| {
-        let port = Arc::clone(&port);
-        let cfg = Arc::clone(&cfg);
-        async move { classify_one(port.as_ref(), &cfg, &text).await }
-    }).await?;
+    let results = batch_classify(
+        texts,
+        &config,
+        Arc::clone(&inference_port),
+        |port, cfg, text| {
+            let port = Arc::clone(&port);
+            let cfg = Arc::clone(&cfg);
+            async move { classify_one(port.as_ref(), &cfg, &text).await }
+        },
+    )
+    .await?;
 
     // Post aggregate cost to ledger (best-effort)
     if let Some(driver) = cost_driver {
         let total_cost_urj: u64 = results.iter().map(|r| r.cost_urj).sum();
         if total_cost_urj > 0 {
-            let provider = results.first()
+            let provider = results
+                .first()
                 .map(|r| r.provider.split('/').next().unwrap_or("classify"))
                 .unwrap_or("classify");
-            let reference = format!("classify-batch-{}-{}", chrono::Utc::now().timestamp_micros(), uuid::Uuid::new_v4());
-            crate::cost::record_cost_best_effort(&driver, provider, total_cost_urj as i64, &reference,
-                &serde_json::json!({"operation": "classify_batch", "item_count": texts.len(), "model": config.model}));
+            let reference = format!(
+                "classify-batch-{}-{}",
+                chrono::Utc::now().timestamp_micros(),
+                uuid::Uuid::new_v4()
+            );
+            crate::cost::record_cost_best_effort(
+                &driver,
+                provider,
+                total_cost_urj as i64,
+                &reference,
+                &serde_json::json!({"operation": "classify_batch", "item_count": texts.len(), "model": config.model}),
+            );
         }
     }
 
@@ -404,7 +356,8 @@ pub async fn extract_passages_batch(
         let port = Arc::clone(&port);
         let cfg = Arc::clone(&cfg);
         async move { extract_passage_one(port.as_ref(), &cfg, &text).await }
-    }).await
+    })
+    .await
 }
 
 /// Extract h_mems from a single passage.

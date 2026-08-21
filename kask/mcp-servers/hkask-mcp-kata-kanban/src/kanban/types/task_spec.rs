@@ -63,49 +63,4 @@ impl TaskSpec {
         self.criteria = criteria;
         self
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  points is a valid u32
-    /// post: returns self with story_points set to Some(points)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_story_points(mut self, points: u32) -> Self {
-        self.story_points = Some(points);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  hours is a non-negative f64
-    /// post: returns self with estimated_hours set to Some(hours)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_estimated_hours(mut self, hours: f64) -> Self {
-        self.estimated_hours = Some(hours);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  priority is a valid Priority variant
-    /// post: returns self with priority set to Some(priority)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_priority(mut self, priority: Priority) -> Self {
-        self.priority = Some(priority);
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  labels is a vector of label strings
-    /// post: returns self with labels set
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_labels(mut self, labels: Vec<String>) -> Self {
-        self.labels = labels;
-        self
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  phase_id is a valid PhaseId
-    /// post: returns self with phase_id set to Some(phase_id)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_phase(mut self, phase_id: PhaseId) -> Self {
-        self.phase_id = Some(phase_id);
-        self
-    }
 }
