@@ -41,7 +41,7 @@ pub use types::{
 };
 
 #[allow(unused_imports)]
-pub(crate) use types::{
+pub use types::{
     MAX_IMPORT_REQUEST_BYTES, MAX_IMPORT_TRANSACTION_COUNT, check_request_size,
 };
 

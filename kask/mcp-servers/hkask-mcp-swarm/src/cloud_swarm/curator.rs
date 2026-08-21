@@ -28,7 +28,7 @@ use crate::spend_gate::{self, DelegateAuthorization};
 /// the authorization on construction failure. Call `send` to post a message;
 /// on success, `send` calls `disarm` internally so the auth is consumed. On
 /// any `Err` return from `create`/`send`, the guard refunds and drops.
-pub(crate) struct CuratorSession<'a> {
+pub struct CuratorSession<'a> {
     client: &'a SwarmClient,
     consent: &'a ConsentStore,
     auth: Option<DelegateAuthorization>,
@@ -185,7 +185,7 @@ impl<'a> Drop for CuratorSession<'a> {
 /// Authorize a curator call and return the auth to hand to `CuratorSession`.
 /// Thin wrapper around `spend_gate::authorize_curate` so the caller doesn't
 /// need to import `spend_gate` directly.
-pub(crate) fn authorize(
+pub fn authorize(
     client: &SwarmClient,
     consent: &ConsentStore,
     token: Option<&str>,

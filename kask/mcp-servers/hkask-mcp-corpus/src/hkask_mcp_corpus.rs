@@ -25,21 +25,21 @@
 //! `hkask_types::json_extract` (re-exported below).
 
 mod backend;
-pub mod batch;
-pub mod compose;
-pub mod convert;
-pub mod corpus;
-pub mod cost;
+pub(crate) mod batch;
+pub(crate) mod compose;
+pub(crate) mod convert;
+pub(crate) mod corpus;
+pub(crate) mod cost;
 mod helpers;
-pub mod inference_svc;
-pub mod model_cache;
-pub mod ocr;
+pub(crate) mod inference_svc;
+pub(crate) mod model_cache;
+pub(crate) mod ocr;
 pub(crate) mod path_safety;
-pub mod runtime;
-pub mod services;
-pub mod template;
-pub mod text;
-pub mod tools;
+pub(crate) mod runtime;
+pub(crate) mod services;
+pub(crate) mod template;
+pub(crate) mod text;
+pub(crate) mod tools;
 
 // Re-export template renderer for tool modules.
 pub(crate) use template::render_docproc_template;
@@ -229,7 +229,7 @@ hkask_mcp_server::mcp_server!(
 
 /// A passage stored in the in-memory vector index with its embedding.
 #[derive(Debug, Clone)]
-pub struct IndexedPassage {
+pub(crate) struct IndexedPassage {
     pub text: String,
     pub metadata: serde_json::Value,
     pub embedding: Vec<f32>,

@@ -14,7 +14,7 @@ use crate::tools::corpus::{
 use crate::{normalize_in_place, render_docproc_template};
 
 /// Input for [`PromptBuilderService::build_prompts`].
-pub struct BuildPromptsRequest {
+pub(crate) struct BuildPromptsRequest {
     pub tagged_jsonl: String,
     pub output: String,
     pub db_path: String,
@@ -33,7 +33,7 @@ pub struct BuildPromptsRequest {
 /// Each call to [`build_prompts`] reads tagged chunks, loads embeddings from
 /// the memory DB, and writes QA prompts JSONL. No inference router is needed —
 /// the method queries the DB for pre-computed embeddings, not the inference API.
-pub struct PromptBuilderService;
+pub(crate) struct PromptBuilderService;
 
 impl PromptBuilderService {
     pub fn new() -> Self {

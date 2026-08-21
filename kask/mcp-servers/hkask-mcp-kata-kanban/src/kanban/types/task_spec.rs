@@ -5,7 +5,7 @@ use super::*;
 /// TaskSpec — input specification for creating a new task.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TaskSpec {
+pub(crate) struct TaskSpec {
     /// Short title for the task.
     pub title: String,
     /// Optional longer description.

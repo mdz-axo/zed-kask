@@ -20,11 +20,11 @@ use thiserror::Error;
 
 // Canonical chat turn type lives in `hkask_types::ChatMessage` (foundation
 // inference type); re-exported here so this module's ChatML section reads in place.
-pub use hkask_types::ChatMessage;
+pub(crate) use hkask_types::ChatMessage;
 
 /// A full conversation (list of role/content turns).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatConversation {
+pub(crate) struct ChatConversation {
     pub messages: Vec<ChatMessage>,
 }
 
@@ -48,7 +48,7 @@ pub struct ChatConversation {
 /// - KTO: https://huggingface.co/docs/trl/main/en/kto_trainer#expected-dataset-type-and-format
 /// - ORPO: https://huggingface.co/docs/trl/main/en/orpo_trainer#expected-dataset-type-and-format
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PreferenceExample {
+pub(crate) struct PreferenceExample {
     /// Optional prompt (string or conversational). Absent for ORPO.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<serde_json::Value>,
@@ -67,7 +67,7 @@ pub struct PreferenceExample {
 /// Source format identifiers for input datasets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DatasetFormat {
+pub(crate) enum DatasetFormat {
     /// JSONL with `{"messages": [{"role": ..., "content": ...}, ...]}` per line.
     ChatML,
     /// ShareGPT format: `{"conversations": [{"from": "human", "value": "..."}, ...]}`.
@@ -190,7 +190,7 @@ impl DatasetFormat {
 // ── Pipeline errors ───────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum DatasetError {
+pub(crate) enum DatasetError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Unsupported format: {0}")]
@@ -214,7 +214,7 @@ pub enum DatasetError {
 /// different structure (prompt + chosen + rejected) that cannot be represented
 /// as a single conversation.
 #[derive(Debug, Clone)]
-pub enum NormalizedDataset {
+pub(crate) enum NormalizedDataset {
     /// SFT data — a list of conversations.
     Sft(Vec<ChatConversation>),
     /// Preference data — a list of preference examples.
@@ -254,7 +254,7 @@ impl NormalizedDataset {
 /// can't be read or parsed, the fields remain `None` and the skill falls back
 /// to its declared-input reasoning.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DatasetProfile {
+pub(crate) struct DatasetProfile {
     /// Detected format (ChatML, ShareGPT, Alpaca, RawText, PreferenceDpo, etc.).
     pub format: Option<DatasetFormat>,
     /// Number of examples (non-empty lines for JSONL, array length for JSON).
@@ -296,7 +296,7 @@ pub struct DatasetProfile {
 /// Preference formats normalize to canonical `PreferenceExample`
 /// (`NormalizedDataset::Preference`). Provider adapters consume the normalized
 /// output and translate it to their native format.
-pub struct DatasetPipeline {
+pub(crate) struct DatasetPipeline {
     /// Cache directory for normalized datasets.
     cache_dir: PathBuf,
     /// Cache key for the current normalization (content hash).

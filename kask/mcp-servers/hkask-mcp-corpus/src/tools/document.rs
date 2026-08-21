@@ -591,7 +591,7 @@ fn is_supported_document(path: &std::path::Path) -> bool {
 // ── Request structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ConvertRequest {
+pub(crate) struct ConvertRequest {
     /// Path to a document file or a directory of documents to convert.
     pub path: String,
     /// Output directory for batch conversion. Required when `path` is a directory.
@@ -608,7 +608,7 @@ pub struct ConvertRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OcrRequest {
+pub(crate) struct OcrRequest {
     /// Path to the document file to OCR.
     pub path: String,
     /// Vision model to use for OCR (must be available in the inference catalog).
@@ -617,7 +617,7 @@ pub struct OcrRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct IsComplexRequest {
+pub(crate) struct IsComplexRequest {
     /// Path to the PDF file to triage.
     pub path: String,
     /// Optional target pages (1-based), e.g. "1-5,10,15-20". None = all pages.
@@ -626,7 +626,7 @@ pub struct IsComplexRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ChunkRequest {
+pub(crate) struct ChunkRequest {
     /// Raw text to chunk. Mutually exclusive with `path` and `input_dir`.
     #[serde(default)]
     pub text: Option<String>,

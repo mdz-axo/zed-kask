@@ -7,7 +7,7 @@ use crate::types::{Perspective, ScenarioEvent, SubQuestion};
 // ── Request types for MCP tools ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BuildEventsRequest {
+pub(crate) struct BuildEventsRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Time horizon for the scenario
@@ -21,7 +21,7 @@ pub struct BuildEventsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrainstormRequest {
+pub(crate) struct BrainstormRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Time horizon: "tactical", "strategic", or "long_term"
@@ -35,7 +35,7 @@ pub struct BrainstormRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FrameRequest {
+pub(crate) struct FrameRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Optional: pre-populated answers from a previous framing session, as a
@@ -47,7 +47,7 @@ pub struct FrameRequest {
 
 /// Request to structure a completed framing conversation into a FramingDocument.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FrameDocumentRequest {
+pub(crate) struct FrameDocumentRequest {
     /// Subject for the scenario project
     pub subject: String,
     /// JSON object with answers from the 7-turn framing conversation.
@@ -62,7 +62,7 @@ pub struct FrameDocumentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketsBridgeRequest {
+pub(crate) struct MarketsBridgeRequest {
     /// An annotated MarketRecord from hkask-mcp-prediction-markets
     /// (market_lookup or market_match output; for market_match, pass the
     /// nested `market` object and set match_confidence). Typed as
@@ -77,7 +77,7 @@ pub struct MarketsBridgeRequest {
 
 /// One dependency edge for `scenario_from_markets_set`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DependencySpecRequest {
+pub(crate) struct DependencySpecRequest {
     /// Child market id (the `market_id` of the conditioned market).
     pub child_market_id: String,
     /// Parent market ids (the conditioning markets).
@@ -91,7 +91,7 @@ pub struct DependencySpecRequest {
 /// Request for `scenario_propagate`: update one event's prior and recompute
 /// the whole tree (T5).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PropagateRequest {
+pub(crate) struct PropagateRequest {
     /// The current tree's events (e.g. from a prior
     /// scenario_from_markets_set / scenario_quantify output).
     pub events: Vec<ScenarioEvent>,
@@ -104,7 +104,7 @@ pub struct PropagateRequest {
 /// Request for `scenario_from_markets_set`: compose N market records into a
 /// dependent event tree.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketsSetBridgeRequest {
+pub(crate) struct MarketsSetBridgeRequest {
     /// Annotated MarketRecords from hkask-mcp-prediction-markets. Typed as
     /// [`AnyJsonValue`] because `MarketRecord` is defined in the
     /// prediction-markets crate and does not derive `JsonSchema`.
@@ -119,7 +119,7 @@ pub struct MarketsSetBridgeRequest {
 /// One dependency edge for `scenario_from_cmp_indices`. Uses CMP index IDs
 /// (`cmp:{family}:{tenor}:{orientation}`) instead of market IDs.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpDependencySpecRequest {
+pub(crate) struct CmpDependencySpecRequest {
     /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
     pub child_id: String,
     /// The parent CMP index IDs.
@@ -132,7 +132,7 @@ pub struct CmpDependencySpecRequest {
 /// Request for `scenario_from_cmp_indices`: compose CMP indices into an
 /// EventTree with optional dependency edges (R1).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpBridgeRequest {
+pub(crate) struct CmpBridgeRequest {
     /// ProvenancedCmpIndex objects from hkask-mcp-prediction-markets
     /// (build_cmp_indices output). Typed as [`AnyJsonValue`] because
     /// `ProvenancedCmpIndex` is defined in the prediction-markets crate and
@@ -147,7 +147,7 @@ pub struct CmpBridgeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FullPipelineRequest {
+pub(crate) struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Events (from scenario_brainstorm or manual construction)
@@ -167,7 +167,7 @@ pub struct FullPipelineRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CrossValidateRequest {
+pub(crate) struct CrossValidateRequest {
     /// Event or question identifier
     pub event_id: String,
     /// Label for the first estimate source (e.g., 'superforecasting_skill')
@@ -187,13 +187,13 @@ pub struct CrossValidateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct QuantifyRequest {
+pub(crate) struct QuantifyRequest {
     /// Events to quantify
     pub events: Vec<ScenarioEvent>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpdateRequest {
+pub(crate) struct UpdateRequest {
     /// Forecast record ID
     pub forecast_id: String,
     /// Event ID being updated
@@ -210,7 +210,7 @@ pub struct UpdateRequest {
 
 /// One outcome entry for `ScoreRequest`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OutcomeEntry {
+pub(crate) struct OutcomeEntry {
     /// The event ID this outcome refers to.
     pub event_id: String,
     /// Whether the event occurred (true = Yes, false = No).
@@ -218,7 +218,7 @@ pub struct OutcomeEntry {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScoreRequest {
+pub(crate) struct ScoreRequest {
     /// Forecast record ID
     pub forecast_id: String,
     /// Events to score
@@ -228,7 +228,7 @@ pub struct ScoreRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CalibrateRequest {
+pub(crate) struct CalibrateRequest {
     /// The forecast question
     pub question: String,
     /// Fermi sub-questions
@@ -242,7 +242,7 @@ pub struct CalibrateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SensitivityRequest {
+pub(crate) struct SensitivityRequest {
     /// Events to analyze
     pub events: Vec<ScenarioEvent>,
 }
@@ -256,13 +256,13 @@ pub struct SynthesizeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CalibrationRequest {
+pub(crate) struct CalibrationRequest {
     /// Optional: filter to a specific subject
     pub subject: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TriageRequest {
+pub(crate) struct TriageRequest {
     /// The forecasting question to triage
     pub question: String,
     /// Does the question have a specific deadline?
@@ -274,7 +274,7 @@ pub struct TriageRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResearchRequest {
+pub(crate) struct ResearchRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Raw text from web searches about this subject
@@ -288,7 +288,7 @@ pub struct ResearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AssessRequest {
+pub(crate) struct AssessRequest {
     /// Project identifier
     pub project_id: String,
     /// Subject domain

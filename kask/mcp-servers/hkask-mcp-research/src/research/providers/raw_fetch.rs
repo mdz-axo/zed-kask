@@ -4,7 +4,7 @@ use crate::research::types::*;
 use async_trait::async_trait;
 use std::time::Duration;
 
-pub struct RawFetchProvider {
+pub(crate) struct RawFetchProvider {
     client: reqwest::Client,
 }
 
@@ -119,7 +119,7 @@ impl WebBrowseProvider for RawFetchProvider {
     }
 }
 
-pub fn truncate_str(s: &str, max_len: usize) -> String {
+pub(crate) fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {

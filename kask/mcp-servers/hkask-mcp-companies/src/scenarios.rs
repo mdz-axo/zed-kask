@@ -24,7 +24,7 @@ pub struct Scenario {
 
 /// Scenario axis definition.
 #[derive(Debug, Clone)]
-pub struct ScenarioAxis {
+pub(crate) struct ScenarioAxis {
     /// Human-readable name.
     pub name: &'static str,
     /// FIBO concept (for ontology anchoring).
@@ -39,7 +39,7 @@ pub struct ScenarioAxis {
 
 /// Schwartz 2x2 scenario matrix.
 #[derive(Debug, Clone)]
-pub struct ScenarioMatrix {
+pub(crate) struct ScenarioMatrix {
     pub axis1: ScenarioAxis,
     pub axis2: ScenarioAxis,
     pub scenarios: [Scenario; 4],
@@ -102,7 +102,7 @@ impl ScenarioMatrix {
 
 /// A projected model under a specific scenario.
 #[derive(Debug, Clone)]
-pub struct ScenarioResult {
+pub(crate) struct ScenarioResult {
     pub scenario: Scenario,
     pub model: ProjectedModel,
     pub applied_growth: f64,
@@ -111,7 +111,7 @@ pub struct ScenarioResult {
 }
 
 /// Run the 11-line-item financial model under all four scenarios.
-pub fn run_scenario_analysis(
+pub(crate) fn run_scenario_analysis(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     matrix: &ScenarioMatrix,
@@ -141,7 +141,7 @@ pub fn run_scenario_analysis(
 }
 
 /// Summarize scenario results with range and dispersion.
-pub fn scenario_summary(results: &[ScenarioResult]) -> ScenarioSummary {
+pub(crate) fn scenario_summary(results: &[ScenarioResult]) -> ScenarioSummary {
     let intrinsics: Vec<f64> = results.iter().map(|r| r.intrinsic_per_share).collect();
     let min_val = intrinsics.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_val = intrinsics.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -173,7 +173,7 @@ pub fn scenario_summary(results: &[ScenarioResult]) -> ScenarioSummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScenarioSummary {
+pub(crate) struct ScenarioSummary {
     pub intrinsic_range: (f64, f64),
     pub intrinsic_average: f64,
     pub upside_pct: f64,

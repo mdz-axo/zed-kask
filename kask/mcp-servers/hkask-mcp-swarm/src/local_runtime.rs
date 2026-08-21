@@ -607,7 +607,7 @@ impl LocalSwarmRuntime {
 /// labels resolve to registered types; runtime bind matching against
 /// those labels is the typing layer's unfinished transition, not this
 /// function's job.
-pub(crate) fn check_bind(
+pub fn check_bind(
     card: &crate::local_registry::LocalAgentCard,
     _task: &str,
 ) -> Option<bool> {
@@ -625,7 +625,7 @@ pub(crate) fn check_bind(
 /// MAX_TOOL_ROUNDS × per-dispatch ceiling). Each delegation runs sequentially
 /// (the local ledger is single-writer; concurrent debits would race the
 /// balance read), so this is also the worst-case serial latency multiplier.
-pub(crate) const MAX_FANOUT: usize = 10;
+pub const MAX_FANOUT: usize = 10;
 
 /// Result of a local delegation.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]

@@ -26,7 +26,7 @@ use crate::ocr::verification::verify_output;
 
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum OcrError {
+pub(crate) enum OcrError {
     #[error("OCR backend {backend} failed: {message}")]
     BackendFailed { backend: String, message: String },
     #[error("No OCR model configured. Set HKASK_OCR_MODEL env var or pass the 'model' parameter.")]
@@ -46,7 +46,7 @@ pub enum OcrError {
 ///
 /// Must be `Send + Sync + 'static` for parallel execution via `tokio::spawn`.
 #[async_trait]
-pub trait OcrExecutor: Send + Sync {
+pub(crate) trait OcrExecutor: Send + Sync {
     /// Check whether a backend is available for use.
     ///
     /// Returns `true` if the backend is installed and ready.

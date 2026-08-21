@@ -7,7 +7,7 @@
 //! et al. (arXiv:2410.21228).
 
 use super::{ValidationFinding, ValidationSeverity};
-pub fn validate_runtime_metrics(
+pub(crate) fn validate_runtime_metrics(
     manifest: &crate::huggingface::CompletionManifest,
 ) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();

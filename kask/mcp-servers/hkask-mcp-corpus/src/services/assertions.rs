@@ -21,7 +21,7 @@ use crate::tools::semantic::{
 use crate::{extract_json_from_response, owner_webid, render_docproc_template};
 
 /// Input for [`AssertionsService::extract`].
-pub struct AssertionsRequest {
+pub(crate) struct AssertionsRequest {
     pub chunks_jsonl: String,
     pub tagged_jsonl: Option<String>,
     pub max_assertions: usize,
@@ -36,7 +36,7 @@ pub struct AssertionsRequest {
 /// Holds the shared inference router. Each call to [`extract`] opens the
 /// memory DB, loads ontology context, and processes chunks concurrently with
 /// 3-attempt retry and confidence capping.
-pub struct AssertionsService {
+pub(crate) struct AssertionsService {
     inference_router: Arc<dyn InferencePort>,
 }
 

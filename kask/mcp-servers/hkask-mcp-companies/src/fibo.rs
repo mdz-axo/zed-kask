@@ -9,7 +9,7 @@
 //! ontology's.
 
 // Re-export the FIBO vocabulary from the shared bridge crate.
-pub use hkask_bridge_ontology::fibo::{
+pub(crate) use hkask_bridge_ontology::fibo::{
     ALL_CONCEPTS, ATTRIBUTION_ANALYSIS, BARRIER_TO_ENTRY, BRIER_SCORE, BUY_TRANSACTION,
     CAPITAL_ALLOCATION, CAPITAL_EXPENDITURE, COMPARABLE_COMPANY_ANALYSIS, COMPETITIVE_ADVANTAGE,
     CORPORATION, COST_OF_CAPITAL, COST_OF_GOODS_SOLD, COUNTRY_OF_INCORPORATION, DCF_VALUATION,
@@ -31,13 +31,13 @@ pub use hkask_bridge_ontology::fibo::{
 
 // Re-export the concept type so call sites that reference `fibo::FiboConcept`
 // keep resolving.
-pub use hkask_bridge_ontology::fibo::FiboConcept;
+pub(crate) use hkask_bridge_ontology::fibo::FiboConcept;
 
 // ── FMP/EODHD field → FIBO concept mapping ──────────────────────────────
 
 /// Map an FMP/EODHD API field name to its FIBO concept URI.
 /// Returns None for fields not covered by FIBO (provider-specific metadata).
-pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
+pub(crate) fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
     match field {
         // Profile
         "symbol" => Some(TICKER_SYMBOL),
@@ -102,7 +102,7 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
 ///
 /// Returns `None` only for tools that produce no artifact worth anchoring
 /// (currently none — all 44 tools are mapped).
-pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
+pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
     use hkask_bridge_ontology::dc_bibo;
     match tool {
         // Portfolio tools
@@ -155,7 +155,7 @@ pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
 /// tool output so the portfolio widget can read it for the "I" pattern dispatch
 /// and the compose-back body. The `reg.tool.*` span carries the same concept
 /// via `execute_tool_semantic` (wired separately).
-pub fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
+pub(crate) fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
     if let Some(concept) = tool_to_ontology(tool) {
         if let Some(obj) = result.as_object_mut() {
             obj.insert(

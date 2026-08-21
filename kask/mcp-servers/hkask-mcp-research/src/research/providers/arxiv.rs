@@ -7,7 +7,7 @@ use async_trait::async_trait;
 /// Free: no API key required. Queries `export.arxiv.org/api/query` which returns
 /// Atom XML. Parses entry titles, authors, summaries (abstracts), PDF links,
 /// and published dates into SearchResult structs.
-pub struct ArxivProvider {
+pub(crate) struct ArxivProvider {
     client: reqwest::Client,
 }
 

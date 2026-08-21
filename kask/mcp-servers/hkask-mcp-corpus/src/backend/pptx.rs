@@ -7,7 +7,7 @@ use hkask_types::document::DocStructure;
 use pptx_to_md::PptxContainer;
 
 /// PPTX presentation backend.
-pub struct PptxBackend;
+pub(crate) struct PptxBackend;
 
 impl DocumentBackend for PptxBackend {
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {

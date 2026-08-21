@@ -27,7 +27,7 @@ impl CacheEntry {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CacheKey(pub String);
 
-pub struct ResponseCache {
+pub(crate) struct ResponseCache {
     entries: RwLock<HashMap<CacheKey, CacheEntry>>,
     max_entries: usize,
     default_ttl: Duration,

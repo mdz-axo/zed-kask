@@ -182,7 +182,7 @@ pub struct DeclaredEvaluator {
 /// Name of the persisted port-type extension file inside the agents dir.
 /// Cloned cards import their (ABW-catalogue) port labels here so the typing
 /// gate resolves them on this and every subsequent load.
-pub(crate) const PORT_TYPES_FILE: &str = "port_types.json";
+pub const PORT_TYPES_FILE: &str = "port_types.json";
 
 /// Reads agent cards from a local directory. Catalogue only — no execution.
 ///

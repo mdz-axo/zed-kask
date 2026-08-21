@@ -16,7 +16,7 @@ use crate::dataset::DatasetFormat;
 /// `Ready` (use directly), `NeedsMapping` (compatible but needs preprocessing —
 /// mapping code is provided), `Incompatible` (cannot be used for this method).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DatasetFormatVerdict {
+pub(crate) enum DatasetFormatVerdict {
     /// Dataset format matches the expected format for the selected method.
     Ready,
     /// Dataset is compatible but needs column-name mapping. `mapping_code` is
@@ -34,7 +34,7 @@ pub enum DatasetFormatVerdict {
 
 /// Result of G-D0 dataset format validation.
 #[derive(Debug, Clone)]
-pub struct DatasetFormatResult {
+pub(crate) struct DatasetFormatResult {
     /// The verdict: ready, needs mapping, or incompatible.
     pub verdict: DatasetFormatVerdict,
     /// The format detected from the dataset file (None if detection failed).
@@ -66,7 +66,7 @@ pub struct DatasetFormatResult {
 /// # Returns
 /// A `DatasetFormatResult` with the verdict, detected/expected formats,
 /// mapping code (if applicable), and any findings.
-pub fn validate_dataset_format(
+pub(crate) fn validate_dataset_format(
     dataset_path: &std::path::Path,
     trainer_preference: Option<&str>,
     adapter_purpose: Option<&str>,

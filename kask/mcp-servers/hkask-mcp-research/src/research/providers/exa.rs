@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 #[derive(Clone)]
-pub struct ExaProvider {
+pub(crate) struct ExaProvider {
     client: reqwest::Client,
     api_key: String,
 }

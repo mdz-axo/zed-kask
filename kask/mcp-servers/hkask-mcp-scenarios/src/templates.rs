@@ -22,7 +22,7 @@ use crate::types::{BrainstormProtocol, BrainstormRound, PersonaConfig};
 ///
 /// Round 4 — PRUNE (analytical): Evaluate and converge. Eliminate redundant
 ///   or implausible events. Merge overlapping events. Produce final tree.
-pub fn generate_brainstorm_protocol(
+pub(crate) fn generate_brainstorm_protocol(
     subject: &str,
     time_horizon: &str,
     research_context: &str,
@@ -263,7 +263,7 @@ pub fn generate_brainstorm_protocol(
 /// - Ryan & Deci (2000): Self-determination theory
 /// - hKask improv skill: Plussing, Yes And, Yes But postures
 /// - hKask kata-starter: coaching posture, 20-minute practice window
-pub fn generate_framing_session(subject: &str) -> serde_json::Value {
+pub(crate) fn generate_framing_session(subject: &str) -> serde_json::Value {
     serde_json::json!({
         "session_type": "Conversational Scenario Framing",
         "subject": subject,

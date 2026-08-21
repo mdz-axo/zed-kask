@@ -32,7 +32,7 @@ use crate::error::SwarmError;
 /// reusable pre-authorized session token. The two are mutually exclusive - a
 /// caller provides exactly one.
 #[derive(Debug)]
-pub(crate) enum SpendAuth<'a> {
+pub enum SpendAuth<'a> {
     SingleUse(&'a str),
     Session(&'a str),
 }
@@ -41,7 +41,7 @@ pub(crate) enum SpendAuth<'a> {
 /// if both are set (ambiguous authorization source) or neither is set. Empty
 /// strings are treated as "not provided" so callers can send an empty
 /// `consent_token` when using a session.
-pub(crate) fn resolve_auth<'a>(
+pub fn resolve_auth<'a>(
     consent_token: Option<&'a str>,
     session_token: Option<&'a str>,
 ) -> Result<SpendAuth<'a>, McpToolError> {
@@ -71,7 +71,7 @@ pub(crate) fn resolve_auth<'a>(
 /// - `Session`: `authorize_*` validates the session without deducting
 ///   (cost=0); `complete_*` deducts the authorized cost on success and does
 ///   nothing on failure (nothing was deducted to refund).
-pub(crate) enum Settlement {
+pub enum Settlement {
     SingleUse { refund_grant: ConsentGrant },
     Session { token: String, cost: u32 },
 }
@@ -99,7 +99,7 @@ impl Settlement {
 /// deducts from the session on success) or refunded explicitly via `refund`
 /// (used by `swarm_create_swarm`'s per-hire error-collection loop, which
 /// continues on failure rather than early-returning).
-pub(crate) struct HireAuthorization {
+pub struct HireAuthorization {
     settlement: Settlement,
 }
 
@@ -128,7 +128,7 @@ impl HireAuthorization {
 /// A carried, refundable authorization to delegate to an agent. Created by
 /// `authorize_delegate`; consumed by `complete_delegate` or refunded via
 /// `refund` (used by `swarm_xaman`'s two-step session lifecycle).
-pub(crate) struct DelegateAuthorization {
+pub struct DelegateAuthorization {
     settlement: Settlement,
 }
 
@@ -374,7 +374,7 @@ pub(crate) async fn complete_hire(
 /// ceiling. Accepts either a single-use consent token or a session token.
 /// Delegation cost is `1 cr + tokens` and not pre-quoted by ABW, so the declared
 /// `credits_authorized` is the cost signal — the ceiling gates it directly.
-pub(crate) fn authorize_delegate(
+pub fn authorize_delegate(
     client: &SwarmClient,
     consent: &ConsentStore,
     auth: SpendAuth<'_>,
@@ -489,7 +489,7 @@ pub(crate) async fn complete_delegate(
 /// refunds it on every failure path of its two-step session lifecycle
 /// (session create + message send), which has custom error mapping and
 /// cannot be wrapped in a single `complete_*`.
-pub(crate) fn authorize_curate(
+pub fn authorize_curate(
     client: &SwarmClient,
     consent: &ConsentStore,
     token: Option<&str>,

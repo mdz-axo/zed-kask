@@ -10,18 +10,18 @@ use serde::{Deserialize, Serialize};
 // ── Financial data request structs ──────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SymbolRequest {
+pub(crate) struct SymbolRequest {
     pub symbol: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SymbolLimitRequest {
+pub(crate) struct SymbolLimitRequest {
     pub symbol: String,
     pub limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct HistoricalRequest {
+pub(crate) struct HistoricalRequest {
     pub symbol: String,
     pub from: String,
     pub to: String,
@@ -41,7 +41,7 @@ pub struct PortfolioNameRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TransactionNoteRequest {
+pub(crate) struct TransactionNoteRequest {
     pub portfolio: String,
     pub tx_id: String,
     pub note: String,
@@ -69,13 +69,13 @@ pub struct LedgerExportRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PortfolioCompareRequest {
+pub(crate) struct PortfolioCompareRequest {
     pub portfolio_a: String,
     pub portfolio_b: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AttributionRequest {
+pub(crate) struct AttributionRequest {
     pub portfolio: String,
     pub from: String,
     pub to: String,
@@ -99,7 +99,7 @@ pub struct AttributionRequest {
 ///   descriptors at 5/95 for Quality and Value-Growth indices.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum AggregationMethod {
+pub(crate) enum AggregationMethod {
     /// Weighted arithmetic mean: Σ(wᵢ × xᵢ). Default; matches the original
     /// implementation. Biased upward for ratios (P/E, P/B, P/S).
     #[default]
@@ -119,7 +119,7 @@ pub enum AggregationMethod {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CharacteristicsRequest {
+pub(crate) struct CharacteristicsRequest {
     pub portfolio: String,
     pub date: String,
     /// Aggregation method for weighted averages. Defaults to
@@ -129,7 +129,7 @@ pub struct CharacteristicsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExpectationsGapRequest {
+pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
     pub target_return: Option<f64>,
     /// Your estimate of sustainable revenue growth (0.0–1.0).
@@ -145,7 +145,7 @@ pub struct PortfolioReturnsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct NoteAddRequest {
+pub(crate) struct NoteAddRequest {
     pub portfolio: String,
     pub symbol: String,
     pub date: String,
@@ -156,7 +156,7 @@ pub struct NoteAddRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct NoteListRequest {
+pub(crate) struct NoteListRequest {
     pub portfolio: String,
     pub symbol: String,
     pub date_from: Option<String>,
@@ -165,12 +165,12 @@ pub struct NoteListRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct NoteDeleteRequest {
+pub(crate) struct NoteDeleteRequest {
     pub note_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FileAttachRequest {
+pub(crate) struct FileAttachRequest {
     pub portfolio: String,
     pub symbol: String,
     pub date: String,
@@ -183,18 +183,18 @@ pub struct FileAttachRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FileListRequest {
+pub(crate) struct FileListRequest {
     pub portfolio: String,
     pub symbol: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FileDeleteRequest {
+pub(crate) struct FileDeleteRequest {
     pub file_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResultFeedbackRequest {
+pub(crate) struct ResultFeedbackRequest {
     /// Which tool produced the result being rated
     pub tool: String,
     /// The query that was used (symbol, portfolio name, search query, etc.)
@@ -213,7 +213,7 @@ pub struct ResultFeedbackRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DcfValuationRequest {
+pub(crate) struct DcfValuationRequest {
     pub symbol: String,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
@@ -251,7 +251,7 @@ pub struct DcfValuationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct EquityDurationRequest {
+pub(crate) struct EquityDurationRequest {
     pub symbol: String,
     /// Stage 1 years (1–3, default 3)
     #[schemars(range(min = 1, max = 3))]
@@ -287,7 +287,7 @@ pub struct EquityDurationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ReverseDcfRequest {
+pub(crate) struct ReverseDcfRequest {
     pub symbol: String,
     /// Stage 1 years (1–3, default 3)
     pub stage1_years: Option<u8>,
@@ -300,7 +300,7 @@ pub struct ReverseDcfRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScenarioAnalysisRequest {
+pub(crate) struct ScenarioAnalysisRequest {
     pub symbol: String,
     /// Discount rate (default 0.10)
     pub discount_rate: Option<f64>,
@@ -316,7 +316,7 @@ pub struct ScenarioAnalysisRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CalibrateForecastRequest {
+pub(crate) struct CalibrateForecastRequest {
     pub symbol: String,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
@@ -354,7 +354,7 @@ pub struct CalibrateForecastRequest {
 
 /// Override for a single Fermi sub-question estimate.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FermiOverride {
+pub(crate) struct FermiOverride {
     /// Index of the sub-question to override (0-3).
     pub index: usize,
     /// New estimate (0.0–1.0).
@@ -364,18 +364,18 @@ pub struct FermiOverride {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ForecastGetRequest {
+pub(crate) struct ForecastGetRequest {
     pub forecast_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ForecastListRequest {
+pub(crate) struct ForecastListRequest {
     pub symbol: String,
 }
 
 /// Forecast horizon for outcome recording.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
-pub enum Horizon {
+pub(crate) enum Horizon {
     #[serde(rename = "3mo")]
     ThreeMo,
     #[serde(rename = "6mo")]
@@ -389,7 +389,7 @@ pub enum Horizon {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ForecastRecordRequest {
+pub(crate) struct ForecastRecordRequest {
     pub symbol: String,
     /// When the forecast was made (YYYY-MM-DD)
     pub forecast_date: String,
@@ -422,7 +422,7 @@ pub struct ForecastRecordRequest {
 /// horizon passes — Brier scoring runs on the recorded price change;
 /// gap decomposition is unavailable (no projected model).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ForecastPersistRequest {
+pub(crate) struct ForecastPersistRequest {
     pub symbol: String,
     /// When the forecast was made (YYYY-MM-DD)
     pub forecast_date: String,
@@ -454,7 +454,7 @@ pub struct ForecastPersistRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SensitivityAnalysisRequest {
+pub(crate) struct SensitivityAnalysisRequest {
     pub symbol: String,
     pub stage1_years: Option<u8>,
     pub stage2_years: Option<u8>,
@@ -475,7 +475,7 @@ fn default_sensitivity_range() -> f64 {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MonteCarloDcfRequest {
+pub(crate) struct MonteCarloDcfRequest {
     pub symbol: String,
     pub stage1_years: Option<u8>,
     pub stage2_years: Option<u8>,
@@ -514,7 +514,7 @@ fn default_mc_range_small() -> f64 {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ComparableAnalysisRequest {
+pub(crate) struct ComparableAnalysisRequest {
     pub symbol: String,
     pub peers: Option<String>,
     /// Discount rate / WACC (0.05–0.30, default 0.10).
@@ -525,7 +525,7 @@ pub struct ComparableAnalysisRequest {
 
 /// Optional DCF projection inputs shared by all valuation tools.
 #[derive(Debug, Default, Clone)]
-pub struct ProjectionAssumptionOverrides {
+pub(crate) struct ProjectionAssumptionOverrides {
     pub stage1_years: Option<u8>,
     pub stage2_years: Option<u8>,
     pub revenue_growth: Option<f64>,
@@ -649,7 +649,7 @@ projection_overrides_from_request!(
 );
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResearchSearchRequest {
+pub(crate) struct ResearchSearchRequest {
     pub symbol: String,
     /// Research query (e.g., "management guidance 2025", "competition market share")
     pub query: String,
@@ -658,7 +658,7 @@ pub struct ResearchSearchRequest {
 // ── Scenario impact valuation request ─────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScenarioImpactValuationRequest {
+pub(crate) struct ScenarioImpactValuationRequest {
     pub symbol: String,
     /// JSON string of the resolved scenario event tree from `scenario_quantify`
     /// (hkask-mcp-scenarios). Must contain `nodes` (array with `id`,
@@ -691,7 +691,7 @@ pub struct ScenarioImpactValuationRequest {
 /// pipeline-ready records and hands off to the corpus pipeline.
 #[derive(Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
-pub enum TranscriptMode {
+pub(crate) enum TranscriptMode {
     /// FMP earnings-call transcript: fetch + coverage-honest.
     #[default]
     Earnings,
@@ -706,7 +706,7 @@ pub enum TranscriptMode {
 /// (probe-verified: AAPL 2023Q1 returns `date: "2012-03-19"`). Callers must
 /// not rely on `date` for ordering or deduplication.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompanyTranscriptRequest {
+pub(crate) struct CompanyTranscriptRequest {
     pub symbol: String,
     /// Fetch mode. `earnings` (default) hits FMP; `corpus` hits SerpAPI YouTube.
     #[serde(default)]
@@ -745,7 +745,7 @@ fn default_corpus_max_results() -> u32 {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScreenerRequest {
+pub(crate) struct ScreenerRequest {
     /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
     pub prompt: String,
     /// Maximum results (default 20)
@@ -768,7 +768,7 @@ fn default_screener_limit() -> u32 {
 // ── Economic Profit valuation request ────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct EpValuationRequest {
+pub(crate) struct EpValuationRequest {
     pub symbol: String,
     /// Discount rate / WACC (0.0–0.30, default 0.10)
     pub wacc: Option<f64>,

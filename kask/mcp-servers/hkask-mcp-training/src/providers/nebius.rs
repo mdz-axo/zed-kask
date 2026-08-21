@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Nebius AI Cloud VM configuration.
-pub struct NebiusHost {
+pub(crate) struct NebiusHost {
     /// Project ID (parent-id for CLI commands).
     project_id: String,
     /// Subnet ID for network interface.

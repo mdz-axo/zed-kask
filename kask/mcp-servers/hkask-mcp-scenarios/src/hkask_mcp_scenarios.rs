@@ -42,9 +42,9 @@ use hkask_bridge_ontology::dc_bibo;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
-pub mod superforecast;
-pub mod templates;
-pub mod types;
+pub(crate) mod superforecast;
+pub(crate) mod templates;
+pub(crate) mod types;
 
 use types::*;
 
@@ -92,7 +92,7 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
 }
 
 mod requests;
-pub use requests::*;
+pub(crate) use requests::*;
 
 // ── Server struct ──────────────────────────────────────────────────────────
 

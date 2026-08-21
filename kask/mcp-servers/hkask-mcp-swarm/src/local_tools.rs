@@ -15,18 +15,18 @@ use crate::request_types::*;
 
 /// Task-set cap for `swarm_eval_agent_local`. Bounds one harness call's
 /// breadth; the total-rollout cap below bounds its depth × breadth.
-pub(crate) const MAX_EVAL_TASKS: usize = 10;
+pub const MAX_EVAL_TASKS: usize = 10;
 
 /// Default and cap for `repeats` in `swarm_eval_agent_local`. The default (3)
 /// is enough to expose a hard 0-or-1 failure mode; the cap keeps a single
 /// call's cost bounded.
-pub(crate) const DEFAULT_EVAL_REPEATS: u32 = 3;
-pub(crate) const MAX_EVAL_REPEATS: u32 = 10;
+pub const DEFAULT_EVAL_REPEATS: u32 = 3;
+pub const MAX_EVAL_REPEATS: u32 = 10;
 
 /// Total rollouts (tasks × repeats) cap for `swarm_eval_agent_local`. Each
 /// rollout is a real inference call with real token cost, so the product —
 /// not just the factors — needs a ceiling.
-pub(crate) const MAX_EVAL_ROLLOUTS: usize = 50;
+pub const MAX_EVAL_ROLLOUTS: usize = 50;
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
 };

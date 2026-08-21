@@ -13,7 +13,7 @@ use docx_rs::{
 use hkask_types::document::{Block, DocStructure, Page};
 
 /// DOCX document backend.
-pub struct DocxBackend;
+pub(crate) struct DocxBackend;
 
 impl DocumentBackend for DocxBackend {
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {

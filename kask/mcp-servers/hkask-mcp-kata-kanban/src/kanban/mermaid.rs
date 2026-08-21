@@ -36,7 +36,7 @@ use crate::kanban::{Board, ColumnDef, Task, TaskStatus};
 
 /// Errors returned by [`parse_mermaid_kanban`].
 #[derive(Debug, thiserror::Error)]
-pub enum MermaidParseError {
+pub(crate) enum MermaidParseError {
     /// The markdown did not contain a `kanban` directive on its own line.
     #[error("not a mermaid kanban block: missing `kanban` directive")]
     MissingKanbanDirective,
@@ -45,7 +45,7 @@ pub enum MermaidParseError {
 /// A task reduced to the fields the mermaid format can carry: a slugified id
 /// (for renderers that benefit from unique node ids) and the title.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskSummary {
+pub(crate) struct TaskSummary {
     /// Slugified task id — safe to use as a mermaid node identifier.
     pub id: String,
     /// Task title — escaped on export, unescaped on parse.
@@ -55,7 +55,7 @@ pub struct TaskSummary {
 /// A parsed column from mermaid kanban markdown: a name and the task titles
 /// in the order they appeared.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedColumn {
+pub(crate) struct ParsedColumn {
     pub name: String,
     pub tasks: Vec<String>,
 }
@@ -63,7 +63,7 @@ pub struct ParsedColumn {
 /// A parsed board from mermaid kanban markdown: an optional board name (from
 /// the `%% kanban board: <name>` comment) and the columns in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedBoard {
+pub(crate) struct ParsedBoard {
     pub name: Option<String>,
     pub columns: Vec<ParsedColumn>,
 }
@@ -80,7 +80,7 @@ pub struct ParsedBoard {
 /// node id would break matching. Making it involutive (e.g. stripping an
 /// existing `t_` prefix) would create real id collisions, so the
 /// non-involutive contract is intentional.
-pub fn slugify_task_id(id: &str) -> String {
+pub(crate) fn slugify_task_id(id: &str) -> String {
     let slug: String = id
         .chars()
         .map(|c| {
@@ -147,7 +147,7 @@ fn unescape_title(title: &str) -> String {
 /// the markdown lists them in creation order (oldest first). This matches the
 /// convention that `task_list` returns newest-first, and the parsed markdown's
 /// source order is creation order (see the round-trip tests).
-pub fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
+pub(crate) fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
     let columns: Vec<(String, Vec<TaskSummary>)> = board
         .columns
         .iter()
@@ -174,7 +174,7 @@ pub fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
 /// This is the lower-level entry point used by the MCP tool layer, which
 /// builds the `(column_name, tasks)` pairs itself (e.g., to apply a different
 /// task ordering or filtering before export).
-pub fn export_board_to_mermaid_from_parts(
+pub(crate) fn export_board_to_mermaid_from_parts(
     board_name: &str,
     columns: &[(String, Vec<TaskSummary>)],
 ) -> String {
@@ -197,7 +197,7 @@ pub fn export_board_to_mermaid_from_parts(
 /// not contain the `kanban` directive on its own line. The error message
 /// references `kanban` so callers can distinguish "not a kanban block" from
 /// other parse failures.
-pub fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, MermaidParseError> {
+pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, MermaidParseError> {
     // Strip the ```mermaid ... ``` fence if present. We tolerate markdown
     // with or without the fence, and with or without leading/trailing
     // whitespace, but we require the `kanban` directive.
@@ -309,7 +309,7 @@ fn strip_code_fence(markdown: &str) -> String {
 /// [`TaskStatus::STANDARD_ORDER`] by position, skipping any already claimed
 /// by a name match. If all five standard statuses are claimed, non-matching
 /// columns fall back to [`TaskStatus::Backlog`].
-pub fn columns_from_parsed(parsed: &ParsedBoard) -> Vec<ColumnDef> {
+pub(crate) fn columns_from_parsed(parsed: &ParsedBoard) -> Vec<ColumnDef> {
     let mut claimed: Vec<Option<TaskStatus>> = vec![None; parsed.columns.len()];
     // First pass: match by name.
     for (i, column) in parsed.columns.iter().enumerate() {

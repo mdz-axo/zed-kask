@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// The domain scopes what the adapter is trained to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum MdsDomain {
+pub(crate) enum MdsDomain {
     /// Solidity smart contract audit
     SolidityAudit,
     /// Rust code review
@@ -82,7 +82,7 @@ impl std::fmt::Display for MdsDomain {
 /// field, so an ephemeral adapter without an expiry is unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
-pub enum AdapterLifecycle {
+pub(crate) enum AdapterLifecycle {
     /// Long-lived expertise adapter. No TTL. Survives across sessions.
     /// Example: rust-coding-lora trained on 191K examples.
     #[default]
@@ -134,7 +134,7 @@ impl std::fmt::Display for AdapterLifecycle {
 
 /// Training provenance — links an expertise to its training run.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TrainingProvenance {
+pub(crate) struct TrainingProvenance {
     /// Identifier of the training run that produced this expertise
     pub training_run_id: String,
     /// URI to the training dataset or configuration
@@ -200,7 +200,7 @@ impl Expertise {
 
 /// Errors for Expertise construction.
 #[derive(Debug, thiserror::Error)]
-pub enum ExpertiseError {
+pub(crate) enum ExpertiseError {
     #[error("Expertise name must not be empty")]
     EmptyName,
 }

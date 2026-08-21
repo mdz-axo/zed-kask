@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 /// Maximum number of scenario nodes (2^N path enumeration limit).
 /// 12 nodes = 4096 DCF runs — each is a closed-form 10-year projection.
-pub const MAX_SCENARIO_NODES: usize = 12;
+pub(crate) const MAX_SCENARIO_NODES: usize = 12;
 
 // ── Input types (deserialized from the tool request) ───────────────────────
 
@@ -39,7 +39,7 @@ pub const MAX_SCENARIO_NODES: usize = 12;
 /// Applied additively: `modified = base + delta`.
 /// All fields optional — omitted deltas are zero.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct AssumptionDelta {
+pub(crate) struct AssumptionDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revenue_growth_delta: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,7 +61,7 @@ pub struct AssumptionDelta {
 /// Per-node impact mapping: how a scenario node's outcome changes the
 /// company's financial assumptions.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ScenarioNodeImpact {
+pub(crate) struct ScenarioNodeImpact {
     /// Scenario node ID (must match a node in the event tree).
     pub node_id: String,
     /// Deltas applied when this node resolves Yes.
@@ -74,7 +74,7 @@ pub struct ScenarioNodeImpact {
 
 /// A scenario tree node parsed from the `scenario_quantify` output JSON.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ScenarioTreeNode {
+pub(crate) struct ScenarioTreeNode {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -84,14 +84,14 @@ pub struct ScenarioTreeNode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ScenarioTreeDependency {
+pub(crate) struct ScenarioTreeDependency {
     pub parent_event_ids: Vec<String>,
     pub conditionals: Vec<f64>,
 }
 
 /// Parsed scenario tree from `scenario_quantify` output.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ScenarioTreeInput {
+pub(crate) struct ScenarioTreeInput {
     pub nodes: Vec<ScenarioTreeNode>,
     #[serde(default)]
     pub topological_order: Vec<String>,
@@ -100,7 +100,7 @@ pub struct ScenarioTreeInput {
 // ── Result types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub struct ScenarioImpactResult {
+pub(crate) struct ScenarioImpactResult {
     pub base_intrinsic: f64,
     pub probability_weighted_intrinsic: f64,
     pub total_probability: f64,
@@ -111,7 +111,7 @@ pub struct ScenarioImpactResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PathResult {
+pub(crate) struct PathResult {
     pub path_mask: usize,
     pub probability: f64,
     pub intrinsic_per_share: f64,
@@ -121,13 +121,13 @@ pub struct PathResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PathOutcome {
+pub(crate) struct PathOutcome {
     pub node_id: String,
     pub outcome: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct NodeSensitivity {
+pub(crate) struct NodeSensitivity {
     pub node_id: String,
     pub node_name: Option<String>,
     /// E[intrinsic | node = Yes] — probability-weighted intrinsic across
@@ -143,7 +143,7 @@ pub struct NodeSensitivity {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ImpactDistribution {
+pub(crate) struct ImpactDistribution {
     pub min: f64,
     pub p10: f64,
     pub p25: f64,
@@ -157,7 +157,7 @@ pub struct ImpactDistribution {
 // ── Error type ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum ScenarioImpactError {
+pub(crate) enum ScenarioImpactError {
     #[error("no scenario nodes provided")]
     NoNodes,
     #[error("too many scenario nodes: {0} (max {MAX_SCENARIO_NODES})")]
@@ -186,7 +186,7 @@ pub enum ScenarioImpactError {
 
 // ── Core computation ───────────────────────────────────────────────────────
 
-pub fn scenario_impact_dcf(
+pub(crate) fn scenario_impact_dcf(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     tree: &ScenarioTreeInput,

@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 // ── HuggingFace error ─────────────────────────────────────────────────────
 #[derive(Debug, thiserror::Error)]
-pub enum HuggingFaceError {
+pub(crate) enum HuggingFaceError {
     #[error("HuggingFace API error: {0}")]
     Api(String),
     #[error("Model not found: {0}")]
@@ -31,7 +31,7 @@ pub enum HuggingFaceError {
 
 /// Resolved model provenance — what we know about a model before training.
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelProvenance {
+pub(crate) struct ModelProvenance {
     pub model_id: String,
     pub architecture: String,
     pub license: Option<String>,
@@ -42,7 +42,7 @@ pub struct ModelProvenance {
 /// ModelResolver — resolves model identity and provenance before training.
 /// Static model resolver using built-in known-model registry.
 #[derive(Default)]
-pub struct LocalModelResolver;
+pub(crate) struct LocalModelResolver;
 
 impl LocalModelResolver {
     pub fn resolve(&self, model_id: &str) -> Result<ModelProvenance, HuggingFaceError> {
@@ -88,7 +88,7 @@ impl LocalModelResolver {
 
 /// An immutable artifact published for a remote training job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainingArtifact {
+pub(crate) struct TrainingArtifact {
     pub repository: String,
     pub revision: String,
     pub path: String,
@@ -97,7 +97,7 @@ pub struct TrainingArtifact {
 
 /// Immutable input and output locations for a Hugging Face training job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainingArtifacts {
+pub(crate) struct TrainingArtifacts {
     pub dataset: TrainingArtifact,
     pub model_repository: String,
     pub completion_manifest_path: String,
@@ -109,7 +109,7 @@ pub struct TrainingArtifacts {
 /// finding with `evidence_kind: runtime_measurement` when the manifest is
 /// evaluated by `validate_runtime_metrics`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrainingAlert {
+pub(crate) struct TrainingAlert {
     /// Alert title (e.g., "Loss divergence", "Vanishing loss").
     #[serde(default)]
     pub title: String,
@@ -138,7 +138,7 @@ fn default_alert_level() -> String {
 /// `alerts` to support G-R1 (runtime alert gate). All new fields are
 /// `#[serde(default)]` for backward compatibility with existing manifests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompletionManifest {
+pub(crate) struct CompletionManifest {
     pub job_id: String,
     /// "success" or "failed" — written by the install script.
     pub status: String,
@@ -179,7 +179,7 @@ pub struct CompletionManifest {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TrainingArtifactError {
+pub(crate) enum TrainingArtifactError {
     #[error("artifact configuration is invalid: {0}")]
     InvalidConfiguration(String),
     #[error("artifact upload failed: {0}")]
@@ -195,7 +195,7 @@ pub enum TrainingArtifactError {
 /// All repositories are addressed through an explicit owner and are private.
 /// The token is deliberately never exposed by this type.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HuggingFaceTrainingConfig {
+pub(crate) struct HuggingFaceTrainingConfig {
     owner: String,
     dataset_repo: String,
     model_repo: String,

@@ -51,7 +51,7 @@ use hkask_storage::database::value::DbValue;
 
 /// Validation failure for a client-supplied idempotency key.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum IdempotencyKeyError {
+pub(crate) enum IdempotencyKeyError {
     #[error("idempotency_key must not be empty or whitespace")]
     Empty,
     #[error("idempotency_key exceeds {max_len} bytes (got {actual_len})")]
@@ -90,7 +90,7 @@ pub enum Reservation {
 /// passphrase is configured, in-memory otherwise. [`Self::is_durable`] reports
 /// which, because an in-memory store cannot dedupe across a restart and callers
 /// must not advertise protection it does not have.
-pub struct IdempotencyStore {
+pub(crate) struct IdempotencyStore {
     inner: Inner,
 }
 

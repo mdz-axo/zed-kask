@@ -22,7 +22,7 @@ pub(crate) struct QaPair {
 
 /// Typed errors for QA response parsing.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum QaParseError {
+pub(crate) enum QaParseError {
     #[error("QA response must be JSON with a qa_pairs array: {0}")]
     InvalidJson(String),
     #[error("QA response must contain at least one QA pair")]

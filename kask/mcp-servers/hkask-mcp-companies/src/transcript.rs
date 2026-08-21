@@ -24,7 +24,7 @@ const FMP_TRANSCRIPT_PATH: &str = "/earning-call-transcript";
 /// One fetched earnings-call transcript. `(year, quarter)` is the canonical
 /// temporal key; `date` is display-only (probe-verified unreliable).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TranscriptRecord {
+pub(crate) struct TranscriptRecord {
     pub symbol: String,
     pub year: u32,
     pub quarter: u8,
@@ -49,7 +49,7 @@ pub struct TranscriptRecord {
 /// Why a requested quarter is missing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum MissingReason {
+pub(crate) enum MissingReason {
     /// FMP returned an empty array — no call that quarter.
     NoCall,
     /// FMP returned a non-2xx status.
@@ -60,7 +60,7 @@ pub enum MissingReason {
 
 /// One entry in `coverage.missing`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct MissingQuarter {
+pub(crate) struct MissingQuarter {
     pub year: u32,
     pub quarter: u8,
     pub reason: MissingReason,
@@ -68,7 +68,7 @@ pub struct MissingQuarter {
 
 /// Coverage accounting — the honesty surface. Gaps reported, never filled.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TranscriptCoverage {
+pub(crate) struct TranscriptCoverage {
     pub requested_quarters: u32,
     pub retrieved_quarters: u32,
     pub missing: Vec<MissingQuarter>,
@@ -76,7 +76,7 @@ pub struct TranscriptCoverage {
 
 /// The full `company_transcript` result envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TranscriptResult {
+pub(crate) struct TranscriptResult {
     pub transcripts: Vec<TranscriptRecord>,
     pub coverage: TranscriptCoverage,
 }
@@ -85,7 +85,7 @@ pub struct TranscriptResult {
 
 /// A `(year, quarter)` pair — the temporal key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct YearQuarter {
+pub(crate) struct YearQuarter {
     pub year: u32,
     pub quarter: u8,
 }
@@ -292,7 +292,7 @@ fn parse_fmp_body(
 // interviews) via SerpAPI YouTube, channel-allowlisted. Does NOT segment.
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CorpusTranscriptRecord {
+pub(crate) struct CorpusTranscriptRecord {
     pub symbol: String,
     pub source_tier: u8,
     pub kind: String,
@@ -306,7 +306,7 @@ pub struct CorpusTranscriptRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ExcludedVideo {
+pub(crate) struct ExcludedVideo {
     pub title: String,
     pub url: String,
     pub channel: String,
@@ -314,7 +314,7 @@ pub struct ExcludedVideo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CorpusTranscriptResult {
+pub(crate) struct CorpusTranscriptResult {
     pub transcripts: Vec<CorpusTranscriptRecord>,
     pub excluded: Vec<ExcludedVideo>,
 }
@@ -481,6 +481,6 @@ async fn fetch_youtube_transcript(
 /// truth for the `company:{symbol}:youtube:{video_id}` format — wired into
 /// `fetch_corpus_transcripts` output so the convention is load-bearing, not
 /// advisory.
-pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
+pub(crate) fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
     format!("company:{symbol}:youtube:{video_id}")
 }

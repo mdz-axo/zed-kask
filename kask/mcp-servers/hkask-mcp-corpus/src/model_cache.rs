@@ -76,7 +76,7 @@ fn lock_cache() -> std::sync::MutexGuard<'static, CacheState> {
 }
 
 /// Process-scoped model-list cache.
-pub struct ModelCache;
+pub(crate) struct ModelCache;
 
 impl ModelCache {
     /// Return the cached model list if fresh; otherwise fetch live, store, and

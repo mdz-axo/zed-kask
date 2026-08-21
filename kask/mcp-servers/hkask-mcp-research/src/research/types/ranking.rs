@@ -18,7 +18,7 @@ use crate::research::types::{RankedResult, RerankSignal};
 /// pre:  k > 0, ranks contains valid 0-based positions
 /// post: returns sum of 1/(k + rank + 1) for each rank
 /// post: result is always ≥ 0.0
-pub fn rrf_score(k: u64, ranks: &[usize]) -> f64 {
+pub(crate) fn rrf_score(k: u64, ranks: &[usize]) -> f64 {
     ranks
         .iter()
         .map(|&r| 1.0 / (k as f64 + r as f64 + 1.0))
@@ -34,7 +34,7 @@ pub fn rrf_score(k: u64, ranks: &[usize]) -> f64 {
 /// pre:  age is a valid &str
 /// post: returns days as f64 (≥ 0.0 for valid dates)
 /// post: returns -1.0 for unparsable or empty input
-pub fn parse_age_to_days(age: &str) -> f64 {
+pub(crate) fn parse_age_to_days(age: &str) -> f64 {
     let lower = age.to_lowercase();
     let lower = lower.trim();
 
@@ -165,7 +165,7 @@ fn parse_fuzzy_date(s: &str) -> f64 {
 
 // ── Web-search-specific ranking ────────────────────────────────────────────
 
-pub fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
+pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
     match signal {
         RerankSignal::Recency => {
             for r in results.iter_mut() {

@@ -29,7 +29,7 @@ use std::path::PathBuf;
 ///
 /// All trainers are implemented. The trainer is selected from
 /// `job.params.trl_trainer` (defaults to `Sft` when `None`).
-pub struct TrlHarness;
+pub(crate) struct TrlHarness;
 
 impl HarnessAdapter for TrlHarness {
     fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {

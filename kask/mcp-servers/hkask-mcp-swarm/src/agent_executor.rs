@@ -19,12 +19,12 @@ use crate::local_registry::LocalAgentCard;
 /// Maximum tool-call rounds per delegation. Each round is a full inference
 /// call; the cap bounds cost amplification (the per-dispatch credit ceiling
 /// is the credit gate, this is the round gate).
-pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
+pub const MAX_TOOL_ROUNDS: usize = 4;
 
 /// The raw result of running an agent — text, model, token usage, and the
 /// tool execution summary. NOT debited. The caller
 /// (`LocalSwarmRuntime::delegate`) debits the ledger.
-pub(crate) struct RawDelegateResult {
+pub struct RawDelegateResult {
     pub text: String,
     pub model: String,
     pub tokens_used: i64,
@@ -39,7 +39,7 @@ pub(crate) struct RawDelegateResult {
 /// the executor after each `generate_with_messages` call; forwarded to the
 /// event sink (when wired) without blocking the generation path.
 #[derive(Debug, Clone)]
-pub(crate) struct CapturedInference {
+pub struct CapturedInference {
     pub rollout_id: String,
     pub model: String,
     pub status: &'static str,
@@ -61,7 +61,7 @@ pub(crate) struct CapturedInference {
 /// data, not forensic records — a truncated body is still a usable example,
 /// and an unbounded one would let a single large context blow the channel
 /// budget (256 captures × body size).
-pub(crate) const MAX_BODY_BYTES: usize = 64 * 1024;
+pub const MAX_BODY_BYTES: usize = 64 * 1024;
 
 fn cap_body(body: &str) -> String {
     if body.len() <= MAX_BODY_BYTES {
@@ -82,12 +82,12 @@ fn cap_body(body: &str) -> String {
 /// appends them to the event store. When the channel is full the capture is
 /// DROPPED and counted — capture must never block or fail a generation call,
 /// but a drop is never silent (the counter is surfaced as a sensor signal).
-pub(crate) type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
+pub type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
 
 /// The agent-run policy: how a local agent executes (tool-loop
 /// orchestration). Owns the inference and tool-dispatch ports.
 /// Ledger-unaware — the runtime owns spending.
-pub(crate) struct AgentExecutor {
+pub struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
     /// Optional capture sink. `None` = capture not wired (the executor runs

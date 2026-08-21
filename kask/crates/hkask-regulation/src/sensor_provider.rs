@@ -3,7 +3,7 @@
 //! Fermi's `Extractor` trait separates domain data extraction from the fitting
 //! loop. Sensor applies the same pattern to hKask's regulation loop:
 //! each metric gets its own `Sensor` implementation, registered with
-//! a `SensorRegistry`. The `CyberneticsLoop::sense()` method walks the registry
+//! a `SensorBus`. The `CyberneticsLoop::sense()` method walks the bus
 //! instead of containing inline sensing logic.
 //!
 //! ## Why this lives in hkask-regulation
@@ -11,19 +11,9 @@
 //! Sensor providers are Regulation regulation infrastructure. They live alongside
 //! `CyberneticsLoop`, `StagnationDetector`, and `SetPoints` in `hkask-regulation`,
 //! the crate responsible for homeostatic self-regulation.
-//!
-//! ## Unified Sensor Catalog (v0.32.0)
-//!
-//! The `SensorRegistry` provides a single registration point for sensors
-//! across ALL loops, not just Cybernetics. Each loop owns a `SensorRegistry`
-//! for its local sensors, but the `SensorRegistry` tracks all of them for
-//! monitoring, health checks, and dynamic registration. This eliminates the
-//! fragmentation where each loop had inline `sense()` methods that couldn't
-//! be discovered or managed from a central point.
 
 use super::loops::{LoopId, Signal, SignalMetric};
 use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A pluggable sensor that produces one kind of signal metric.

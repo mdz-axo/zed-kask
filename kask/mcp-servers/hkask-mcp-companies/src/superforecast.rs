@@ -20,7 +20,7 @@ use hkask_forecast::FermiQuestion;
 /// Apply user overrides to a set of Fermi sub-questions.
 /// `overrides`: list of (index, estimate, confidence) tuples.
 /// Only overrides for valid indices are applied; others are ignored.
-pub fn apply_fermi_overrides(sub_questions: &mut [FermiQuestion], overrides: &[(usize, f64, f64)]) {
+pub(crate) fn apply_fermi_overrides(sub_questions: &mut [FermiQuestion], overrides: &[(usize, f64, f64)]) {
     for (idx, est, conf) in overrides {
         if *idx < sub_questions.len() {
             sub_questions[*idx].estimate = *est;
@@ -33,7 +33,7 @@ pub fn apply_fermi_overrides(sub_questions: &mut [FermiQuestion], overrides: &[(
 /// Overridable via environment variable HKASK_FERMI_DEFAULTS as JSON.
 /// Each deployment can set its own seed/bootstrap estimates.
 #[derive(Debug, Clone)]
-pub struct FermiDefaults {
+pub(crate) struct FermiDefaults {
     pub growth_questions: Vec<FermiQuestion>,
     pub margin_questions: Vec<FermiQuestion>,
 }
@@ -84,7 +84,7 @@ impl FermiDefaults {
 // ── Fermi decomposition ────────────────────────────────────────────────────
 
 /// Decompose a revenue growth forecast into Fermi sub-questions.
-pub fn fermi_decompose_growth() -> Vec<FermiQuestion> {
+pub(crate) fn fermi_decompose_growth() -> Vec<FermiQuestion> {
     vec![
         FermiQuestion {
             question: "Will TAM (total addressable market) grow? (0=shrink, 0.5=flat, 1=grow)"
@@ -115,7 +115,7 @@ pub fn fermi_decompose_growth() -> Vec<FermiQuestion> {
 }
 
 /// Decompose a profit margin forecast into Fermi sub-questions.
-pub fn fermi_decompose_margin() -> Vec<FermiQuestion> {
+pub(crate) fn fermi_decompose_margin() -> Vec<FermiQuestion> {
     vec![
         FermiQuestion {
             question: "Will input costs decrease? (0=increase, 0.5=flat, 1=decrease)".into(),
@@ -144,7 +144,7 @@ pub fn fermi_decompose_margin() -> Vec<FermiQuestion> {
 
 /// Probability-weighted scenario.
 #[derive(Debug, Clone)]
-pub struct WeightedScenario {
+pub(crate) struct WeightedScenario {
     pub name: &'static str,
     pub intrinsic_per_share: f64,
     pub probability: f64,
@@ -155,7 +155,7 @@ pub struct WeightedScenario {
 /// Uses the growth and margin calibrated probabilities to assign
 /// probabilities to each quadrant of the 2×2 matrix. Growth and margin
 /// are treated as independent.
-pub fn distribute_scenario_probabilities(
+pub(crate) fn distribute_scenario_probabilities(
     growth_probability: f64, // P(high growth)
     margin_probability: f64, // P(high margin)
     scenario_results: &[ScenarioResult],
@@ -179,7 +179,7 @@ pub fn distribute_scenario_probabilities(
 }
 
 /// Compute expected intrinsic value from probability-weighted scenarios.
-pub fn expected_intrinsic(weighted: &[WeightedScenario]) -> f64 {
+pub(crate) fn expected_intrinsic(weighted: &[WeightedScenario]) -> f64 {
     weighted
         .iter()
         .map(|w| w.intrinsic_per_share * w.probability)
@@ -191,7 +191,7 @@ pub fn expected_intrinsic(weighted: &[WeightedScenario]) -> f64 {
 /// Weighting mode of a scenario analysis — the maturity label downstream
 /// consumers use to tell how the quadrant probabilities were derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum WeightingMode {
+pub(crate) enum WeightingMode {
     /// Simple mode: 2×2 range without probabilities (the default on-ramp).
     #[serde(rename = "schwartz_2x2")]
     Schwartz2x2,
@@ -238,10 +238,10 @@ pub struct EventTreeProjection {
 /// `#[serde(default)]` tolerates partial entries without failing the whole
 /// tree, and the pin test in each crate enforces that the real emitters
 /// populate the full 7-field shape.
-pub use hkask_forecast::CmpIndexProvenance;
+pub(crate) use hkask_forecast::CmpIndexProvenance;
 
 #[derive(Debug, Clone, serde::Deserialize)]
-pub struct EventTreeNodeProjection {
+pub(crate) struct EventTreeNodeProjection {
     pub id: String,
     pub marginal_probability: f64,
 }
@@ -258,7 +258,7 @@ pub struct EventTreeNodeProjection {
 /// with a warning rather than fabricating a mapping.
 ///
 /// Returns (growth_probability, margin_probability) on success.
-pub fn tree_root_probabilities(tree: &EventTreeProjection) -> Option<(f64, f64)> {
+pub(crate) fn tree_root_probabilities(tree: &EventTreeProjection) -> Option<(f64, f64)> {
     if tree.root_ids.len() != 2 {
         return None;
     }
@@ -277,7 +277,7 @@ pub fn tree_root_probabilities(tree: &EventTreeProjection) -> Option<(f64, f64)>
 }
 
 /// Check if an actual value falls within a tolerance band of the forecast.
-pub fn within_tolerance(forecast: f64, actual: f64, tolerance: f64) -> bool {
+pub(crate) fn within_tolerance(forecast: f64, actual: f64, tolerance: f64) -> bool {
     if forecast == 0.0 {
         return actual.abs() < tolerance;
     }

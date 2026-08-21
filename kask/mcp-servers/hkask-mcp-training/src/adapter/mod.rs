@@ -19,9 +19,9 @@
 //! was removed — it was dead code with zero production callers. The training
 //! tools use `AdapterStore` (CRUD) and `InferencePort` (inference) directly.
 
-pub mod adapter_store;
-pub mod expertise;
+pub(crate) mod adapter_store;
+pub(crate) mod expertise;
 
 // Re-exports — public API
-pub use adapter_store::{AdapterSource, AdapterStore, AdapterStoreError, TrainedLoRAAdapter};
-pub use expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};
+pub(crate) use adapter_store::{AdapterSource, AdapterStore, AdapterStoreError, TrainedLoRAAdapter};
+pub(crate) use expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};

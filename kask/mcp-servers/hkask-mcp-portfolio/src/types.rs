@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub(crate) const MAX_IMPORT_REQUEST_BYTES: usize = 5 * 1024 * 1024;
-pub(crate) const MAX_IMPORT_TRANSACTION_COUNT: usize = 10_000;
+pub const MAX_IMPORT_REQUEST_BYTES: usize = 5 * 1024 * 1024;
+pub const MAX_IMPORT_TRANSACTION_COUNT: usize = 10_000;
 
 // ── Error type ───────────────────────────────────────────────────────
 
@@ -268,7 +268,7 @@ impl Transaction {
     }
 }
 
-pub(crate) fn check_request_size(
+pub fn check_request_size(
     size: usize,
     maximum: usize,
     subject: &str,

@@ -10,15 +10,15 @@
 
 pub(crate) mod mermaid;
 mod service_impl;
-pub mod types;
+pub(crate) mod types;
 
 // Common imports for submodule files that use `use super::*`
 
 // Re-export the public API from types
-pub use types::{
+pub(crate) use types::{
     Board, ColumnDef, Comment, KanbanPhase, Priority, SpawnSpec, SpendEntry, Task, TaskFilter,
     TaskSpec, TaskStatus, Verification, VerificationCriterion,
 };
 
 // Re-export the service and errors from service_impl
-pub use service_impl::{KanbanError, KanbanService, UnjamFix, UnjamItem};
+pub(crate) use service_impl::{KanbanError, KanbanService, UnjamFix, UnjamItem};

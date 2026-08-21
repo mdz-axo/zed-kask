@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Determines backend routing strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum ComplexityTier {
+pub(crate) enum ComplexityTier {
     /// Low visual complexity — text-only or near-empty pages.
     Simple,
     /// Moderate complexity — tables, mixed content, forms.
@@ -21,7 +21,7 @@ pub enum ComplexityTier {
 /// authoritative routing signal; `value` is the raw heuristic score for
 /// logging and threshold self-tuning.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ComplexityScore {
+pub(crate) struct ComplexityScore {
     /// Raw edge-density ratio [0.0, 1.0].
     pub value: f32,
     /// Threshold-derived tier.
@@ -33,7 +33,7 @@ pub struct ComplexityScore {
 /// Exhaustive set of OCR backends. Each variant maps to a concrete
 /// invocation path within the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum OcrBackend {
+pub(crate) enum OcrBackend {
     /// Classical OCR via Tesseract (fast, best for text-only).
     Tesseract,
     /// Vision-language model OCR via hkask-inference router.
@@ -67,7 +67,7 @@ impl std::fmt::Display for OcrBackend {
 /// the inference port (the port handles provider credentials — not `RUNPOD_*`
 /// env vars read in this crate).
 /// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
-pub const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
+pub(crate) const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
 
 /// Configurable OCR complexity thresholds.
 ///
@@ -75,7 +75,7 @@ pub const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAUL
 /// adjustments based on accumulated cross-validation data (P4: human
 /// approval required before any change takes effect).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ThresholdConfig {
+pub(crate) struct ThresholdConfig {
     /// Edge-density ratio below which a page is considered Simple.
     pub simple_max: f32,
     /// Edge-density ratio below which a page is considered Moderate.
@@ -160,7 +160,7 @@ impl ThresholdConfig {
 /// - `Scanned` / `EmbeddedImages` — from `pdfimages -list` physical image size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum TriageReason {
+pub(crate) enum TriageReason {
     /// A single raster covers most of the page and there is no extractable
     /// text behind it — a scanned/photographed page.
     Scanned,
@@ -193,7 +193,7 @@ impl TriageReason {
 /// silent-loss bug where a mixed PDF with ≥100 total words skipped OCR
 /// entirely and dropped any per-page scanned regions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriageVerdict {
+pub(crate) struct TriageVerdict {
     /// 1-based page number.
     pub page_number: usize,
     /// Native text word count on this page (from `pdftotext`).

@@ -332,7 +332,7 @@ impl CorpusServer {
 // ── Request structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CacheRequest {
+pub(crate) struct CacheRequest {
     /// Text content to cache.
     pub content: String,
     /// Label/key for the cached entry.
@@ -340,7 +340,7 @@ pub struct CacheRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct QueryRequest {
+pub(crate) struct QueryRequest {
     /// Natural language question to search for.
     pub query: String,
     /// Number of top results to return (default 5).
@@ -352,14 +352,14 @@ pub struct QueryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ClearIndexRequest {
+pub(crate) struct ClearIndexRequest {
     /// Reserved for future multi-index support.
     #[serde(default)]
     pub index_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PurgeQaRequest {
+pub(crate) struct PurgeQaRequest {
     /// Entity-ref prefix to purge (e.g. "corpus:researcher:").
     #[serde(default = "default_purge_prefix")]
     pub prefix: String,

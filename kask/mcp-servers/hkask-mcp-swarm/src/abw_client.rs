@@ -12,7 +12,7 @@ use crate::error::SwarmError;
 /// Thin reqwest wrapper isolating every ABW-specific assumption (base URL,
 /// auth header, error mapping) behind one seam. The panel, settings, and
 /// tools never construct raw requests.
-pub(crate) struct SwarmClient {
+pub struct SwarmClient {
     http: reqwest::Client,
     config: SwarmConfig,
 }

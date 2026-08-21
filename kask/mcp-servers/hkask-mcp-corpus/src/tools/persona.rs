@@ -171,7 +171,7 @@ pub struct BuildRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ComposeRequest {
+pub(crate) struct ComposeRequest {
     pub prompt: String,
     pub author: String,
     pub db_path: String,
@@ -189,7 +189,7 @@ fn default_compare_mode() -> String {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompareRequest {
+pub(crate) struct CompareRequest {
     pub db_path: String,
     pub passphrase: String,
     #[serde(default)]
@@ -201,7 +201,7 @@ pub struct CompareRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MashupRequest {
+pub(crate) struct MashupRequest {
     pub prompt: String,
     pub author_a: String,
     pub author_b: String,
@@ -217,13 +217,13 @@ fn default_half() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "lowercase")]
-pub enum RegistryAction {
+pub(crate) enum RegistryAction {
     List,
     Remove { author: String },
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RegistryRequest {
+pub(crate) struct RegistryRequest {
     #[serde(flatten)]
     pub action: RegistryAction,
     pub db_path: String,
@@ -231,7 +231,7 @@ pub struct RegistryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RewriteRequest {
+pub(crate) struct RewriteRequest {
     pub content: String,
     #[serde(default = "default_rewrite_author")]
     pub author: String,

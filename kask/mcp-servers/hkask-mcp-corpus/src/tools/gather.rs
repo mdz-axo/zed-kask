@@ -65,7 +65,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CacheWorkRequest {
+pub(crate) struct CacheWorkRequest {
     pub slug: String,
     pub content: String,
     pub cache_dir: String,
@@ -480,7 +480,7 @@ impl CorpusServer {
 // ── Company discovery types ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DiscoverCompanyRequest {
+pub(crate) struct DiscoverCompanyRequest {
     pub symbol: String,
     /// Path to the company manifest YAML. Defaults to
     /// `kask/registry/company-sources/{symbol}.yaml`.

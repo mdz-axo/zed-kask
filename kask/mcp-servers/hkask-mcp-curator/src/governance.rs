@@ -13,7 +13,7 @@ use std::sync::Arc;
 // ── Escalation response type ──────────────────────────────────────────
 
 /// Response for a single escalation entry.
-pub struct EscalationResponse {
+pub(crate) struct EscalationResponse {
     pub id: String,
     pub template_id: String,
     pub bot_id: String,
@@ -97,7 +97,7 @@ fn emit_escalation_event(
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: returns all currently pending escalation entries as EscalationResponse records
 #[must_use = "result must be used"]
-pub fn list_escalations_direct(
+pub(crate) fn list_escalations_direct(
     queue: &EscalationQueue,
 ) -> Result<Vec<EscalationResponse>, ServiceError> {
     let entries = queue.list_pending().map_err(|e| ServiceError::Domain {
@@ -114,7 +114,7 @@ pub fn list_escalations_direct(
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: marks the escalation as resolved; emits a Regulation regulation record; Err if not found
 #[must_use = "result must be used"]
-pub fn resolve_direct(
+pub(crate) fn resolve_direct(
     queue: &EscalationQueue,
     events: &Arc<dyn RegulationSink>,
     id: &str,
@@ -151,7 +151,7 @@ pub fn resolve_direct(
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: marks the escalation as dismissed; emits a Regulation regulation record; Err if not found
 #[must_use = "result must be used"]
-pub fn dismiss_direct(
+pub(crate) fn dismiss_direct(
     queue: &EscalationQueue,
     events: &Arc<dyn RegulationSink>,
     id: &str,

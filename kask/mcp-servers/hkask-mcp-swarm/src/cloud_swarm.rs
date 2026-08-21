@@ -12,8 +12,8 @@
 //!   `extract_execute_response`) with their property tests.
 //! - `curator` — the Xaman Ek `CuratorSession` refund guard.
 
-pub(crate) mod curator;
-pub(crate) mod helpers;
+pub mod curator;
+pub mod helpers;
 
 // Re-export the pure helpers so `cloud_swarm_tools.rs` and `test_utils` can import
 // them from `cloud` without reaching into the sub-module.

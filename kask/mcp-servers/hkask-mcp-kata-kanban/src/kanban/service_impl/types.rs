@@ -7,7 +7,7 @@ use crate::TaskStatus;
 
 /// UnjamItem — a stuck state detected by the de-jammer.
 #[derive(Debug, Clone)]
-pub struct UnjamItem {
+pub(crate) struct UnjamItem {
     pub task_id: TaskId,
     pub task_title: String,
     pub issue: String,
@@ -16,7 +16,7 @@ pub struct UnjamItem {
 
 /// UnjamFix — records an auto-fix action taken by the de-jammer.
 #[derive(Debug, Clone)]
-pub struct UnjamFix {
+pub(crate) struct UnjamFix {
     pub task_id: TaskId,
     pub task_title: String,
     pub action: String,
@@ -24,7 +24,7 @@ pub struct UnjamFix {
 
 /// Errors specific to kanban operations.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum KanbanError {
+pub(crate) enum KanbanError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

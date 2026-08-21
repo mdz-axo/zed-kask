@@ -6,7 +6,7 @@ use calamine::{Data, Reader, open_workbook_auto};
 use hkask_types::document::{Block, DocStructure, Page};
 
 /// XLSX/XLS/ODS spreadsheet backend.
-pub struct XlsxBackend;
+pub(crate) struct XlsxBackend;
 
 impl DocumentBackend for XlsxBackend {
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {

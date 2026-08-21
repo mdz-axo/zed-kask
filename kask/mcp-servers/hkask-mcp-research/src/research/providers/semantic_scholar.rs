@@ -7,7 +7,7 @@ use async_trait::async_trait;
 /// Free tier: no API key required, rate-limited to ~1 request/second.
 /// Searches papers by title/author/keyword and returns structured results
 /// with abstracts, authors, year, citation count, and external IDs (DOI, ArXiv).
-pub struct SemanticScholarProvider {
+pub(crate) struct SemanticScholarProvider {
     client: reqwest::Client,
 }
 

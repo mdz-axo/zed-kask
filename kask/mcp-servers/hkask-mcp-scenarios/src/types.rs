@@ -17,7 +17,7 @@ use thiserror::Error;
 
 /// Errors from scenario computation and validation.
 #[derive(Debug, Error)]
-pub enum ScenarioError {
+pub(crate) enum ScenarioError {
     #[error("no events provided")]
     NoEvents,
 
@@ -61,7 +61,7 @@ pub enum ScenarioError {
 /// This is the "semi-structured discussion" that scopes the project:
 /// what are we trying to learn, for whom, by when, and why?
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct FramingDocument {
+pub(crate) struct FramingDocument {
     /// The focal question or decision this scenario project informs.
     /// Schwartz: must be decision-relevant, time-bounded, scope-bounded.
     pub focal_question: String,
@@ -106,7 +106,7 @@ pub struct FramingDocument {
 
 /// A stakeholder whose perspective should be represented in the scenario process.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct StakeholderConfig {
+pub(crate) struct StakeholderConfig {
     /// Role or name
     pub role: String,
     /// What does this stakeholder care about most?
@@ -120,7 +120,7 @@ pub struct StakeholderConfig {
 /// How the scenario output will be consumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum UseCase {
+pub(crate) enum UseCase {
     /// Informing a specific strategic decision (e.g., "should we enter market X?")
     StrategicDecision,
     /// Validating or stress-testing an investment thesis
@@ -150,7 +150,7 @@ impl UseCase {
 /// Planning horizon for scenario construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TimeHorizon {
+pub(crate) enum TimeHorizon {
     /// 12–18 months: near-term opportunities and challenges
     Tactical,
     /// 3–5 years: investment thesis validation
@@ -173,7 +173,7 @@ impl TimeHorizon {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ScenarioType {
+pub(crate) enum ScenarioType {
     /// Quarterly or periodic company updates
     CompanyUpdate,
     /// Investment thesis construction
@@ -236,7 +236,7 @@ impl CertaintyTier {
 
 /// A binomial scenario event — a yes/no question with a deadline.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ScenarioEvent {
+pub(crate) struct ScenarioEvent {
     /// Unique event identifier
     pub id: String,
     /// Short descriptive name
@@ -289,7 +289,7 @@ pub struct ScenarioEvent {
 ///
 /// `conditionals.len()` must equal 2^`parent_event_ids.len()`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EventDependency {
+pub(crate) struct EventDependency {
     /// IDs of parent events that jointly condition this event's probability.
     pub parent_event_ids: Vec<String>,
     /// Full joint conditional table P(this_event | parent truth assignment),
@@ -301,7 +301,7 @@ pub struct EventDependency {
 
 /// A sub-question from Fermi decomposition.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SubQuestion {
+pub(crate) struct SubQuestion {
     /// The sub-question text
     pub question: String,
     /// Best estimate for this sub-question (0.0–1.0)
@@ -317,7 +317,7 @@ pub struct SubQuestion {
 /// A single perspective on an event — one analyst's probability estimate
 /// with their Fermi decomposition and rationale.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Perspective {
+pub(crate) struct Perspective {
     /// Who or what produced this perspective (analyst name, agent ID, model name)
     pub source: String,
     /// Calibrated probability for this event (0.0–1.0)
@@ -337,7 +337,7 @@ pub struct Perspective {
 /// Synthesized forecast from multiple independent perspectives.
 /// The dragonfly has 30,000 lenses — this aggregates them into one view.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DragonflySynthesis {
+pub(crate) struct DragonflySynthesis {
     /// Which event is being synthesized
     pub event_id: String,
     /// All perspectives considered
@@ -358,7 +358,7 @@ pub struct DragonflySynthesis {
 
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredForecastRecord {
+pub(crate) struct StoredForecastRecord {
     /// Schema version for forward-compatible deserialization (current: 2).
     /// Old files without this field default to 0.
     /// v2 adds `category` for per-domain calibration.
@@ -384,7 +384,7 @@ pub struct StoredForecastRecord {
 /// One bin in a calibration curve — forecasts in a probability range
 /// and their actual hit rate.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CalibrationBin {
+pub(crate) struct CalibrationBin {
     /// Probability range (e.g. 0.7–0.8)
     pub probability_range: String,
     /// How many forecasts fall in this bin
@@ -399,7 +399,7 @@ pub struct CalibrationBin {
 
 /// Full calibration curve across all stored forecasts.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CalibrationCurve {
+pub(crate) struct CalibrationCurve {
     pub bins: Vec<CalibrationBin>,
     pub total_forecasts: u64,
     pub resolved_forecasts: u64,
@@ -414,7 +414,7 @@ pub struct CalibrationCurve {
 /// Triage assessment for a forecasting question.
 /// Evaluates whether a question is worth the full superforecasting pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TriageAssessment {
+pub(crate) struct TriageAssessment {
     /// The original question
     pub question: String,
     /// Is this worth forecasting?
@@ -436,7 +436,7 @@ pub struct TriageAssessment {
 /// A persona for divergent event generation.
 /// Each persona brings a distinct perspective to the brainstorming session.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PersonaConfig {
+pub(crate) struct PersonaConfig {
     /// Persona name (e.g., "Bull", "Bear", "Contrarian", "Domain Expert")
     pub name: String,
     /// Lens: what this persona focuses on
@@ -447,7 +447,7 @@ pub struct PersonaConfig {
 
 /// A single round in the multi-round brainstorming protocol.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BrainstormRound {
+pub(crate) struct BrainstormRound {
     /// Round number (1-4)
     pub round: u8,
     /// Round name
@@ -466,7 +466,7 @@ pub struct BrainstormRound {
 
 /// Full multi-round brainstorming protocol.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BrainstormProtocol {
+pub(crate) struct BrainstormProtocol {
     /// Subject being brainstormed
     pub subject: String,
     /// Time horizon
@@ -487,7 +487,7 @@ pub struct BrainstormProtocol {
 /// parameters into a single struct so callers don't need to remember
 /// argument order.
 #[derive(Debug)]
-pub struct AssessInput<'a> {
+pub(crate) struct AssessInput<'a> {
     pub project_id: &'a str,
     pub subject: &'a str,
     pub perspective_count: usize,
@@ -508,7 +508,7 @@ pub struct AssessInput<'a> {
 /// Evaluates not just forecast accuracy (Tetlock) but whether the
 /// scenario project improved decision quality and organizational learning.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ProjectAssessment {
+pub(crate) struct ProjectAssessment {
     /// Project identifier
     pub project_id: String,
     /// Subject domain
@@ -537,7 +537,7 @@ pub struct ProjectAssessment {
 
 /// Score for a single phase of the scenario project.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PhaseScore {
+pub(crate) struct PhaseScore {
     /// Phase name
     pub phase: String,
     /// Score 0-1
@@ -552,7 +552,7 @@ pub struct PhaseScore {
 /// An event tree node with resolved probability (after conditional computation).
 /// Full event tree with resolved probabilities.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EventTreeNode {
+pub(crate) struct EventTreeNode {
     pub event: ScenarioEvent,
     /// Resolved marginal probability after applying all dependencies
     pub marginal_probability: f64,
@@ -584,7 +584,7 @@ pub struct EventTree {
 
 /// Recorded outcome of a forecast.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ForecastOutcome {
+pub(crate) struct ForecastOutcome {
     /// Forecast record ID
     pub forecast_id: String,
     /// Subject identifier
@@ -635,7 +635,7 @@ pub struct CrossValidation {
 
 /// Per-sub-question divergence between two Fermi decompositions.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SubQuestionDivergence {
+pub(crate) struct SubQuestionDivergence {
     /// The sub-question text
     pub question: String,
     /// Estimate from source A

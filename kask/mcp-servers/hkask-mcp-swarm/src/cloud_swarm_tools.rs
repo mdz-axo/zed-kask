@@ -33,7 +33,7 @@ pub use crate::cloud_swarm::{build_create_agent_card, extract_execute_response};
 /// a field absent from fermi's response stays `Null` (schema-stable), and a
 /// field fermi stops emitting silently goes `Null` rather than blanking the
 /// panel (the panel deserializes with `serde` and ignores unknown keys).
-pub(crate) fn map_catalogue_agent(a: &serde_json::Value) -> serde_json::Value {
+pub fn map_catalogue_agent(a: &serde_json::Value) -> serde_json::Value {
     // Sanitize the description field (KA-01): agent descriptions are
     // ABW/LLM-generated and can carry injection payloads. Plain-string
     // sanitizer: the panel parses `description` as `Option<String>` — the

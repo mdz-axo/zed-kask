@@ -22,14 +22,14 @@ pub(crate) mod verification;
 // Re-export all public types. `TaskStatus` lives in `hkask_types` (the shared
 // single source of truth for the widget and the server); re-exported here so
 // existing `crate::kanban::TaskStatus` paths keep working.
-pub use board::Board;
-pub use column::ColumnDef;
+pub(crate) use board::Board;
+pub(crate) use column::ColumnDef;
 
-pub use hkask_types::TaskStatus;
-pub use phase::KanbanPhase;
-pub use priority::Priority;
-pub use spawn::SpawnSpec;
-pub use spend::SpendEntry;
-pub use task::{Comment, Task, TaskFilter};
-pub use task_spec::TaskSpec;
-pub use verification::{Verification, VerificationCriterion};
+pub(crate) use hkask_types::TaskStatus;
+pub(crate) use phase::KanbanPhase;
+pub(crate) use priority::Priority;
+pub(crate) use spawn::SpawnSpec;
+pub(crate) use spend::SpendEntry;
+pub(crate) use task::{Comment, Task, TaskFilter};
+pub(crate) use task_spec::TaskSpec;
+pub(crate) use verification::{Verification, VerificationCriterion};

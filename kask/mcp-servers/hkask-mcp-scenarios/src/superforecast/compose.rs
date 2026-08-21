@@ -19,7 +19,7 @@ use crate::types::{EventTree, ScenarioError, ScenarioEvent, ScenarioType, TimeHo
 /// joints but never invents the conditional probabilities themselves (the
 /// never-fabricate rule applied to the composition layer).
 #[derive(Debug, Clone)]
-pub struct DependencySpec {
+pub(crate) struct DependencySpec {
     /// Child event id (must match a converted event's `mkt-{market_id}`).
     pub child_market_id: String,
     /// Parent event ids (market ids of the conditioning markets).
@@ -32,7 +32,7 @@ pub struct DependencySpec {
 /// Maximum parents per dependency group (CPT size cap — variety amplifier iv).
 /// 2^4 = 16 conditional entries per group; deeper conditioning belongs in
 /// multiple groups (noisy-OR channels) or signals a misspecified tree.
-pub const MAX_PARENTS_PER_GROUP: usize = 4;
+pub(crate) const MAX_PARENTS_PER_GROUP: usize = 4;
 
 /// Jaccard token-overlap threshold above which two market questions are
 /// flagged as potential duplicates (same underlying event, not a dependency).
@@ -41,7 +41,7 @@ const DUPLICATE_OVERLAP_THRESHOLD: f64 = 0.65;
 /// A warning emitted during composition — surfaced to the caller, never
 /// silently dropped.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct CompositionWarning {
+pub(crate) struct CompositionWarning {
     pub kind: &'static str,
     pub detail: String,
 }
@@ -59,7 +59,7 @@ pub struct CompositionWarning {
 /// Overlap above `DUPLICATE_OVERLAP_THRESHOLD` is flagged as a likely
 /// duplicate (wiring two records of the same event into a tree double-counts
 /// the signal).
-pub fn compose_market_tree(
+pub(crate) fn compose_market_tree(
     records: &[hkask_mcp_prediction_markets::types::MarketRecord],
     match_confidences: &[Option<String>],
     dependency_specs: &[DependencySpec],
@@ -180,7 +180,7 @@ pub fn compose_market_tree(
 /// index). The event deadline is `observation_date + target_maturity_days` —
 /// the honest deadline for the constant-maturity target, not a fabricated
 /// placeholder.
-pub fn convert_cmp_index(
+pub(crate) fn convert_cmp_index(
     index: &hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex,
     observation_date: chrono::NaiveDate,
 ) -> ScenarioEvent {
@@ -288,7 +288,7 @@ pub fn compose_cmp_tree(
 /// length 2^parent_ids.len(). The server validates structure but never invents
 /// conditional probabilities — the caller authors them.
 #[derive(Debug, Clone)]
-pub struct CmpDependencySpec {
+pub(crate) struct CmpDependencySpec {
     /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
     pub child_id: String,
     /// The parent CMP index IDs.
@@ -308,7 +308,7 @@ pub struct CmpDependencySpec {
 /// `observation_date` is the date the CMP indices were built.
 /// `dependency_specs` are caller-authored edges between CMP index IDs. Omit for
 /// a flat (independent) tree — same as `compose_cmp_tree`.
-pub fn compose_cmp_tree_with_deps(
+pub(crate) fn compose_cmp_tree_with_deps(
     indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
     observation_date: chrono::NaiveDate,
     dependency_specs: &[CmpDependencySpec],
@@ -362,7 +362,7 @@ pub fn compose_cmp_tree_with_deps(
 /// (T10): each entry is one round of the market's one-step-ahead adjustment
 /// (Bhattacharya Prop. 6, arXiv:2211.03244 — see t0-keystone-mapping.md §3).
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct PropagationEntry {
+pub(crate) struct PropagationEntry {
     pub event_id: String,
     pub marginal_before: f64,
     pub marginal_after: f64,
@@ -371,7 +371,7 @@ pub struct PropagationEntry {
 
 /// Result of updating one node's prior and propagating through the tree.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct PropagationResult {
+pub(crate) struct PropagationResult {
     /// The updated tree (all marginals recomputed).
     pub tree: EventTree,
     /// Every node whose marginal changed (including the updated node itself),
@@ -395,7 +395,7 @@ pub struct PropagationResult {
 /// evidence revision. Nodes not reachable from the updated node are
 /// unaffected but are re-validated with the tree (cheap, and keeps one
 /// validation path).
-pub fn propagate_prior_update(
+pub(crate) fn propagate_prior_update(
     events: &[ScenarioEvent],
     updated_event_id: &str,
     new_prior: f64,

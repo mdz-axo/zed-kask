@@ -8,10 +8,10 @@
 //! - `corpus`   — dedup, consolidate, build prompts, ingest QA, training data (QA output)
 //! - `persona`  — build persona, compose/rewrite/mashup prose, compare, registry (persona output)
 //! - `storage`  — cache, query, clear index, purge QA (management)
-pub mod corpus;
-pub mod document;
-pub mod gather;
-pub mod persona;
-pub mod semantic;
-pub mod storage;
-pub mod tagging;
+pub(crate) mod corpus;
+pub(crate) mod document;
+pub(crate) mod gather;
+pub(crate) mod persona;
+pub(crate) mod semantic;
+pub(crate) mod storage;
+pub(crate) mod tagging;

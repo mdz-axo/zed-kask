@@ -2,7 +2,7 @@ use super::{ProviderSearchOutput, WebError, WebSearchProvider};
 use crate::research::types::*;
 use async_trait::async_trait;
 
-pub struct BraveProvider {
+pub(crate) struct BraveProvider {
     client: reqwest::Client,
     api_key: String,
 }

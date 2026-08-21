@@ -26,7 +26,7 @@ use crate::{normalize_concept, normalize_in_place, render_docproc_template};
 /// other parameterizes the memory cybernetic loop. The shared name was a
 /// false friend — a semantic graph audit found no shared code path, data
 /// flow, or ontology axis between them.
-pub struct ChunkConsolidationRequest {
+pub(crate) struct ChunkConsolidationRequest {
     pub tagged_jsonl: String,
     pub output: String,
     pub db_path: String,

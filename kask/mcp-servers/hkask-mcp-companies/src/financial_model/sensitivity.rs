@@ -13,7 +13,7 @@ use crate::fibo::{
 
 /// Result of varying one assumption and measuring intrinsic value delta.
 #[derive(Debug, Clone, Serialize)]
-pub struct SensitivityResult {
+pub(crate) struct SensitivityResult {
     pub driver: String,
     pub label: String,
     pub base_value: f64,
@@ -28,7 +28,7 @@ pub struct SensitivityResult {
 /// Run sensitivity analysis on all key DCF drivers.
 /// Varies each assumption by +/- range_pct and records intrinsic value impact.
 /// Returns results sorted by absolute delta (most impactful first).
-pub fn sensitivity_analysis(
+pub(crate) fn sensitivity_analysis(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     range_pct: f64,

@@ -27,7 +27,7 @@ use crate::ocr::{TriageConfig, TriageReason, TriageVerdict};
 
 /// Typed triage errors. (No `Result<_, String>` — project rule.)
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum TriageError {
+pub(crate) enum TriageError {
     #[error("pdftotext failed: {0}")]
     PdftotextFailed(String),
     #[error("pdfimages failed: {0}")]
@@ -124,7 +124,7 @@ pub(crate) fn ocr_page_indices(verdicts: &[TriageVerdict]) -> Vec<usize> {
 ///
 /// Mirrors LiteParse's `--target-pages` CLI grammar. Errors on malformed
 /// ranges (non-numeric, inverted `5-2`, zero page).
-pub fn parse_target_pages(spec: &str) -> Result<Vec<usize>, TriageError> {
+pub(crate) fn parse_target_pages(spec: &str) -> Result<Vec<usize>, TriageError> {
     let spec = spec.trim();
     if spec.is_empty() {
         return Ok(Vec::new());

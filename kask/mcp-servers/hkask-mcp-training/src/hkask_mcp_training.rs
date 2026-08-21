@@ -68,13 +68,13 @@
 //! - `HKASK_PODS_FILE` — Path to RunPod pod ID persistence file (default: data/training-pods.json)
 //!   Ensures pod IDs survive restarts so orphaned pods can be terminated.
 
-pub mod adapter;
-pub mod adapters;
-pub mod dataset;
-pub mod huggingface;
-pub mod lora_validation;
-pub mod providers;
-pub mod types;
+pub(crate) mod adapter;
+pub(crate) mod adapters;
+pub(crate) mod dataset;
+pub(crate) mod huggingface;
+pub(crate) mod lora_validation;
+pub(crate) mod providers;
+pub(crate) mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

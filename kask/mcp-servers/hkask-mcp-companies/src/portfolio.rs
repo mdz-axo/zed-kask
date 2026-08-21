@@ -15,7 +15,7 @@ use hkask_mcp_portfolio::{
     import_csv, import_json, returns,
 };
 // Re-export the general types the tool layer imports from this module.
-pub use hkask_mcp_portfolio::{PortfolioError, Transaction, TxType};
+pub(crate) use hkask_mcp_portfolio::{PortfolioError, Transaction, TxType};
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -90,7 +90,7 @@ fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
 
 /// Owner-scoped forecast persisted as structured JSON for later reconstruction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedForecast {
+pub(crate) struct PersistedForecast {
     pub id: String,
     pub symbol: String,
     pub revision_of: Option<String>,
@@ -131,14 +131,14 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
 // layer keeps compiling without changes, and provide a thin `PortfolioManager`
 // that delegates the general ops while owning the companies-specific ones.
 
-pub use hkask_mcp_portfolio::{Transaction as PortfolioTransaction, TxType as PortfolioTxType};
+pub(crate) use hkask_mcp_portfolio::{Transaction as PortfolioTransaction, TxType as PortfolioTxType};
 
 /// Companies-side portfolio manager. Holds a [`PortfolioStore`] (the
 /// general-purpose ledger/holdings/returns engine from `hkask-mcp-portfolio`)
 /// and adds companies-specific research artifacts: notes, files, and DCF
 /// forecast snapshots.
 #[derive(Clone)]
-pub struct PortfolioManager {
+pub(crate) struct PortfolioManager {
     /// The general-purpose store (owns the SQLite DB + schema).
     store: PortfolioStore,
     /// Path to the same SQLite DB the store uses, for companies-specific
@@ -793,7 +793,7 @@ impl PortfolioManager {
 // ── Validation report (companies-side view) ───────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ValidationReport {
+pub(crate) struct ValidationReport {
     pub valid: bool,
     pub transaction_count: usize,
     pub positions: Vec<PositionSummary>,
@@ -802,7 +802,7 @@ pub struct ValidationReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PositionSummary {
+pub(crate) struct PositionSummary {
     pub symbol: String,
     pub shares: f64,
     pub total_buys: f64,

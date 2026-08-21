@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::{HistoricalSnapshot, ProjectionAssumptionError, ProjectionAssumptions, project_model};
 /// Distribution of intrinsic values from Monte Carlo simulation.
 #[derive(Debug, Clone, Serialize)]
-pub struct MonteCarloResult {
+pub(crate) struct MonteCarloResult {
     pub simulations: usize,
     pub base_intrinsic: f64,
     pub mean_intrinsic: f64,
@@ -30,7 +30,7 @@ pub struct MonteCarloResult {
 }
 
 /// Range specification for one assumption in Monte Carlo simulation.
-pub struct McRange {
+pub(crate) struct McRange {
     pub revenue_growth: f64,
     pub gross_margin: f64,
     pub da_to_revenue: f64,
@@ -63,7 +63,7 @@ impl McRange {
 }
 
 /// Validate the relative sensitivity range before varying assumptions.
-pub fn validate_sensitivity_range(range_pct: f64) -> Result<(), ProjectionAssumptionError> {
+pub(crate) fn validate_sensitivity_range(range_pct: f64) -> Result<(), ProjectionAssumptionError> {
     if !range_pct.is_finite() || !(0.0..=1.0).contains(&range_pct) {
         return Err(ProjectionAssumptionError::NotFiniteOrOutOfRange {
             field: "range_pct",
@@ -88,8 +88,8 @@ impl Default for McRange {
 }
 
 /// The simulation-count bounds enforced by [`monte_carlo_dcf`].
-pub const MC_MIN_SIMULATIONS: usize = 100;
-pub const MC_MAX_SIMULATIONS: usize = 10_000;
+pub(crate) const MC_MIN_SIMULATIONS: usize = 100;
+pub(crate) const MC_MAX_SIMULATIONS: usize = 10_000;
 
 /// Run N Monte Carlo simulations with randomized assumptions within +/- range.
 ///
@@ -97,7 +97,7 @@ pub const MC_MAX_SIMULATIONS: usize = 10_000;
 /// rather than at the call site, so the non-empty invariant the histogram and
 /// percentile computations rely on holds for every caller of this public
 /// function. `MonteCarloResult::simulations` reports the count actually run.
-pub fn monte_carlo_dcf(
+pub(crate) fn monte_carlo_dcf(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     simulations: usize,

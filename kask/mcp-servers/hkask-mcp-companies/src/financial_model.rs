@@ -71,7 +71,7 @@ fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f6
 
 /// Historical financial data extracted from API responses.
 #[derive(Debug, Clone)]
-pub struct HistoricalSnapshot {
+pub(crate) struct HistoricalSnapshot {
     pub revenue: Vec<(String, f64)>,
     pub cogs: Vec<(String, f64)>,
     pub da: Vec<(String, f64)>,
@@ -355,7 +355,7 @@ impl HistoricalSnapshot {
 
 /// One period in the projected financial statements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectedLineItems {
+pub(crate) struct ProjectedLineItems {
     pub period: usize,
     pub year: f64,
     pub revenue: f64,
@@ -374,7 +374,7 @@ pub struct ProjectedLineItems {
 
 /// The full projected model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectedModel {
+pub(crate) struct ProjectedModel {
     pub periods: Vec<ProjectedLineItems>,
     pub terminal_value: f64,
     pub terminal_pv: f64,
@@ -386,7 +386,7 @@ pub struct ProjectedModel {
 
 /// Projection assumptions — overrideable by the user or calibrated from history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectionAssumptions {
+pub(crate) struct ProjectionAssumptions {
     /// Revenue growth rate (annual).
     pub revenue_growth: f64,
     /// Gross margin: (revenue - cogs) / revenue.
@@ -427,7 +427,7 @@ impl Default for ProjectionAssumptions {
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum ProjectionAssumptionError {
+pub(crate) enum ProjectionAssumptionError {
     #[error("{field} must be finite")]
     NotFinite { field: &'static str },
     #[error("{field} must be within {min}..={max}")]
@@ -690,8 +690,8 @@ pub fn project_model(
 
 /// The growth-rate search bounds used by the reverse DCF. Callers verify the
 /// price is bracketed by these bounds before searching.
-pub const IMPLIED_GROWTH_LO: f64 = -0.50;
-pub const IMPLIED_GROWTH_HI: f64 = 1.00;
+pub(crate) const IMPLIED_GROWTH_LO: f64 = -0.50;
+pub(crate) const IMPLIED_GROWTH_HI: f64 = 1.00;
 
 /// Solve for the revenue-growth rate at which the projected intrinsic value
 /// equals `current_price` (the Mauboussin reverse DCF).
@@ -706,7 +706,7 @@ pub const IMPLIED_GROWTH_HI: f64 = 1.00;
 /// Returns `None` when `current_price` is not positive, or when the price is
 /// not bracketed by `[IMPLIED_GROWTH_LO, IMPLIED_GROWTH_HI]` (the root lies
 /// outside the searchable range — never fabricate an in-range answer).
-pub fn implied_growth(
+pub(crate) fn implied_growth(
     hist: &HistoricalSnapshot,
     assumptions: &ProjectionAssumptions,
     current_price: f64,
@@ -753,22 +753,22 @@ pub fn implied_growth(
 
 // ── Equity duration — extracted to `financial_model/equity_duration.rs`
 mod equity_duration;
-pub use equity_duration::equity_duration;
+pub(crate) use equity_duration::equity_duration;
 
 // ── Gap decomposition — extracted to `financial_model/gap_decomposition.rs`
 mod gap_decomposition;
-pub use gap_decomposition::decompose_gap;
+pub(crate) use gap_decomposition::decompose_gap;
 
 // ── Sensitivity analysis — extracted to `financial_model/sensitivity.rs`
 mod sensitivity;
-pub use sensitivity::sensitivity_analysis;
+pub(crate) use sensitivity::sensitivity_analysis;
 
 // ── Monte Carlo DCF — extracted to `financial_model/monte_carlo.rs`
 mod monte_carlo;
-pub use monte_carlo::{McRange, monte_carlo_dcf, validate_sensitivity_range};
+pub(crate) use monte_carlo::{McRange, monte_carlo_dcf, validate_sensitivity_range};
 
 // ── Scenario impact valuation — extracted to `financial_model/scenario_impact.rs`
 mod scenario_impact;
-pub use scenario_impact::{
+pub(crate) use scenario_impact::{
     ScenarioImpactError, ScenarioNodeImpact, ScenarioTreeInput, scenario_impact_dcf,
 };

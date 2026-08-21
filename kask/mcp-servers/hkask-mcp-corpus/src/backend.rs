@@ -10,13 +10,13 @@
 //! - `DocStructure` is the single output type — downstream tools don't care
 //!   which backend produced it.
 
-pub mod docx;
-pub mod pptx;
-pub mod xlsx;
+pub(crate) mod docx;
+pub(crate) mod pptx;
+pub(crate) mod xlsx;
 
-pub use docx::DocxBackend;
-pub use pptx::PptxBackend;
-pub use xlsx::XlsxBackend;
+pub(crate) use docx::DocxBackend;
+pub(crate) use pptx::PptxBackend;
+pub(crate) use xlsx::XlsxBackend;
 
 use hkask_types::document::{Block, DocStructure, Page};
 
@@ -24,14 +24,14 @@ use hkask_types::document::{Block, DocStructure, Page};
 ///
 /// Implementations are format-specific. The caller selects the backend based
 /// on file extension (see `convert::detect_format`).
-pub trait DocumentBackend {
+pub(crate) trait DocumentBackend {
     /// Parse the file at `path` into a `DocStructure`.
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError>;
 }
 
 /// Error from a document backend.
 #[derive(Debug, thiserror::Error)]
-pub enum BackendError {
+pub(crate) enum BackendError {
     #[error("Failed to read file '{path}': {source}")]
     Read {
         path: String,
