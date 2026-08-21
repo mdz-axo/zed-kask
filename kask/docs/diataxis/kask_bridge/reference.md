@@ -40,7 +40,6 @@ loops the SKILL.md bodies describe.
 | `KaskDataServiceSettings` | `kask/crates/kask_bridge/src/settings.rs:130-152` |
 | `KaskInferenceProvidersSettings` | `kask/crates/kask_bridge/src/settings.rs:164-174` |
 | `KaskInferenceProvidersSettings::from_env` | `kask/crates/kask_bridge/src/settings.rs:183-189` |
-| `KaskCollabSettings` | `kask/crates/kask_bridge/src/settings.rs:203-220` |
 | `KaskCuratorSettings` | `kask/crates/kask_bridge/src/settings.rs:240-252` |
 | `KaskCuratorEmailSettings` | `kask/crates/kask_bridge/src/settings.rs:270-295` |
 | `KaskMemorySettings` | `kask/crates/kask_bridge/src/settings.rs:298-314` |
@@ -135,7 +134,6 @@ classDiagram
         +models: KaskModelsSettings
         +tool_router: KaskToolRouterSettings
         +inference_providers: KaskInferenceProvidersSettings
-        +collab: KaskCollabSettings
         +mcp_env() HashMap
     }
     class KaskMcpSettings {
@@ -189,12 +187,6 @@ classDiagram
         +threshold: f64
         +complex_word_threshold: usize
     }
-    class KaskCollabSettings {
-        +enabled: bool
-        +database_url: String
-        +http_port: u16
-        +zed_environment: String
-    }
     KaskSettings --> KaskMcpSettings
     KaskSettings --> KaskCuratorSettings
     KaskSettings --> KaskMemorySettings
@@ -203,7 +195,6 @@ classDiagram
     KaskSettings --> KaskSwarmSettings
     KaskSettings --> KaskModelsSettings
     KaskSettings --> KaskToolRouterSettings
-    KaskSettings --> KaskCollabSettings
     KaskCuratorSettings --> KaskCuratorEmailSettings
 ```
 

@@ -1924,8 +1924,8 @@ fn main() {
                     let credentials_provider = zed_credentials_provider::global(cx);
                     kask_bridge::mirror_env_keys_to_keychain(&credentials_provider, cx)
                 });
+                :
                 mirror_task.detach();
-:
 
                 // zed-kask: Registry path resolution is now handled by the
                 // model-dependent skill execution task (below the deferred

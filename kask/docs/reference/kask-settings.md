@@ -37,7 +37,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 | `inference_providers` | `KaskInferenceProvidersSettings` | derived `Default` (all false) |
-| `collab` | `KaskCollabSettings` | `Default` (enabled, localhost:3000, sqlite) |
 
 ## MCP Servers (`KaskMcpSettings`)
 
