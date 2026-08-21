@@ -788,7 +788,7 @@ impl KaskSettings {
     /// `mcp_env_models_embedding_model_overrides_corpus`.
     #[must_use]
     pub fn effective_embedding_model(&self) -> String {
-        if !self.models.embedding_model.trim().is_empty() {
+        if !self.models.embedding_model.is_empty() {
             self.models.embedding_model.clone()
         } else if self.corpus.embedding_model != default_embedding_model() {
             self.corpus.embedding_model.clone()

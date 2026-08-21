@@ -233,22 +233,6 @@ impl ServiceConfig {
     /// This puts the agent's memory database alongside its pod database in the
     /// same directory, so all of an agent's data is self-contained in one folder.
     ///
-    /// Returns `None` when `in_memory: true` (memory stores are ephemeral).
-    ///
-    /// pre:  none (always succeeds)
-    /// post: returns Some(path) using agent dir layout if not in_memory; None if in_memory
-    #[must_use]
-    pub fn effective_memory_db_path(&self) -> Option<String> {
-        if self.in_memory {
-            return None;
-        }
-        Some(
-            hkask_types::agent_paths::agent_memory_db(&self.user_name)
-                .to_string_lossy()
-                .to_string(),
-        )
-    }
-
     /// Open a SQLite database driver.
     ///
     /// Opens a SQLCipher database at `db_path` with `db_passphrase`.

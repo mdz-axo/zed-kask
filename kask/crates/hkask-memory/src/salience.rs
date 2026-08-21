@@ -666,20 +666,6 @@ impl EntityTags {
             .chain(self.concepts.iter().map(String::as_str))
             .chain(self.methods.iter().map(String::as_str))
     }
-
-    /// Number of distinct tags across all categories.
-    ///
-    /// expect: "The system scores passage salience to gate h_mem storage budget"
-    /// \[P3\] Motivating: Generative Space — counts distinct tags across all categories
-    /// \[P5\] Constraining: Essentialism — simple sum of category lengths
-    /// post: returns sum of lengths of all tag category vectors
-    pub fn tag_count(&self) -> usize {
-        self.characters.len()
-            + self.places.len()
-            + self.events.len()
-            + self.concepts.len()
-            + self.methods.len()
-    }
 }
 
 // ── Salience Score ────────────────────────────────────────────────────────
@@ -920,23 +906,6 @@ pub fn extract_keywords(text: &str) -> Vec<String> {
         .filter(|w| w.len() > 2)
         .map(|w| w.to_string())
         .collect()
-}
-
-/// Score how many keywords appear in a text (case-insensitive substring match).
-///
-/// Returns the count of keywords from `keywords` that appear as substrings
-/// in the lowercased `text`. Higher = more relevant. Used to rank chat
-/// episodes by keyword overlap with the query.
-///
-/// expect: "The system ranks recalled memories by relevance to the query"
-/// pre:  keywords are lowercased (as produced by `extract_keywords`)
-/// post: returns count of keywords found as substrings in text (0 if none)
-pub fn keyword_overlap_score(keywords: &[String], text: &str) -> usize {
-    let text_lower = text.to_lowercase();
-    keywords
-        .iter()
-        .filter(|kw| text_lower.contains(kw.as_str()))
-        .count()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

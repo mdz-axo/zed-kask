@@ -200,23 +200,4 @@ pub struct TaggedChunk {
     pub ontology: Option<ChunkOntology>,
 }
 
-impl TaggedChunk {
-    /// Get concepts from a specific ontology namespace.
-    /// Returns empty slice if the namespace isn't present.
-    pub fn ontology_concepts(&self, namespace: &str) -> &[String] {
-        self.ontology_tags
-            .get(namespace)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
-    }
-
-    /// Which ontology namespaces are present in this chunk's tags?
-    pub fn ontology_namespaces(&self) -> impl Iterator<Item = &str> {
-        self.ontology_tags.keys().map(|k| k.as_str())
-    }
-
-    /// Does this chunk have tags from the given ontology namespace?
-    pub fn has_ontology(&self, namespace: &str) -> bool {
-        self.ontology_tags.contains_key(namespace)
-    }
-}
+impl TaggedChunk {}

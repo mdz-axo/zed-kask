@@ -317,37 +317,6 @@ impl Ledger {
         Ok(balance)
     }
 
-    /// REQ: P9-ledger-namespace-balances
-    /// expect: "I can see all balances in a domain (cost, wallet, portfolio) at once" \[P9\]
-    /// pre:  namespace is a valid namespace string
-    /// post: returns all (account, asset, balance) h_mems for accounts in the namespace
-    /// inv:  read-only; returns empty vec for unknown namespace
-    /// \[P9\] Constraining: Observability — all domain balances are visible at once
-    pub fn namespace_balances(&self, namespace: &str) -> Result<Vec<AccountBalance>, LedgerError> {
-        let rows = self.driver.query(
-            "SELECT a.id,
-                    COALESCE(p.asset, '') AS asset,
-                    COALESCE(SUM(CASE WHEN p.destination = a.id THEN p.amount ELSE 0 END), 0)
-                  - COALESCE(SUM(CASE WHEN p.source = a.id THEN p.amount ELSE 0 END), 0) AS balance
-             FROM accounts a
-             LEFT JOIN postings p ON (p.source = a.id OR p.destination = a.id)
-             WHERE a.namespace = ?1
-             GROUP BY a.id, p.asset
-             ORDER BY a.id, p.asset",
-            &[DbValue::Text(namespace.to_string())],
-        )?;
-
-        let mut balances = Vec::new();
-        for row in rows {
-            balances.push(AccountBalance {
-                account: row.get_str(0)?.to_string(),
-                asset: row.get_str(1)?.to_string(),
-                balance: row.get(2)?.as_int()?,
-            });
-        }
-        Ok(balances)
-    }
-
     /// REQ: P9-ledger-transaction-count
     /// expect: "I can count how many transactions reference a specific account" \[P9\]
     /// pre:  destination is a valid account ID

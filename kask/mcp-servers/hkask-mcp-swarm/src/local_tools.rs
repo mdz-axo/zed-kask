@@ -38,7 +38,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 /// logic lives once — a bad evaluator spec or regex errors propagate to the
 /// caller rather than silently stamping `pass: false` (which would produce a
 /// false fault attribution: the agent gets blamed for a bad evaluator).
-fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
+async fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
     match evaluator {
         "contains" => Ok(response.contains(spec)),
         "not_contains" => Ok(!response.contains(spec)),
@@ -57,11 +57,12 @@ fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, Mc
         // The spec is trusted (operator-provided in the task definition),
         // so running commands is acceptable in this context.
         "exit_code" => {
-            let output = std::process::Command::new("sh")
+            let output = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(spec)
                 .env("RESPONSE", response)
                 .output()
+                .await
                 .map_err(|e| {
                     McpToolError::internal(format!(
                         "exit_code evaluator failed to run command: {e}"
@@ -186,7 +187,8 @@ impl SwarmServer {
                         &result.response,
                         &declared.evaluator,
                         &declared.spec,
-                    )?;
+                    )
+                    .await?;
                     detail_parts.push(format!(
                         "evaluator={}, spec_len={}, pass={}",
                         declared.evaluator,
@@ -1485,7 +1487,7 @@ impl SwarmServer {
                         "response and spec must be non-empty".to_string(),
                     ));
                 }
-                let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
+                let pass = run_evaluator(&req.response, &req.evaluator, &req.spec).await?;
                 let detail = format!(
                     "evaluator={}, spec_len={}, pass={}",
                     req.evaluator,
@@ -1572,7 +1574,8 @@ impl SwarmServer {
                             total_tokens += r.tokens_used;
                             // Stamp the deterministic verdict when an evaluator is provided.
                             if let Some(ev) = &entry.evaluator {
-                                let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
+                                let pass =
+                                    run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
                                 r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
                                     pass,
                                     score: None,
@@ -1693,7 +1696,7 @@ impl SwarmServer {
                             "tasks[{index}].task must be non-empty"
                         )));
                     }
-                    run_evaluator("", &task.evaluator.evaluator, &task.evaluator.spec)?;
+                    run_evaluator("", &task.evaluator.evaluator, &task.evaluator.spec).await?;
                 }
                 let runtime = self
                     .local_runtime
@@ -1760,7 +1763,8 @@ impl SwarmServer {
                                     &result.response,
                                     &task.evaluator.evaluator,
                                     &task.evaluator.spec,
-                                )?;
+                                )
+                                .await?;
                                 if passed {
                                     passes += 1;
                                 }
@@ -2014,20 +2018,28 @@ mod tests {
         assert!(report["mean_latency_ms"].is_null());
     }
 
-    #[test]
-    fn run_evaluator_rejects_unknown_kind() {
-        let err = run_evaluator("resp", "jsonpath", "$.x").unwrap_err();
+    #[tokio::test]
+    async fn run_evaluator_rejects_unknown_kind() {
+        let err = run_evaluator("resp", "jsonpath", "$.x").await.unwrap_err();
         assert!(err.to_string().contains("jsonpath"));
     }
 
-    #[test]
-    fn run_evaluator_contains_and_regex() {
-        assert!(run_evaluator("hello world", "contains", "world").unwrap());
-        assert!(!run_evaluator("hello world", "not_contains", "world").unwrap());
-        assert!(run_evaluator("a1b2", "regex", "[0-9]").unwrap());
+    #[tokio::test]
+    async fn run_evaluator_contains_and_regex() {
+        assert!(
+            run_evaluator("hello world", "contains", "world")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !run_evaluator("hello world", "not_contains", "world")
+                .await
+                .unwrap()
+        );
+        assert!(run_evaluator("a1b2", "regex", "[0-9]").await.unwrap());
         // Invalid regex must error, not stamp pass:false (false fault
         // attribution — the agent would be blamed for a bad evaluator).
-        assert!(run_evaluator("x", "regex", "(").is_err());
+        assert!(run_evaluator("x", "regex", "(").await.is_err());
     }
 
     #[test]
@@ -2055,59 +2067,274 @@ mod tests {
         assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
     }
 
-    #[test]
-    fn run_evaluator_exit_code_passes_on_zero_exit() {
+    #[tokio::test]
+    async fn run_evaluator_exit_code_passes_on_zero_exit() {
         // `true` always exits 0 — the evaluator must report pass.
-        assert!(run_evaluator("anything", "exit_code", "true").unwrap());
+        assert!(
+            run_evaluator("anything", "exit_code", "true")
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_exit_code_fails_on_nonzero_exit() {
+    #[tokio::test]
+    async fn run_evaluator_exit_code_fails_on_nonzero_exit() {
         // `false` always exits 1 — the evaluator must report fail, not error.
-        assert!(!run_evaluator("anything", "exit_code", "false").unwrap());
+        assert!(
+            !run_evaluator("anything", "exit_code", "false")
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_exit_code_receives_response_env() {
+    #[tokio::test]
+    async fn run_evaluator_exit_code_receives_response_env() {
         // The command can access $RESPONSE — this is how external ground-truth
         // checks validate the agent's actual output rather than gaming it.
-        assert!(run_evaluator("hello", "exit_code", "test \"$RESPONSE\" = hello").unwrap());
-        assert!(!run_evaluator("wrong", "exit_code", "test \"$RESPONSE\" = hello").unwrap());
+        assert!(
+            run_evaluator("hello", "exit_code", "test \"$RESPONSE\" = hello")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !run_evaluator("wrong", "exit_code", "test \"$RESPONSE\" = hello")
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_exit_code_errors_on_missing_command() {
-        // A command that cannot execute must error, not silently fail —
-        // the distinction matters for fault attribution.
-        assert!(run_evaluator("x", "exit_code", "/nonexistent/binary_xyz").is_err());
+    #[tokio::test]
+    async fn run_evaluator_exit_code_fails_for_nonexistent_command() {
+        // A nonexistent command makes sh exit 127 — a non-zero exit. The
+        // evaluator must report Ok(false) (task did not pass), not Err
+        // (sh ran fine; the command it was told to run didn't exist). Err
+        // is reserved for when sh itself cannot be spawned (system failure).
+        assert!(
+            !run_evaluator("x", "exit_code", "/nonexistent/binary_xyz")
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_file_exists_checks_real_filesystem() {
+    #[tokio::test]
+    async fn run_evaluator_file_exists_checks_real_filesystem() {
         // A real file that exists in the test environment.
         let path = std::env::temp_dir().join("hkask_eval_test_file_exists");
         std::fs::write(&path, "test").unwrap();
-        assert!(run_evaluator("x", "file_exists", path.to_str().unwrap()).unwrap());
+        assert!(
+            run_evaluator("x", "file_exists", path.to_str().unwrap())
+                .await
+                .unwrap()
+        );
         std::fs::remove_file(&path).unwrap();
         // After deletion, the file no longer exists.
-        assert!(!run_evaluator("x", "file_exists", path.to_str().unwrap()).unwrap());
+        assert!(
+            !run_evaluator("x", "file_exists", path.to_str().unwrap())
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_file_exists_fails_for_missing_file() {
-        assert!(!run_evaluator("x", "file_exists", "/nonexistent/path_xyz_123").unwrap());
+    #[tokio::test]
+    async fn run_evaluator_file_exists_fails_for_missing_file() {
+        assert!(
+            !run_evaluator("x", "file_exists", "/nonexistent/path_xyz_123")
+                .await
+                .unwrap()
+        );
     }
 
-    #[test]
-    fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
+    #[tokio::test]
+    async fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
         // The error message must name all valid evaluator kinds so the
         // operator knows what's available without reading the source.
-        let err = run_evaluator("resp", "bogus", "x").unwrap_err();
+        let err = run_evaluator("resp", "bogus", "x").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("contains"));
         assert!(msg.contains("not_contains"));
         assert!(msg.contains("regex"));
         assert!(msg.contains("exit_code"));
         assert!(msg.contains("file_exists"));
+    }
+
+    // ── Discriminative power probe (event-substrate item 4) ───────────
+    //
+    // The 27/27 probe validated structural task sharing across cards, not
+    // that the task set can distinguish good from bad agents. This probe runs
+    // two agents with different system prompts through the real delegate +
+    // evaluator path (mock inference, real evaluator) and verifies the harness
+    // produces non-trivial, divergent pass rates — the harness actually
+    // measures something, not just noise.
+
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock inference that returns different responses based on the system
+    /// prompt embedded in the prompt text. An agent whose system prompt
+    /// contains respond correctly gets the right answer; everyone else gets
+    /// a wrong one. This models a real capability gap without a real model.
+    struct DiscriminativeInference {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    impl hkask_types::InferencePort for DiscriminativeInference {
+        fn generate(
+            &self,
+            prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            let text = if prompt.contains("respond correctly") {
+                "42".to_string()
+            } else {
+                "I dont know".to_string()
+            };
+            Box::pin(async move {
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "mock".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    struct NoopDispatch;
+
+    impl hkask_types::ToolDispatchPort for NoopDispatch {
+        fn invoke_tool<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _allowlist: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(serde_json::json!({})) })
+        }
+    }
+
+    fn mock_agent_card(agent_id: &str, system_prompt: &str) -> LocalAgentCard {
+        LocalAgentCard {
+            agent_id: agent_id.to_string(),
+            agent_type: "local".to_string(),
+            description: "test agent".to_string(),
+            display_name: agent_id.to_string(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: LocalAgentDependencies::default(),
+            capabilities: LocalAgentCapabilities {
+                model: "mock".to_string(),
+                min_provider_class: "".to_string(),
+                system_prompt: Some(system_prompt.to_string()),
+                mcp_tools: vec![],
+                skills: vec![],
+                output_contract: None,
+                evaluators: vec![],
+            },
+            cloud_swarm_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_distinguishes_good_from_bad_agent() {
+        // Two agents with different system prompts. The mock inference
+        // returns 42 when the system prompt says respond correctly, and
+        // a wrong answer otherwise. A task asking for 6x7 with evaluator
+        // contains 42 should pass for the good agent and fail for the bad
+        // one — non-trivial, divergent pass rates confirm the harness
+        // measures something.
+        use crate::local_runtime::LocalSwarmRuntime;
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let ledger = Arc::new(hkask_ledger::Ledger::from_driver(driver).unwrap());
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
+            call_count: call_count.clone(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(ledger, inference, dispatch);
+
+        let good_agent = mock_agent_card(
+            "good",
+            "You are a helpful assistant. Always respond correctly.",
+        );
+        let bad_agent = mock_agent_card("bad", "You are a confused assistant.");
+
+        let good_result = runtime
+            .delegate(&good_agent, "What is 6 times 7?", 10, 100)
+            .await
+            .unwrap();
+        let bad_result = runtime
+            .delegate(&bad_agent, "What is 6 times 7?", 10, 100)
+            .await
+            .unwrap();
+
+        // The good agent passes; the bad agent fails.
+        assert!(
+            run_evaluator(&good_result.response, "contains", "42")
+                .await
+                .unwrap(),
+            "good agent should produce the correct answer"
+        );
+        assert!(
+            !run_evaluator(&bad_result.response, "contains", "42")
+                .await
+                .unwrap(),
+            "bad agent should NOT produce the correct answer"
+        );
+
+        // Non-trivial: both agents ran real inference (not short-circuited).
+        assert!(
+            call_count.load(Ordering::Relaxed) >= 2,
+            "both agents must have called inference"
+        );
+    }
+
+    #[tokio::test]
+    async fn harness_exit_code_evaluator_distinguishes_correct_from_wrong_output() {
+        // The exit_code evaluator is external ground truth: it runs a command
+        // that checks the response, not the response text itself. This is the
+        // Goodhart-resistant evaluator — an adapter that learns to emit 42
+        // without solving the task cannot game an exit_code check that
+        // validates the answer against a real computation.
+        // Use grep instead of test to avoid shell quoting issues in the spec.
+        assert!(
+            run_evaluator("42", "exit_code", "echo $RESPONSE | grep -qx 42")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !run_evaluator("wrong", "exit_code", "echo $RESPONSE | grep -qx 42")
+                .await
+                .unwrap()
+        );
     }
 }

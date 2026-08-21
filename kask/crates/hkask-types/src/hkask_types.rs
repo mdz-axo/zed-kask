@@ -43,7 +43,7 @@ pub use event::{RegulationRecord, RegulationSink};
 
 pub use id::{
     BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
-    IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WebID,
+    IdKind, PhaseId, TaskId, TemplateID, UserID, WebID,
 };
 pub use kanban_status::TaskStatus;
 pub use regulation::LedgerHealth;

@@ -205,6 +205,32 @@ impl LocalSwarmRuntime {
         })
     }
 
+    /// Test-only constructor with injected inference and tool-dispatch ports.
+    /// The production `new(db_path)` resolves ports from env (zed IPC bridge
+    /// or MediaRouter fallback), which is unsuitable for unit tests. This
+    /// constructor accepts a pre-built ledger + the two agent-run ports,
+    /// which it composes into an AgentExecutor, so tests can exercise the
+    /// delegate logic without a real backend. Used by the discriminative
+    /// power probe (event-substrate item 4).
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        ledger: std::sync::Arc<hkask_ledger::Ledger>,
+        inference: std::sync::Arc<dyn hkask_types::InferencePort>,
+        tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
+    ) -> Self {
+        let executor = AgentExecutor::new(inference, tool_dispatch);
+        let operator_account = "operator".to_string();
+        let asset = "credits".to_string();
+        let _ = ledger.ensure_account(&operator_account, "local_swarm");
+        Self {
+            ledger,
+            executor,
+            operator_account,
+            asset,
+            capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
     /// Captures dropped due to channel backpressure (send side, counted in
     /// the executor) or store append failure (drainer side). A sensor
     /// signal, not an error: the delegation path must never fail because

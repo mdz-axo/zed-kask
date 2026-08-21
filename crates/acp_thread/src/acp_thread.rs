@@ -876,10 +876,10 @@ pub struct ToolCall {
     /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
     /// the command was sandboxed normally (or sandboxing was off).
     pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
-    /// Real-time thinking trace from the tool's execution. Populated by the
-    /// skill cascade executor via `thinking_sender()` — each cascade step
-    /// appends its reasoning here so the user sees a live thinking trace,
-    /// not just a one-line title. `None` when the tool call has no cascade
+    /// Real-time thinking trace from the tool's execution. Populated by skill
+    /// execution via `thinking_sender()` — each step appends its reasoning
+    /// here so the user sees a live thinking trace, not just a one-line
+    /// title. `None` when the tool call has no skill execution
     /// (ordinary built-in tools like `read_file`).
     pub thoughts: Option<Entity<Markdown>>,
 }
@@ -3215,9 +3215,9 @@ impl AcpThread {
     }
 
     /// Append a thinking trace chunk to a tool call's `thoughts` buffer.
-    /// Called from `ThreadEvent::ToolCallThinking` — the skill cascade
-    /// executor emits these so the user sees a live thinking trace during
-    /// long-running tool calls, not just a one-line title.
+    /// Called from `ThreadEvent::ToolCallThinking` — skill execution emits
+    /// these so the user sees a live thinking trace during long-running tool
+    /// calls, not just a one-line title.
     pub fn append_tool_call_thinking(
         &mut self,
         tool_call_id: &acp::ToolCallId,

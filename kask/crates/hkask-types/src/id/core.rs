@@ -142,10 +142,6 @@ pub enum UserKind {}
 impl private::Sealed for UserKind {}
 impl IdKind for UserKind {}
 
-pub enum PodIdKind {}
-impl private::Sealed for PodIdKind {}
-impl IdKind for PodIdKind {}
-
 pub enum EscalationKind {}
 impl private::Sealed for EscalationKind {}
 impl IdKind for EscalationKind {}
@@ -179,7 +175,7 @@ pub type EventID = Id<EventKind>;
 pub type GoalID = Id<GoalKind>;
 pub type EmbeddingID = Id<EmbeddingKind>;
 pub type UserID = Id<UserKind>;
-pub type PodID = Id<PodIdKind>;
+
 pub type EscalationID = Id<EscalationKind>;
 pub type PhaseId = Id<PhaseKind>;
 pub type CommentId = Id<CommentKind>;

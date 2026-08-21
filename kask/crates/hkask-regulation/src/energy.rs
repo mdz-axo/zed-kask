@@ -248,15 +248,6 @@ impl CallCapManager {
         }
     }
 
-    /// Snapshot an agent's status, or `None` if it has no registered cap.
-    pub async fn agent_status(&self, agent: &WebID) -> Option<AgentCallCapStatus> {
-        self.caps
-            .read()
-            .await
-            .get(agent)
-            .map(AgentCallCapStatus::from)
-    }
-
     /// Snapshot every agent's status.
     pub async fn all_agent_statuses(&self) -> Vec<(WebID, AgentCallCapStatus)> {
         self.caps
