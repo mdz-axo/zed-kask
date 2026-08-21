@@ -206,7 +206,6 @@ impl KaskInferenceProvidersSettings {
         }
     }
 }
-}
 
 /// Curator configuration.
 ///
@@ -1734,7 +1733,6 @@ mod tests {
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
     }
-:
 
     // `mcp_env()` must not emit env vars for settings that match `Default`.
     // Previously `mcp_env()` compared against inlined magic numbers (1024, 4,

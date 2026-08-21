@@ -219,7 +219,6 @@ status: VERIFIED
 | Sub-struct | Notable defaults | Source |
 |------------|------------------|--------|
 | `KaskMcpSettings` | `load_default = true` | `settings.rs:120-127` |
-| `KaskCollabSettings` | `enabled = true`, `http_port = 3000`, `sqlite:kask_marketplace.db?mode=rwc` | `settings.rs:222-232` |
 | `KaskCuratorSettings` | `always_on = true`, `algedonic_threshold = 0.8` | `settings.rs:254-262` |
 | `KaskMemorySettings` | `consolidation_cadence_secs = 300`, `confidence_floor = 0.3`, `recall_limit = 5`, `auto_inject = true` | `settings.rs:316-326` |
 | `KaskCondenserSettings` | `profile = "normal"`, `auto_compress_tool_results = false`, `saliency_window = 5` | `settings.rs:355-364` |
