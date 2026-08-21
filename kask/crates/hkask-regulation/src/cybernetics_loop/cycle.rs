@@ -601,12 +601,16 @@ impl super::CyberneticsLoop {
             // name a rollout and a rollout event source is wired, query the
             // store for the before/after values. The struct walk below is the
             // fallback for actions that don't target a rollout. A query
-            // failure is logged and falls through to the fallback (degraded,
-            // not broken — the loop still verifies via re-sensing).
+            // failure (Err) or a no-data result (Ok(None)) is warned and skips
+            // the action — it does NOT fall through to the struct walk: a
+            // RolloutImpactCheck carries no before value to re-sense, so
+            // falling through would silently drop the submitted check with no
+            // signal (the .rules broken-feedback-loop trap).
             //
-            // Both paths converge on the SAME classify/stagnation/block
-            // tail below — the store path sets (metric, before, after) and
-            // jumps past the struct walk; it must not bypass the stagnation
+            // The two paths that proceed (store-answered Ok(Some) and the
+            // struct-walk fallback) converge on the SAME classify/stagnation/
+            // block tail below — the store path sets (metric, before, after)
+            // and jumps past the struct walk; it must not bypass the stagnation
             // detector or the block escalation, or a store-answered failure
             // would never trigger plateau detection while a re-sensed one
             // would.
@@ -1177,5 +1181,199 @@ impl super::CyberneticsLoop {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::CyberneticsLoop;
+    use crate::RolloutEventSource;
+    use crate::loops::{
+        ActionType, LoopId, RegulationData, RegulatoryAction, RegulatoryActionParams,
+    };
+    use crate::runtime::RegulationLedger;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::RwLock;
+
+    /// A recorded `append_impact_verdict` call — exactly what the loop wrote back.
+    #[derive(Debug, Clone, PartialEq)]
+    struct RecordedVerdict {
+        rollout_id: String,
+        metric: String,
+        before: f64,
+        after: f64,
+        improved: bool,
+        decision: String,
+    }
+
+    /// A test double for `RolloutEventSource` that returns a configured
+    /// `metric_before_and_after` result and records `append_impact_verdict`
+    /// calls so the test can assert exactly what the loop persisted.
+    ///
+    /// `metric_before_and_after` is configurable (Ok(Some) / Ok(None) / Err)
+    /// to exercise the three branches of the event-substrate path. The
+    /// no-data and error branches must NOT record a verdict and must NOT fall
+    /// through to the struct-walk fallback (B1).
+    struct MockRolloutEventSource {
+        before_after: Mutex<Result<Option<(f64, f64)>, String>>,
+        verdicts: Mutex<Vec<RecordedVerdict>>,
+    }
+
+    impl MockRolloutEventSource {
+        fn answering(before: f64, after: f64) -> Self {
+            Self {
+                before_after: Mutex::new(Ok(Some((before, after)))),
+                verdicts: Mutex::new(Vec::new()),
+            }
+        }
+        fn empty() -> Self {
+            Self {
+                before_after: Mutex::new(Ok(None)),
+                verdicts: Mutex::new(Vec::new()),
+            }
+        }
+        fn failing(error: &str) -> Self {
+            Self {
+                before_after: Mutex::new(Err(error.to_string())),
+                verdicts: Mutex::new(Vec::new()),
+            }
+        }
+        fn recorded(&self) -> Vec<RecordedVerdict> {
+            self.verdicts.lock().expect("verdicts lock").clone()
+        }
+    }
+
+    impl RolloutEventSource for MockRolloutEventSource {
+        fn metric_before_and_after(
+            &self,
+            _rollout_id: &str,
+            _metric: &str,
+            _before_position: i64,
+        ) -> Result<Option<(f64, f64)>, String> {
+            self.before_after.lock().expect("before_after lock").clone()
+        }
+        fn append_impact_verdict(
+            &self,
+            rollout_id: &str,
+            metric: &str,
+            before: f64,
+            after: f64,
+            improved: bool,
+            decision: &str,
+        ) -> Result<(), String> {
+            self.verdicts
+                .lock()
+                .expect("verdicts lock")
+                .push(RecordedVerdict {
+                    rollout_id: rollout_id.to_string(),
+                    metric: metric.to_string(),
+                    before,
+                    after,
+                    improved,
+                    decision: decision.to_string(),
+                });
+            Ok(())
+        }
+    }
+
+    fn loop_with_source<S: RolloutEventSource + 'static>(source: Arc<S>) -> CyberneticsLoop {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+        CyberneticsLoop::new(ledger).with_rollout_event_source(source)
+    }
+
+    fn rollout_impact_check(rollout_id: &str, metric: &str) -> RegulatoryAction {
+        RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Notify,
+            RegulatoryActionParams::with_data(
+                "rollout_impact_check",
+                RegulationData::RolloutImpactCheck {
+                    rollout_id: rollout_id.to_string(),
+                    before_position: 1,
+                    metric: metric.to_string(),
+                },
+            ),
+        )
+    }
+
+    /// S1 + happy path: a store-answered pass_rate regression writes a verdict
+    /// event labeled with the REAL metric name ("pass_rate"), not the
+    /// `SignalMetric` fallback ("energy_remaining"). Before the fix the
+    /// write-back passed `metric.as_str()`, which fell through
+    /// `from_str_name("pass_rate").unwrap_or(EnergyRemaining)` →
+    /// `"energy_remaining"` — self-describing JSON that lied about its
+    /// content.
+    #[test]
+    fn verify_impact_write_back_records_real_metric_name() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let source = Arc::new(MockRolloutEventSource::answering(0.8, 0.5));
+            let regulation_loop = loop_with_source(Arc::clone(&source));
+            let reports = regulation_loop
+                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
+                .await;
+            assert_eq!(
+                reports.len(),
+                1,
+                "a store-answered check produces one report"
+            );
+            let verdicts = source.recorded();
+            assert_eq!(verdicts.len(), 1, "the impact verdict is written back once");
+            let verdict = &verdicts[0];
+            assert_eq!(verdict.rollout_id, "alpha");
+            // S1: the verdict records the real metric name, not the SignalMetric
+            // fallback. Before the fix this asserted "energy_remaining".
+            assert_eq!(verdict.metric, "pass_rate");
+            assert_eq!(verdict.before, 0.8);
+            assert_eq!(verdict.after, 0.5);
+            assert!(!verdict.improved, "a pass-rate drop is not an improvement");
+            assert!(
+                matches!(verdict.decision.as_str(), "Accept" | "Stage" | "Block"),
+                "decision is a known ActionDecision variant, got {}",
+                verdict.decision
+            );
+        });
+    }
+
+    /// B1 (no-data): a submitted impact check the store can't answer must NOT
+    /// silently fall through to the struct-walk (which `continue`s for
+    /// `RolloutImpactCheck`) with no signal. It skips the action — no report,
+    /// no verdict write-back. Before the fix the `Ok(None)` was swallowed by
+    /// `if let Ok(Some(..))` and the check vanished.
+    #[test]
+    fn verify_impact_store_no_data_skips_without_verdict() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let source = Arc::new(MockRolloutEventSource::empty());
+            let regulation_loop = loop_with_source(Arc::clone(&source));
+            let reports = regulation_loop
+                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
+                .await;
+            assert!(reports.is_empty(), "no report when the store has no data");
+            assert!(
+                source.recorded().is_empty(),
+                "no verdict written back when the store has no data"
+            );
+        });
+    }
+
+    /// B1 (error): a store error must be surfaced (warned) and skip the action,
+    /// not be silently discarded by the `if let Ok(Some(..))` swallowing the
+    /// `Err`. Before the fix the error was dropped with no warn and no report.
+    #[test]
+    fn verify_impact_store_error_skips_without_verdict() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let source = Arc::new(MockRolloutEventSource::failing("store down"));
+            let regulation_loop = loop_with_source(Arc::clone(&source));
+            let reports = regulation_loop
+                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
+                .await;
+            assert!(reports.is_empty(), "no report when the store errors");
+            assert!(
+                source.recorded().is_empty(),
+                "no verdict written back on a store error"
+            );
+        });
     }
 }

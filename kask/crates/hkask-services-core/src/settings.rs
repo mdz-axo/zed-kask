@@ -59,7 +59,7 @@ pub struct HkaskSettings {
 ///
 /// 256 tokens ≈ 192 words — paragraph-level granularity suitable for
 /// QA generation and semantic search.
-pub const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
+pub(crate) const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
     // Single source of truth: hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.
@@ -254,7 +254,7 @@ pub fn load_settings<T: serde::de::DeserializeOwned + Default>() -> T {
 /// pre:  settings must implement Serialize
 /// post: settings are written as pretty JSON to settings_path(); Err(ServiceError::Infra) on serialization or I/O failure
 #[must_use = "result must be used"]
-pub fn save_settings<T: serde::Serialize>(settings: &T) -> Result<(), crate::ServiceError> {
+pub(crate) fn save_settings<T: serde::Serialize>(settings: &T) -> Result<(), crate::ServiceError> {
     let path = settings_path();
     let json = serde_json::to_string_pretty(settings).map_err(|e| {
         crate::ServiceError::Infra(hkask_types::InfrastructureError::Serialization(

@@ -262,7 +262,7 @@ fn resolve_config_str(key: &str) -> Option<String> {
 
 /// Per-provider connection config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
+pub(crate) struct ProviderConfig {
     pub base_url: String,
     pub api_key: String,
 }

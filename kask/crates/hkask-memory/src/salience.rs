@@ -900,7 +900,7 @@ impl BudgetConfig {
 /// expect: "The system ranks recalled memories by relevance to the query"
 /// pre:  text is a valid &str
 /// post: returns lowercased keywords with length > 2, in input order
-pub fn extract_keywords(text: &str) -> Vec<String> {
+pub(crate) fn extract_keywords(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split_whitespace()
         .filter(|w| w.len() > 2)

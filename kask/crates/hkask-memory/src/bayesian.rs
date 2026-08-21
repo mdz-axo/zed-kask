@@ -25,7 +25,7 @@ const SECONDS_PER_DAY: f64 = 86400.0;
 /// expect: "The system combines independent confidence estimates using Bayesian evidence pooling"
 /// pre:  dt is any valid DateTime<Utc>
 /// post: returns days elapsed as f64, always ≥ 0.0
-pub fn days_since(dt: DateTime<Utc>) -> f64 {
+pub(crate) fn days_since(dt: DateTime<Utc>) -> f64 {
     let now = Utc::now();
     let seconds = (now - dt).num_seconds() as f64;
     if seconds < 0.0 {
@@ -83,7 +83,7 @@ const LOG_ODDS_EPSILON: f64 = 1e-6;
 /// post: returns Confidence in [0, 1]
 /// post: combined ≥ max(c₁, c₂) when both > 0.5 (consensus strengthens)
 /// post: combined = 0.5 when c₁ = 0.5 and c₂ = 0.5 (neutral evidence)
-pub fn combine_confidences(c1: Confidence, c2: Confidence) -> Confidence {
+pub(crate) fn combine_confidences(c1: Confidence, c2: Confidence) -> Confidence {
     let v1 = c1.value().clamp(LOG_ODDS_EPSILON, 1.0 - LOG_ODDS_EPSILON);
     let v2 = c2.value().clamp(LOG_ODDS_EPSILON, 1.0 - LOG_ODDS_EPSILON);
 

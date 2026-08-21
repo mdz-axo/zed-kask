@@ -22,7 +22,7 @@ use zeroize::{Zeroize, Zeroizing};
 /// days in the future (judged by the server clock) and purges manifests whose
 /// `expires_at` has passed. The publisher writes `expires_at` at signing time;
 /// this constant is the cap the client defaults to.
-pub const KEY_MAX_AGE_DAYS: u64 = 120;
+pub(crate) const KEY_MAX_AGE_DAYS: u64 = 120;
 
 /// Generate a new Ed25519 signing keypair.
 ///
@@ -31,7 +31,7 @@ pub const KEY_MAX_AGE_DAYS: u64 = 120;
 /// the key is built from is wiped explicitly — `from_bytes` copies out of it, so
 /// without this the raw scalar would outlive the call on the stack.
 #[must_use]
-pub fn generate_signing_keypair() -> SigningKey {
+pub(crate) fn generate_signing_keypair() -> SigningKey {
     let mut secret_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut secret_bytes);
     let signing_key = SigningKey::from_bytes(&secret_bytes);
@@ -41,7 +41,7 @@ pub fn generate_signing_keypair() -> SigningKey {
 
 /// Derive the public key from a signing key.
 #[must_use]
-pub fn derive_public_key(signing_key: &SigningKey) -> Ed25519PublicKey {
+pub(crate) fn derive_public_key(signing_key: &SigningKey) -> Ed25519PublicKey {
     let verifying_key = signing_key.verifying_key();
     Ed25519PublicKey(*verifying_key.as_bytes())
 }
@@ -75,7 +75,7 @@ pub fn verify(message: &[u8], signature: &Ed25519Signature, public_key: &Ed25519
 ///
 /// The key is stored as a hex string under `kask://signing-keys/{publisher}`.
 /// The keychain service name is the default `hkask` (same as DB passphrase).
-pub fn store_signing_key(
+pub(crate) fn store_signing_key(
     publisher: &str,
     signing_key: &SigningKey,
 ) -> Result<(), crate::keychain::KeychainError> {
@@ -98,7 +98,7 @@ pub fn store_signing_key(
 /// broken" or "the stored key is corrupt" (RR-0063).
 ///
 /// All intermediate buffers holding the secret scalar are zeroized.
-pub fn load_signing_key(publisher: &str) -> Option<SigningKey> {
+pub(crate) fn load_signing_key(publisher: &str) -> Option<SigningKey> {
     let keychain = crate::keychain::Keychain::default();
     let key_hex = match keychain.retrieve_by_key(&format!("signing-keys/{publisher}")) {
         Ok(key_hex) => Zeroizing::new(key_hex),
@@ -146,7 +146,7 @@ pub fn load_signing_key(publisher: &str) -> Option<SigningKey> {
 }
 
 /// Delete a publisher's Ed25519 signing key from the OS keychain.
-pub fn delete_signing_key(publisher: &str) -> Result<(), crate::keychain::KeychainError> {
+pub(crate) fn delete_signing_key(publisher: &str) -> Result<(), crate::keychain::KeychainError> {
     let keychain = crate::keychain::Keychain::default();
     keychain.delete_by_key(&format!("signing-keys/{publisher}"))
 }

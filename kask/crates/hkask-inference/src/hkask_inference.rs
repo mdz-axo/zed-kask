@@ -236,7 +236,7 @@ pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::Wo
 
 /// Worktree-spawn stub for MCP servers without the IPC bridge. Returns an
 /// error so `kanban_task_spawn` falls back to `LazyLocalSwarmRuntime`.
-pub struct UnavailableWorktreeSpawn;
+pub(crate) struct UnavailableWorktreeSpawn;
 
 impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
     fn create_worktree_thread<'a>(
@@ -273,7 +273,7 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
 ///
 /// Prefer this over the per-port resolvers when an MCP server needs more than
 /// one port.
-pub struct InferencePorts {
+pub(crate) struct InferencePorts {
     pub inference: std::sync::Arc<dyn hkask_types::InferencePort>,
     pub tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
     pub worktree_spawn: std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>,
