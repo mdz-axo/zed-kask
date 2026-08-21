@@ -40,7 +40,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ---
 
-> **Current state (2026-08-20):** The kask workspace has **16 kask crates** under `kask/crates/` (15 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and 1 zed-side crate (`crates/kask_extensions_ui/`). D1–D32 are wired at the composition root (`crates/zed/src/main.rs`); the authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root. The composition-root wiring is documented in [§13.3](#133-composition-root-startup--di-pattern).
+> **Current state (2026-08-21):** The kask workspace has **16 kask crates** under `kask/crates/` (15 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and zed-side crates (`crates/swarm_panel/`, `crates/kanban_panel/`, `crates/hkask-viz-core/`, `crates/hkask-*-widget/`, `crates/hkask-tool-invoker/`, `crates/hkask-conversation-injector/`, `crates/marketplace_ui_common/`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). D1–D32 are wired at the composition root (`crates/zed/src/main.rs`); the authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root. The composition-root wiring is documented in [§13.3](#133-composition-root-startup--di-pattern).
 
 ---
 
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-08-20):** workspace builds clean. **16 kask crates** under `kask/crates/` (15 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and 1 zed-side crate (`crates/kask_extensions_ui/`). 10 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
+**Status (2026-08-21):** workspace builds clean. **16 kask crates** under `kask/crates/` (15 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-conversation-injector`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). 10 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

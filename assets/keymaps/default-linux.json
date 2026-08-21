@@ -701,10 +701,9 @@
       "ctrl-shift-d": "debug_panel::ToggleFocus",
       // zed-kask: kask center-pane items live in the ctrl-shift-alt-<mnemonic> tier.
       // The ctrl-shift-<letter> workspace tier is saturated by upstream Zed panels
-      // (e/d/b/g/m) and the kask mnemonics (e/s) collide there. The ctrl-shift-alt
+      // (e/d/b/g/m) and the kask mnemonics collide there. The ctrl-shift-alt
       // tier is kask-owned: no editor-context shadowing (all fire regardless
       // of focus) and zero collision risk with future upstream keymap changes.
-      "ctrl-shift-alt-e": "kask_extensions_ui::Toggle",
       "ctrl-shift-alt-s": "swarm_panel::Toggle",
       "ctrl-?": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",

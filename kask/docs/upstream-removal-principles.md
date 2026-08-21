@@ -158,8 +158,9 @@ Only the *provably unreachable* form survives as Category 4.
   `crates/auto_update/src/auto_update.rs:1382`
   (`test_auto_update_defaults_to_false`); `DIVERGENCE.md` D16 L37 (upstream
   update actions removed, replaced by `RunZedKaskUpdate`);
-  `crates/kask_extensions_ui/src/kask_extensions_ui.rs:1403` (provides filter
-  + upsell banners removed — "kask skills have no provides concept").
+  `crates/kask_extensions_ui/src/kask_extensions_ui.rs:1403` (historical —
+  crate removed 2026-08-20; provided filter + upsell banners removed —
+  "kask skills have no provides concept").
 - **Scope boundary:** Does NOT authorize removing upstream surface merely
   because kask *also* does the same thing — the upstream surface must produce
   a *concrete defect* when retained alongside the kask replacement. Pure
@@ -312,7 +313,7 @@ traps (verified against the codebase per `.rules:464-475`):
 | 8 | Daemon transport deleted | D3 L24 | C3 |
 | 9 | Upstream update menu actions removed | D16 L37 | C1+C3 (co-occurrence) |
 | 10 | `auto_update` default false | `auto_update.rs:1382` | C1 |
-| 11 | kask_extensions_ui provides filter + upsell banners removed | `kask_extensions_ui.rs:1403` | C3 |
+: 11 | kask_extensions_ui provides filter + upsell banners removed | `kask_extensions_ui.rs:1403` (historical — crate removed 2026-08-20) | C3 |
 
 (Kask-side dead-surface removals — ocap/`OcapConfig`, `required_capabilities`,
 `AdapterPort`/`AdapterRouter`, folded services, no-consumer hooks — validate
@@ -405,7 +406,7 @@ load-bearing).
       `crates/agent/src/agent.rs:4966,5010`,
       `crates/agent_skills/agent_skills.rs:1733`,
       `crates/auto_update/src/auto_update.rs:1382`,
-      `crates/kask_extensions_ui/src/kask_extensions_ui.rs:1403`,
+      :      `crates/kask_extensions_ui/src/kask_extensions_ui.rs:1403` (historical — crate removed 2026-08-20),
       `kask/scripts/build/check-desktop-no-collision.sh`,
       `kask/scripts/build/check-zed-isolation.sh`, `script/bundle-*`); the one
       missing anchor (C4 upstream) is marked "no existing anchor — proposed,"

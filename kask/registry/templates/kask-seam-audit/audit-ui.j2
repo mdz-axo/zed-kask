@@ -23,7 +23,8 @@ Audit ONLY these kask-owned GPUI crates (they live under `crates/` because they
 depend on gpui/theme, per the §13.1 invariant, but they are kask-owned):
 `hkask-viz-core`, `hkask-media-widget`, `hkask-graph-widget`,
 `hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`,
-`hkask-conversation-injector`, `kask_extensions_ui`, `marketplace_ui_common`,
+`hkask-conversation-injector`, `marketplace_ui_common`,
+`swarm_panel`, `kanban_panel`,
 and the D9 settings page (`settings_ui/src/pages/kask_page.rs` — flag findings
 but mark remediation D9-seam-scoped). Do NOT audit upstream Zed editor/panel
 code outside the above.

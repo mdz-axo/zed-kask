@@ -191,9 +191,14 @@ impl Sensor for ToolReliabilitySensor {
 /// fallback pattern this mirrors.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum MetricsLocateError {
-    /// The trace directory itself could not be read (missing, permission
-    /// denied, not a directory). The sensor cannot determine whether any run
-    /// has metrics — this is a broken sensor, not an empty one.
+    /// The trace directory exists but could not be read (permission denied,
+    /// not a directory). The sensor cannot determine whether any run has
+    /// metrics — this is a broken sensor, not an empty one.
+    ///
+    /// Note: a *missing* trace directory is not this variant — it is the
+    /// legitimate "no metrics yet" state and is returned as `Ok(None)` by
+    /// `latest_run_metrics`. Treating `NotFound` as an error spammed the log
+    /// with warnings every loop tick before any trace run had occurred.
     #[error("trace directory unreadable: {path}: {error}")]
     TraceDirInaccessible {
         path: std::path::PathBuf,
@@ -213,11 +218,12 @@ pub(crate) enum MetricsLocateError {
 
 /// Find the run directory whose `metrics.json` was most recently modified.
 ///
-/// Returns `Ok(None)` when the trace directory exists but contains no run
-/// with a `metrics.json` (the legitimate "no metrics yet" case). Returns
-/// `Err` for I/O failures so the caller can `warn!` and distinguish a broken
-/// sensor from an empty one — collapsing the two into `None` made a DB outage
-/// indistinguishable from "coverage meets set-point" (F1/F2).
+/// Returns `Ok(None)` when the trace directory does not exist or exists but
+/// contains no run with a `metrics.json` (the legitimate "no metrics yet"
+/// case). Returns `Err` for genuine I/O failures (permission denied, not a
+/// directory, metadata unreadable) so the caller can `warn!` and distinguish a
+/// broken sensor from an empty one — collapsing the two into `None` made a DB
+/// outage indistinguishable from "coverage meets set-point" (F1/F2).
 ///
 /// Shared by `TestCoverageSensor` and `MutationScoreSensor`; extracting this
 /// closes the byte-identical duplication and gives one place to enforce the
@@ -226,11 +232,22 @@ pub(crate) enum MetricsLocateError {
 pub(crate) fn latest_run_metrics(
     trace_dir: &std::path::Path,
 ) -> Result<Option<std::path::PathBuf>, MetricsLocateError> {
-    let entries =
-        std::fs::read_dir(trace_dir).map_err(|error| MetricsLocateError::TraceDirInaccessible {
-            path: trace_dir.to_path_buf(),
-            error,
-        })?;
+    let entries = match std::fs::read_dir(trace_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A missing trace directory is the normal "no metrics yet" state, not
+            // a broken sensor — return `Ok(None)` so the sensor stays silent.
+            // Only genuine I/O failures (permission denied, not a directory, etc.)
+            // are classified as `TraceDirInaccessible` to trigger the warn.
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(MetricsLocateError::TraceDirInaccessible {
+                path: trace_dir.to_path_buf(),
+                error,
+            });
+        }
+    };
     let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
     for entry in entries.flatten() {
         let metrics = entry.path().join("metrics.json");
@@ -253,7 +270,7 @@ pub(crate) fn latest_run_metrics(
 
 /// Senses test coverage from the latest trace run's `metrics.json`.
 ///
-/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
+/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `{HKASK_DATA_DIR}/traces`).
 /// Produces a signal only when `coverage_pct` is below the coverage floor.
 pub(crate) struct TestCoverageSensor {
     trace_dir: std::path::PathBuf,
@@ -326,7 +343,7 @@ impl Sensor for TestCoverageSensor {
 
 /// Senses mutation score from the latest trace run's `metrics.json`.
 ///
-/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
+/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `{HKASK_DATA_DIR}/traces`).
 /// Produces a signal only when `mutation_score` is below the mutation score floor.
 pub(crate) struct MutationScoreSensor {
     trace_dir: std::path::PathBuf,

@@ -356,7 +356,7 @@ Invoke this process (and the future `upstream-rebase` skill) when:
 The process is **not** needed for:
 - Files under `kask/` (upstream never touches them).
 - D-seam files that auto-merge cleanly with all markers preserved.
-- Additive-only crates (`hkask-*`, `kask_extensions_ui`).
+- Additive-only crates (`hkask-*`, `swarm_panel`, `kanban_panel`, `hkask-*-widget`).
 
 ---
 

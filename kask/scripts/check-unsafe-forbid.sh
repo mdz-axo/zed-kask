@@ -28,7 +28,7 @@ else
   scan_dirs=(
     crates/*/ mcp-servers/*/
     ../crates/swarm_panel/ ../crates/hkask-viz-core/
-    ../crates/kask_extensions_ui/ ../crates/marketplace_ui_common/
+    ../crates/marketplace_ui_common/
     ../crates/hkask-scenarios-widget/ ../crates/hkask-portfolio-widget/
     ../crates/hkask-kanban-widget/
   )
