@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 /// Errors that can occur during email delivery.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum EmailError {
+pub enum EmailError {
     #[error("Email delivery is not configured: {0}")]
     NotConfigured(String),
     #[error("MXroute API request failed: {0}")]
@@ -36,13 +36,13 @@ pub(crate) enum EmailError {
 }
 
 /// Result type for email operations.
-pub(crate) type EmailResult<T> = std::result::Result<T, EmailError>;
+pub type EmailResult<T> = std::result::Result<T, EmailError>;
 
 // ── Email mode ───────────────────────────────────────────────────────────
 
 /// Interaction mode for curator email — tags each message with its cybernetic purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum EmailMode {
+pub enum EmailMode {
     Invite,
     Alert,
     Notification,

@@ -28,7 +28,8 @@ pub mod signing;
 pub use encryption::derive_key;
 pub use error::KeystoreError;
 pub use keychain::{Keychain, KeychainError, resolve};
-pub use signing::{
+pub(crate) use signing::{
     KEY_MAX_AGE_DAYS, delete_signing_key, derive_public_key, generate_signing_keypair,
-    load_signing_key, sign, store_signing_key, verify,
+    load_signing_key, store_signing_key,
 };
+pub use signing::{sign, verify};

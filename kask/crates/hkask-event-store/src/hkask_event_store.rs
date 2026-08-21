@@ -31,7 +31,8 @@
 
 mod types;
 
-pub use types::{EventFilter, EventRecord, EventStoreError, RolloutKind, VerdictSource};
+pub use types::{EventFilter, RolloutKind, VerdictSource};
+pub use types::{EventRecord, EventStoreError};
 
 use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::value::DbValue;

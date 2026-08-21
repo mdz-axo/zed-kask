@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Explanation: Why the Framework Looks Like This"
 audience: [developers who want the design rationale, not just the API]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -80,11 +80,12 @@ via `config_env`, not `credentials`. Probing the credential map for it would
 conflate identity with secrets and break the anonymous fallback for
 standalone IDE use.
 
-`reg_available()` returns `self.embedded` (`context.rs:128-130`) — Regulation
-spans are meaningful only when the runtime is there to consume them. In
-standalone mode the spans still emit (via tracing to stderr), so a developer
-running the server in an IDE still sees the tool-outcome telemetry, but the
-Regulation loop does not act on them.
+There is no `reg_available()` wrapper — it was removed. The `embedded`
+field is the capability signal: Regulation spans are meaningful only when
+the runtime is there to consume them, so consumers read `embedded` directly.
+In standalone mode the spans still emit (via tracing to stderr), so a
+developer running the server in an IDE still sees the tool-outcome
+telemetry, but the Regulation loop does not act on them.
 
 ## Why the `mcp_server!` macro instead of a trait
 
@@ -124,14 +125,13 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-031
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:119-134
+verified_date: 2026-08-20
 status: VERIFIED
 -->
 
 The `emitted` flag prevents double-emission: `ok`/`error`/`finish` set it to
 `true` before emitting, so `Drop` sees the flag and skips
-(`tool_span.rs:63, 82, 121`).
+(`tool_span.rs:62, 81, 122`).
 
 ## Why `execute_tool_semantic` warns on `None` ontology
 
@@ -165,8 +165,10 @@ have different audiences.
 `McpToolError` carries a `kind: McpErrorKind` so the client can branch on the
 classification (`not_found`, `permission_denied`, `rate_limited`, …) rather
 than parsing a free-text message. The wire format is pinned by golden-string
-tests (`server/mod.rs:106-140`) — changing the JSON shape breaks every
-client.
+pinned by the `to_json_string` implementation (`error.rs:127-129`) itself —
+the former golden-string tests at `server/mod.rs:106-140` were removed with
+the `mod.rs` rename; the only tests in the crate are the SSRF unit tests in
+`security.rs`.
 
 ## Why per-variant error mappers instead of `internal(format!(...))`
 
@@ -204,9 +206,9 @@ target is created by the write, a read target must already be there.
 
 `validate_tool_url_with_dns` is the strict default for untrusted URLs: it
 runs sync scheme/credential/literal-IP checks then resolves the hostname and
-rejects private/loopback resolved IPs (`validation.rs:303-307`).
+rejects private/loopback resolved IPs (`security.rs:240`).
 `validate_tool_url_permissive` allows private IPs and loopback
-(`validation.rs:321-324`).
+(`security.rs:251`). Both wrappers live in `security.rs`, not `validation.rs`.
 
 The reason is that not every URL is untrusted. A user-curated RSS
 subscription list may legitimately point at `http://localhost:4000/feed.xml`
@@ -216,17 +218,20 @@ unsuitable for arbitrary untrusted input (`security.rs:42-50`).
 
 A TOCTOU between DNS resolution and the downstream `reqwest` connect (DNS
 rebinding) remains; closing that requires a custom reqwest connector that
-re-checks the resolved IP at connect time (`validation.rs:289-294`). The
-framework documents the gap rather than pretending the check is complete.
+re-checks the resolved IP at connect time (see the `validate_url_with_dns`
+doc comment, `security.rs:138-203`). The framework documents the gap rather
+than pretending the check is complete.
 
 ## Why `AnyJsonValue` is re-exported from `hkask-types`
 
 `AnyJsonValue` and `find_boolean_schema_positions` are re-exported from
-`hkask_types::tool_schema` (`tool_schema.rs:18`). The canonical implementation
-lives in `hkask-types` so pure domain crates (e.g. `hkask-condenser`) can use
-them without depending on `hkask-mcp-server`, which drags in `rmcp`,
-`reqwest`, `hkask-keystore`, `hkask-storage`, and `tracing-subscriber` as
-transitive deps (`tool_schema.rs:1-15`).
+`hkask_types::tool_schema` at the lib root (`hkask_mcp_server.rs:36`). The
+canonical implementation lives in `hkask-types` so pure domain crates (e.g.
+`hkask-condenser`) can use them without depending on `hkask-mcp-server`, which
+drags in `rmcp`, `reqwest`, `hkask-keystore`, `hkask-storage`, and
+`tracing-subscriber` as transitive deps. The dedicated `tool_schema` module
+file was inlined as a `pub use` here — the `tool_schema::` path had no
+external users.
 
 The reason is dependency hygiene. Tool input schemas accepting arbitrary
 JSON need a type that `schemars` renders as a proper open-ended schema (not

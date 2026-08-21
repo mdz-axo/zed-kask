@@ -10,7 +10,7 @@ mod private {
 
 /// Marker trait for ID kind — enables type-safe ID types via phantom generics.
 /// The `Sealed` supertrait prevents external implementations.
-pub(crate) trait IdKind: private::Sealed + 'static {}
+pub trait IdKind: private::Sealed + 'static {}
 
 /// Generic UUID-based identifier with phantom type parameter.
 ///
@@ -114,15 +114,15 @@ impl<T: IdKind> std::fmt::Display for Id<T> {
 
 // ── Kind types (sealed, empty enums for phantom type parameters) ─────────
 
-pub(crate) enum TemplateKind {}
+pub enum TemplateKind {}
 impl private::Sealed for TemplateKind {}
 impl IdKind for TemplateKind {}
 
-pub(crate) enum BotKind {}
+pub enum BotKind {}
 impl private::Sealed for BotKind {}
 impl IdKind for BotKind {}
 
-pub(crate) enum TripleKind {}
+pub enum TripleKind {}
 impl private::Sealed for TripleKind {}
 impl IdKind for TripleKind {}
 
@@ -130,39 +130,39 @@ pub enum EventKind {}
 impl private::Sealed for EventKind {}
 impl IdKind for EventKind {}
 
-pub(crate) enum GoalKind {}
+pub enum GoalKind {}
 impl private::Sealed for GoalKind {}
 impl IdKind for GoalKind {}
 
-pub(crate) enum EmbeddingKind {}
+pub enum EmbeddingKind {}
 impl private::Sealed for EmbeddingKind {}
 impl IdKind for EmbeddingKind {}
 
-pub(crate) enum UserKind {}
+pub enum UserKind {}
 impl private::Sealed for UserKind {}
 impl IdKind for UserKind {}
 
-pub(crate) enum EscalationKind {}
+pub enum EscalationKind {}
 impl private::Sealed for EscalationKind {}
 impl IdKind for EscalationKind {}
 
-pub(crate) enum PhaseKind {}
+pub enum PhaseKind {}
 impl private::Sealed for PhaseKind {}
 impl IdKind for PhaseKind {}
 
-pub(crate) enum CommentKind {}
+pub enum CommentKind {}
 impl private::Sealed for CommentKind {}
 impl IdKind for CommentKind {}
 
-pub(crate) enum BoardKind {}
+pub enum BoardKind {}
 impl private::Sealed for BoardKind {}
 impl IdKind for BoardKind {}
 
-pub(crate) enum ColumnKind {}
+pub enum ColumnKind {}
 impl private::Sealed for ColumnKind {}
 impl IdKind for ColumnKind {}
 
-pub(crate) enum TaskKind {}
+pub enum TaskKind {}
 impl private::Sealed for TaskKind {}
 impl IdKind for TaskKind {}
 

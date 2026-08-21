@@ -25,7 +25,7 @@ impl From<crate::database::types::DbError> for EmbeddingError {
 }
 /// Stored embedding record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StoredEmbedding {
+pub struct StoredEmbedding {
     pub id: String,
     pub entity_ref: String,
     pub vector: Vec<f32>,

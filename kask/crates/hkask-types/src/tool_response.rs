@@ -27,7 +27,7 @@ use crate::error::McpErrorKind;
 /// unclassified envelope, so a data payload that happens to carry `error`/
 /// `kind` fields is not misclassified as a server error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ToolErrorEnvelope {
+pub struct ToolErrorEnvelope {
     /// The human-readable error message from the server.
     pub message: String,
     /// The typed kind. Always `Some` when constructed via `parse_tool_error`;

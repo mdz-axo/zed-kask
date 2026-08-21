@@ -142,7 +142,7 @@ impl RolloutKind {
 /// One event in the log. `position` is the identity — there is no separate
 /// event ID (Agent Lightning's `schemas.py` pattern).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct EventRecord {
+pub struct EventRecord {
     /// Position in the log. Monotonic; assigned by `append`.
     pub position: i64,
     /// The rollout this event belongs to. Caller-assigned; groups events
@@ -175,7 +175,7 @@ pub struct EventFilter {
 
 /// Event store errors.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum EventStoreError {
+pub enum EventStoreError {
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("stored payload was not valid JSON: {0}")]
