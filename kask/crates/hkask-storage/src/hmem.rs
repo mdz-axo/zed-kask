@@ -1,5 +1,4 @@
 //! Uni-temporal h_mems — entity/attribute/value with observed_at timestamp.
-pub mod archive;
 
 use crate::database::value::{DbRow, DbValue};
 use chrono::{DateTime, Utc};

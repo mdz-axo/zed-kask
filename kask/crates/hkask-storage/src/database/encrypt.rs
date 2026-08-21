@@ -7,7 +7,6 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
-use blake3::Hasher;
 use rand::RngCore;
 
 const PREFIX: &str = "ENCv1:";
@@ -18,15 +17,6 @@ pub(crate) struct Encryptor {
 }
 
 impl Encryptor {
-    pub fn from_passphrase(passphrase: &str) -> Self {
-        let mut hasher = Hasher::new();
-        hasher.update(b"hkask-db-encrypt-v1");
-        hasher.update(passphrase.as_bytes());
-        let hash = hasher.finalize();
-        let key = *Key::<Aes256Gcm>::from_slice(hash.as_bytes());
-        Self { key }
-    }
-
     /// Encrypt a plaintext string → `ENCv1:<base64>`.
     ///
     /// If AES-GCM encryption fails (extremely unlikely for h_mem-sized values —

@@ -57,7 +57,7 @@ pub(crate) const DEFAULT_MAX_ITERATIONS: u32 = 100;
 ///   If user doesn't respond within the timeout, apply gentle throttle as fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum InferenceThrottleMode {
+pub enum InferenceThrottleMode {
     /// No automatic throttle. User manages budget manually.
     Off,
     /// Throttle directly — pre-authorized by user (P2 consent via config).
@@ -246,7 +246,7 @@ pub use hkask_types::curator::CurationThresholdConfig;
 /// YAML-configurable set-points. Fields are Optional so partial configs work.
 /// Missing fields fall back to the `SetPoints::default()` values.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
-pub(crate) struct SetPointsConfig {
+pub struct SetPointsConfig {
     pub energy_min_remaining: Option<f64>,
     pub variety_max_deficit: Option<f64>,
     pub error_rate_max: Option<f64>,

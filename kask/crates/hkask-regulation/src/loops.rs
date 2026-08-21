@@ -43,7 +43,6 @@ pub mod signals;
 pub use actions::{ActionType, RegulatoryAction};
 pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
 pub use channels::CurationInput;
-};
 pub use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
 pub use signals::Signal;

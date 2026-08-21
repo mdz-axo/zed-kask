@@ -136,7 +136,7 @@ impl From<&CallCap> for AgentCallCapStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum CallCapError {
+pub enum CallCapError {
     #[error("call cap exceeded: remaining {remaining}, ceiling {ceiling}")]
     Exceeded { remaining: u32, ceiling: u32 },
     #[error("persistence: {0}")]
