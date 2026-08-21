@@ -1,37 +1,16 @@
-//! HTTP helpers — tool output wrapper and HTTP error classification.
+//! HTTP error classification for MCP tool responses.
 
 use hkask_inference::openai_compat::sanitize_error_body;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::error::McpToolError;
 
-/// Tool result with optional observability metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct McpToolOutput {
-    pub(crate) content: Value,
-}
-
-impl McpToolOutput {
-    pub(crate) fn new(content: Value) -> Self {
-        Self { content }
-    }
-
-    /// Serialize to JSON string for rmcp tool return value.
-    pub(crate) fn to_json_string(&self) -> String {
-        serde_json::to_string(&serde_json::json!({"content": &self.content})).unwrap_or_else(|e| {
-            serde_json::json!({"content": format!("serialization error: {e}")}).to_string()
-        })
-    }
-}
-
-// ── HTTP helpers ──────────────────────────────────────────────────────────
-
-/// Classify an HTTP error response into a structured `McpToolError`.
-/// Classify an HTTP error response into an McpToolError.
+/// Classify an HTTP error response into an `McpToolError`.
 ///
-/// pre:  service is non-empty, status is valid
-/// post: returns McpToolError with appropriate kind based on status code
+/// `pre`: service is non-empty, status is valid.
+/// `post`: returns an `McpToolError` whose kind maps from the status code
+/// (401/403 → permission_denied, 404 → not_found, 422 → invalid_argument,
+/// 429 → rate_limited, 5xx → unavailable, else → internal). The body is
+/// redacted via `sanitize_error_body` before formatting.
 #[must_use]
 pub fn classify_http_error(service: &str, status: reqwest::StatusCode, body: &str) -> McpToolError {
     let sanitized = sanitize_error_body(body);

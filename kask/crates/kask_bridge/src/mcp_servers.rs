@@ -325,50 +325,21 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     },
 ];
 
-/// Just the server IDs, as a static slice of `&str`.
+/// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].
 /// Convenience for consumers that only need the ID list (e.g. `swarm_panel`).
-pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
-    "portfolio",
-    "companies",
-    "corpus",
-    "curator",
-    "kata-kanban",
-    "research",
-    "scenarios",
-    "prediction-markets",
-    "swarm",
-    "training",
-];
+pub fn builtin_mcp_server_ids() -> Vec<&'static str> {
+    BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect()
+}
 
-/// The server list as `(id, description)` pairs.
-/// Convenience for the settings UI which renders `(id, description)` rows.
-pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
-    (
-        "portfolio",
-        "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
-    ),
-    ("companies", "Companies — company research and filings"),
-    ("corpus", "Corpus — document corpus and QA generation"),
-    (
-        "curator",
-        "Curator — regulation cascade and algedonic signals",
-    ),
-    ("kata-kanban", "Kata Kanban — improvement kata board"),
-    ("research", "Research — web research and paper search"),
-    ("scenarios", "Scenarios — scenario planning and forecasting"),
-    (
-        "prediction-markets",
-        "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
-    ),
-    (
-        "swarm",
-        "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
-    ),
-    (
-        "training",
-        "Training — LoRA training configuration and audit",
-    ),
-];
+/// The server list as `(id, description)` pairs, derived from
+/// [`BUILT_IN_MCP_SERVERS`]. Convenience for the settings UI which renders
+/// `(id, description)` rows.
+pub fn builtin_mcp_server_pairs() -> Vec<(&'static str, &'static str)> {
+    BUILT_IN_MCP_SERVERS
+        .iter()
+        .map(|s| (s.id, s.description))
+        .collect()
+}
 
 /// Look up a server by ID.
 #[must_use]
@@ -529,6 +500,23 @@ mod tests {
             .iter()
             .find(|s| s.id == id)
             .unwrap_or_else(|| panic!("server '{id}' not in BUILT_IN_MCP_SERVERS"))
+    }
+
+    // The derived fns must match the main registry — this pins the single-source
+    // invariant so a future edit to the fns can't silently drift.
+    #[test]
+    fn builtin_mcp_server_ids_match_main_registry() {
+        let ids: Vec<_> = BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect();
+        assert_eq!(builtin_mcp_server_ids(), ids);
+    }
+
+    #[test]
+    fn builtin_mcp_server_pairs_match_main_registry() {
+        let pairs: Vec<_> = BUILT_IN_MCP_SERVERS
+            .iter()
+            .map(|s| (s.id, s.description))
+            .collect();
+        assert_eq!(builtin_mcp_server_pairs(), pairs);
     }
 
     #[test]

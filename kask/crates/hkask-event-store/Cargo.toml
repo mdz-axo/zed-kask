@@ -11,6 +11,7 @@ path = "src/hkask_event_store.rs"
 
 [dependencies]
 hkask-storage.workspace = true
+hkask-types.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true

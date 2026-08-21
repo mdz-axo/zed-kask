@@ -5,7 +5,6 @@ use serde_json::Value;
 use std::time::Instant;
 
 use super::error::McpToolError;
-use super::http_helpers::McpToolOutput;
 
 /// RAII guard — emits Regulation tool span on drop. Use `span.ok(output)` or `span.error(kind, output)`.
 pub struct ToolSpanGuard {
@@ -92,14 +91,17 @@ impl ToolSpanGuard {
         output
     }
 
-    /// Equivalent to `self.ok(McpToolOutput::new(value).to_json_string())`.
-    /// Finish span with Ok JSON value.
+    /// Finish span with Ok, serializing `value` as the MCP `{"content": ...}`
+    /// tool-result envelope.
     ///
     /// post: Regulation tool span emitted with "ok" status
-    /// post: returns JSON string of value
+    /// post: returns the `{"content": value}` JSON string
     #[must_use]
     pub fn ok_json(self, value: Value) -> String {
-        self.ok(McpToolOutput::new(value).to_json_string())
+        self.ok(
+            serde_json::to_string(&serde_json::json!({"content": value}))
+                .unwrap_or_else(|e| serde_json::json!({"content": format!("serialization error: {e}")}).to_string()),
+        )
     }
 
     /// Consume a `Result<Value, McpToolError>` — ok→`ok_json`, err→`error(…)`.
