@@ -91,7 +91,7 @@ pub(crate) struct CommunicationEvent {
 /// CommunicationWatcher sends `Communication`.
 /// All flow through one `mpsc::Sender<CurationInput>` channel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) enum CurationInput {
+pub enum CurationInput {
     /// Algedonic alert from Cybernetics (variety deficit escalation)
     Alert(RuntimeAlert),
     /// Goal state transition from GoalStore

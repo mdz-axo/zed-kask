@@ -39,7 +39,7 @@ pub struct BridgeRolloutEventSource {
 /// A detected harness pass-rate regression — the producer-side signal that
 /// triggers `submit_rollout_impact_check` on the `CyberneticsLoop`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct HarnessRegression {
+pub struct HarnessRegression {
     /// The agent whose pass rate regressed. Used as the `rollout_id` for the
     /// impact check so `metric_before_and_after` queries the agent's
     /// `harness_summary` event group.
