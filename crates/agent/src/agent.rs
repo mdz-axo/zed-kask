@@ -4429,7 +4429,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         }
     }
 
@@ -4485,7 +4484,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         }
     }
 
@@ -4989,7 +4987,6 @@ mod internal_tests {
                 disable_model_invocation: false,
                 dependencies: Vec::new(),
                 core: false,
-                steps: Vec::new(),
             });
         }
 
@@ -5068,7 +5065,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -5080,7 +5076,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -5092,7 +5087,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -5152,7 +5146,6 @@ mod internal_tests {
             disable_model_invocation: true,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -5164,7 +5157,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);

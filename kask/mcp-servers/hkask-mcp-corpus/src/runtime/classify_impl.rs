@@ -1,6 +1,5 @@
 //! Section type classifier — config-driven, multi-provider.
 //!
-//! Classifier configs live in registry/classify/{name}.yaml.
 //! corpus.yaml references which one to use via the `classifier` field.
 //!
 //! Routes through zed's `LanguageModelRegistry` via `InferencePort::generate_with_model`,
@@ -17,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Classification result for a single passage.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ClassifyResult {
     /// The classified section type.
     pub category: String,
@@ -298,9 +297,56 @@ async fn classify_one(
 
 /// Classify a batch of passages concurrently.
 ///
-/// Returns results in the same order as the input texts.
-/// Failed classifications default to "Statement".
+/// Run a batch of LLM classifications concurrently.
 ///
+/// `item_fn` is called per text with the inference port and config.
+/// Failed items use `fallback_fn`. All items use `default_fn` when no model.
+async fn batch_classify<T: Default + Clone + Send + 'static, F, Fut>(
+    texts: &[String],
+    config: &ClassifierConfig,
+    inference_port: Arc<dyn InferencePort>,
+    item_fn: F,
+) -> Result<Vec<T>, ServiceError>
+where
+    F: Fn(Arc<dyn InferencePort>, Arc<ClassifierConfig>, String) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<T, ServiceError>> + Send,
+{
+    if config.model.is_empty() {
+        return Ok(texts.iter().map(|_| T::default()).collect());
+    }
+
+    let config = Arc::new(config.clone());
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
+    let item_fn = Arc::new(item_fn);
+    let mut handles = Vec::with_capacity(texts.len());
+
+    for (i, text) in texts.iter().enumerate() {
+        let inference_port = Arc::clone(&inference_port);
+        let cfg = Arc::clone(&config);
+        let text = text.clone();
+        let permit = Arc::clone(&semaphore);
+        let fn_clone = Arc::clone(&item_fn);
+
+        handles.push(tokio::spawn(async move {
+            let _permit = permit.acquire().await;
+            let result = fn_clone(inference_port, cfg, text).await;
+            (i, result)
+        }));
+    }
+
+    let mut results: Vec<Option<T>> = vec![None; texts.len()];
+    for handle in handles {
+        match handle.await {
+            Ok((i, Ok(result))) => results[i] = Some(result),
+            Ok((i, Err(_))) => results[i] = Some(T::default()),
+            Err(_) => {}
+        }
+    }
+
+    Ok(results.into_iter().map(|r| r.unwrap_or_default()).collect())
+}
+
+/// Classify a batch of passages concurrently.
 #[must_use = "result must be used"]
 pub async fn classify_batch(
     texts: &[String],
@@ -308,183 +354,57 @@ pub async fn classify_batch(
     inference_port: Arc<dyn InferencePort>,
     cost_driver: Option<Arc<dyn hkask_storage::database::driver::DatabaseDriver>>,
 ) -> Result<Vec<ClassifyResult>, ServiceError> {
-    // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "classify_batch", item_count = texts.len(), "REG");
 
     if config.model.is_empty() {
-        // No model resolved — return all fallback category (skip classification)
-        let fallback = &config.fallback_category;
-        return Ok(texts
-            .iter()
-            .map(|_| ClassifyResult {
-                category: fallback.clone(),
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                cached_tokens: 0,
-                cost_urj: 0,
-                failed: false,
-                provider: String::new(),
-            })
-            .collect());
+        let fallback = config.fallback_category.clone();
+        return Ok(texts.iter().map(|_| ClassifyResult {
+            category: fallback.clone(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            cached_tokens: 0,
+            cost_urj: 0,
+            failed: false,
+            provider: String::new(),
+        }).collect());
     }
 
-    let config = std::sync::Arc::new(config); // share across spawned tasks
-    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
-    let mut handles = Vec::with_capacity(texts.len());
+    let results = batch_classify(texts, &config, Arc::clone(&inference_port), |port, cfg, text| {
+        let port = Arc::clone(&port);
+        let cfg = Arc::clone(&cfg);
+        async move { classify_one(port.as_ref(), &cfg, &text).await }
+    }).await?;
 
-    for (i, text) in texts.iter().enumerate() {
-        let inference_port = Arc::clone(&inference_port);
-        let cfg = Arc::clone(&config);
-        let text = text.clone();
-        let permit = Arc::clone(&semaphore);
-
-        handles.push(tokio::spawn(async move {
-            let _permit = permit.acquire().await;
-            let result = classify_one(inference_port.as_ref(), &cfg, &text).await;
-            (i, result)
-        }));
-    }
-
-    let mut results: Vec<Option<ClassifyResult>> = vec![None; texts.len()];
-    for handle in handles {
-        match handle.await {
-            Ok((i, Ok(result))) => {
-                results[i] = Some(result);
-            }
-            Ok((i, Err(e))) => {
-                tracing::warn!(index = i, error = %e, "Classifier failed for passage, using fallback");
-                results[i] = Some(ClassifyResult {
-                    category: config.fallback_category.clone(),
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    cached_tokens: 0,
-                    cost_urj: 0,
-                    failed: true,
-                    provider: config.model.clone(),
-                });
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Classifier task panicked");
-            }
-        }
-    }
-
-    let results: Vec<ClassifyResult> = results
-        .into_iter()
-        .map(|r| {
-            r.unwrap_or(ClassifyResult {
-                category: config.fallback_category.clone(),
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                cached_tokens: 0,
-                cost_urj: 0,
-                failed: true,
-                provider: config.model.clone(),
-            })
-        })
-        .collect();
-
-    // Post the aggregate rJoule cost to the ledger so the corpus server can
-    // find efficiencies in LLM interactions. 1 rJoule = 1 USD; `cost_urj` is
-    // in µrJ. Best-effort: a failed post warns but does not block the result.
+    // Post aggregate cost to ledger (best-effort)
     if let Some(driver) = cost_driver {
         let total_cost_urj: u64 = results.iter().map(|r| r.cost_urj).sum();
         if total_cost_urj > 0 {
-            let provider = if results
-                .first()
-                .map(|r| r.provider.as_str())
-                .unwrap_or("")
-                .is_empty()
-            {
-                "unknown"
-            } else {
-                // The provider is the model name's namespace prefix (e.g.
-                // "OpenRouter" from "OpenRouter/qwen/qwen3-embedding").
-                // Fall back to "classify" if no prefix.
-                results
-                    .first()
-                    .map(|r| r.provider.split('/').next().unwrap_or("classify"))
-                    .unwrap_or("classify")
-            };
-            let reference = format!(
-                "classify-batch-{}-{}",
-                chrono::Utc::now().timestamp_micros(),
-                uuid::Uuid::new_v4()
-            );
-            crate::cost::record_cost_best_effort(
-                &driver,
-                provider,
-                total_cost_urj as i64,
-                &reference,
-                &serde_json::json!({
-                    "operation": "classify_batch",
-                    "item_count": texts.len(),
-                    "model": config.model,
-                }),
-            );
+            let provider = results.first()
+                .map(|r| r.provider.split('/').next().unwrap_or("classify"))
+                .unwrap_or("classify");
+            let reference = format!("classify-batch-{}-{}", chrono::Utc::now().timestamp_micros(), uuid::Uuid::new_v4());
+            crate::cost::record_cost_best_effort(&driver, provider, total_cost_urj as i64, &reference,
+                &serde_json::json!({"operation": "classify_batch", "item_count": texts.len(), "model": config.model}));
         }
     }
 
     Ok(results)
 }
 
-// ── HMem Extraction ──────────────────────────────────────────────────
-
-/// Extract semantic h_mems from a batch of passages.
-/// Model is determined by `HKASK_CLASSIFIER_MODEL` env var / settings, falling back
-///
-/// Returns results in the same order as the input texts.
-/// Failed extractions default to empty PassageExtraction.
-/// Graceful degradation: no model resolved → all empty extractions.
-///
+/// Extract semantic h_mems from a batch of passages concurrently.
 #[must_use = "result must be used"]
 pub async fn extract_passages_batch(
     texts: &[String],
     config: &ClassifierConfig,
     inference_port: Arc<dyn InferencePort>,
 ) -> Result<Vec<PassageExtraction>, ServiceError> {
-    // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "extract_passages_batch", item_count = texts.len(), "REG");
 
-    if config.model.is_empty() {
-        tracing::info!("No model resolved for h_mem extraction — returning empty extractions");
-        return Ok(texts.iter().map(|_| PassageExtraction::default()).collect());
-    }
-
-    let config = Arc::new(config.clone());
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
-    let mut handles = Vec::with_capacity(texts.len());
-
-    for (i, text) in texts.iter().enumerate() {
-        let inference_port = Arc::clone(&inference_port);
-        let cfg = Arc::clone(&config);
-        let text = text.clone();
-        let permit = Arc::clone(&semaphore);
-
-        handles.push(tokio::spawn(async move {
-            let _permit = permit.acquire().await;
-            let result = extract_passage_one(inference_port.as_ref(), &cfg, &text).await;
-            (i, result)
-        }));
-    }
-
-    let mut results: Vec<Option<PassageExtraction>> = vec![None; texts.len()];
-    for handle in handles {
-        match handle.await {
-            Ok((i, Ok(result))) => {
-                results[i] = Some(result);
-            }
-            Ok((i, Err(e))) => {
-                tracing::warn!(index = i, error = %e, "HMem extraction failed, using empty");
-                results[i] = Some(PassageExtraction::default());
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "HMem extraction task panicked");
-            }
-        }
-    }
-
-    Ok(results.into_iter().map(|r| r.unwrap_or_default()).collect())
+    batch_classify(texts, config, inference_port, |port, cfg, text| {
+        let port = Arc::clone(&port);
+        let cfg = Arc::clone(&cfg);
+        async move { extract_passage_one(port.as_ref(), &cfg, &text).await }
+    }).await
 }
 
 /// Extract h_mems from a single passage.

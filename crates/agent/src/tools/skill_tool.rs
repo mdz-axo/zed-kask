@@ -859,7 +859,6 @@ mod tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            steps: Vec::new(),
         };
         let rendered = render_skill_envelope(&skill, "body content");
         assert!(
