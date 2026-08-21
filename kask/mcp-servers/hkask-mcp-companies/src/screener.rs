@@ -79,6 +79,8 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     );
 
     // ── P/E ratio ─────────────────────────────────────────────
+    // Not supported by FMP stable company-screener — parsed for
+    // caller awareness but filtered out before the API call.
     parse_numeric(
         &lower,
         &mut map,
@@ -88,27 +90,31 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
         ValueKind::Bare,
     );
 
-    // ── Dividend yield ─────────────────────────────────────────
+    // ── Dividend (annual dividend per share, dollar amount) ────
+    // FMP's stable company-screener filters by lastAnnualDividend
+    // (dollar amount), not dividend yield percentage.
     parse_numeric(
         &lower,
         &mut map,
-        &["dividend", "dividend yield", "yield", "div yield"],
+        &["dividend", "annual dividend", "dividend per share"],
         &more_than("dividendMoreThan"),
         &less_than("dividendLowerThan"),
-        ValueKind::Percent,
+        ValueKind::Dollar,
     );
 
     // ── ROE ────────────────────────────────────────────────────
+    // Not supported by FMP stable company-screener.
     parse_numeric(
         &lower,
         &mut map,
         &["roe", "return on equity"],
         &more_than("roeMoreThan"),
-        &[], // No less-than for ROE (FMP doesn't support it)
+        &[],
         ValueKind::Bare,
     );
 
     // ── ROIC ───────────────────────────────────────────────────
+    // Not supported by FMP stable company-screener.
     parse_numeric(
         &lower,
         &mut map,
@@ -119,6 +125,7 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     );
 
     // ── Debt/Equity ────────────────────────────────────────────
+    // Not supported by FMP stable company-screener.
     parse_numeric(
         &lower,
         &mut map,
@@ -129,6 +136,7 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     );
 
     // ── Price/Book ─────────────────────────────────────────────
+    // Not supported by FMP stable company-screener.
     parse_numeric(
         &lower,
         &mut map,
@@ -159,12 +167,65 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// Parameters accepted by the FMP stable `company-screener` endpoint.
+///
+/// The old `/api/v3/stock-screener` supported P/E, ROE, ROIC, debt/equity,
+/// and price/book filters, but the stable endpoint silently ignores them.
+/// We split criteria before the API call so unsupported filters are surfaced
+/// to the caller rather than silently dropped.
+const SUPPORTED_SCREENER_PARAMS: &[&str] = &[
+    "marketCapMoreThan",
+    "marketCapLowerThan",
+    "priceMoreThan",
+    "priceLowerThan",
+    "volumeMoreThan",
+    "volumeLowerThan",
+    "betaMoreThan",
+    "betaLowerThan",
+    "dividendMoreThan",
+    "dividendLowerThan",
+    "sector",
+    "industry",
+    "country",
+    "exchange",
+    "isActivelyTrading",
+    "isEtf",
+    "isFund",
+];
+
+/// Split parsed criteria into (supported, unsupported) based on the FMP
+/// stable company-screener endpoint's accepted parameters.
+pub(crate) fn split_supported_criteria(
+    criteria: &serde_json::Value,
+) -> (serde_json::Value, serde_json::Value) {
+    let empty = serde_json::Map::new();
+    let obj = criteria.as_object().unwrap_or(&empty);
+
+    let mut supported = serde_json::Map::new();
+    let mut unsupported = serde_json::Map::new();
+
+    for (key, value) in obj {
+        if key == "limit" || key == "apikey" {
+            continue;
+        }
+        if SUPPORTED_SCREENER_PARAMS.contains(&key.as_str()) {
+            supported.insert(key.clone(), value.clone());
+        } else {
+            unsupported.insert(key.clone(), value.clone());
+        }
+    }
+
+    (
+        serde_json::Value::Object(supported),
+        serde_json::Value::Object(unsupported),
+    )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 enum ValueKind {
     Dollar,  // "$10B", "$500M", "$1.5T", "$50"
-    Percent, // "5%"
     Bare,    // "20", "1.5"
 }
 
@@ -193,7 +254,6 @@ fn parse_numeric(
             // Parse the value
             let value = match value_kind {
                 ValueKind::Dollar => parse_dollar_value(value_str),
-                ValueKind::Percent => parse_percent_value(value_str),
                 ValueKind::Bare => value_str.trim().parse::<f64>().ok(),
             };
 
@@ -340,11 +400,6 @@ fn parse_dollar_value(s: &str) -> Option<f64> {
     num_str.parse::<f64>().ok().map(|n| n * multiplier)
 }
 
-/// Parse a percentage value: "5%" → 0.05, "2.5%" → 0.025.
-fn parse_percent_value(s: &str) -> Option<f64> {
-    let s = s.trim().strip_suffix('%').unwrap_or(s).trim();
-    s.parse::<f64>().ok().map(|n| n / 100.0)
-}
 
 /// Words that are operators or noise — skip them when parsing string values.
 fn is_operator_word(s: &str) -> bool {

@@ -164,11 +164,18 @@ fn extract_ep_inputs(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    let shares_outstanding = latest_metrics
+    let shares_outstanding = latest_income
         .and_then(|m| {
             m.get("weightedAverageShsOutDil")
                 .or_else(|| m.get("weightedAverageShsOut"))
                 .and_then(|v| v.as_f64())
+        })
+        .or_else(|| {
+            latest_metrics.and_then(|m| {
+                m.get("weightedAverageShsOutDil")
+                    .or_else(|| m.get("weightedAverageShsOut"))
+                    .and_then(|v| v.as_f64())
+            })
         })
         .or_else(|| {
             profile_data

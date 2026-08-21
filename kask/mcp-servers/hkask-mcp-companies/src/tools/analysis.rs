@@ -251,7 +251,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Company screener. Parses natural language prompts into FMP stock screener API parameters. Supports filtering by market cap, price, volume, P/E ratio, dividend yield, beta, sector, industry, country, exchange, ROE, ROIC, and more. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt to refine results."
+        description = "Company screener. Parses natural language prompts into FMP stable company-screener API parameters. Supports filtering by market cap, price, volume, beta, annual dividend (dollar amount), sector, industry, country, and exchange. P/E, ROE, ROIC, debt/equity, and price/book are parsed from the prompt but not supported by the current FMP endpoint — they are returned as unsupported_criteria. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt to refine results."
     )]
     pub async fn company_screener(
         &self,
@@ -279,27 +279,33 @@ impl CompaniesServer {
                 );
             }
 
-            // Build query params from criteria
+            // Split into supported and unsupported criteria.
+            // The FMP stable company-screener endpoint silently ignores
+            // P/E, ROE, ROIC, debt/equity, and price/book filters — sending
+            // them would be a broken feedback loop.
+            let (supported_criteria, unsupported_criteria) =
+                screener::split_supported_criteria(&criteria);
+
+            // Build query params from supported criteria only
             let mut query_params: Vec<(&str, String)> = Vec::new();
-            if let Some(obj) = criteria.as_object() {
+            if let Some(obj) = supported_criteria.as_object() {
                 for (k, v) in obj {
-                    if k != "apikey" {
-                        let val_str = match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        query_params.push((k.as_str(), val_str));
-                    }
+                    let val_str = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    query_params.push((k.as_str(), val_str));
                 }
             }
 
-            // Call FMP screener API
-            let url = "https://financialmodelingprep.com/api/v3/stock-screener";
+            // Call FMP stable screener API
+            let url = "https://financialmodelingprep.com/stable/company-screener";
 
             let response = self
                 .client
                 .get(url)
                 .query(&[("apikey", self.fmp_api_key.as_str())])
+                .query(&[("limit", req.limit.to_string().as_str())])
                 .query(
                     &query_params
                         .iter()
@@ -324,9 +330,13 @@ impl CompaniesServer {
 
             let count = results.as_array().map(|a| a.len()).unwrap_or(0);
 
-            let output = serde_json::json!({
+            let has_unsupported = !unsupported_criteria.as_object().map(|m| m.is_empty()).unwrap_or(true);
+
+            let mut output = serde_json::json!({
                 "prompt": req.prompt,
                 "criteria": criteria,
+                "applied_criteria": supported_criteria,
+                "unsupported_criteria": unsupported_criteria,
                 "count": count,
                 "results": results,
                 "fibo": {
@@ -335,8 +345,19 @@ impl CompaniesServer {
                     "price_earnings_ratio": fibo::PRICE_EARNINGS_RATIO,
                     "dividend_yield": fibo::DIVIDEND_YIELD,
                 },
-                "framework": "FMP Stock Screener. Parses natural language screening prompts into FMP screener API parameters. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt or criteria_overrides to refine results."
+                "framework": "FMP Stable Company Screener. Parses natural language screening prompts into FMP stable company-screener API parameters. Supports: market cap, price, volume, beta, annual dividend (dollar amount), sector, industry, country, exchange. P/E, ROE, ROIC, debt/equity, and price/book are parsed but not supported by the current FMP endpoint — see unsupported_criteria. Use criteria_overrides to adjust parsed criteria."
             });
+
+            if has_unsupported {
+                if let Some(obj) = output.as_object_mut() {
+                    obj.insert(
+                        "warning".to_string(),
+                        serde_json::Value::String(
+                            "Some parsed criteria are not supported by the FMP stable company-screener endpoint and were not applied. See unsupported_criteria for details.".to_string(),
+                        ),
+                    );
+                }
+            }
 
             Ok(fibo::enrich_with_ontology(output, "company_screener"))
         })

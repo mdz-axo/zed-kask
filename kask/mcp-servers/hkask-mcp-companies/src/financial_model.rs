@@ -107,6 +107,7 @@ impl HistoricalSnapshot {
         for entry in income_statements.iter().rev() {
             let year = entry
                 .get("calendarYear")
+                .or_else(|| entry.get("fiscalYear"))
                 .or_else(|| entry.get("date"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -136,6 +137,7 @@ impl HistoricalSnapshot {
         for entry in balance_sheets.iter().rev() {
             let year = entry
                 .get("calendarYear")
+                .or_else(|| entry.get("fiscalYear"))
                 .or_else(|| entry.get("date"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -170,6 +172,7 @@ impl HistoricalSnapshot {
         for entry in cash_flows.iter().rev() {
             let year = entry
                 .get("calendarYear")
+                .or_else(|| entry.get("fiscalYear"))
                 .or_else(|| entry.get("date"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -180,14 +183,22 @@ impl HistoricalSnapshot {
             capex.push((year.to_string(), cap.abs()));
         }
 
-        // Shares outstanding: prefer diluted (accounts for options/warrants/convertibles),
-        // fall back to basic weighted average, then profile shares.
-        let shares_outstanding = key_metrics
+        // Shares outstanding: prefer diluted from income statement (FMP stable
+        // moved this from key-metrics to income-statement), fall back to basic
+        // weighted average, then key_metrics (legacy/EODHD), then profile.
+        let shares_outstanding = income_statements
             .first()
             .and_then(|e| {
                 e.get("weightedAverageShsOutDil")
                     .or_else(|| e.get("weightedAverageShsOut"))
                     .and_then(|v| v.as_f64())
+            })
+            .or_else(|| {
+                key_metrics.first().and_then(|e| {
+                    e.get("weightedAverageShsOutDil")
+                        .or_else(|| e.get("weightedAverageShsOut"))
+                        .and_then(|v| v.as_f64())
+                })
             })
             .or_else(|| profile.get("sharesOutstanding").and_then(|v| v.as_f64()))
             .unwrap_or(1_000.0);

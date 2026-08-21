@@ -122,6 +122,20 @@ impl CompaniesServer {
         symbol: &str,
         extra: &[(&str, &str)],
     ) -> Result<serde_json::Value, McpToolError> {
+        // Key metrics requires enrichment — FMP stable split the old
+        // key-metrics response across /key-metrics, /ratios, and
+        // /financial-growth. Delegate to fetch_key_metrics which merges
+        // them and adds field aliases (roic, calendarYear, etc.).
+        if tool == "key_metrics" {
+            let limit = extra
+                .iter()
+                .find(|(k, _)| *k == "limit")
+                .and_then(|(_, v)| v.parse::<usize>().ok())
+                .unwrap_or(5);
+            let metrics = self.fetch_key_metrics(symbol, limit).await?;
+            return Ok(metrics.raw().clone());
+        }
+
         let l = self
             .learning
             .lock()

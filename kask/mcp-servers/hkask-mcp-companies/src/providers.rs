@@ -68,9 +68,13 @@ impl CompanyProfile {
         self.first()?.get("price").and_then(|v| v.as_f64())
     }
 
-    /// `mktCap` (FMP) — the market capitalization.
+    /// `marketCap` (FMP stable) — the market capitalization.
+    /// Also checks `mktCap` (legacy FMP v3 field name) for EODHD compatibility.
     pub fn market_cap(&self) -> Option<f64> {
-        self.first()?.get("mktCap").and_then(|v| v.as_f64())
+        self.first()?
+            .get("marketCap")
+            .or_else(|| self.first()?.get("mktCap"))
+            .and_then(|v| v.as_f64())
     }
 }
 
@@ -107,8 +111,13 @@ impl KeyMetrics {
     }
 
     /// `peRatio` from the latest year — the price-to-earnings multiple.
+    /// FMP stable moved this to `/ratios` as `priceToEarningsRatio`;
+    /// `fetch_key_metrics` merges ratios fields in, so both names resolve.
     pub fn pe_ratio(&self) -> Option<f64> {
-        self.latest()?.get("peRatio").and_then(|v| v.as_f64())
+        self.latest()?
+            .get("peRatio")
+            .or_else(|| self.latest()?.get("priceToEarningsRatio"))
+            .and_then(|v| v.as_f64())
     }
 
     /// `priceToBookRatio` from the latest year.
@@ -126,12 +135,13 @@ impl KeyMetrics {
     }
 
     /// `evToEbitda` (preferred) or `enterpriseValueMultiple` from the latest
-    /// year — the EV/EBITDA multiple (FMP renamed this field across API
-    /// versions; both spellings appear in the wild).
+    /// year — the EV/EBITDA multiple. FMP stable renamed the field to
+    /// `evToEBITDA` (uppercase); all three spellings are checked.
     pub fn ev_to_ebitda(&self) -> Option<f64> {
         let latest = self.latest()?;
         latest
-            .get("evToEbitda")
+            .get("evToEBITDA")
+            .or_else(|| latest.get("evToEbitda"))
             .or_else(|| latest.get("enterpriseValueMultiple"))
             .and_then(|v| v.as_f64())
     }
@@ -147,9 +157,12 @@ impl KeyMetrics {
     }
 }
 
-/// Typed view over historical prices (FMP `/historical-price-full` or EODHD
-/// `/eod`). The raw payload is the FMP-shaped `{"symbol": ..., "historical":
-/// [...]}` envelope; per-day accessors read from the `historical` array.
+/// Typed view over historical prices (FMP `/historical-price-eod/full` or EODHD
+/// `/eod`).
+///
+/// FMP stable returns a flat array of daily OHLCV bars `[{symbol, date, close, ...}]`.
+/// EODHD (normalized) returns the legacy envelope `{symbol, historical: [...]}`.
+/// Both shapes are handled — `historical()` returns the bar array from either.
 pub(crate) struct HistoricalPriceView {
     raw: Value,
 }
@@ -160,9 +173,15 @@ impl HistoricalPriceView {
         Self { raw }
     }
 
-    /// The `historical` array of daily OHLCV bars (newest-first per FMP), or an
-    /// empty slice if the envelope is missing the array.
+    /// The array of daily OHLCV bars (newest-first per FMP), or an empty slice
+    /// if the payload has no bars. Handles both the FMP stable flat array and
+    /// the legacy `{symbol, historical: [...]}` envelope.
     pub fn historical(&self) -> &[Value] {
+        // FMP stable: flat array of bar objects.
+        if let Some(arr) = self.raw.as_array() {
+            return arr;
+        }
+        // Legacy envelope / EODHD normalized: {symbol, historical: [...]}.
         self.raw
             .get("historical")
             .and_then(|v| v.as_array())
@@ -246,8 +265,18 @@ fn endpoint_mapping(tool: &str) -> Option<EndpointMapping> {
             normalize_eodhd: true,
         }),
         "historical_price" => Some(EndpointMapping {
-            fmp_path: "/historical-price-full",
+            fmp_path: "/historical-price-eod/full",
             eodhd_path: "/eod",
+            normalize_eodhd: true,
+        }),
+        "ratios" => Some(EndpointMapping {
+            fmp_path: "/ratios",
+            eodhd_path: "/fundamentals",
+            normalize_eodhd: true,
+        }),
+        "financial_growth" => Some(EndpointMapping {
+            fmp_path: "/financial-growth",
+            eodhd_path: "/fundamentals",
             normalize_eodhd: true,
         }),
         "symbol_search" => Some(EndpointMapping {
@@ -265,7 +294,14 @@ fn endpoint_mapping(tool: &str) -> Option<EndpointMapping> {
 // Plain symbols (e.g., AAPL) → FMP primary, EODHD fallback.
 
 fn is_international_symbol(symbol: &str) -> bool {
-    symbol.contains('.')
+    // Symbols with an exchange suffix (e.g., VOD.LSE, 0700.HK) are
+    // international. The .US suffix is a US listing (FMP primary).
+    if let Some(exchange) = symbol.split('.').nth(1) {
+        exchange != "US"
+    } else {
+        // No suffix — plain ticker, assumed US (FMP primary).
+        false
+    }
 }
 
 fn primary_provider(symbol: &str) -> Provider {
@@ -397,6 +433,17 @@ pub async fn fetch_company_profile(
 }
 
 /// Fetch key metrics as a typed `KeyMetrics` view over the retained raw array.
+///
+/// FMP's stable API split the old key-metrics response across three endpoints:
+/// - `/stable/key-metrics` — ROIC, ROE, DSO, DPO, cash conversion cycle, etc.
+/// - `/stable/ratios` — P/E, P/B, P/S, dividend yield, gross profit margin, etc.
+/// - `/stable/financial-growth` — revenue growth, net income growth, etc.
+///
+/// This function fetches all three and merges relevant fields into each
+/// key-metrics entry (matched by date) so downstream code and typed accessors
+/// see the same field set as the old single-endpoint response. Field aliases
+/// (`roic` for `returnOnInvestedCapital`, `calendarYear` for `fiscalYear`)
+/// are added so existing `.get("fieldName")` calls continue to work.
 pub async fn fetch_key_metrics(
     client: &reqwest::Client,
     symbol: &str,
@@ -416,11 +463,22 @@ pub async fn fetch_key_metrics(
         learning,
     )
     .await?;
-    Ok(KeyMetrics::from_raw(raw))
+
+    // Enrich with ratios and financial-growth data from FMP.
+    // These supplementary fetches are best-effort — if they fail, the key-metrics
+    // data is still returned (with None for the moved fields).
+    let ratios_raw = fmp_get(client, "/ratios", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
+    let growth_raw = fmp_get(client, "/financial-growth", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
+
+    let enriched = enrich_key_metrics(raw, ratios_raw, growth_raw);
+    Ok(KeyMetrics::from_raw(enriched))
 }
 
-/// Fetch historical prices as a typed `HistoricalPriceView` over the
-/// `{"symbol": ..., "historical": [...]}` envelope.
+/// Fetch historical prices as a typed `HistoricalPriceView`.
+///
+/// FMP stable returns a flat array of daily bars; EODHD (normalized) returns
+/// the legacy `{symbol, historical: [...]}` envelope. `HistoricalPriceView`
+/// handles both shapes.
 pub async fn fetch_historical_price(
     client: &reqwest::Client,
     symbol: &str,
@@ -441,6 +499,118 @@ pub async fn fetch_historical_price(
     )
     .await?;
     Ok(HistoricalPriceView::from_raw(raw))
+}
+
+/// Merge ratios and financial-growth fields into key-metrics entries by date.
+///
+/// FMP's stable API split the old key-metrics response across three endpoints.
+/// This function merges the moved fields back into each key-metrics entry so
+/// downstream code sees the same field set as before. Also adds field aliases
+/// for renamed fields (`roic` for `returnOnInvestedCapital`, `calendarYear`
+/// for `fiscalYear`) so existing `.get("fieldName")` calls continue to work.
+fn enrich_key_metrics(
+    mut raw: Value,
+    ratios: Option<Value>,
+    growth: Option<Value>,
+) -> Value {
+    let Some(entries) = raw.as_array_mut() else {
+        return raw;
+    };
+
+    // Build lookup maps by date for ratios and growth data.
+    let ratios_by_date: std::collections::HashMap<String, &Value> = ratios
+        .as_ref()
+        .and_then(|r| r.as_array())
+        .map_or(std::collections::HashMap::new(), |arr| {
+            arr.iter()
+                .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(|d| (d.to_string(), e)))
+                .collect()
+        });
+
+    let growth_by_date: std::collections::HashMap<String, &Value> = growth
+        .as_ref()
+        .and_then(|g| g.as_array())
+        .map_or(std::collections::HashMap::new(), |arr| {
+            arr.iter()
+                .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(|d| (d.to_string(), e)))
+                .collect()
+        });
+
+    // Fields from /stable/ratios that were in the old key-metrics response.
+    const RATIOS_FIELDS: &[&str] = &[
+        "priceToEarningsRatio",
+        "priceToBookRatio",
+        "priceToSalesRatio",
+        "dividendYield",
+        "grossProfitMargin",
+        "enterpriseValueMultiple",
+        "debtToEquityRatio",
+        "effectiveTaxRate",
+    ];
+
+    // Fields from /stable/financial-growth that were in the old key-metrics response.
+    const GROWTH_FIELDS: &[&str] = &[
+        "revenueGrowth",
+        "grossProfitGrowth",
+        "ebitgrowth",
+        "operatingIncomeGrowth",
+        "netIncomeGrowth",
+        "epsgrowth",
+        "epsdilutedGrowth",
+        "freeCashFlowGrowth",
+    ];
+
+    for entry in entries {
+        if let Some(obj) = entry.as_object_mut() {
+            // Add calendarYear alias for fiscalYear (old field name).
+            if !obj.contains_key("calendarYear") {
+                if let Some(fy) = obj.get("fiscalYear").and_then(|v| v.as_str()) {
+                    obj.insert("calendarYear".to_string(), Value::String(fy.to_string()));
+                }
+            }
+
+            // Add roic alias for returnOnInvestedCapital (old field name).
+            if !obj.contains_key("roic") {
+                if let Some(roic) = obj.get("returnOnInvestedCapital") {
+                    obj.insert("roic".to_string(), roic.clone());
+                }
+            }
+
+            // Merge ratios and growth fields by matching date.
+            // Extract the date string first to avoid holding an immutable borrow
+            // across the mutable `obj.insert` calls below.
+            let date_str = obj.get("date").and_then(|d| d.as_str()).map(|s| s.to_string());
+            if let Some(date) = date_str.as_deref() {
+                // Merge ratios fields.
+                if let Some(ratios_entry) = ratios_by_date.get(date)
+                    .and_then(|r| r.as_object())
+                {
+                    for field in RATIOS_FIELDS {
+                        if !obj.contains_key(*field) {
+                            if let Some(val) = ratios_entry.get(*field) {
+                                obj.insert(field.to_string(), val.clone());
+                            }
+                        }
+                    }
+                }
+
+                // Merge growth fields.
+                if let Some(growth_entry) = growth_by_date.get(date)
+                    .and_then(|g| g.as_object())
+                {
+                    for field in GROWTH_FIELDS {
+                        if !obj.contains_key(*field) {
+                            if let Some(val) = growth_entry.get(*field) {
+                                obj.insert(field.to_string(), val.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    raw
 }
 
 /// Approximated field count for EODHD key_metrics normalization (FinGPT §3.2).
@@ -539,6 +709,16 @@ async fn eodhd_get(
 // These functions extract and reshape data to match FMP's flat array format
 // so that analysis.rs functions work unchanged.
 
+/// Copy a field from one key to another if the target is absent.
+/// Used to map EODHD field names to FMP field names.
+fn map_field(map: &mut serde_json::Map<String, Value>, from: &str, to: &str) {
+    if !map.contains_key(to) {
+        if let Some(v) = map.get(from) {
+            map.insert(to.to_string(), v.clone());
+        }
+    }
+}
+
 /// Normalize EODHD response based on which logical tool endpoint was requested.
 fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> Value {
     match tool {
@@ -546,25 +726,81 @@ fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> Value {
         "income_statement" => normalize_eodhd_income_statement(eodhd_value),
         "balance_sheet" => normalize_eodhd_balance_sheet(eodhd_value),
         "cash_flow_statement" => normalize_eodhd_cash_flow(eodhd_value),
-        "key_metrics" => normalize_eodhd_key_metrics(eodhd_value),
+        "key_metrics" | "ratios" | "financial_growth" => {
+            // EODHD fundamentals is a single endpoint — ratios and growth data
+            // are computed from the same financial statements. The key_metrics
+            // normalizer already computes grossProfitMargin, roic, DPO, DSO,
+            // and merges Highlights fields (dividendYield, marketCap, etc.).
+            normalize_eodhd_key_metrics(eodhd_value)
+        }
         "historical_price" => normalize_eodhd_historical(eodhd_value, symbol),
         _ => eodhd_value.clone(),
     }
 }
 
-/// Extract company profile from EODHD General section → FMP profile format.
+/// Extract company profile from EODHD General + Highlights → FMP profile format.
+///
+/// EODHD's General section uses PascalCase field names (Code, Name,
+/// MarketCapitalization) while FMP uses camelCase (symbol, companyName,
+/// marketCap). We map the key fields and also pull MarketCapitalization from
+/// Highlights since General doesn't include it.
 fn normalize_eodhd_profile(fundamentals: &Value) -> Value {
     let general = fundamentals.get("General");
+    let highlights = fundamentals.get("Highlights");
     match general {
         Some(g) => {
-            // FMP profile returns an array with one element
-            Value::Array(vec![g.clone()])
+            let mut obj = g.clone();
+            if let Some(map) = obj.as_object_mut() {
+                // Map EODHD General fields → FMP profile field names.
+                map_field(map, "Code", "symbol");
+                map_field(map, "Name", "companyName");
+                map_field(map, "GicSector", "sector");
+                map_field(map, "Industry", "industry");
+                map_field(map, "CurrencyCode", "currency");
+                map_field(map, "Exchange", "exchange");
+                map_field(map, "CountryISO", "country");
+                map_field(map, "FullTimeEmployees", "fullTimeEmployees");
+                map_field(map, "Description", "description");
+                map_field(map, "WebURL", "website");
+                map_field(map, "ISIN", "isin");
+                map_field(map, "CIK", "cik");
+                map_field(map, "IPODate", "ipoDate");
+
+                // Market cap: EODHD puts this in Highlights, not General.
+                if !map.contains_key("marketCap") {
+                    if let Some(h) = highlights {
+                        if let Some(mc) = h.get("MarketCapitalization") {
+                            map.insert("marketCap".to_string(), mc.clone());
+                        }
+                    }
+                }
+
+                // Shares outstanding: EODHD puts this in the latest balance sheet.
+                if !map.contains_key("sharesOutstanding") {
+                    if let Some(bs) = fundamentals
+                        .get("Financials")
+                        .and_then(|f| f.get("Balance_Sheet"))
+                        .and_then(|bs| bs.get("yearly"))
+                        .and_then(|y| y.as_object())
+                        .and_then(|m| m.iter().max_by_key(|(k, _)| k.as_str()))
+                        .map(|(_, v)| v)
+                    {
+                        if let Some(shares) = bs.get("commonStockSharesOutstanding") {
+                            map.insert("sharesOutstanding".to_string(), shares.clone());
+                        }
+                    }
+                }
+            }
+            Value::Array(vec![obj])
         }
         None => Value::Array(vec![]),
     }
 }
 
 /// Extract income statements from EODHD Financials.Income_Statement.yearly → FMP format.
+///
+/// Maps EODHD field names to FMP equivalents (e.g. totalRevenue → revenue)
+/// and adds calendarYear/date fields for downstream compatibility.
 fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
     let yearly = fundamentals
         .get("Financials")
@@ -577,7 +813,6 @@ fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
                 .iter()
                 .map(|(date, stmt)| {
                     let mut obj = stmt.clone();
-                    // Ensure calendarYear field exists (FMP uses this)
                     if let Some(obj_map) = obj.as_object_mut() {
                         let year = date.split('-').next().unwrap_or(date);
                         obj_map
@@ -586,6 +821,8 @@ fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
                         obj_map
                             .entry("date".to_string())
                             .or_insert_with(|| Value::String(date.to_string()));
+                        // Map EODHD field names → FMP field names
+                        map_field(obj_map, "totalRevenue", "revenue");
                     }
                     obj
                 })
@@ -603,6 +840,9 @@ fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
 }
 
 /// Extract balance sheets from EODHD Financials.Balance_Sheet.yearly → FMP format.
+///
+/// Maps EODHD field names to FMP equivalents (e.g. totalLiab → totalLiabilities,
+/// totalStockholderEquity → totalEquity/totalStockholdersEquity).
 fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
     let yearly = fundamentals
         .get("Financials")
@@ -623,6 +863,12 @@ fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
                         obj_map
                             .entry("date".to_string())
                             .or_insert_with(|| Value::String(date.to_string()));
+                        // Map EODHD field names → FMP field names
+                        map_field(obj_map, "totalLiab", "totalLiabilities");
+                        map_field(obj_map, "totalStockholderEquity", "totalStockholdersEquity");
+                        map_field(obj_map, "totalStockholderEquity", "totalEquity");
+                        map_field(obj_map, "cashAndShortTermInvestments", "cashAndCashEquivalents");
+                        map_field(obj_map, "commonStockSharesOutstanding", "sharesOutstanding");
                     }
                     obj
                 })
@@ -639,6 +885,10 @@ fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
 }
 
 /// Extract cash flow statements from EODHD Financials.Cash_Flow.yearly → FMP format.
+///
+/// Maps EODHD field names to FMP equivalents (e.g. totalCashFromOperatingActivities
+/// → netCashProvidedByOperatingActivities, capitalExpenditures → capitalExpenditure,
+/// depreciation → depreciationAndAmortization).
 fn normalize_eodhd_cash_flow(fundamentals: &Value) -> Value {
     let yearly = fundamentals
         .get("Financials")
@@ -659,6 +909,13 @@ fn normalize_eodhd_cash_flow(fundamentals: &Value) -> Value {
                         obj_map
                             .entry("date".to_string())
                             .or_insert_with(|| Value::String(date.to_string()));
+                        // Map EODHD field names → FMP field names
+                        map_field(obj_map, "totalCashFromOperatingActivities", "netCashProvidedByOperatingActivities");
+                        map_field(obj_map, "totalCashflowsFromInvestingActivities", "netCashProvidedByInvestingActivities");
+                        map_field(obj_map, "totalCashFromFinancingActivities", "netCashProvidedByFinancingActivities");
+                        map_field(obj_map, "capitalExpenditures", "capitalExpenditure");
+                        map_field(obj_map, "depreciation", "depreciationAndAmortization");
+                        map_field(obj_map, "totalCashFromOperatingActivities", "operatingCashFlow");
                     }
                     obj
                 })
@@ -735,14 +992,40 @@ fn normalize_eodhd_key_metrics(fundamentals: &Value) -> Value {
         db.cmp(da)
     });
 
-    // Merge Highlights data into the latest year's entry (now first after sort)
+    // Merge Highlights data into the latest year's entry (now first after sort).
+    // Map EODHD Highlights field names → FMP field names.
     if let (Some(highlights), Some(first)) = (highlights, items.first_mut())
         && let (Some(h_obj), Some(f_map)) = (highlights.as_object(), first.as_object_mut())
     {
+        // First copy raw Highlights fields.
         for (key, value) in h_obj {
             f_map.entry(key.clone()).or_insert_with(|| value.clone());
         }
+        // Then add FMP-compatible aliases.
+        map_field(f_map, "MarketCapitalization", "marketCap");
+        map_field(f_map, "DividendYield", "dividendYield");
+        map_field(f_map, "EarningsShare", "eps");
+        map_field(f_map, "DilutedEpsTTM", "epsDiluted");
+        map_field(f_map, "ReturnOnEquityTTM", "returnOnEquity");
+        map_field(f_map, "ReturnOnAssetsTTM", "returnOnAssets");
+        map_field(f_map, "BookValue", "bookValuePerShare");
+        map_field(f_map, "RevenuePerShareTTM", "revenuePerShare");
+        map_field(f_map, "DividendShare", "dividendPerShare");
+        map_field(f_map, "RevenueTTM", "revenueTTM");
+        map_field(f_map, "GrossprofitTTM", "grossProfitTTM");
+        map_field(f_map, "EBITDA", "ebitdaTTM");
+        map_field(f_map, "PEGRatio", "pegRatio");
+
+        // Compute valuation ratios from available data.
+        // P/E = MarketCap / netIncome
+        // P/B = MarketCap / totalEquity
+        // P/S = MarketCap / revenue
+        // EV/EBITDA = (MarketCap + netDebt) / EBITDA
+        compute_valuation_ratios(f_map, income_yearly, balance_yearly, Some(highlights));
     }
+
+    // Compute revenue growth year-over-year from income statement data.
+    compute_revenue_growth(&mut items, income_yearly);
 
     Value::Array(items)
 }
@@ -770,7 +1053,10 @@ fn compute_year_metrics(
 
     // ── grossProfitMargin ──
     if let Some(income) = income_entry {
-        let revenue = income.get("revenue").and_then(|v| v.as_f64());
+        let revenue = income
+            .get("revenue")
+            .or_else(|| income.get("totalRevenue"))
+            .and_then(|v| v.as_f64());
         let gross_profit = income.get("grossProfit").and_then(|v| v.as_f64());
         if let (Some(rev), Some(gp)) = (revenue, gross_profit)
             && rev > 0.0
@@ -787,9 +1073,37 @@ fn compute_year_metrics(
             if let (Some(ni), Some(ta)) = (net_income, total_assets)
                 && ta > 0.0
             {
+                let roic_val = ni / ta;
                 obj_map
                     .entry("roic".to_string())
-                    .or_insert(Value::from(ni / ta));
+                    .or_insert(Value::from(roic_val));
+                // Also add returnOnInvestedCapital alias for code that checks the new field name.
+                obj_map
+                    .entry("returnOnInvestedCapital".to_string())
+                    .or_insert(Value::from(roic_val));
+            }
+
+            // ── investedCapital ──
+            if let Some(ic) = balance.get("netInvestedCapital").and_then(|v| v.as_f64()) {
+                obj_map
+                    .entry("investedCapital".to_string())
+                    .or_insert(Value::from(ic));
+            }
+
+            // ── daysOfInventoryOutstanding ──
+            // DIO = inventory / (costOfRevenue / 365)
+            let inventory = balance.get("inventory").and_then(|v| v.as_f64());
+            let cost_of_revenue = income
+                .get("costOfRevenue")
+                .or_else(|| income.get("costOfGoodsSold"))
+                .and_then(|v| v.as_f64());
+            if let (Some(inv), Some(cor)) = (inventory, cost_of_revenue)
+                && cor > 0.0
+            {
+                let dio = inv / (cor / 365.0);
+                obj_map
+                    .entry("daysOfInventoryOutstanding".to_string())
+                    .or_insert(Value::from(dio));
             }
         }
 
@@ -800,7 +1114,10 @@ fn compute_year_metrics(
             .or_else(|| income.get("costOfGoodsSold"))
             .and_then(|v| v.as_f64());
         if let Some(balance) = balance_entry {
-            let accounts_payable = balance.get("accountsPayable").and_then(|v| v.as_f64());
+            let accounts_payable = balance
+                .get("accountsPayable")
+                .or_else(|| balance.get("accountPayables"))
+                .and_then(|v| v.as_f64());
             if let (Some(ap), Some(cor)) = (accounts_payable, cost_of_revenue)
                 && cor > 0.0
             {
@@ -813,7 +1130,10 @@ fn compute_year_metrics(
         // ── daysOfSalesOutstanding ──
         // DSO = accountsReceivable / (revenue / 365)
         if let Some(balance) = balance_entry {
-            let accounts_receivable = balance.get("accountsReceivable").and_then(|v| v.as_f64());
+            let accounts_receivable = balance
+                .get("netReceivables")
+                .or_else(|| balance.get("accountsReceivables"))
+                .and_then(|v| v.as_f64());
             if let (Some(ar), Some(rev)) = (accounts_receivable, revenue)
                 && rev > 0.0
             {
@@ -823,15 +1143,188 @@ fn compute_year_metrics(
             }
         }
     }
+
+    // ── operatingCycle and cashConversionCycle ──
+    // OC = DIO + DSO; CCC = OC - DPO
+    if let (Some(dio), Some(dso), Some(dpo)) = (
+        obj_map.get("daysOfInventoryOutstanding").and_then(|v| v.as_f64()),
+        obj_map.get("daysOfSalesOutstanding").and_then(|v| v.as_f64()),
+        obj_map.get("daysOfPayablesOutstanding").and_then(|v| v.as_f64()),
+    ) {
+        obj_map
+            .entry("operatingCycle".to_string())
+            .or_insert(Value::from(dio + dso));
+        obj_map
+            .entry("cashConversionCycle".to_string())
+            .or_insert(Value::from(dio + dso - dpo));
+    }
 }
 
-/// Normalize EODHD /eod/{symbol} historical prices → FMP historical-price-full format.
+/// Compute valuation ratios (P/E, P/B, P/S, EV/EBITDA) for the latest year's
+/// key-metrics entry from EODHD Highlights + financial statement data.
+///
+/// These ratios were in FMP's old key-metrics endpoint but moved to /ratios in
+/// the stable API. For EODHD-primary symbols, we compute them from the raw
+/// data that's already available.
+fn compute_valuation_ratios(
+    f_map: &mut serde_json::Map<String, Value>,
+    income_yearly: Option<&Value>,
+    balance_yearly: Option<&Value>,
+    highlights: Option<&Value>,
+) {
+    let market_cap = f_map
+        .get("marketCap")
+        .or_else(|| f_map.get("MarketCapitalization"))
+        .and_then(|v| v.as_f64());
+
+    let Some(market_cap) = market_cap else {
+        return;
+    };
+
+    // Get the latest date from the entry to look up financial statements.
+    let date = f_map.get("date").and_then(|v| v.as_str());
+    let income_entry = date.and_then(|d| income_yearly.and_then(|iy| iy.get(d)));
+    let balance_entry = date.and_then(|d| balance_yearly.and_then(|by| by.get(d)));
+
+    // P/E = MarketCap / netIncome
+    if !f_map.contains_key("peRatio") && !f_map.contains_key("priceToEarningsRatio") {
+        if let Some(income) = income_entry {
+            let net_income = income.get("netIncome").and_then(|v| v.as_f64());
+            if let Some(ni) = net_income {
+                if ni > 0.0 {
+                    f_map.insert("peRatio".to_string(), Value::from(market_cap / ni));
+                    f_map.insert("priceToEarningsRatio".to_string(), Value::from(market_cap / ni));
+                }
+            }
+        }
+    }
+
+    // P/B = MarketCap / totalEquity
+    if !f_map.contains_key("priceToBookRatio") {
+        if let Some(balance) = balance_entry {
+            let equity = balance
+                .get("totalStockholderEquity")
+                .or_else(|| balance.get("totalEquity"))
+                .or_else(|| balance.get("totalStockholdersEquity"))
+                .and_then(|v| v.as_f64());
+            if let Some(eq) = equity {
+                if eq > 0.0 {
+                    f_map.insert("priceToBookRatio".to_string(), Value::from(market_cap / eq));
+                }
+            }
+        }
+    }
+
+    // P/S = MarketCap / revenue
+    if !f_map.contains_key("priceToSalesRatio") {
+        if let Some(income) = income_entry {
+            let revenue = income
+                .get("revenue")
+                .or_else(|| income.get("totalRevenue"))
+                .and_then(|v| v.as_f64());
+            if let Some(rev) = revenue {
+                if rev > 0.0 {
+                    f_map.insert("priceToSalesRatio".to_string(), Value::from(market_cap / rev));
+                }
+            }
+        }
+    }
+
+    // EV/EBITDA = (MarketCap + netDebt) / EBITDA
+    if !f_map.contains_key("evToEBITDA") && !f_map.contains_key("evToEbitda") {
+        let ebitda = highlights
+            .and_then(|h| h.get("EBITDA"))
+            .or_else(|| f_map.get("ebitdaTTM"))
+            .and_then(|v| v.as_f64());
+        if let Some(ebitda_val) = ebitda {
+            if ebitda_val > 0.0 {
+                let net_debt = balance_entry
+                    .and_then(|b| b.get("netDebt"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let ev = market_cap + net_debt;
+                f_map.insert("evToEBITDA".to_string(), Value::from(ev / ebitda_val));
+                f_map.insert("evToEbitda".to_string(), Value::from(ev / ebitda_val));
+            }
+        }
+    }
+}
+
+/// Compute year-over-year revenue growth for each entry in the key-metrics array.
+///
+/// Looks up revenue from the income statement for each year and computes
+/// revenueGrowth[n] = (revenue[n] - revenue[n-1]) / revenue[n-1].
+fn compute_revenue_growth(
+    items: &mut [Value],
+    income_yearly: Option<&Value>,
+) {
+    let Some(income_yearly) = income_yearly else {
+        return;
+    };
+
+    // Build a sorted list of (date, revenue) from income statements.
+    let mut revenue_by_date: Vec<(String, f64)> = income_yearly
+        .as_object()
+        .map_or(vec![], |map| {
+            map.iter()
+                .filter_map(|(date, stmt)| {
+                    let rev = stmt
+                        .get("revenue")
+                        .or_else(|| stmt.get("totalRevenue"))
+                        .and_then(|v| v.as_f64())?;
+                    Some((date.clone(), rev))
+                })
+                .collect()
+        });
+    revenue_by_date.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // For each item in the key-metrics array, compute revenue growth.
+    for item in items {
+        let Some(obj) = item.as_object_mut() else {
+            continue;
+        };
+        if obj.contains_key("revenueGrowth") {
+            continue;
+        }
+        let Some(date) = obj.get("date").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // Find this year's revenue and the prior year's revenue.
+        let idx = revenue_by_date.iter().position(|(d, _)| d == date);
+        if let Some(idx) = idx {
+            if idx > 0 {
+                let (curr, prev) = (revenue_by_date[idx].1, revenue_by_date[idx - 1].1);
+                if prev > 0.0 {
+                    let growth = (curr - prev) / prev;
+                    obj.insert("revenueGrowth".to_string(), Value::from(growth));
+                }
+            }
+        }
+    }
+}
+
+
+/// Normalize EODHD /eod/{symbol} historical prices → FMP-compatible format.
 ///
 /// EODHD returns an array of {date, open, high, low, close, adjusted_close, volume}.
-/// FMP returns {symbol, historical: [{date, open, high, low, close, adjClose, volume, ...}]}.
+/// We wrap in the legacy {symbol, historical: [...]} envelope (HistoricalPriceView
+/// handles both envelope and flat array) and map adjusted_close → adjClose
+/// so HistoricalPriceView::latest_close() fallback works.
 fn normalize_eodhd_historical(eod_value: &Value, symbol: &str) -> Value {
     let historical = match eod_value {
-        Value::Array(arr) => Value::Array(arr.clone()),
+        Value::Array(arr) => {
+            let mapped: Vec<Value> = arr
+                .iter()
+                .map(|bar| {
+                    let mut obj = bar.clone();
+                    if let Some(map) = obj.as_object_mut() {
+                        map_field(map, "adjusted_close", "adjClose");
+                    }
+                    obj
+                })
+                .collect();
+            Value::Array(mapped)
+        }
         _ => Value::Array(vec![]),
     };
 
@@ -898,6 +1391,90 @@ pub async fn eodhd_search_get(
     serde_json::from_str(&body).map_err(|e| {
         McpToolError::unavailable(format!("failed to parse EODHD search response: {e}"))
     })
+}
+
+
+/// Resolve a company name or plain ticker to its primary exchange symbol.
+///
+/// Searches EODHD for the company, filters for `isPrimary == true` and
+/// `Type == "Common Stock"`, and returns the symbol as `{Code}.{Exchange}`.
+/// If the input already contains a `.`, it's assumed to be already resolved.
+///
+/// Returns the resolved EODHD-format symbol and whether it's a US listing
+/// (FMP primary) or international (EODHD primary).
+pub async fn resolve_symbol(
+    client: &reqwest::Client,
+    query: &str,
+    eodhd_api_key: &str,
+) -> Result<ResolvedSymbol, McpToolError> {
+    // Already in EXCHANGE.FORMAT — use as-is.
+    if query.contains('.') {
+        let exchange = query.split('.').nth(1).unwrap_or("");
+        let is_us = exchange == "US";
+        return Ok(ResolvedSymbol {
+            symbol: query.to_string(),
+            is_us,
+            company_name: None,
+        });
+    }
+
+    // Search EODHD for the primary listing.
+    let results = eodhd_search_get(client, query, "50", eodhd_api_key).await?;
+
+    let arr = results
+        .as_array()
+        .ok_or_else(|| McpToolError::unavailable("EODHD search returned non-array"))?;
+
+    // Prefer: isPrimary == true AND Type == "Common Stock".
+    let best = arr
+        .iter()
+        .filter(|e| {
+            e.get("Type")
+                .and_then(|v| v.as_str())
+                .map(|t| t == "Common Stock")
+                .unwrap_or(false)
+        })
+        .max_by_key(|e| {
+            e.get("isPrimary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        });
+
+    let best = best.ok_or_else(|| {
+        McpToolError::unavailable(format!(
+            "No primary common stock listing found for '{query}'"
+        ))
+    })?;
+
+    let code = best
+        .get("Code")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::unavailable("EODHD search result missing 'Code'"))?;
+    let exchange = best
+        .get("Exchange")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| McpToolError::unavailable("EODHD search result missing 'Exchange'"))?;
+    let company_name = best
+        .get("Name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let symbol = format!("{code}.{exchange}");
+    let is_us = exchange == "US";
+
+    Ok(ResolvedSymbol {
+        symbol,
+        is_us,
+        company_name,
+    })
+}
+
+/// Result of symbol resolution: the EODHD-format symbol, whether it's a US
+/// listing (FMP primary), and the company name if available.
+pub struct ResolvedSymbol {
+    pub symbol: String,
+    pub is_us: bool,
+    pub company_name: Option<String>,
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

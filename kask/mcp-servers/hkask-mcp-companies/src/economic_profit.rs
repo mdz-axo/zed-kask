@@ -523,8 +523,13 @@ pub(crate) fn adj_invested_capital(balance_entry: &serde_json::Value) -> Option<
 // ── ROIC from key_metrics (pre-computed) ──────────────────────────────────────
 
 /// Extract ROIC from key_metrics data (pre-computed by FMP/EODHD).
+/// Checks `roic` (legacy alias added by `enrich_key_metrics`) and
+/// `returnOnInvestedCapital` (FMP stable field name).
 pub(crate) fn extract_roic_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
-    metrics_entry.get("roic").and_then(|v| v.as_f64())
+    metrics_entry
+        .get("roic")
+        .or_else(|| metrics_entry.get("returnOnInvestedCapital"))
+        .and_then(|v| v.as_f64())
 }
 
 /// Extract invested capital from key_metrics data.

@@ -179,4 +179,39 @@ impl CompaniesServer {
         )
         .await
     }
+
+    #[tool(
+        description = "Resolve a company name or plain ticker to its primary exchange symbol. Searches EODHD for the primary common stock listing (isPrimary=true, Type=Common Stock) and returns the symbol in {CODE}.{EXCHANGE} format, the company name, and whether it's a US listing (FMP primary) or international (EODHD primary). Use this before calling company_profile, income_statement, etc. when you only have the company name. If the input already contains a dot (e.g., VOD.LSE), it's returned as-is."
+    )]
+    pub async fn resolve_symbol(
+        &self,
+        Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "resolve_symbol",
+            Self::ontology_anchor("symbol_search"),
+            async {
+                if symbol.is_empty() {
+                    return Err(McpToolError::invalid_argument("symbol must not be empty"));
+                }
+                let resolved = providers::resolve_symbol(
+                    &self.client,
+                    &symbol,
+                    &self.eodhd_api_key,
+                )
+                .await?;
+
+                Ok(serde_json::json!({
+                    "query": symbol,
+                    "symbol": resolved.symbol,
+                    "companyName": resolved.company_name,
+                    "isUS": resolved.is_us,
+                    "primaryProvider": if resolved.is_us { "FMP" } else { "EODHD" },
+                    "framework": "EODHD symbol resolution. Searches for the primary common stock listing (isPrimary=true) and returns the canonical symbol for data fetching."
+                }))
+            },
+        )
+        .await
+    }
 }
