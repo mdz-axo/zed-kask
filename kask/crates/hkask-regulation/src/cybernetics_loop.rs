@@ -47,7 +47,7 @@ pub trait RolloutEventSource: Send + Sync {
         before_position: i64,
     ) -> Result<Option<(f64, f64)>, String>;
 }
-use crate::energy::{AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome};
+use crate::energy::{CallCapError, CallCapManager, CallMeterOutcome};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
 use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
@@ -246,24 +246,6 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Wire the reviewable escalation queue sink for algedonic alerts.
-    ///
-    /// When set, every escalated alert is persisted to the escalation queue
-    /// (the `EscalationQueue` on the curator's curator.db) so the Curator/user can
-    /// review pending alerts via `curator_escalations` and resolve/dismiss them
-    /// with an audit trail. This is the primary durable path for alert review.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_alert_escalation_sink(
-        mut self,
-        sink: Arc<dyn crate::algedonic::AlertEscalationSink>,
-    ) -> Self {
-        self.alert_escalation_sink = Some(sink);
-        self
-    }
-
     /// Set or clear the alert escalation sink after construction.
     ///
     /// Used by the composition root to lazily wire the escalation queue after
@@ -334,29 +316,6 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Enable call-cap persistence across restarts.
-    ///
-    /// Caps are saved to the given path after each reset cycle
-    /// and loaded automatically on construction.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_budget_persistence(mut self, path: std::path::PathBuf) -> Self {
-        self.budget_persistence_path = Some(path);
-        self
-    }
-
-    /// Wire the tool stats learner for statistical tool learning.
-    /// Registers the ToolReliabilitySensor into the sensor registry.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    pub fn with_tool_stats(mut self, stats: Arc<ToolStats>) -> Self {
-        self.set_tool_stats(stats);
-        self
-    }
-
     /// Set tool stats on an already-constructed loop (post-build wiring).
     ///
     /// expect: "The system provides configurable cybernetic self-regulation"
@@ -367,23 +326,6 @@ impl CyberneticsLoop {
                 crate::tool_stats::DEFAULT_RELIABILITY_THRESHOLD,
             )));
         self.tool_stats = Some(stats);
-    }
-
-    /// Override the stagnation detection threshold (default: 5 cycles).
-    ///
-    /// After this many consecutive cycles where the same (metric, action)
-    /// pair is ineffective, a `RegulatoryPlateau` escalation is triggered.
-    /// Per-metric thresholds from SetPoints are preserved.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_stagnation_threshold(mut self, threshold: u32) -> Self {
-        let existing_thresholds = self.set_points.stagnation_thresholds.clone();
-        self.stagnation_detector = Arc::new(
-            StagnationDetector::new(threshold).with_per_metric_thresholds(existing_thresholds),
-        );
-        self
     }
 
     /// Attempt to substitute an action type when the proposed one has been
@@ -610,52 +552,6 @@ impl CyberneticsLoop {
         queue.push(action);
     }
 
-    pub async fn load_budgets(&self) -> Result<usize, CallCapError> {
-        if let Some(ref path) = self.budget_persistence_path {
-            let contents = match tokio::fs::read_to_string(path).await {
-                Ok(c) => c,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-                Err(e) => {
-                    return Err(CallCapError::Persistence(format!(
-                        "read {}: {e}",
-                        path.display()
-                    )));
-                }
-            };
-            let wrapper: serde_json::Value = serde_json::from_str(&contents)
-                .map_err(|e| CallCapError::Persistence(format!("parse {}: {e}", path.display())))?;
-
-            // Load persisted call caps.
-            let count = if let Some(caps_val) = wrapper.get("budgets") {
-                let loaded: HashMap<WebID, CallCap> = serde_json::from_value(caps_val.clone())
-                    .map_err(|e| CallCapError::Persistence(format!("parse caps: {e}")))?;
-                let n = loaded.len();
-                let mgr = self.call_cap_manager.read().await;
-                let mut caps = mgr.caps_mut().await;
-                for (id, cap) in loaded {
-                    caps.insert(id, cap);
-                }
-                n
-            } else {
-                0
-            };
-
-            // Restore ToolStats state
-            if let Some(ts_val) = wrapper.get("tool_stats")
-                && let Some(ref stats) = self.tool_stats
-            {
-                stats.load_state(ts_val).await;
-            }
-
-            if count > 0 || wrapper.get("tool_stats").is_some() {
-                tracing::info!(target: "reg.cybernetics", count = count, "Loaded persisted caps + ToolStats state");
-            }
-            Ok(count)
-        } else {
-            Ok(0)
-        }
-    }
-
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
     ///
     /// Delegates to `RegulationLedger::record_outcome`. Called by `McpRuntime`
@@ -710,29 +606,11 @@ impl CyberneticsLoop {
             .await
     }
 
-    /// Returns `None` if the agent has no registered cap.
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn agent_call_cap_status(&self, agent: &WebID) -> Option<AgentCallCapStatus> {
-        self.call_cap_manager.read().await.agent_status(agent).await
-    }
-
     /// Reset every registered cap to its ceiling (one regulation tick).
     ///
     /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn reset_all_caps(&self) {
         self.call_cap_manager.read().await.reset_all().await;
-    }
-
-    /// Credit `amount` calls to an agent (used by `CuratorDirective::ReplenishBudget`).
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn credit_calls(&self, agent: &WebID, amount: u32) {
-        self.call_cap_manager
-            .read()
-            .await
-            .credit(agent, amount)
-            .await;
     }
 
     /// Called during sense() so directives are applied before computing actions.
@@ -2044,13 +1922,5 @@ impl CyberneticsLoop {
     /// expect: "The system provides observability into Regulation regulation state"
     pub fn set_points(&self) -> &SetPoints {
         &self.set_points
-    }
-
-    /// Return a mutable reference to the set-points for calibration.
-    /// Callers must hold `&mut CyberneticsLoop` (e.g., via `loop.write().await`).
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub fn set_points_mut(&mut self) -> &mut SetPoints {
-        &mut self.set_points
     }
 }

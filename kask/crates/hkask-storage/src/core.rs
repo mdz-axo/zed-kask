@@ -6,10 +6,10 @@
 
 #[macro_use]
 pub mod store_macros;
-pub mod database;
+pub mod connection;
 pub mod security;
 
-pub use database::{
+pub use connection::{
     DEFAULT_EMBEDDING_DIM, Database, DatabaseError, check_passphrase, embedding_dim, open_database,
     open_or_repair,
 };

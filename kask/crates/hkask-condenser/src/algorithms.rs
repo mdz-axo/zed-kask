@@ -697,7 +697,7 @@ mod tests {
             }
         );
         assert_eq!(
-            derive_ontology_anchor("condenser_persist"),
+            derive_ontology_anchor("test_task"),
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
                 concept: pko::PROCEDURE.to_string()

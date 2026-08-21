@@ -130,7 +130,7 @@ impl LazyLocalSwarmRuntime {
 /// The initialized local swarm runtime — ledger + agent executor.
 ///
 /// The runtime owns the *spending* policy (ceiling check, cost computation,
-/// spend recording — there is no balance gate). The *agent-run* policy (skill cascade,
+/// spend recording — there is no balance gate). The *agent-run* policy (skill execution,
 /// tool-loop orchestration) lives in `AgentExecutor`.
 pub struct LocalSwarmRuntime {
     ledger: std::sync::Arc<hkask_ledger::Ledger>,
@@ -430,12 +430,12 @@ impl LocalSwarmRuntime {
         })
     }
 
-    /// Execute a local agent: run the agent (skill cascade + tool loop, via
+    /// Execute a local agent: run the agent (skill execution + tool loop, via
     /// `AgentExecutor::run`) → compute cost → debit ledger. Returns the
     /// response text, model, token usage, cost, remaining balance, and a
     /// tool-call summary.
     ///
-    /// The agent-run policy (skill cascade, tool-loop orchestration) lives in
+    /// The agent-run policy (skill execution, tool-loop orchestration) lives in
     /// `AgentExecutor::run`; the runtime owns the spending policy (ceiling,
     /// balance, cost, debit).
     ///

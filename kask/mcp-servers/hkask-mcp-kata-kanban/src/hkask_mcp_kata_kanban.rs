@@ -40,7 +40,7 @@ hkask_mcp_server::mcp_server!(
     pub struct KanbanServer {
         pub service: KanbanService,
         /// Local swarm runtime — kanban_task_spawn delegates task execution to a
-        /// local agent (ledger-funded inference + guard + skill cascade). Shared
+        /// local agent (ledger-funded inference + guard + skill execution). Shared
         /// ledger path with hkask-mcp-swarm so operator funding is reusable.
         /// Used as the fallback when the worktree spawn port is unavailable.
         pub local_runtime: Arc<LazyLocalSwarmRuntime>,
@@ -162,7 +162,7 @@ where
 /// Build a task-specific local agent card for `kanban_task_spawn` when no
 /// reusable expert agent covers the requested skills. The agent runs in-memory
 /// (not persisted to the registry) with the delegated skills as its declared
-/// skill set — `AgentExecutor::run` executes each skill cascade against the
+/// skill set — `AgentExecutor::run` executes each skill execution against the
 /// task before the LLM call. An empty `model` lets the inference port pick its
 /// default; an empty `mcp_tools` set means the agent runs skill + LLM only.
 fn build_task_agent_card(

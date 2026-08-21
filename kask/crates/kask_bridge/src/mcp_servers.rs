@@ -269,7 +269,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Skills corpus dir — set from `KaskSwarmSettings.skills_dir`.
             // Retained for settings UI compatibility; the swarm server no
             // longer reads this env var (skill-awareness was removed with the
-            // skill cascade cleanup).
+            // skill execution cleanup).
             "HKASK_SKILLS_DIR",
             // Swarm memory store shape — read in config.rs alongside the
             // passphrase above. Without these the DB path and embedding
@@ -704,7 +704,7 @@ mod tests {
         );
         config_env.insert(
             "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
-            "claude-haiku-4-5-20251001".to_string(),
+            hkask_inference::model_constants::DEFAULT_AGENT_MODEL.to_string(),
         );
         config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
         config_env.insert(

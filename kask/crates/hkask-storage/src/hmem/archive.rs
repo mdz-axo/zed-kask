@@ -60,7 +60,7 @@ pub struct BackupArchive {
 impl BackupArchive {
     /// Create a pool for the archive database, handling SQLCipher setup.
     fn open_pool(path: &str, passphrase: &str) -> Result<Pool, ArchiveError> {
-        let db = crate::core::database::Database::open(path, passphrase)
+        let db = crate::core::connection::Database::open(path, passphrase)
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
         db.sqlite_pool()
             .map_err(|e| ArchiveError::Database(e.to_string()))

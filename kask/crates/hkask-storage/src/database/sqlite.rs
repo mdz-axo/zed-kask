@@ -90,10 +90,10 @@ impl SqliteDriver {
             // `vec0` virtual table, which fails with "no such module: vec0"
             // (aborting the whole batch and leaving zero tables created) if
             // the extension isn't loaded. Mirrors the production pool init in
-            // `core::database::Database::sqlite_pool`.
-            crate::core::database::init_sqlite_vec_on(conn)?;
+            // `core::connection::Database::sqlite_pool`.
+            crate::core::connection::init_sqlite_vec_on(conn)?;
             let schema = include_str!("../core/sql/schema.sql");
-            let dim = crate::core::database::embedding_dim();
+            let dim = crate::core::connection::embedding_dim();
             conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
             Ok(())
         });
@@ -118,25 +118,6 @@ impl SqliteDriver {
         let manager = SqliteConnectionManager::file(path)
             .with_init(|conn| conn.execute_batch(WAL_PRAGMA_BATCH));
         Pool::builder().build(manager)
-    }
-
-    /// Create a file-backed driver (panics on pool error; for tests / when
-    /// the caller has already validated the path). The driver is labeled
-    /// with `path` so lock errors from it are attributable.
-    pub fn file_driver(path: &str) -> Arc<dyn super::driver::DatabaseDriver> {
-        Arc::new(Self::new_labeled(
-            Self::file_pool(path).expect("file pool"),
-            path,
-        ))
-    }
-
-    /// Acquire a raw `rusqlite::Connection` from the pool.
-    ///
-    /// Used by stores that need direct rusqlite access (e.g., sqlite-vec
-    /// virtual tables that don't work through the DbValue abstraction).
-    /// The connection is returned to the pool when the guard is dropped.
-    pub fn acquire_raw(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>, DbError> {
-        self.pool.get().map_err(|e| self.map_conn_err(e))
     }
 
     /// Prefix the pool label (if any) to a connection-acquisition error.
@@ -223,6 +204,37 @@ impl SqliteDriver {
     }
 }
 
+// ── Storage Regulation spans (inlined from database/regulation.rs) ──
+// Emit `reg.storage` tracing events so the Regulation regulator can observe
+// query latency, error rates, and throughput per table. `debug!` (not `info!`)
+// because the storage layer fires one event per SQL operation.
+
+/// Extract a table name from a SQL statement. Returns the first identifier
+/// after FROM/INSERT INTO/UPDATE/DELETE FROM/INTO, or "unknown".
+fn extract_table(sql: &str) -> &str {
+    let upper = sql.to_uppercase();
+    for keyword in &["FROM", "INSERT INTO", "UPDATE", "DELETE FROM", "INTO"] {
+        if let Some(pos) = upper.find(keyword) {
+            let rest = &sql[pos + keyword.len()..].trim();
+            return rest.split_whitespace().next().unwrap_or("unknown");
+        }
+    }
+    "unknown"
+}
+
+/// Emit a Regulation span for a completed storage operation.
+fn emit_storage_span(operation: &str, table: &str, duration_us: u64, rows: usize, error: bool) {
+    tracing::debug!(
+        target: "reg.storage",
+        operation = operation,
+        table = table,
+        duration_us = duration_us,
+        rows = rows,
+        error = error,
+        "Storage operation completed"
+    );
+}
+
 impl DatabaseDriver for SqliteDriver {
     fn as_any(&self) -> &dyn std::any::Any {
         &self.pool
@@ -234,7 +246,7 @@ impl DatabaseDriver for SqliteDriver {
 
     fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
         let start = std::time::Instant::now();
-        let table = super::regulation::extract_table(sql);
+        let table = extract_table(sql);
         let conn = self.pool.get().map_err(|e| self.map_conn_err(e))?;
         let rusqlite_params = Self::to_rusqlite_params(params);
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -244,10 +256,8 @@ impl DatabaseDriver for SqliteDriver {
             .map_err(|e| self.map_db_err(e));
         let duration_us = start.elapsed().as_micros() as u64;
         match &result {
-            Ok(rows) => {
-                super::regulation::emit_storage_span("execute", table, duration_us, *rows, false)
-            }
-            Err(_) => super::regulation::emit_storage_span("execute", table, duration_us, 0, true),
+            Ok(rows) => emit_storage_span("execute", table, duration_us, *rows, false),
+            Err(_) => emit_storage_span("execute", table, duration_us, 0, true),
         }
         result
     }
@@ -259,33 +269,25 @@ impl DatabaseDriver for SqliteDriver {
 
     fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
         let start = std::time::Instant::now();
-        let table = super::regulation::extract_table(sql);
+        let table = extract_table(sql);
         let result = self.query_raw(sql, params);
         let duration_us = start.elapsed().as_micros() as u64;
         match &result {
-            Ok(rows) => {
-                super::regulation::emit_storage_span("query", table, duration_us, rows.len(), false)
-            }
-            Err(_) => super::regulation::emit_storage_span("query", table, duration_us, 0, true),
+            Ok(rows) => emit_storage_span("query", table, duration_us, rows.len(), false),
+            Err(_) => emit_storage_span("query", table, duration_us, 0, true),
         }
         result
     }
 
     fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError> {
         let start = std::time::Instant::now();
-        let table = super::regulation::extract_table(sql);
+        let table = extract_table(sql);
         let result = self.query_raw(sql, params);
         let duration_us = start.elapsed().as_micros() as u64;
         match result {
             Ok(mut rows) => {
                 let row_count = rows.len();
-                super::regulation::emit_storage_span(
-                    "query_optional",
-                    table,
-                    duration_us,
-                    row_count,
-                    false,
-                );
+                emit_storage_span("query_optional", table, duration_us, row_count, false);
                 if rows.is_empty() {
                     Ok(None)
                 } else if rows.len() == 1 {
@@ -298,7 +300,7 @@ impl DatabaseDriver for SqliteDriver {
                 }
             }
             Err(e) => {
-                super::regulation::emit_storage_span("query_optional", table, duration_us, 0, true);
+                emit_storage_span("query_optional", table, duration_us, 0, true);
                 Err(e)
             }
         }

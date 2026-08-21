@@ -954,11 +954,17 @@ pub struct EvaluateLocalRequest {
     /// `swarm_delegate_local`'s result).
     pub response: String,
     /// The evaluator type: "contains" (response contains the spec string),
-    /// "regex" (response matches the spec regex), or "not_contains" (response
-    /// does NOT contain the spec string — for verifying absence of an error).
+    /// "regex" (response matches the spec regex), "not_contains" (response
+    /// does NOT contain the spec string — for verifying absence of an error),
+    /// "exit_code" (run the spec as a shell command with $RESPONSE set to
+    /// the response text; pass if exit code is 0 — external ground truth),
+    /// or "file_exists" (pass if the spec file path exists — external ground
+    /// truth). The exit_code and file_exists evaluators mitigate the Goodhart
+    /// risk of string-match oracles in a training loop: they check real-world
+    /// effects, not response text, so gaming requires actually doing the work.
     pub evaluator: String,
-    /// The spec: the substring to find (contains/not_contains) or the regex
-    /// pattern to match (regex). Case-sensitive.
+    /// The spec: substring (contains/not_contains), regex pattern, shell
+    /// command (exit_code), or file path (file_exists). Case-sensitive.
     pub spec: String,
 }
 
@@ -982,9 +988,11 @@ pub struct PlanDelegation {
 /// An evaluator spec within a plan delegation.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PlanEvaluator {
-    /// The evaluator type: "contains", "not_contains", or "regex".
+    /// The evaluator type: "contains", "not_contains", "regex", "exit_code",
+    /// or "file_exists".
     pub evaluator: String,
-    /// The spec: substring (contains/not_contains) or regex pattern. Case-sensitive.
+    /// The spec: substring (contains/not_contains), regex pattern, shell
+    /// command (exit_code), or file path (file_exists). Case-sensitive.
     pub spec: String,
 }
 

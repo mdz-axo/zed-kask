@@ -1282,7 +1282,7 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 // the composition root never registered is auto-registered at the
                 // default ceiling rather than denied. Denying would fail the call
                 // for a wiring omission (which is exactly what happened: the
-                // `kask-panel` and skill cascade personas were never
+                // `kask-panel` and skill execution personas were never
                 // seeded, so every IPC and cascade tool call died here).
                 let cyber_lock = cyber.read().await;
                 match cyber_lock.charge_call_metered(&agent).await {
