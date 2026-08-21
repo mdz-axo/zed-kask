@@ -1705,3 +1705,243 @@ mod env_isolation_tests {
         }
     }
 }
+
+// ── Reconnect-path bookkeeping tests ───────────────────────────────────────
+//
+// These live inline (not in tests/) because they assert on the private
+// `launch_specs` map and call the private `try_reconnect` — the bookkeeping
+// half of connection healing. The end-to-end half (real child processes,
+// SIGKILL, new-pid oracles) lives in tests/reconnect_integration.rs.
+#[cfg(test)]
+mod reconnect_path_tests {
+    use super::*;
+
+    use std::collections::HashMap;
+
+
+    async fn register_test_tool(runtime: &McpRuntime, server_id: &str, tool_name: &str) {
+        runtime
+            .register_server(McpServer {
+                id: server_id.to_string(),
+                name: server_id.to_string(),
+                tools: vec![McpTool {
+                    name: tool_name.to_string(),
+                    description: "test tool".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    server_id: server_id.to_string(),
+                }],
+            })
+            .await;
+    }
+
+/// A server that cannot be spawned leaves a launch spec behind, so the
+/// reconnect path keeps trying on later calls rather than requiring an
+/// operator settings change.
+///
+/// This is the regression for the sticky-dead-connection bug: recovery used to
+/// depend on `sync_kask_mcp_runtime_servers` firing, which only happens on a
+/// settings change.
+#[tokio::test]
+async fn failed_start_still_records_a_launch_spec_for_later_reconnect() {
+    let runtime = McpRuntime::new();
+    let outcome = runtime
+        .start_server_with_env(
+            "ghost",
+            "hkask-mcp-definitely-not-a-real-binary",
+            HashMap::new(),
+        )
+        .await;
+    assert!(outcome.is_err(), "a nonexistent binary must fail to start");
+
+    assert!(
+        runtime.launch_specs.read().await.contains_key("ghost"),
+        "the launch spec must survive a failed start so the reconnect path can retry; \
+             without it, recovery requires an operator settings change"
+    );
+}
+
+/// `stop_server` drops the launch spec, so the reconnect path does not
+/// resurrect a server that was deliberately stopped.
+#[tokio::test]
+async fn stop_server_clears_the_reconnect_path() {
+    let runtime = McpRuntime::new();
+    let _ = runtime
+        .start_server_with_env("ghost", "hkask-mcp-not-real", HashMap::new())
+        .await;
+    assert!(runtime.launch_specs.read().await.contains_key("ghost"));
+
+    runtime.stop_server("ghost").await;
+
+    assert!(
+        !runtime.launch_specs.read().await.contains_key("ghost"),
+        "a deliberate stop must not leave a reconnect path that resurrects the server"
+    );
+}
+
+/// `shutdown_all` clears every reconnect path for the same reason.
+#[tokio::test]
+async fn shutdown_all_clears_every_reconnect_path() {
+    let runtime = McpRuntime::new();
+    let _ = runtime
+        .start_server_with_env("ghost-a", "hkask-mcp-not-real", HashMap::new())
+        .await;
+    let _ = runtime
+        .start_server_with_env("ghost-b", "hkask-mcp-not-real", HashMap::new())
+        .await;
+
+    runtime.shutdown_all().await;
+
+    assert!(
+        runtime.launch_specs.read().await.is_empty(),
+        "shutdown_all must not leave reconnect paths that resurrect stopped servers"
+    );
+}
+
+/// The reconnect cooldown bounds spawn attempts against a crash-looping
+/// binary. Without it, every tool call would spawn another process.
+#[tokio::test]
+async fn reconnect_is_rate_limited_by_the_cooldown() {
+    let runtime = McpRuntime::new();
+    // Record a launch spec without a live connection, so `try_reconnect` has
+    // something to attempt.
+    let _ = runtime
+        .start_server_with_env("ghost", "hkask-mcp-not-real", HashMap::new())
+        .await;
+
+    // The failed start above already stamped an attempt, so the immediate
+    // next attempt must be suppressed.
+    assert!(
+        !runtime.try_reconnect("ghost").await,
+        "a reconnect within the cooldown window must be suppressed so a broken \
+             binary cannot become a process-spawn storm"
+    );
+}
+
+/// A server that was only `register_server`'d (metadata, never a process)
+/// cannot be reconnected, and reports that rather than pretending to recover.
+#[tokio::test]
+async fn metadata_only_server_cannot_be_reconnected() {
+    let runtime = McpRuntime::new();
+    register_test_tool(&runtime, "metadata-only", "test_tool").await;
+
+    assert!(
+        !runtime.try_reconnect("metadata-only").await,
+        "a server with no recorded launch spec has no process to restart"
+    );
+}
+
+}
+
+// ── Invoke-gate metering tests (RR-0056 / RR-0057) ──────────────────────────
+//
+// Inline because the regression harness runs `cargo test -p hkask-mcp --lib
+// <pattern>` — an integration-test path would match 0 tests and trip the
+// orphaned-regression check. The public-API retry-classification tests live
+// in tests/invoke_gate.rs.
+#[cfg(test)]
+mod invoke_gate_tests {
+    use super::*;
+    use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
+    use hkask_tool_port::{ToolPort, ToolPortError};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn cybernetics() -> Arc<RwLock<CyberneticsLoop>> {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(10)));
+        Arc::new(RwLock::new(CyberneticsLoop::new(ledger)))
+    }
+
+    async fn register_test_tool(runtime: &McpRuntime, server_id: &str, tool_name: &str) {
+        runtime
+            .register_server(McpServer {
+                id: server_id.to_string(),
+                name: server_id.to_string(),
+                tools: vec![McpTool {
+                    name: tool_name.to_string(),
+                    description: "test tool".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    server_id: server_id.to_string(),
+                }],
+            })
+            .await;
+    }
+
+    fn test_agent_webid() -> hkask_types::WebID {
+        hkask_types::WebID::from_persona(b"invoke-gate-test-agent")
+    }
+
+    /// Build a `McpRuntime` with governance (metering + event sink) wired.
+    fn governed_runtime() -> McpRuntime {
+        McpRuntime::new().with_governance(cybernetics(), Arc::new(NoopEventSink))
+    }
+
+/// An agent the composition root never seeded must NOT be refused. This is the
+/// regression for the persona-mismatch bug: `main.rs` seeded only `swarm-panel`,
+/// while the IPC dispatch and the cascade used `kask-panel` and
+/// `manifest-executor`, so the old fail-closed cap denied every one of their
+/// tool calls.
+#[tokio::test]
+async fn unregistered_agent_is_auto_registered_not_denied() {
+    let runtime = governed_runtime();
+    register_test_tool(&runtime, "test-server", "test_tool").await;
+
+    let unseeded = hkask_types::WebID::from_persona(b"never-registered-persona");
+    let result = runtime
+        .invoke("test-server", "test_tool", json!({}), unseeded)
+        .await;
+
+    assert!(
+        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "an agent with no registered ceiling must be auto-registered and allowed \
+         through, not refused (wiring omission != authorization decision), got: {result:?}"
+    );
+}
+/// The one pre-dispatch refusal: a runaway loop that burns its whole per-tick
+/// ceiling.
+#[tokio::test]
+async fn exhausted_ceiling_trips_the_runaway_breaker() {
+    let cybernetics = cybernetics();
+    let agent = test_agent_webid();
+    // Ceiling of 1: the first call consumes it, the second must trip.
+    cybernetics.read().await.register_call_cap(agent, 1).await;
+
+    let runtime = McpRuntime::new().with_governance(cybernetics, Arc::new(NoopEventSink));
+    register_test_tool(&runtime, "test-server", "test_tool").await;
+
+    let first = runtime
+        .invoke("test-server", "test_tool", json!({}), agent)
+        .await;
+    assert!(
+        !matches!(first, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "the first call fits within a ceiling of 1, got: {first:?}"
+    );
+
+    let second = runtime
+        .invoke("test-server", "test_tool", json!({}), agent)
+        .await;
+    assert!(
+        matches!(second, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "exhausting the per-tick ceiling must trip the runaway-loop breaker, got: {second:?}"
+    );
+}
+/// Metering is accounting, not authorization — its absence must not refuse the
+/// call. This inverts the prior `no_governance_fails_closed` expectation: that
+/// fail-closed branch made `McpRuntime::new()` unusable for any embedder that
+/// did not also wire regulation, while denying nothing an attacker could reach.
+#[tokio::test]
+async fn no_governance_dispatches_unmetered() {
+    let runtime = McpRuntime::new();
+    register_test_tool(&runtime, "test-server", "test_tool").await;
+
+    let result = runtime
+        .invoke("test-server", "test_tool", json!({}), test_agent_webid())
+        .await;
+
+    assert!(
+        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "an unmetered runtime must dispatch rather than refuse, got: {result:?}"
+    );
+}
+
+}

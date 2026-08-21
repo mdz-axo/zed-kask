@@ -926,8 +926,6 @@ impl MemoryPort for RealMemoryPort {
         })
     }
 
-        }
-    }
 }
 
 impl RealMemoryPort {

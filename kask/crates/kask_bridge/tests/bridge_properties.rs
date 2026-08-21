@@ -136,8 +136,6 @@ fn bare_params() -> InferenceParams {
         tool_name: None,
         tool_args: None,
         tool_allowlist: None,
-        skill_name: None,
-        skill_task: None,
         worktree_prompt: None,
         worktree_title: None,
         worktree_name: None,
