@@ -720,5 +720,15 @@ pub(crate) fn default_corpus_passphrase() -> String {
     }
     // Fall back to env → keychain for tests or when construction didn't set
     // the OnceLock (or set it to `None` after a resolution failure).
-    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").unwrap_or_default()
+    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE")
+        .map_err(|e| {
+            tracing::warn!(
+                target: "hkask.mcp.corpus",
+                error = %e,
+                "HKASK_DB_PASSPHRASE resolution failed; falling back to empty passphrase"
+            );
+            e
+        })
+        .ok()
+        .unwrap_or_default()
 }

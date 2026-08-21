@@ -48,11 +48,6 @@ HTTP, no async — the crate is fully testable in-process.
 | `score_against_persona` | `kask/crates/hkask-condenser/src/saliency.rs:52` |
 | `extract_query_words` | `kask/crates/hkask-condenser/src/saliency.rs:91` |
 | `score_memory_results` | `kask/crates/hkask-condenser/src/saliency.rs:104` |
-| `SUMMARY_SYSTEM_PROMPT` | `kask/crates/hkask-condenser/src/inference.rs:13` |
-| `format_conversation_text` | `kask/crates/hkask-condenser/src/inference.rs:21` |
-| `build_summarization_prompt` | `kask/crates/hkask-condenser/src/inference.rs:35` |
-| `build_summary_output` | `kask/crates/hkask-condenser/src/inference.rs:48` |
-| `approx_token_count` | `kask/crates/hkask-condenser/src/inference.rs:72` |
 | `OntologyAnchor` | `kask/crates/hkask-bridge-ontology/src/axis.rs:133` |
 | `OntologyAxis` | `kask/crates/hkask-bridge-ontology/src/axis.rs:33` |
 | `OntologyNamespace` | `kask/crates/hkask-bridge-ontology/src/axis.rs:47` |
@@ -63,7 +58,6 @@ HTTP, no async — the crate is fully testable in-process.
 | `CondenserHealthSignal` | `kask/crates/hkask-condenser/src/types.rs:195` |
 | `PersistRequest` | `kask/crates/hkask-condenser/src/types.rs:38` |
 | `ThreadSummaryRequest` | `kask/crates/hkask-condenser/src/types.rs:214` |
-| `ThreadSummaryOutput` | `kask/crates/hkask-condenser/src/types.rs:234` |
 
 ## Class diagram
 
@@ -269,22 +263,6 @@ The anchor exposes `confidence_modifier`
 `density_factor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:170`),
 `axis` (`kask/crates/hkask-bridge-ontology/src/axis.rs:190`), and
 `tier_label` (`kask/crates/hkask-bridge-ontology/src/axis.rs:199`).
-
-## Inference formatting
-
-The `inference` module (`kask/crates/hkask-condenser/src/inference.rs`)
-holds pure formatting functions for LLM-assisted thread summarization.
-Inference itself is handled by the centralized `InferencePort`
-(hkask-inference router); this module contains only the testable pure
-logic with no HTTP or async.
-
-| Function | Location | Purpose |
-|----------|----------|---------|
-| `SUMMARY_SYSTEM_PROMPT` | `inference.rs:13` | System prompt for thread summarization |
-| `format_conversation_text` | `inference.rs:21` | Render messages as `[role]: content\n\n` |
-| `build_summarization_prompt` | `inference.rs:35` | Compose the user-turn summarization prompt |
-| `build_summary_output` | `inference.rs:48` | Assemble a `ThreadSummaryOutput` with token estimates |
-| `approx_token_count` | `inference.rs:72` | `chars / 4`, floored at 1 |
 
 ## Regulation spans
 

@@ -1793,6 +1793,33 @@ impl SwarmServer {
                 // drainer-side append failures) from the runtime. A drop is
                 // never silent.
                 let capture_drops = runtime.capture_drops();
+                // Write a harness_summary event so the zed-side regression
+                // monitor can compare pass rates across runs for the same
+                // agent. The rollout_id is the agent name — this groups all
+                // harness_summary events for one agent under a single
+                // queryable key, so `metric_before_and_after` can find the
+                // before/after values across runs. A write failure is counted
+                // in `events_dropped` — never silent (the failure-signal rule:
+                // a missing summary means the regression monitor is blind,
+                // which must be distinguishable from "no run happened").
+                if let Some(store) = &event_store {
+                    let summary = serde_json::json!({
+                        "agent_name": req.agent_name,
+                        "harness_run_id": harness_run_id,
+                        "overall_pass_rate": overall_pass_rate,
+                        "total_rollouts": total_rollouts,
+                        "total_passes": total_passes,
+                    });
+                    if let Err(error) = store.append(&req.agent_name, "harness_summary", &summary) {
+                        events_dropped += 1;
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            agent = %req.agent_name,
+                            error = %error,
+                            "harness_summary event append failed — regression monitor blind to this run"
+                        );
+                    }
+                }
                 Ok(serde_json::json!({
                     "agent_name": req.agent_name,
                     "harness_run_id": harness_run_id,

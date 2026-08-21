@@ -24,7 +24,6 @@ pub mod keychain;
 pub mod keychain_keys;
 pub mod master_key;
 pub mod signing;
-pub mod version_file;
 
 pub use encryption::derive_key;
 pub use error::KeystoreError;

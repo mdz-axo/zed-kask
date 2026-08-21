@@ -16,7 +16,6 @@ hkask-tool-port.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true
-hkask-ledger.workspace = true
 hkask-event-store.workspace = true
 r2d2.workspace = true
 r2d2_sqlite.workspace = true
@@ -35,7 +34,6 @@ http_client.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 agent.workspace = true
-agent_skills.workspace = true
 settings.workspace = true
 settings_content.workspace = true
 credentials_provider.workspace = true

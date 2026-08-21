@@ -66,7 +66,9 @@ mod algedonic_log_bridge;
 pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
 
 mod rollout_event_bridge;
-pub use rollout_event_bridge::BridgeRolloutEventSource;
+pub use rollout_event_bridge::{
+    BridgeRolloutEventSource, HarnessRegression, check_harness_regressions,
+};
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Used by the settings UI to read/write API keys via zed's CredentialsProvider.

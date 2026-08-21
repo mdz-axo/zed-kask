@@ -70,18 +70,3 @@ pub fn derive_sub_key(master_key: &[u8], context: &str) -> Zeroizing<Vec<u8>> {
 
     Zeroizing::new(okm[..SUB_KEY_LEN].to_vec())
 }
-
-/// Derive a sub-key with a key version embedded in the HKDF info string.
-///
-/// The info string becomes `"hkask-v{version}:{context}"` instead of
-/// just `context`. This provides cryptographic domain separation between
-/// different key versions — version N and version N+1 produce completely
-/// independent sub-keys from the same master key.
-pub fn derive_sub_key_with_version(
-    master_key: &[u8],
-    context: &str,
-    key_version: u32,
-) -> Zeroizing<Vec<u8>> {
-    let versioned_context = format!("hkask-v{key_version}:{context}");
-    derive_sub_key(master_key, &versioned_context)
-}

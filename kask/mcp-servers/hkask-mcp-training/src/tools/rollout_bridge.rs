@@ -106,11 +106,6 @@ impl TrainingServer {
                 // Group verdicts by task (harness runs stamp task_index on the
                 // verdict payload). A rollout is usable when its verdict names
                 // a harness task — the bridge pairs by (harness_run_id, task_index).
-                #[derive(Default)]
-                struct TaskRollouts {
-                    passed: Vec<String>,
-                    failed: Vec<String>,
-                }
                 let mut by_task: std::collections::BTreeMap<(String, i64), TaskRollouts> =
                     std::collections::BTreeMap::new();
                 for event in &verdicts {
@@ -182,67 +177,11 @@ impl TrainingServer {
                     );
                 }
 
-                // Emit the datasets. SFT: one ChatML line per passed rollout
-                // with bodies. Preference: one DPO line per (passed, failed)
-                // pair on the same task, both with bodies.
-                let mut sft_lines: Vec<String> = Vec::new();
-                let mut preference_lines: Vec<String> = Vec::new();
-                let mut skipped_no_bodies = 0usize;
-                for task_rollouts in by_task.values() {
-                    let passed_with_bodies: Vec<&(String, String)> = task_rollouts
-                        .passed
-                        .iter()
-                        .filter_map(|id| rollout_bodies.get(id))
-                        .collect();
-                    skipped_no_bodies += task_rollouts.passed.len() - passed_with_bodies.len();
-                    if mode == "sft" || mode == "both" {
-                        for (request_body, response_body) in &passed_with_bodies {
-                            // The request body is the JSON-serialized message
-                            // array the executor captured: [[role, content], ...].
-                            // The ChatML example is the user turn (the task)
-                            // and the assistant turn (the response).
-                            let messages = parse_message_pairs(request_body);
-                            if let Some(user_task) = messages
-                                .iter()
-                                .find(|(role, _)| role == "user")
-                                .map(|(_, content)| content.clone())
-                            {
-                                let example = serde_json::json!({
-                                    "messages": [
-                                        { "role": "user", "content": user_task },
-                                        { "role": "assistant", "content": response_body },
-                                    ]
-                                });
-                                sft_lines.push(example.to_string());
-                            }
-                        }
-                    }
-                    if mode == "preference" || mode == "both" {
-                        let failed_with_bodies: Vec<&(String, String)> = task_rollouts
-                            .failed
-                            .iter()
-                            .filter_map(|id| rollout_bodies.get(id))
-                            .collect();
-                        skipped_no_bodies += task_rollouts.failed.len() - failed_with_bodies.len();
-                        for (chosen, rejected) in
-                            passed_with_bodies.iter().zip(failed_with_bodies.iter())
-                        {
-                            let chosen_messages = parse_message_pairs(&chosen.0);
-                            let prompt = chosen_messages
-                                .iter()
-                                .find(|(role, _)| role == "user")
-                                .map(|(_, content)| content.clone());
-                            if let Some(prompt) = prompt {
-                                let example = serde_json::json!({
-                                    "prompt": prompt,
-                                    "chosen": chosen.1,
-                                    "rejected": rejected.1,
-                                });
-                                preference_lines.push(example.to_string());
-                            }
-                        }
-                    }
-                }
+                // Emit the datasets. The line construction is pure (no I/O) so it
+                // lives in `build_dataset_lines`, which the tests exercise directly
+                // — the pairing invariants are pinned there.
+                let (sft_lines, preference_lines, skipped_no_bodies) =
+                    build_dataset_lines(&by_task, &rollout_bodies, mode);
 
                 let output = contain_for_write(&req.output_path)?;
                 let mut written = serde_json::Map::new();
@@ -305,4 +244,225 @@ impl TrainingServer {
 /// malformed capture is not a training example).
 fn parse_message_pairs(request_body: &str) -> Vec<(String, String)> {
     serde_json::from_str::<Vec<(String, String)>>(request_body).unwrap_or_default()
+}
+
+/// Verdict-labeled rollouts for one harness task: which rollout ids passed
+/// and which failed. The bridge pairs a passed and a failed rollout *within*
+/// the same task group to form a preference pair, so `chosen` and `rejected`
+/// are responses to the same prompt by construction.
+#[derive(Default)]
+struct TaskRollouts {
+    passed: Vec<String>,
+    failed: Vec<String>,
+}
+
+/// Build SFT and/or preference-pair dataset lines from grouped task rollouts
+/// and their retained request/response bodies. Pure: no I/O, no DB.
+///
+/// **Pairing invariant.** Preference pairs are formed within a single task
+/// group (keyed upstream by `(harness_run_id, task_index)`), so `chosen`
+/// (passed) and `rejected` (failed) are responses to the same task prompt. The
+/// prompt is taken from the chosen rollout only — the rejected rollout's
+/// request body is never parsed. `passed.iter().zip(failed.iter())` pairs
+/// positionally and truncates to the shorter side: excess unpaired rollouts
+/// on either side are dropped (a passed rollout with no failed counterpart is
+/// not fabricated into a pair). Rollouts without retained bodies are skipped
+/// and counted in the returned `skipped_no_bodies`, never fabricated.
+fn build_dataset_lines(
+    by_task: &std::collections::BTreeMap<(String, i64), TaskRollouts>,
+    rollout_bodies: &std::collections::HashMap<String, (String, String)>,
+    mode: &str,
+) -> (Vec<String>, Vec<String>, usize) {
+    let mut sft_lines: Vec<String> = Vec::new();
+    let mut preference_lines: Vec<String> = Vec::new();
+    let mut skipped_no_bodies = 0usize;
+    for task_rollouts in by_task.values() {
+        let passed_with_bodies: Vec<&(String, String)> = task_rollouts
+            .passed
+            .iter()
+            .filter_map(|id| rollout_bodies.get(id))
+            .collect();
+        skipped_no_bodies += task_rollouts.passed.len() - passed_with_bodies.len();
+        if mode == "sft" || mode == "both" {
+            for (request_body, response_body) in &passed_with_bodies {
+                let messages = parse_message_pairs(request_body);
+                if let Some(user_task) = messages
+                    .iter()
+                    .find(|(role, _)| role == "user")
+                    .map(|(_, content)| content.clone())
+                {
+                    let example = serde_json::json!({
+                        "messages": [
+                            { "role": "user", "content": user_task },
+                            { "role": "assistant", "content": response_body },
+                        ]
+                    });
+                    sft_lines.push(example.to_string());
+                }
+            }
+        }
+        if mode == "preference" || mode == "both" {
+            let failed_with_bodies: Vec<&(String, String)> = task_rollouts
+                .failed
+                .iter()
+                .filter_map(|id| rollout_bodies.get(id))
+                .collect();
+            skipped_no_bodies += task_rollouts.failed.len() - failed_with_bodies.len();
+            for (chosen, rejected) in passed_with_bodies.iter().zip(failed_with_bodies.iter()) {
+                let chosen_messages = parse_message_pairs(&chosen.0);
+                let prompt = chosen_messages
+                    .iter()
+                    .find(|(role, _)| role == "user")
+                    .map(|(_, content)| content.clone());
+                if let Some(prompt) = prompt {
+                    let example = serde_json::json!({
+                        "prompt": prompt,
+                        "chosen": chosen.1,
+                        "rejected": rejected.1,
+                    });
+                    preference_lines.push(example.to_string());
+                }
+            }
+        }
+    }
+    (sft_lines, preference_lines, skipped_no_bodies)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One task group `("run-1", 0)` with the given passed/failed rollout ids.
+    fn one_task(
+        passed: &[&str],
+        failed: &[&str],
+    ) -> std::collections::BTreeMap<(String, i64), TaskRollouts> {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            ("run-1".to_string(), 0),
+            TaskRollouts {
+                passed: passed.iter().map(|s| s.to_string()).collect(),
+                failed: failed.iter().map(|s| s.to_string()).collect(),
+            },
+        );
+        map
+    }
+
+    /// A request body: a JSON array of `[role, content]` pairs (one user turn).
+    fn request_body(user_msg: &str) -> String {
+        serde_json::json!([["user", user_msg]]).to_string()
+    }
+
+    /// A `(request_body, response_body)` pair for the bodies map.
+    fn body(user_msg: &str, response: &str) -> (String, String) {
+        (request_body(user_msg), response.to_string())
+    }
+
+    #[test]
+    fn sft_emits_one_chatml_line_per_passed_rollout_with_body() {
+        let by_task = one_task(&["r1"], &[]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("r1".to_string(), body("solve X", "good response"));
+        let (sft, pref, skipped) = build_dataset_lines(&by_task, &bodies, "sft");
+        assert_eq!(sft.len(), 1);
+        assert!(pref.is_empty());
+        assert_eq!(skipped, 0);
+        let example: serde_json::Value = serde_json::from_str(&sft[0]).unwrap();
+        assert_eq!(example["messages"][0]["role"], "user");
+        assert_eq!(example["messages"][0]["content"], "solve X");
+        assert_eq!(example["messages"][1]["role"], "assistant");
+        assert_eq!(example["messages"][1]["content"], "good response");
+    }
+
+    #[test]
+    fn preference_pair_uses_chosen_prompt_and_same_task_responses() {
+        let by_task = one_task(&["pass1"], &["fail1"]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("pass1".to_string(), body("solve X", "good"));
+        bodies.insert("fail1".to_string(), body("solve X", "bad"));
+        let (sft, pref, skipped) = build_dataset_lines(&by_task, &bodies, "preference");
+        assert!(sft.is_empty());
+        assert_eq!(pref.len(), 1);
+        assert_eq!(skipped, 0);
+        let pair: serde_json::Value = serde_json::from_str(&pref[0]).unwrap();
+        assert_eq!(pair["prompt"], "solve X");
+        assert_eq!(pair["chosen"], "good");
+        assert_eq!(pair["rejected"], "bad");
+    }
+
+    #[test]
+    fn preference_pair_never_parses_rejected_request_body() {
+        // The rejected rollout's request body is garbage, but the pair must
+        // still build correctly from the chosen rollout's prompt. This pins
+        // that `rejected.0` is never consulted — the property that makes
+        // skipping `parse_message_pairs(&rejected.0)` safe.
+        let by_task = one_task(&["pass1"], &["fail1"]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("pass1".to_string(), body("solve X", "good"));
+        bodies.insert(
+            "fail1".to_string(),
+            ("not valid json pairs{{{".to_string(), "bad".to_string()),
+        );
+        let (_sft, pref, _skipped) = build_dataset_lines(&by_task, &bodies, "preference");
+        assert_eq!(
+            pref.len(),
+            1,
+            "a garbage rejected body must not abort the pair"
+        );
+        let pair: serde_json::Value = serde_json::from_str(&pref[0]).unwrap();
+        assert_eq!(pair["prompt"], "solve X");
+        assert_eq!(pair["chosen"], "good");
+        assert_eq!(pair["rejected"], "bad");
+    }
+
+    #[test]
+    fn preference_zip_truncates_to_the_shorter_side() {
+        // 2 passed, 1 failed → one pair; the extra passed rollout is dropped,
+        // not paired with a fabricated rejected. A preference pair needs a
+        // real failed counterpart.
+        let by_task = one_task(&["p1", "p2"], &["f1"]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("p1".to_string(), body("solve X", "good1"));
+        bodies.insert("p2".to_string(), body("solve X", "good2"));
+        bodies.insert("f1".to_string(), body("solve X", "bad"));
+        let (_sft, pref, _skipped) = build_dataset_lines(&by_task, &bodies, "preference");
+        assert_eq!(
+            pref.len(),
+            1,
+            "zip truncates: only one pair from 2 passed + 1 failed"
+        );
+    }
+
+    #[test]
+    fn rollouts_without_bodies_are_skipped_and_counted_never_fabricated() {
+        // One passed WITH a body, one passed WITHOUT — only the one with a
+        // body becomes an SFT example; the bodyless one is counted as skipped.
+        let by_task = one_task(&["with_body", "no_body"], &[]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("with_body".to_string(), body("solve X", "good"));
+        let (sft, _pref, skipped) = build_dataset_lines(&by_task, &bodies, "sft");
+        assert_eq!(
+            sft.len(),
+            1,
+            "the bodyless rollout is not fabricated into an example"
+        );
+        assert_eq!(skipped, 1, "the bodyless rollout is counted as skipped");
+    }
+
+    #[test]
+    fn both_mode_counts_passed_and_failed_without_bodies_separately() {
+        // 2 passed (1 bodyless) + 1 failed (bodyless) in "both" mode:
+        // skipped = 1 (passed bodyless) + 1 (failed bodyless) = 2.
+        let by_task = one_task(&["p_ok", "p_nobody"], &["f_nobody"]);
+        let mut bodies = std::collections::HashMap::new();
+        bodies.insert("p_ok".to_string(), body("solve X", "good"));
+        let (sft, pref, skipped) = build_dataset_lines(&by_task, &bodies, "both");
+        assert_eq!(sft.len(), 1);
+        assert_eq!(
+            pref.len(),
+            0,
+            "the only failed has no body, so no pair forms"
+        );
+        assert_eq!(skipped, 2, "1 passed-without-body + 1 failed-without-body");
+    }
 }

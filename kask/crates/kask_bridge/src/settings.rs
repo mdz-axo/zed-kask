@@ -1844,7 +1844,7 @@ mod tests {
     // training) find templates in production where the CWD-relative default
     // ("kask/registry") does not exist. For default settings, the value is
     // resolved from `data_dir` as `{data_dir}/skills/registry/` — the path
-    // where `agent_skills::seed_templates` writes at startup.
+    // where `seed_templates` writes at startup.
     #[test]
     fn mcp_env_always_emits_template_root() {
         let settings = KaskSettings::default();

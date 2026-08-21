@@ -9217,7 +9217,6 @@ version = "0.36.0"
 dependencies = [
  "aes-gcm",
  "argon2",
- "dirs",
  "ed25519-dalek",
  "hex",
  "hkask-types",
@@ -10926,7 +10925,6 @@ name = "kask_bridge"
 version = "0.36.0"
 dependencies = [
  "agent",
- "agent_skills",
  "anyhow",
  "async-trait",
  "chrono",
@@ -10943,7 +10941,6 @@ dependencies = [
  "hkask-event-store",
  "hkask-inference",
  "hkask-keystore",
- "hkask-ledger",
  "hkask-memory",
  "hkask-regulation",
  "hkask-services-core",
