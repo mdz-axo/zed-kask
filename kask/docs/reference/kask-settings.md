@@ -1,18 +1,12 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-05
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
 ---
-
-<!-- STALE — predates the hkask-inference refactor. `DEFAULT_VISION_MODEL` was removed from
-`model_constants` (zero callers); `InferenceConfig::timeout_secs`/`pool_max_idle` and their env vars
-`HKASK_HTTP_TIMEOUT_SECS`/`HKASK_HTTP_POOL_MAX_IDLE` were removed (orphaned — they configured the
-deleted direct-HTTP client). The "Multi-provider inference router" framing is obsolete — inference
-routes through the IPC bridge (`InferenceIpcClient`). Verify against source before relying on citations below. -->
 
 # Kask Settings Reference
 
@@ -264,15 +258,20 @@ constants, which are `const` references to the single source of truth in
 
 | Field | Type | Default | Effective fallback |
 |-------|------|---------|-------------------|
-| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:35) |
-| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"ollama/nomic-embed-text"` (model_constants.rs:26) |
-| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:23) |
+| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:46) |
+| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"ollama/nomic-embed-text"` (model_constants.rs:32) |
+| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:24) |
 
 `model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`,
-env `HKASK_OCR_MODEL`) and `DEFAULT_VISION_MODEL`
-(`"OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct"`). Every constant has an env-var accessor (e.g.
-`classifier_model()` reads `HKASK_CLASSIFIER_MODEL` first) so operators can
-override without recompiling.
+env `HKASK_OCR_MODEL`, model_constants.rs:41) and `DEFAULT_AGENT_MODEL`
+(`"claude-haiku-4-5-20251001"`, model_constants.rs:50). There is **no**
+`DEFAULT_VISION_MODEL` / `DEFAULT_TTS_MODEL` / `DEFAULT_STT_MODEL` /
+`DEFAULT_IMAGE_GEN_MODEL` constant — those were removed (zero callers); vision,
+TTS, STT, and image-gen model overrides are settings fields on
+`KaskMediaSettings` / `KaskCorpusSettings`, not compile-time constants here.
+Every retained constant has an env-var accessor (e.g. `classifier_model()`
+reads `HKASK_CLASSIFIER_MODEL` first) so operators can override without
+recompiling.
 
 ## Keychain Architecture
 

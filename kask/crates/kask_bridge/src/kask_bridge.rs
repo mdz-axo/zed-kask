@@ -25,9 +25,9 @@ pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 pub use hkask_types::agent_paths::resolve_data_dir;
-pub(crate) use identity::ProvisionError;
+
 pub use identity::{
-    ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
+    ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
     mirror_runpod_api_key, provision_agent,
 };
 pub use inference::BridgeEditPredictionPort;
@@ -42,11 +42,9 @@ pub use inference_providers::{
 };
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BuiltinMcpServer, build_mcp_server_env, builtin_mcp_server_ids,
-    builtin_mcp_server_pairs, filter_config_env_for_server, filter_credentials_for_server,
-    find_server,
+    builtin_mcp_server_pairs, filter_credentials_for_server,
 };
 pub(crate) use mcp_servers::{filter_config_env_for_server, find_server};
-};
 pub use memory::{
     BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, open_curator_escalation_queue,
     open_curator_regulation_archive,
@@ -70,9 +68,9 @@ mod algedonic_log_bridge;
 pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
 
 mod rollout_event_bridge;
-pub(crate) use rollout_event_bridge::HarnessRegression;
+
 pub use rollout_event_bridge::{
-    BridgeRolloutEventSource, check_harness_regressions,
+    BridgeRolloutEventSource, HarnessRegression, check_harness_regressions,
 };
 
 /// The URL prefix for kask-namespaced credentials in the keychain.

@@ -32,7 +32,7 @@ use hkask_types::{WebID, agent_paths::sanitize_name};
 
 /// Error type for agent provisioning (directory creation + keychain access).
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ProvisionError {
+pub enum ProvisionError {
     #[error("{0}")]
     InvalidUsername(String),
     #[error("Failed to create agent directory: {0}")]
