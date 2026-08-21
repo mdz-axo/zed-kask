@@ -35,7 +35,8 @@ pub(crate) struct WriteContext<'a> {
     pub tokio_handle: &'a tokio::runtime::Handle,
     /// Self-healing curator consolidation service — rebuilt here after a
     /// curator-store heal so the timer promotes freshly-ingested curator h_mems.
-    pub curator_consolidation: &'a RwLock<Option<Arc<MemoryConsolidator>>>,
+    /// Behind an `Arc` shared with the timer, which re-reads it on each tick.
+    pub curator_consolidation: &'a Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
     pub consolidation_cadence_secs: u64,
 }
 

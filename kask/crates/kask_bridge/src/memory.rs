@@ -343,11 +343,12 @@ impl RealMemoryPort {
             return None;
         }
         let consolidation = self.consolidation.clone()?;
-        let curator_consolidation = self
-            .curator_consolidation
-            .read()
-            .ok()
-            .and_then(|guard| guard.clone());
+        // Clone the Arc to the shared curator-consolidation cell so the timer
+        // re-reads the current value on each tick. This picks up the rebuild
+        // that `write_turn` performs after a curator-store heal — previously
+        // the value was captured once at startup, so a curator store that was
+        // down at startup and later healed never got curator consolidation.
+        let curator_consolidation_lock = Arc::clone(&self.curator_consolidation);
         let user_webid = self.user_webid;
         let curator_webid = self.curator_webid;
         let confidence_floor = self.confidence_floor;
@@ -409,9 +410,15 @@ impl RealMemoryPort {
                 // Shared consolidate-and-log path. The cadence check above is
                 // timer-specific (skips the first tick via `unwrap_or(false)`);
                 // the actual pass is identical to `maybe_consolidate`'s.
+                // Re-read the curator consolidation service on each tick so a
+                // heal-rebuild (performed by `write_turn`) is picked up here too.
+                let curator_consolidation_now = curator_consolidation_lock
+                    .read()
+                    .ok()
+                    .and_then(|g| g.clone());
                 fire_consolidation_pass(
                     &consolidation,
-                    curator_consolidation.as_deref(),
+                    curator_consolidation_now.as_deref(),
                     user_webid,
                     curator_webid,
                     confidence_floor,
@@ -1234,10 +1241,10 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
         curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
         embedding_port,
         embedding_model: "test-model".to_string(),
-        user_webid: WebID::new(),
+        webid: WebID::new(),
         curator_webid: WebID::from_persona(b"curator"),
         consolidation: None,
-        curator_consolidation: RwLock::new(None),
+        curator_consolidation: Arc::new(RwLock::new(None)),
         consolidation_cadence_secs: 0,
         confidence_floor: 0.3,
         last_consolidation: Mutex::new(None),
@@ -1308,7 +1315,7 @@ mod tests {
             user_webid: test_webid(),
             curator_webid: WebID::from_persona(b"curator"),
             consolidation,
-            curator_consolidation: RwLock::new(curator_consolidation),
+            curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
             consolidation_cadence_secs,
             confidence_floor,
             last_consolidation: Mutex::new(None),
@@ -1356,7 +1363,7 @@ mod tests {
             user_webid: test_webid(),
             curator_webid: WebID::from_persona(b"curator"),
             consolidation: None,
-            curator_consolidation: RwLock::new(None),
+            curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
             confidence_floor: 0.3,
             last_consolidation: Mutex::new(None),
