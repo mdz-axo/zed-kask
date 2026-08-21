@@ -131,7 +131,6 @@ pub(crate) struct CharacteristicsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
-    pub target_return: Option<f64>,
     /// Your estimate of sustainable revenue growth (0.0–1.0).
     /// Compared against market-implied growth and management guidance.
     pub growth_estimate: Option<f64>,

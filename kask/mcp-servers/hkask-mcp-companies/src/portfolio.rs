@@ -131,8 +131,6 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
 // layer keeps compiling without changes, and provide a thin `PortfolioManager`
 // that delegates the general ops while owning the companies-specific ones.
 
-pub(crate) use hkask_mcp_portfolio::{Transaction as PortfolioTransaction, TxType as PortfolioTxType};
-
 /// Companies-side portfolio manager. Holds a [`PortfolioStore`] (the
 /// general-purpose ledger/holdings/returns engine from `hkask-mcp-portfolio`)
 /// and adds companies-specific research artifacts: notes, files, and DCF
@@ -170,12 +168,6 @@ impl PortfolioManager {
         conn.execute_batch(COMPANIES_SCHEMA_DDL)
             .map_err(|e| format!("failed to initialize companies schema: {e}"))?;
         Ok(())
-    }
-
-    /// The underlying general-purpose store. The tool layer uses this for
-    /// portfolio CRUD, ledger reads, and returns delegation.
-    pub fn store(&self) -> &PortfolioStore {
-        &self.store
     }
 
     // ── General ops (delegated to the portfolio crate) ──────────────

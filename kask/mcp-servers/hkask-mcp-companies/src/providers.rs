@@ -53,11 +53,6 @@ impl CompanyProfile {
         self.first()?.get("companyName").and_then(|v| v.as_str())
     }
 
-    /// `symbol` (FMP) — the ticker.
-    pub fn symbol(&self) -> Option<&str> {
-        self.first()?.get("symbol").and_then(|v| v.as_str())
-    }
-
     /// `sector` (FMP) — the GICS sector.
     pub fn sector(&self) -> Option<&str> {
         self.first()?.get("sector").and_then(|v| v.as_str())
@@ -76,21 +71,6 @@ impl CompanyProfile {
     /// `mktCap` (FMP) — the market capitalization.
     pub fn market_cap(&self) -> Option<f64> {
         self.first()?.get("mktCap").and_then(|v| v.as_f64())
-    }
-
-    /// `sharesOutstanding` (FMP profile) — the shares outstanding from the
-    /// profile endpoint (the key-metrics `weightedAverageShsOut*` fields are
-    /// preferred when available; see `KeyMetrics::shares_outstanding`).
-    pub fn shares_outstanding(&self) -> Option<f64> {
-        self.first()?
-            .get("sharesOutstanding")
-            .and_then(|v| v.as_f64())
-    }
-
-    /// `taxRate` (FMP profile) — the effective tax rate. Used as a fallback
-    /// for ROIC computation when the income statement doesn't supply one.
-    pub fn tax_rate(&self) -> Option<f64> {
-        self.first()?.get("taxRate").and_then(|v| v.as_f64())
     }
 }
 
@@ -124,30 +104,6 @@ impl KeyMetrics {
     /// The latest yearly metric object (FMP returns newest-first), or `None`.
     pub fn latest(&self) -> Option<&Value> {
         self.years().first()
-    }
-
-    /// `weightedAverageShsOutDil` (preferred) or `weightedAverageShsOut` from
-    /// the latest year — the diluted (preferred) or basic shares outstanding.
-    pub fn shares_outstanding(&self) -> Option<f64> {
-        let latest = self.latest()?;
-        latest
-            .get("weightedAverageShsOutDil")
-            .or_else(|| latest.get("weightedAverageShsOut"))
-            .and_then(|v| v.as_f64())
-    }
-
-    /// `roic` from the latest year's key metrics.
-    pub fn roic(&self) -> Option<f64> {
-        self.latest()?.get("roic").and_then(|v| v.as_f64())
-    }
-
-    /// `investedCapital` (preferred) or `totalAssets` from the latest year.
-    pub fn invested_capital(&self) -> Option<f64> {
-        let latest = self.latest()?;
-        latest
-            .get("investedCapital")
-            .or_else(|| latest.get("totalAssets"))
-            .and_then(|v| v.as_f64())
     }
 
     /// `peRatio` from the latest year — the price-to-earnings multiple.
@@ -202,11 +158,6 @@ impl HistoricalPriceView {
     /// Wrap a normalized historical-price payload.
     pub fn from_raw(raw: Value) -> Self {
         Self { raw }
-    }
-
-    /// Escape hatch — the retained raw payload.
-    pub fn raw(&self) -> &Value {
-        &self.raw
     }
 
     /// The `historical` array of daily OHLCV bars (newest-first per FMP), or an

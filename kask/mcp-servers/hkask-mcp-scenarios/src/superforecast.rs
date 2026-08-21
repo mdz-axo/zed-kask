@@ -12,7 +12,9 @@
 use hkask_forecast as forecast;
 
 // ── Re-exports from hkask-forecast (pure pass-throughs eliminated) ───────
-pub(crate) use forecast::{bayesian_update, brier_interpretation, brier_score, outside_view_adjustment};
+pub(crate) use forecast::{
+    bayesian_update, brier_interpretation, brier_score, outside_view_adjustment,
+};
 // R3: shared CMP-index provenance bridge contract — re-exported so the
 // `scenario_from_cmp_indices` emitter and the companies `EventTreeProjection`
 // deserializer share one type-level source of truth. The pin test
@@ -50,14 +52,13 @@ pub(crate) use store::ForecastStore;
 // Extracted to `superforecast/bridge.rs` (deep-module split: adapting external
 // server outputs into scenario events, and cross-validating estimates).
 mod bridge;
-pub(crate) use bridge::{convert_market_record, cross_validate, domain_bias_delta};
+pub(crate) use bridge::{convert_market_record, cross_validate};
 
 // ── Composition: market/CMP tree composition + Bayesian propagation ───────
 // Extracted to `superforecast/compose.rs` (deep-module split: building event
 // trees from market/CMP inputs and propagating prior updates).
 mod compose;
 pub(crate) use compose::{
-    CmpDependencySpec, CompositionWarning, DependencySpec, MAX_PARENTS_PER_GROUP, PropagationEntry,
-    PropagationResult, compose_cmp_tree, compose_cmp_tree_with_deps, compose_market_tree,
-    convert_cmp_index, propagate_prior_update,
+    CmpDependencySpec, DependencySpec, compose_cmp_tree, compose_cmp_tree_with_deps,
+    compose_market_tree, propagate_prior_update,
 };

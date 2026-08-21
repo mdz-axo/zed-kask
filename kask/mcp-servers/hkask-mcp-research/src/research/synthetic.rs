@@ -41,18 +41,6 @@ pub(crate) enum ExtractorKind {
     // Xpath,
 }
 
-impl ExtractorKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Css => "css",
-            Self::JsonPath => "json_path",
-            Self::DiffHash => "diff_hash",
-            Self::LlmSchema => "llm_schema",
-            Self::PdfOcr => "pdf_ocr",
-        }
-    }
-}
-
 impl std::str::FromStr for ExtractorKind {
     type Err = SyntheticError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -636,7 +624,10 @@ fn render_template(template: &str, item: &ExtractedItem) -> String {
 
 /// Convert extracted items into `feed_rs::Entry` objects for insertion
 /// via the existing `insert_entries` function.
-pub(crate) fn items_to_entries(items: Vec<ExtractedItem>, feed_title: &str) -> Vec<feed_rs::model::Entry> {
+pub(crate) fn items_to_entries(
+    items: Vec<ExtractedItem>,
+    feed_title: &str,
+) -> Vec<feed_rs::model::Entry> {
     items
         .into_iter()
         .map(|item| {

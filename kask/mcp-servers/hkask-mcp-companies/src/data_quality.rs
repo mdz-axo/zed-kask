@@ -354,40 +354,6 @@ impl ModelInputQuality {
     }
 }
 
-// ── Provider-specific quality annotations ────────────────────────────────────
-
-/// Annotation on a normalized field indicating how it was derived.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct NormalizationAnnotation {
-    /// The original provider field name.
-    pub source_field: String,
-    /// Whether this field was approximated during normalization.
-    pub was_approximated: bool,
-    /// What was done to normalise it (empty if exact match).
-    pub method: String,
-}
-
-/// Provider quality metadata attached to API responses.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ProviderQuality {
-    /// Which provider served this data.
-    pub provider: String,
-    /// Fields that required normalization/approximation.
-    pub approximated_fields: Vec<NormalizationAnnotation>,
-    /// Overall provider confidence for this response type.
-    pub provider_confidence: f64,
-}
-
-impl ProviderQuality {
-    pub fn exact_match(provider: &str) -> Self {
-        ProviderQuality {
-            provider: provider.to_string(),
-            approximated_fields: Vec::new(),
-            provider_confidence: 1.0,
-        }
-    }
-}
-
 // ── Temporal coherence tracking ──────────────────────────────────────────────
 
 /// Record of data freshness for temporal coherence learning (FinGPT RLSP-inspired).
@@ -398,10 +364,6 @@ impl ProviderQuality {
 /// data quality, not sentiment classification.
 #[derive(Debug, Clone)]
 pub(crate) struct TemporalSnapshot {
-    /// When the data was fetched (RFC 3339).
-    pub fetched_at: String,
-    /// Stock price at fetch time.
-    pub price_at_fetch: f64,
     /// Earnings announcement date for the most recent period in the data.
     pub latest_filing_date: Option<String>,
 }

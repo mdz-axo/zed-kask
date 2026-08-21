@@ -68,7 +68,6 @@ pub(crate) mod types;
 use portfolio::{PersistedForecast, PortfolioManager};
 
 pub(crate) mod tools;
-pub(crate) use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
 
 // ── Validation ──────────────────────────────────────────────────────
 

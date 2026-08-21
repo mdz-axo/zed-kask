@@ -26,8 +26,6 @@ pub(crate) const DEFAULT_CACHE_MAX_ENTRIES: usize = 50;
 pub(crate) const MAX_CACHE_MAX_ENTRIES: usize = 200;
 pub(crate) const MAX_CACHE_VALUE_BYTES: usize = 1_048_576;
 pub(crate) const RRF_K: u64 = 60;
-pub(crate) const RATE_LIMIT_WINDOW_SECS: u64 = 60;
-pub(crate) const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
 pub(crate) const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
 pub(crate) const MAX_QUERY_LENGTH: usize = 400;
 pub(crate) const MAX_URL_LENGTH: usize = 2048;
@@ -38,7 +36,7 @@ pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 // ── Re-exports ──
 
 pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
-pub(crate) use ranking::{apply_rerank, parse_age_to_days, rrf_score};
+pub(crate) use ranking::{apply_rerank, rrf_score};
 pub(crate) use rate_limiter::RateLimiter;
 pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 

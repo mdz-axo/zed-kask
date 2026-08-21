@@ -114,12 +114,6 @@ impl ForecastStore {
         self.records.get(key)
     }
 
-    /// Get mutable reference. Caller must call `persist()` after modification
-    /// to durably persist changes, or use `insert` to persist via journal append.
-    pub fn get_mut(&mut self, key: &str) -> Option<&mut StoredForecastRecord> {
-        self.records.get_mut(key)
-    }
-
     /// Persist all changes (writes full snapshot, truncates journal).
     pub fn persist(&self) {
         self.compact();
@@ -148,11 +142,6 @@ impl ForecastStore {
 
     pub fn len(&self) -> usize {
         self.records.len()
-    }
-
-    /// Returns `true` if the forecast store contains no records.
-    pub fn is_empty(&self) -> bool {
-        self.records.is_empty()
     }
 
     pub fn values(&self) -> impl Iterator<Item = &StoredForecastRecord> {

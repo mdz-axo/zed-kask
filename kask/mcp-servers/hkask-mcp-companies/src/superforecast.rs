@@ -20,7 +20,10 @@ use hkask_forecast::FermiQuestion;
 /// Apply user overrides to a set of Fermi sub-questions.
 /// `overrides`: list of (index, estimate, confidence) tuples.
 /// Only overrides for valid indices are applied; others are ignored.
-pub(crate) fn apply_fermi_overrides(sub_questions: &mut [FermiQuestion], overrides: &[(usize, f64, f64)]) {
+pub(crate) fn apply_fermi_overrides(
+    sub_questions: &mut [FermiQuestion],
+    overrides: &[(usize, f64, f64)],
+) {
     for (idx, est, conf) in overrides {
         if *idx < sub_questions.len() {
             sub_questions[*idx].estimate = *est;
@@ -238,7 +241,6 @@ pub struct EventTreeProjection {
 /// `#[serde(default)]` tolerates partial entries without failing the whole
 /// tree, and the pin test in each crate enforces that the real emitters
 /// populate the full 7-field shape.
-pub(crate) use hkask_forecast::CmpIndexProvenance;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct EventTreeNodeProjection {

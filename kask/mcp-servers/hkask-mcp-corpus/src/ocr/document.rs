@@ -52,11 +52,11 @@ pub struct CrossValidation {
     /// Normalized Levenshtein similarity [0.0, 1.0] between the two results.
     pub similarity: f32,
     /// Complexity tier at routing time.
-    pub tier: super::config::ComplexityTier,
+    pub(crate) tier: super::config::ComplexityTier,
     /// First backend used.
-    pub backend_a: super::config::OcrBackend,
+    pub(crate) backend_a: super::config::OcrBackend,
     /// Second backend used.
-    pub backend_b: super::config::OcrBackend,
+    pub(crate) backend_b: super::config::OcrBackend,
     /// Semantic (embedding) similarity [0.0, 1.0] when available.
     /// Populated by `verify_semantic` if an embedding router is provided.
     #[serde(default, skip_serializing_if = "Option::is_none")]
