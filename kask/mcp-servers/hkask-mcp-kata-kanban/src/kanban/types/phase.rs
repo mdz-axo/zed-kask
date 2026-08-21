@@ -31,13 +31,4 @@ impl KanbanPhase {
             created_at: Utc::now(),
         }
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  desc is a non-empty description string
-    /// post: returns Self with description set to Some(desc)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_description(mut self, desc: String) -> Self {
-        self.description = Some(desc);
-        self
-    }
 }

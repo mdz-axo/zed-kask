@@ -1,7 +1,7 @@
 use super::*;
 
 impl KanbanService {
-    pub fn spawn_task(
+    pub(crate) fn spawn_task(
         &self,
         task_id: TaskId,
         spawn_spec: super::SpawnSpec,

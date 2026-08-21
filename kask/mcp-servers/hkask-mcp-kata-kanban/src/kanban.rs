@@ -21,4 +21,4 @@ pub(crate) use types::{
 };
 
 // Re-export the service and errors from service_impl
-pub(crate) use service_impl::{KanbanError, KanbanService, UnjamFix, UnjamItem};
+pub(crate) use service_impl::{KanbanError, KanbanService};

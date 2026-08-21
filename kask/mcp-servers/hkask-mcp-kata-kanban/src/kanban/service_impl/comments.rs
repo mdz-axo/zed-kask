@@ -1,7 +1,7 @@
 use super::*;
 
 impl KanbanService {
-    pub fn task_comment(
+    pub(crate) fn task_comment(
         &self,
         task_id: TaskId,
         author: WebID,
@@ -17,7 +17,7 @@ impl KanbanService {
     }
 
     /// Fetch comments starting from a given index (for incremental polling).
-    pub fn task_comments_since(
+    pub(crate) fn task_comments_since(
         &self,
         task_id: TaskId,
         since_index: usize,
@@ -26,7 +26,7 @@ impl KanbanService {
         Ok(task.comments.into_iter().skip(since_index).collect())
     }
 
-    pub fn task_add_deliverable(
+    pub(crate) fn task_add_deliverable(
         &self,
         task_id: TaskId,
         path: &str,

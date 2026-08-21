@@ -30,12 +30,6 @@ impl TesseractExecutor {
             psm: None,
         }
     }
-
-    /// Set the language for OCR (e.g., "eng", "fra", "deu").
-    pub fn with_language(mut self, lang: &str) -> Self {
-        self.language = lang.to_string();
-        self
-    }
 }
 
 impl Default for TesseractExecutor {

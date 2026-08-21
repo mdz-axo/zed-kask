@@ -107,16 +107,6 @@ impl AdapterLifecycle {
         }
     }
 
-    /// Parses kebab-case or PascalCase strings. For `Ephemeral`, the
-    /// `expires_at` field is set to 0 — callers should set it explicitly.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "durable" | "Durable" => Some(AdapterLifecycle::Durable),
-            "ephemeral" | "Ephemeral" => Some(AdapterLifecycle::Ephemeral { expires_at: 0 }),
-            _ => None,
-        }
-    }
-
     /// Returns the expiry timestamp if this is an `Ephemeral` adapter.
     pub fn expires_at(&self) -> Option<u64> {
         match self {

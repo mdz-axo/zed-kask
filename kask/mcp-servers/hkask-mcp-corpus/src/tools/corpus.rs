@@ -179,9 +179,7 @@ impl CorpusServer {
                         context_k: req.context_k,
                         prompts_per_chunk: req.prompts_per_chunk,
                         type_distribution: req.type_distribution,
-                        cross_reference: req.cross_reference,
                         max_prompts: req.max_prompts,
-                        owner: req.owner,
                         ontology_bloom_overrides: req.ontology_bloom_overrides,
                     })
                     .await
@@ -417,15 +415,9 @@ pub(crate) struct BuildPromptsRequest {
     /// Bloom's taxonomy weight distribution (e.g. "1,1,1,1,1" = equal).
     #[serde(default = "default_type_distribution")]
     pub type_distribution: String,
-    /// Generate cross-reference synthesis prompts.
-    #[serde(default)]
-    pub cross_reference: bool,
     /// Max prompts to output (0 = all qualifying chunks).
     #[serde(default)]
     pub max_prompts: usize,
-    /// Owner persona for h_mem queries (e.g. "john-brooks").
-    #[serde(default = "default_owner")]
-    pub owner: String,
     /// Per-ontology Bloom distribution overrides. Format:
     /// "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|eso:1,1,2,1,0"
     /// When a chunk's ontology_tags contain the key, use the override

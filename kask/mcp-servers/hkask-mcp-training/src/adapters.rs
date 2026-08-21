@@ -44,19 +44,7 @@ fn exec_discard(
         .map_err(|e| JobStoreError::Storage(format!("Execute failed: {}", e)))
 }
 
-// ── Job store ───────────────────────────────────────────────────────────
-
-/// Persisted training job record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct StoredJob {
-    pub id: String,
-    pub base_model: String,
-    pub dataset_path: String,
-    pub params_json: String,
-    pub status: String,
-    pub created_at: i64,
-    pub host: String,
-}
+// ── Job store ───────────────────────────────────────────────────────────────
 
 /// Persistent job registry backed by the same SQLite database.
 /// Survives server restarts — enables `training_status` to look up
@@ -233,65 +221,5 @@ impl JobStore {
                 &job_id as &dyn rusqlite::types::ToSql,
             ],
         )
-    }
-
-    /// Get a job by ID.
-    pub fn get(&self, job_id: &str) -> Result<Option<StoredJob>, JobStoreError> {
-        let conn = self.lock()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, base_model, dataset_path, params_json, status, created_at, host
-                     FROM training_jobs WHERE id = ?1",
-            )
-            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
-
-        let result = stmt.query_row(rusqlite::params![job_id], |row| {
-            Ok(StoredJob {
-                id: row.get(0)?,
-                base_model: row.get(1)?,
-                dataset_path: row.get(2)?,
-                params_json: row.get(3)?,
-                status: row.get(4)?,
-                created_at: row.get(5)?,
-                host: row.get(6)?,
-            })
-        });
-
-        match result {
-            Ok(job) => Ok(Some(job)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(JobStoreError::Storage(format!("Query failed: {}", e))),
-        }
-    }
-
-    /// List all jobs, most recent first.
-    pub fn list_all(&self) -> Result<Vec<StoredJob>, JobStoreError> {
-        let conn = self.lock()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, base_model, dataset_path, params_json, status, created_at, host
-                     FROM training_jobs ORDER BY created_at DESC",
-            )
-            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(StoredJob {
-                    id: row.get(0)?,
-                    base_model: row.get(1)?,
-                    dataset_path: row.get(2)?,
-                    params_json: row.get(3)?,
-                    status: row.get(4)?,
-                    created_at: row.get(5)?,
-                    host: row.get(6)?,
-                })
-            })
-            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
-
-        let mut jobs = Vec::new();
-        for row in rows {
-            jobs.push(row.map_err(|e| JobStoreError::Storage(format!("Row error: {}", e)))?);
-        }
-        Ok(jobs)
     }
 }

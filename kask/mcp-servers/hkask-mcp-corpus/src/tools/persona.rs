@@ -36,10 +36,6 @@ fn generation_model() -> String {
     hkask_inference::InferenceConfig::from_env().default_model
 }
 
-fn inference_config() -> hkask_inference::InferenceConfig {
-    hkask_inference::InferenceConfig::from_env()
-}
-
 fn database_passphrase() -> Result<String, McpToolError> {
     let passphrase = crate::tools::semantic::default_corpus_passphrase();
     if passphrase.is_empty() {
@@ -354,7 +350,6 @@ impl CorpusServer {
             async {
                 let model = embedding_model();
                 let gen_model = generation_model();
-                let inf_cfg = inference_config();
                 let config = crate::compose::CognitionConfig {
                     author: params.author.clone(),
                     jinja2_template: None,
@@ -372,7 +367,7 @@ impl CorpusServer {
                 let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
                     Some(self.inference_router.clone()),
                     &gen_model,
-                    inf_cfg,
+
                 );
 
                 let request = crate::compose::ComposeRequest {
@@ -443,7 +438,6 @@ impl CorpusServer {
 
             let model = embedding_model();
             let gen_model = generation_model();
-            let inf_cfg = inference_config();
             let config = crate::compose::CognitionConfig {
                 author: params.author.clone(),
                 jinja2_template: None,
@@ -459,7 +453,7 @@ impl CorpusServer {
             };
 
             let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
 
             let request = crate::compose::ComposeRequest {
                 prompt,
@@ -720,7 +714,6 @@ impl CorpusServer {
                     .store(&blended_ref, &blended, &model)
                     .map_err(|e| map_embedding_error(e, "store blended centroid"))?;
 
-                let inf_cfg = inference_config();
                 let config = crate::compose::CognitionConfig {
                     author: format!("mashup:{}:{}", params.author_a, params.author_b),
                     jinja2_template: None,
@@ -738,7 +731,7 @@ impl CorpusServer {
                 let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
                     Some(self.inference_router.clone()),
                     &gen_model,
-                    inf_cfg,
+
                 );
 
                 let request = crate::compose::ComposeRequest {

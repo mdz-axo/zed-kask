@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use hkask_inference::ProviderId;
 use hkask_types::InferencePort;
 
 use hkask_services_core::ServiceError;
@@ -15,7 +14,6 @@ use hkask_services_core::ServiceError;
 pub(crate) struct InferenceContext {
     pub shared_port: Option<Arc<dyn InferencePort>>,
     pub default_model: String,
-    pub inference_config: hkask_inference::InferenceConfig,
 }
 
 impl InferenceContext {
@@ -23,42 +21,10 @@ impl InferenceContext {
     pub fn from_parts(
         shared_port: Option<Arc<dyn InferencePort>>,
         default_model: impl Into<String>,
-        inference_config: hkask_inference::InferenceConfig,
     ) -> Self {
         Self {
             shared_port,
             default_model: default_model.into(),
-            inference_config,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModelInfo {
-    pub name: String,
-    pub provider: ProviderId,
-    pub family: Option<String>,
-    pub parameter_size: Option<String>,
-    pub quantization_level: Option<String>,
-    pub size_bytes: Option<u64>,
-}
-
-impl From<hkask_types::ModelEntry> for ModelInfo {
-    fn from(entry: hkask_types::ModelEntry) -> Self {
-        // Parse the provider from the prefixed name (e.g. "openrouter/qwen/..." → OpenRouter).
-        let provider_str = entry
-            .prefixed_name
-            .split('/')
-            .next()
-            .unwrap_or("openrouter");
-        let provider = ProviderId::from_prefix_segment(provider_str);
-        Self {
-            name: entry.prefixed_name,
-            provider,
-            family: None,
-            parameter_size: None,
-            quantization_level: None,
-            size_bytes: None,
         }
     }
 }
@@ -95,31 +61,5 @@ impl InferenceService {
                  Requested model: {model}"
             ),
         })
-    }
-
-    #[must_use = "result must be used"]
-    pub async fn list_models(ctx: &InferenceContext) -> Result<Vec<ModelInfo>, ServiceError> {
-        tracing::info!(target: "hkask.inference_svc", operation = "list_models", "REG");
-        // Lazy TTL cache: first call fetches live (the "start-up" update),
-        // subsequent calls within the TTL return cached. See `model_cache`.
-        crate::model_cache::ModelCache::list_models(ctx).await
-    }
-
-    #[must_use = "result must be used"]
-    pub async fn search_models(
-        ctx: &InferenceContext,
-        query: &str,
-    ) -> Result<Vec<ModelInfo>, ServiceError> {
-        tracing::info!(target: "hkask.inference_svc", operation = "search_models", query = %query, "REG");
-        // Search is a filter over the cached full list — one cache, filtered in-memory.
-        let all = crate::model_cache::ModelCache::list_models(ctx).await?;
-        if query.is_empty() {
-            return Ok(all);
-        }
-        let lower = query.to_lowercase();
-        Ok(all
-            .into_iter()
-            .filter(|m| m.name.to_lowercase().contains(&lower))
-            .collect())
     }
 }

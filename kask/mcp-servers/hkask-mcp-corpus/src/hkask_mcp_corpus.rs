@@ -32,7 +32,6 @@ pub(crate) mod corpus;
 pub(crate) mod cost;
 mod helpers;
 pub(crate) mod inference_svc;
-pub(crate) mod model_cache;
 pub(crate) mod ocr;
 pub(crate) mod path_safety;
 pub(crate) mod runtime;

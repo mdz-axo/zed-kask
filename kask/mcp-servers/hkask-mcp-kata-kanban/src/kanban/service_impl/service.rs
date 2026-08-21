@@ -101,7 +101,7 @@ impl KanbanService {
     /// pre:  owner is a valid WebID; name is non-empty; columns is non-empty
     /// post: board is persisted as a h_mem; returns the created Board
     #[must_use = "result must be used"]
-    pub fn board_create(
+    pub(crate) fn board_create(
         &self,
         owner: WebID,
         name: &str,
@@ -175,7 +175,7 @@ impl KanbanService {
     /// pre:  owner is a valid WebID
     /// post: returns all boards owned by this agent
     #[must_use = "result must be used"]
-    pub fn board_list(&self, owner: &WebID) -> Result<Vec<Board>, KanbanError> {
+    pub(crate) fn board_list(&self, owner: &WebID) -> Result<Vec<Board>, KanbanError> {
         let h_mems = self
             .store
             .query_by_entity(BOARD_ENTITY)
@@ -199,7 +199,7 @@ impl KanbanService {
     /// pre:  board_id is valid
     /// post: returns Some(Board) if found, None otherwise
     #[must_use = "result must be used"]
-    pub fn board_get(&self, board_id: BoardId) -> Result<Option<Board>, KanbanError> {
+    pub(crate) fn board_get(&self, board_id: BoardId) -> Result<Option<Board>, KanbanError> {
         let h_mems = self
             .store
             .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
@@ -221,7 +221,7 @@ impl KanbanService {
     /// pre:  board_id refers to an existing board; spec.title is non-empty; owner is valid
     /// post: task is persisted as a h_mem; returns the created Task
     #[must_use = "result must be used"]
-    pub fn task_create(
+    pub(crate) fn task_create(
         &self,
         board_id: BoardId,
         spec: TaskSpec,
@@ -328,7 +328,7 @@ impl KanbanService {
     /// pre:  board_id refers to an existing board
     /// post: returns tasks matching the filter; empty Vec if none match
     #[must_use = "result must be used"]
-    pub fn task_list(
+    pub(crate) fn task_list(
         &self,
         board_id: BoardId,
         filter: TaskFilter,
@@ -386,7 +386,7 @@ impl KanbanService {
     /// pre:  task_id is valid
     /// post: returns Some(Task) if found, None otherwise
     #[must_use = "result must be used"]
-    pub fn task_get(&self, task_id: TaskId) -> Result<Option<Task>, KanbanError> {
+    pub(crate) fn task_get(&self, task_id: TaskId) -> Result<Option<Task>, KanbanError> {
         let h_mems = self
             .store
             .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
@@ -407,7 +407,7 @@ impl KanbanService {
     /// pre:  actor is a valid WebID (P12)
     /// post: task.status is updated; updated_at is refreshed
     #[must_use = "result must be used"]
-    pub fn task_move(
+    pub(crate) fn task_move(
         &self,
         task_id: TaskId,
         target: TaskStatus,
@@ -470,7 +470,7 @@ impl KanbanService {
     /// post: task.assignee is set to actor; a different agent cannot be assigned by this call.
     /// \[P12\] Constraining: No anonymous agency — the accepted assignment has an actor WebID.
     #[must_use = "result must be used"]
-    pub fn task_claim(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
+    pub(crate) fn task_claim(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
         let mut task = self.require_task(task_id)?;
 
         if task.assignee.is_some() {
@@ -512,7 +512,7 @@ impl KanbanService {
     /// pre:  verifier is a valid WebID
     /// post: task.verification is set; task moves to Done if passed
     #[must_use = "result must be used"]
-    pub fn task_verify(
+    pub(crate) fn task_verify(
         &self,
         task_id: TaskId,
         evidence: &str,
@@ -600,7 +600,7 @@ impl KanbanService {
     /// pre:  task_id is valid
     /// post: task h_mem and index h_mem are soft-deleted
     #[must_use = "result must be used"]
-    pub fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
+    pub(crate) fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
         let task = self.require_task(task_id)?;
 
         // Close the task h_mem
@@ -641,7 +641,7 @@ impl KanbanService {
     /// pre:  task_id is valid; actor is the task owner
     /// post: task.assignee is set to None; task.updated_at refreshed
     #[must_use = "result must be used"]
-    pub fn task_unassign(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
+    pub(crate) fn task_unassign(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
         let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         task.assignee = None;
@@ -664,7 +664,7 @@ impl KanbanService {
     // documented above, so we accept the argument count.
     #[allow(clippy::too_many_arguments)]
     #[must_use = "result must be used"]
-    pub fn task_update(
+    pub(crate) fn task_update(
         &self,
         task_id: TaskId,
         actor: WebID,
@@ -701,7 +701,7 @@ impl KanbanService {
     /// pre:  task_id refers to a task in Done status
     /// post: task moves to InProgress, verification cleared
     #[must_use = "result must be used"]
-    pub fn task_reopen(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
+    pub(crate) fn task_reopen(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
         let mut task = self.require_task(task_id)?;
 
         Self::require_task_owner(&task, actor)?;
@@ -726,7 +726,7 @@ impl KanbanService {
     /// Called by the delegating agent to refill a subagent's rJoule budget
     /// so it can continue work after exhausting its initial budget.
     #[must_use = "result must be used"]
-    pub fn task_add_rjoules(
+    pub(crate) fn task_add_rjoules(
         &self,
         task_id: TaskId,
         amount: u64,
@@ -763,7 +763,7 @@ impl KanbanService {
     /// post: task.delegate_result and task.deterministic_verdict are populated;
     ///       the task h_mem is updated.
     #[must_use = "result must be used"]
-    pub fn task_record_delegation(
+    pub(crate) fn task_record_delegation(
         &self,
         task_id: TaskId,
         swarm_id: Option<String>,
@@ -800,7 +800,7 @@ impl KanbanService {
     /// pre:  board_id is valid
     /// post: board h_mem and all associated task/index h_mems are soft-deleted
     #[must_use = "result must be used"]
-    pub fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
+    pub(crate) fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
         let board = self.board_get(board_id)?.ok_or_else(|| {
             KanbanError::NotFound(NotFound {
                 entity_type: "board".to_string(),

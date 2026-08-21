@@ -237,7 +237,7 @@ impl CorpusServer {
     )]
     pub async fn corpus_clear_index(
         &self,
-        Parameters(ClearIndexRequest { index_id: _ }): Parameters<ClearIndexRequest>,
+        Parameters(ClearIndexRequest {}): Parameters<ClearIndexRequest>,
     ) -> String {
         execute_tool_semantic(
             self,
@@ -352,11 +352,7 @@ pub(crate) struct QueryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ClearIndexRequest {
-    /// Reserved for future multi-index support.
-    #[serde(default)]
-    pub index_id: Option<String>,
-}
+pub(crate) struct ClearIndexRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PurgeQaRequest {

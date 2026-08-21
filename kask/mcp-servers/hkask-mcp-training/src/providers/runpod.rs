@@ -184,13 +184,6 @@ impl RunpodHost {
         }
     }
 
-    /// Get the SSH command for a job, if available. Under v2 this is always
-    /// `None` — the REST API v2 does not surface per-port SSH IP/port info in
-    /// the pod response. Use the RunPod console or `runpodctl ssh` instead.
-    pub fn ssh_for_job(&self, job_id: &str) -> Option<String> {
-        self.ssh_commands.lock().ok()?.get(job_id).cloned()
-    }
-
     /// Load persisted pod IDs from the JSON file.
     fn load_pods(path: &std::path::Path) -> HashMap<String, String> {
         match std::fs::read_to_string(path) {
@@ -227,47 +220,6 @@ impl RunpodHost {
                 "Failed to persist pod IDs"
             );
         }
-    }
-
-    /// Drain all known pods by terminating them. Used on shutdown to avoid
-    /// orphaned billable pods. Errors per-pod are logged but don't abort the
-    /// drain — we want to attempt every pod even if one fails.
-    pub async fn drain_all_pods(&self) -> Result<usize, HostProviderError> {
-        let pod_ids: Vec<(String, String)> = {
-            let map = self
-                .jobs
-                .lock()
-                .map_err(|e| HostProviderError::Backend(format!("Lock error: {}", e)))?;
-            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        };
-        let count = pod_ids.len();
-        tracing::info!(
-            target: "reg.training.provider.runpod.drain",
-            count = count,
-            "Draining all RunPod pods"
-        );
-        for (job_id, pod_id) in &pod_ids {
-            match self.delete_pod(pod_id).await {
-                Ok(()) => tracing::info!(
-                    target: "hkask.training.runpod",
-                    job_id = %job_id,
-                    pod_id = %pod_id,
-                    "Pod terminated during drain"
-                ),
-                Err(e) => tracing::warn!(
-                    target: "hkask.training.runpod",
-                    job_id = %job_id,
-                    pod_id = %pod_id,
-                    error = %e,
-                    "Failed to terminate pod during drain — may need manual deletion via RunPod console"
-                ),
-            }
-        }
-        if let Ok(mut map) = self.jobs.lock() {
-            map.clear();
-        }
-        self.persist_pods();
-        Ok(count)
     }
 
     /// Send a request to the Runpod REST API v2 and return the parsed JSON

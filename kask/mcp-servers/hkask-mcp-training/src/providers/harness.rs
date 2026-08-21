@@ -31,12 +31,6 @@ pub(crate) trait HarnessAdapter: Send + Sync {
 
     /// Directory where the harness outputs adapter weights.
     fn output_dir(&self, job_id: &str) -> PathBuf;
-
-    /// File whose existence signals training completion.
-    fn completion_marker(&self, job_id: &str) -> PathBuf;
-
-    /// The harness identifier for Regulation spans.
-    fn harness_id(&self) -> TrainingHarnessId;
 }
 
 // ── Axolotl harness ────────────────────────────────────────────────────────
@@ -248,17 +242,9 @@ impl HarnessAdapter for AxolotlHarness {
         // HKASK_COMPLETION_MANIFEST_PATH contract).
         PathBuf::from(format!("/workspace/outputs/{}", job_id))
     }
-
-    fn completion_marker(&self, job_id: &str) -> PathBuf {
-        self.output_dir(job_id).join("adapter_model.safetensors")
-    }
-
-    fn harness_id(&self) -> TrainingHarnessId {
-        TrainingHarnessId::Axolotl
-    }
 }
 
-// ── Ludwig harness ──────────────────────────────────────────────────────────
+// ── Ludwig harness ────────────────────────────────────────────────────────────
 
 /// Renders Ludwig YAML configuration from canonical `TrainingParams`.
 ///
@@ -459,14 +445,5 @@ impl HarnessAdapter for LudwigHarness {
         // Same canonical output dir as AxolotlHarness — the RunPod pod contract
         // is harness-agnostic (/workspace/outputs/{job_id}).
         PathBuf::from(format!("/workspace/outputs/{}", job_id))
-    }
-
-    fn completion_marker(&self, job_id: &str) -> PathBuf {
-        // Ludwig + PEFT saves adapter_model.safetensors (same as axolotl/TRL).
-        self.output_dir(job_id).join("adapter_model.safetensors")
-    }
-
-    fn harness_id(&self) -> TrainingHarnessId {
-        TrainingHarnessId::Ludwig
     }
 }

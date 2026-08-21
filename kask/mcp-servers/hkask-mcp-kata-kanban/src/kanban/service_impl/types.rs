@@ -1,26 +1,9 @@
-//! Kanban error types and de-jam data structures.
+//! Kanban error types.
 
 use hkask_types::NotFound;
 use hkask_types::id::TaskId;
 
 use crate::TaskStatus;
-
-/// UnjamItem — a stuck state detected by the de-jammer.
-#[derive(Debug, Clone)]
-pub(crate) struct UnjamItem {
-    pub task_id: TaskId,
-    pub task_title: String,
-    pub issue: String,
-    pub suggestion: String,
-}
-
-/// UnjamFix — records an auto-fix action taken by the de-jammer.
-#[derive(Debug, Clone)]
-pub(crate) struct UnjamFix {
-    pub task_id: TaskId,
-    pub task_title: String,
-    pub action: String,
-}
 
 /// Errors specific to kanban operations.
 #[derive(Debug, Clone, thiserror::Error)]
