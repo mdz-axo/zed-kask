@@ -140,6 +140,25 @@ impl EventStore {
         Ok(dropped)
     }
 
+    /// Strip the request/response bodies from `model_request` events older
+    /// than the cutoff — the summary-compaction half of retention. Terminal
+    /// rollouts keep their shape (model, latency, usage, verdict) but lose
+    /// their bulk; the training bridge has already consumed the bodies it
+    /// will consume by then. Returns the number of events stripped —
+    /// surfaced, never silent.
+    ///
+    /// SQLite's `json_remove` updates the payload in place; events whose
+    /// payload lacks the keys are unaffected (0 rows changed for them).
+    pub fn strip_bodies(&self, cutoff_rfc3339: &str) -> Result<usize, EventStoreError> {
+        let stripped = self.driver.execute(
+            "UPDATE events SET payload = json_remove(payload, '$.request_body', '$.response_body') \
+             WHERE kind = 'model_request' AND created_at < ?1 \
+             AND json_type(payload, '$.request_body') IS NOT NULL",
+            &[DbValue::Text(cutoff_rfc3339.to_string())],
+        )?;
+        Ok(stripped)
+    }
+
     /// The current log position — the resume point for incremental readers.
     /// `None` on an empty log (absence, not zero: nothing has happened yet).
     pub fn cursor(&self) -> Result<Option<i64>, EventStoreError> {
@@ -350,5 +369,52 @@ mod tests {
         // And they must be contiguous 1..=total (AUTOINCREMENT from empty).
         let expected: Vec<i64> = (1..=total as i64).collect();
         assert_eq!(all, expected, "positions must be contiguous");
+    }
+
+    #[test]
+    fn strip_bodies_removes_only_old_model_requests() {
+        let store = memory_store();
+        let old = serde_json::json!({
+            "model": "m", "request_body": "the task", "response_body": "the answer"
+        });
+        let recent = serde_json::json!({
+            "model": "m", "request_body": "keep me", "response_body": "keep me too"
+        });
+        let verdict = serde_json::json!({"pass": true});
+        store.append("r-old", "model_request", &old).unwrap();
+        store.append("r-old", "verdict", &verdict).unwrap();
+        store.append("r-recent", "model_request", &recent).unwrap();
+
+        // "now" is after everything written — all model_requests are old.
+        let stripped = store.strip_bodies("9999-01-01T00:00:00Z").unwrap();
+        assert_eq!(stripped, 2, "both model_request events are stripped");
+
+        let events = store.query(&EventFilter::default()).unwrap();
+        for event in &events {
+            if event.kind == "model_request" {
+                assert!(
+                    event.payload.get("request_body").is_none(),
+                    "bodies must be gone after strip"
+                );
+                assert!(event.payload.get("response_body").is_none());
+                // Shape survives.
+                assert_eq!(event.payload.get("model").unwrap(), "m");
+            }
+            if event.kind == "verdict" {
+                // Non-model_request kinds are untouched.
+                assert_eq!(event.payload.get("pass").unwrap(), &serde_json::json!(true));
+            }
+        }
+    }
+
+    #[test]
+    fn strip_bodies_is_idempotent() {
+        let store = memory_store();
+        let body = serde_json::json!({"request_body": "x", "response_body": "y"});
+        store.append("r", "model_request", &body).unwrap();
+        assert_eq!(store.strip_bodies("9999-01-01T00:00:00Z").unwrap(), 1);
+        // Second pass finds nothing to strip — the guard on json_type
+        // prevents a no-op rewrite from counting.
+        assert_eq!(store.strip_bodies("9999-01-01T00:00:00Z").unwrap(), 0);
     }
 }

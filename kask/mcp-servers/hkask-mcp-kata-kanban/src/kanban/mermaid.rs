@@ -86,14 +86,9 @@ pub fn slugify_task_id(id: &str) -> String {
     let trimmed = slug.trim_matches('_');
     if trimmed.is_empty() {
         "t_task".to_string()
-    } else if trimmed
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphabetic())
-        .unwrap_or(false)
-    {
-        format!("t_{trimmed}")
     } else {
+        // The `t_` prefix guarantees the id starts with a letter, satisfying
+        // Mermaid's node-id grammar regardless of `trimmed`'s first character.
         format!("t_{trimmed}")
     }
 }

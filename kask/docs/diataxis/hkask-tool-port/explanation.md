@@ -97,8 +97,7 @@ same disposition Layer 3 (instruction hierarchy) has. That is the honest state
 and the safer one: an inert gate invites reliance on a protection that does
 not exist. RR-0053 is an absence check, and it states what a real IFC gate
 would have to prove. Rationale in full:
-[`DIVERGENCE.md`](../../../../DIVERGENCE.md) D4 (guard layer removal) and
-`kask/security/regressions/RR-0053.yaml` (taint gate removal).
+`kask/security/regressions/RR-0053.yaml` (guard layer + taint gate removal).
 
 ## If a real trust boundary appears
 
@@ -142,8 +141,7 @@ without that proof — see `kask/security/regressions/RR-0056.yaml`.
 - [hkask-tool-port Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
 - [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
-- [`DIVERGENCE.md`](../../../../DIVERGENCE.md) D4 and
-  `kask/security/regressions/RR-0053.yaml`: full rationale for the guard-layer
+- `kask/security/regressions/RR-0053.yaml`: full rationale for the guard-layer
   and taint-gate deletions.
 - `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.
 

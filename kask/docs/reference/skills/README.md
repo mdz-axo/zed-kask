@@ -166,7 +166,7 @@ read-only resources the skill body may reference via `render_template`.
 | `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
 | `gemba-walk` | Human-in-the-loop guided review of the cybernetic regulation system |
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast. Inventories ontology namespaces, builds a complete-graph prior, maps the recombination field, detects gradients, generates reason hypotheses, and selects seed concepts |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D33) |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D32) |
 | `listening` | Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process |
 | `principle-constraints` | Compiles a stated principle into a set of checkable, code-path-anchored constraints with named falsifiers |
 | `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and SKILL.md files against their stated goals |

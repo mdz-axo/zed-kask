@@ -122,7 +122,7 @@ If Nebius adds account-wide API key auth (like RunPod's `RUNPOD_API_KEY`) and/or
 
    **Possible approach:** Store the per-endpoint token in the `AvailableModel` config directly (not in the keychain). This is less secure but matches Nebius's per-endpoint token model. Alternatively, store tokens in the keychain under `kask://credentials/nebius_{endpoint_name}` and resolve them per-model.
 
-6. **DIVERGENCE.md:** Add a D-seam entry (D30 or next available) documenting the provider addition.
+6. **DIVERGENCE.md:** Add a D-seam entry (next available) documenting the provider addition.
 7. **Pin tests:** `endpoint_url` format, `telemetry_id` format, case-insensitive provider ID match, model field match.
 
 ## Lessons learned from RunPod (D29)
