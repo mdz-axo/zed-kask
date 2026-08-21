@@ -47,8 +47,32 @@ fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, Mc
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid regex spec: {e}")))?;
             Ok(re.is_match(response))
         }
+        // External ground-truth evaluators (Goodhart mitigation per the
+        // LLM-vs-LLM rule). The string-match evaluators above are the
+        // scoring function of a training loop — adapters can learn to game
+        // them by emitting the expected substring without solving the
+        // task. `exit_code` and `file_exists` check real-world effects,
+        // not response text, so gaming requires actually doing the work.
+        //
+        // The spec is trusted (operator-provided in the task definition),
+        // so running commands is acceptable in this context.
+        "exit_code" => {
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(spec)
+                .env("RESPONSE", response)
+                .output()
+                .map_err(|e| {
+                    McpToolError::internal(format!(
+                        "exit_code evaluator failed to run command: {e}"
+                    ))
+                })?;
+            Ok(output.status.success())
+        }
+        "file_exists" => Ok(std::path::Path::new(spec).exists()),
         other => Err(McpToolError::invalid_argument(format!(
-            "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
+            "evaluator must be 'contains', 'not_contains', 'regex', \
+             'exit_code', or 'file_exists'; got '{other}'"
         ))),
     }
 }
@@ -1444,7 +1468,7 @@ impl SwarmServer {
     /// is downgraded by ORIENT (Gap S3). No ABW calls, no ledger spend —
     /// evaluation is free.
     #[tool(
-        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex) and returns a TaskSuccessVerdict with provenance: Deterministic. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
+        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: Deterministic. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,
@@ -1623,7 +1647,7 @@ impl SwarmServer {
     /// rollout for that task — the harness measures end-to-end pass rate,
     /// which includes crashes, not just wrong answers.
     #[tool(
-        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50."
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex/exit_code/file_exists), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, old model_request bodies are stripped and very old rollouts are compacted (bodies_stripped/rollouts_compacted in the report)."
     )]
     pub(crate) async fn swarm_eval_agent_local(
         &self,
@@ -1820,6 +1844,61 @@ impl SwarmServer {
                         );
                     }
                 }
+                // Compaction caller (event-substrate item 2): after each
+                // harness run, strip bodies from old model_request events
+                // and drop very old rollouts. The training bridge has had
+                // its chance by now (operator-triggered, runs between harness
+                // calls); bodies from previous runs are bulk with no remaining
+                // consumer. Both counts are surfaced — never silent (the
+                // .rules failure-signal rule: a missing count means "nothing
+                // old enough to strip/drop", which must be distinguishable
+                // from "compaction failed").
+                //
+                // Body retention: default 1 hour (configurable via
+                // `HKASK_SWARM_BODY_RETENTION_HOURS`). Rollout retention:
+                // default 7 days (configurable via
+                // `HKASK_SWARM_ROLLOUT_RETENTION_DAYS`).
+                let (bodies_stripped, rollouts_compacted) = if let Some(store) = &event_store {
+                    let body_retention_hours = std::env::var("HKASK_SWARM_BODY_RETENTION_HOURS")
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(1);
+                    let body_cutoff = (chrono::Utc::now()
+                        - chrono::Duration::hours(body_retention_hours))
+                        .to_rfc3339();
+                    let stripped = match store.strip_bodies(&body_cutoff) {
+                        Ok(n) => n,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                error = %error,
+                                "strip_bodies failed after harness run"
+                            );
+                            0
+                        }
+                    };
+                    let rollout_retention_days = std::env::var("HKASK_SWARM_ROLLOUT_RETENTION_DAYS")
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(7);
+                    let rollout_cutoff = (chrono::Utc::now()
+                        - chrono::Duration::days(rollout_retention_days))
+                        .to_rfc3339();
+                    let compacted = match store.compact(&rollout_cutoff) {
+                        Ok(n) => n,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                error = %error,
+                                "compact failed after harness run"
+                            );
+                            0
+                        }
+                    };
+                    (stripped, compacted)
+                } else {
+                    (0, 0)
+                };
                 Ok(serde_json::json!({
                     "agent_name": req.agent_name,
                     "harness_run_id": harness_run_id,
@@ -1833,6 +1912,8 @@ impl SwarmServer {
                     "balance": balance,
                     "events_dropped": events_dropped,
                     "capture_drops": capture_drops,
+                    "bodies_stripped": bodies_stripped,
+                    "rollouts_compacted": rollouts_compacted,
                 }))
             },
         )
@@ -1972,5 +2053,61 @@ mod tests {
             "tasks": [{ "task": "t", "credits_authorized": 5 }]
         });
         assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
+    }
+
+    #[test]
+    fn run_evaluator_exit_code_passes_on_zero_exit() {
+        // `true` always exits 0 — the evaluator must report pass.
+        assert!(run_evaluator("anything", "exit_code", "true").unwrap());
+    }
+
+    #[test]
+    fn run_evaluator_exit_code_fails_on_nonzero_exit() {
+        // `false` always exits 1 — the evaluator must report fail, not error.
+        assert!(!run_evaluator("anything", "exit_code", "false").unwrap());
+    }
+
+    #[test]
+    fn run_evaluator_exit_code_receives_response_env() {
+        // The command can access $RESPONSE — this is how external ground-truth
+        // checks validate the agent's actual output rather than gaming it.
+        assert!(run_evaluator("hello", "exit_code", "test \"$RESPONSE\" = hello").unwrap());
+        assert!(!run_evaluator("wrong", "exit_code", "test \"$RESPONSE\" = hello").unwrap());
+    }
+
+    #[test]
+    fn run_evaluator_exit_code_errors_on_missing_command() {
+        // A command that cannot execute must error, not silently fail —
+        // the distinction matters for fault attribution.
+        assert!(run_evaluator("x", "exit_code", "/nonexistent/binary_xyz").is_err());
+    }
+
+    #[test]
+    fn run_evaluator_file_exists_checks_real_filesystem() {
+        // A real file that exists in the test environment.
+        let path = std::env::temp_dir().join("hkask_eval_test_file_exists");
+        std::fs::write(&path, "test").unwrap();
+        assert!(run_evaluator("x", "file_exists", path.to_str().unwrap()).unwrap());
+        std::fs::remove_file(&path).unwrap();
+        // After deletion, the file no longer exists.
+        assert!(!run_evaluator("x", "file_exists", path.to_str().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn run_evaluator_file_exists_fails_for_missing_file() {
+        assert!(!run_evaluator("x", "file_exists", "/nonexistent/path_xyz_123").unwrap());
+    }
+
+    #[test]
+    fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
+        // The error message must name all valid evaluator kinds so the
+        // operator knows what's available without reading the source.
+        let err = run_evaluator("resp", "bogus", "x").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("contains"));
+        assert!(msg.contains("not_contains"));
+        assert!(msg.contains("regex"));
+        assert!(msg.contains("exit_code"));
+        assert!(msg.contains("file_exists"));
     }
 }

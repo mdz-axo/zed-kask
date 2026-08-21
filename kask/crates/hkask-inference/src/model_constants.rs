@@ -48,10 +48,9 @@ pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
-// ── Test fixtures (arbitrary identifiers, no network calls) ──────────────
-
-pub const TEST_MODEL_SMALL: &str = "OpenRouter/google/gemma-4-9b-it";
-pub const TEST_MODEL_MEDIUM: &str = "OpenRouter/meta-llama/Llama-4-Scout-17B-16E-Instruct";
+/// Default agent model for local swarm agents (the model the agent runs on).
+/// Used by `SwarmConfig::default()` and `KaskSwarmSettings::default()`.
+pub const DEFAULT_AGENT_MODEL: &str = "claude-haiku-4-5-20251001";
 
 // ── Resolved model accessors (env var → default) ──────────────────────────
 

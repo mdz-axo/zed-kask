@@ -142,7 +142,7 @@ impl Default for SwarmConfig {
             api_key: None,
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
-            default_agent_model: "claude-haiku-4-5-20251001".to_string(),
+            default_agent_model: hkask_inference::model_constants::DEFAULT_AGENT_MODEL.to_string(),
             local_agents_dir: "agents/local/curated".to_string(),
             local_swarms_dir: "agents/local/swarms".to_string(),
             a2a_http_enabled: false,

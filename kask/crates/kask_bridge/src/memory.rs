@@ -11,10 +11,8 @@
 //! wired (pre-login), the thread's ingest call site no-ops on `None`.
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
-use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
-use hkask_types::{
-    HMemOntology, MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID,
-};
+use hkask_storage::{Database, EmbeddingStore, HMemStore};
+use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -45,6 +43,14 @@ pub use curator_stores::{curator_db_path, open_curator_regulation_archive};
 // `curator_stores` re-export above.
 mod alert_escalation;
 pub use alert_escalation::{BridgeAlertEscalationSink, open_curator_escalation_queue};
+
+// ── Ingest write path — extracted to `memory/ingest.rs` ────────────────────
+// Deep-module split (bridge-audit BD-04 continuation): the turn write path
+// (episodic + semantic h_mem writes + embedding) is independent of the port
+// orchestration and the recall path that remain here. `write_turn` borrows the
+// port's fields via `WriteContext`; `ingest_turn` keeps only the semaphore permit.
+mod ingest;
+pub(crate) use ingest::WriteContext;
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
@@ -605,14 +611,13 @@ impl MemoryPort for RealMemoryPort {
         Box::pin(async move {
             // Acquire an ingestion permit before touching the database. This
             // serializes concurrent ingestion futures (one per completing
-            // thread) so they don't contend for the SQLite pool with each
-            // other or with the recall path. The permit is held for the
-            // duration of the ingestion (including the embedding HTTP call
-            // and consolidation trigger) and released on drop.
+            // thread) so they don't contend for the SQLite pool with each other
+            // or with the recall path. The permit is held for the duration of the
+            // ingestion (including the embedding HTTP call) and released on drop.
             //
-            // If the semaphore is contended, this future parks until a permit
-            // is available — the calling thread's turn has already completed,
-            // so the user sees no latency from this wait.
+            // If the semaphore is contended, this future parks until a permit is
+            // available — the calling thread's turn has already completed, so
+            // the user sees no latency from this wait.
             let _ingest_permit = match self.ingest_semaphore.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
@@ -627,261 +632,21 @@ impl MemoryPort for RealMemoryPort {
                 }
             };
 
-            let thread_id = record.thread_id.clone();
-            let user_input = record.user_input.clone();
-            let agent_response = record.agent_response.clone();
-            let model = record.model.clone();
-            let title = record.thread_title.clone();
-            let agent_id = record.agent_id.clone();
-            let is_curator_turn = agent_id.as_deref() == Some("Curator");
-
-            let turn_value = serde_json::json!({
-                "user_input": user_input,
-                "agent_response": agent_response,
-                "model": model,
-                "title": title,
-            });
-
-            // Resolve the curator stores once per ingestion — `get()`
-            // re-attempts the open when they're down (self-healing) and
-            // signals persistent failure with a warn-once, so the writes
-            // below can treat `None` as "already signaled, skip".
-            let curator_store = self.curator_store.get();
-            // Rebuild the curator consolidation service after a heal so the
-            // timer promotes freshly-ingested curator h_mems.
-            if curator_store.is_some() {
-                let needs_rebuild = match self.curator_consolidation.read() {
-                    Ok(guard) => guard.is_none(),
-                    Err(_) => true,
-                };
-                if needs_rebuild && self.consolidation_cadence_secs > 0 {
-                    let rebuilt = build_curator_consolidation(
-                        self.consolidation_cadence_secs,
-                        &curator_store,
-                    );
-                    if let Ok(mut guard) = self.curator_consolidation.write()
-                        && guard.is_none()
-                    {
-                        *guard = rebuilt;
-                    }
-                }
-            }
-
-            // ── 1. User-perspective episodic h_mem (Private) — EVERY turn ──
-            //
-            // Both user turns and curator turns are conversations the USER
-            // participated in, so both land in the user's `memory.db` as the
-            // user's first-person record. Pre-dual-write, curator turns were
-            // written only to the curator's sovereign DB — the user had no
-            // episodic record of their own curator conversations.
-            let entity = format!("chat:thread:{thread_id}");
-            // Process-axis anchoring (P5.4): a chat turn is a PKO step
-            // execution of the `chat` procedure. `dc_source` carries the
-            // thread as the session provenance so recall can distinguish
-            // turns by conversation without re-parsing the entity string.
-            let episodic_ontology =
-                HMemOntology::episodic("chat", "turn", format!("session:{thread_id}"));
-            let episodic_h_mem = HMem::new(
-                &entity,
-                "chatted",
-                serde_json::Value::String(turn_value.to_string()),
-                self.user_webid,
-            )
-            .with_perspective(self.user_webid)
-            .with_visibility(Visibility::Private)
-            .with_ontology(episodic_ontology);
-
-            if let Err(e) = self.store.store(episodic_h_mem) {
-                tracing::warn!(
-                    target: "reg.memory",
-                    thread_id = %thread_id,
-                    error = %e,
-                    "Failed to store episodic h_mem"
-                );
-                return Err(MemoryError::Ingestion(format!(
-                    "Episodic store failed: {e}"
-                )));
-            }
-
-            // ── 2. Curator-side writes — branch on whose turn it is ──────
-            if is_curator_turn {
-                // Curator-perspective episodic h_mem (Private,
-                // `curator_webid`) in `agents/curator/curator.db` — the curator's
-                // own first-person record of the same conversation, mirroring
-                // the user's record above. Together they give each party a
-                // first-person memory of the shared conversation from their
-                // own perspective.
-                let episodic_h_mem = HMem::new(
-                    &entity,
-                    "chatted",
-                    serde_json::Value::String(turn_value.to_string()),
-                    self.curator_webid,
-                )
-                .with_perspective(self.curator_webid)
-                .with_visibility(Visibility::Private)
-                .with_ontology(HMemOntology::episodic(
-                    "chat",
-                    "turn",
-                    format!("session:{thread_id}"),
-                ));
-
-                if let Some(ref curator_store) = curator_store {
-                    if let Err(e) = curator_store.store(episodic_h_mem) {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            thread_id = %thread_id,
-                            error = %e,
-                            "Failed to store curator episodic h_mem — \
-                             curator will not recall this turn as experience"
-                        );
-                        // Non-fatal — fall through to semantic copy.
-                    }
-                } else {
-                    // Store unavailability is already signaled (error at
-                    // construction, warn-once per heal attempt) — no
-                    // additional per-turn log here.
-                    tracing::trace!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        "Curator store unavailable — skipping curator episodic write"
-                    );
-                }
-            }
-
-            // Shared semantic copy in the curator's DB — written for BOTH
-            // turn kinds so `curator_memory_recall` / `curator_semantic_search`
-            // see every turn the agent has observed, regardless of speaker.
-            let curator_entity = format!("curator:thread:{thread_id}");
-            // State-axis anchoring (P5.4): the curator copy is a document the
-            // curator holds about the conversation, not a step it executed.
-            // `bibo:Document` is the BIBO type for a standalone record.
-            let curator_ontology =
-                HMemOntology::semantic("bibo:Document", vec!["chat_turn".to_string()], "curator");
-            let curator_h_mem = HMem::new(
-                &curator_entity,
-                "turn",
-                serde_json::Value::String(turn_value.to_string()),
-                self.curator_webid,
-            )
-            .with_visibility(Visibility::Shared)
-            .with_ontology(curator_ontology);
-
-            if let Some(ref curator_store) = curator_store {
-                if let Err(e) = curator_store.store(curator_h_mem) {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Failed to store curator semantic h_mem — \
-                         curator memory will not include this turn"
-                    );
-                    // Non-fatal — the episodic record is the primary store.
-                }
-            } else {
-                tracing::trace!(
-                    target: "reg.memory",
-                    thread_id = %thread_id,
-                    "Curator store unavailable — skipping curator copy"
-                );
-            }
-
-            // ── 3. Embed the user prompt for future retrieval ─────────────
-            //
-            // The embedding enables semantic search (KNN) for context
-            // injection. Written to the user's semantic store always; for
-            // curator turns, also written to the curator's semantic store so
-            // the curator can recall its own turns by similarity.
-            //
-            // The embedding's `entity_ref` MUST match the episodic h_mem's
-            // `entity` (`chat:thread:{thread_id}`) so the recall path's
-            // `query_deduped_untouched(entity_ref)` can join the KNN neighbor
-            // back to the h_mem holding the full turn text. A separate
-            // `embedding:thread:...` namespace was dead code — no h_mem was
-            // ever stored under it, so the semantic recall leg always
-            // returned zero snippets. See the `recall_context_finds_turn_by_embedding_only`
-            // test for the end-to-end pin.
-            let embedding_entity = entity.clone();
-            // Spawn the embedding HTTP call on the tokio runtime so the
-            // GPUI-side channel task (which holds the AsyncApp) can resolve
-            // credentials and make the HTTP call. The rest of ingest_turn
-            // doesn't need tokio.
-            let embedding_model = self.embedding_model.clone();
-            let embedding_port = self.embedding_port.clone();
-            let user_input_owned = user_input.clone();
-            let vectors = self
-                .tokio_handle
-                .spawn(async move {
-                    embedding_port
-                        .embed(&embedding_model, &[user_input_owned])
-                        .await
-                })
-                .await;
-
-            match vectors {
-                Ok(Ok(vectors)) => {
-                    if let Some(vector) = vectors.into_iter().next() {
-                        if let Err(e) = self.store.store_embedding(
-                            &embedding_entity,
-                            &vector,
-                            &self.embedding_model,
-                        ) {
-                            tracing::warn!(
-                                target: "reg.memory",
-                                thread_id = %thread_id,
-                                error = %e,
-                                "Failed to store prompt embedding"
-                            );
-                        }
-                        if is_curator_turn
-                            && let Some(ref curator_store) = curator_store
-                            && let Err(e) = curator_store.store_embedding(
-                                &embedding_entity,
-                                &vector,
-                                &self.embedding_model,
-                            )
-                        {
-                            tracing::warn!(
-                                target: "reg.memory",
-                                thread_id = %thread_id,
-                                error = %e,
-                                "Failed to store curator prompt embedding"
-                            );
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Failed to embed user prompt — embedding-based recall will not work for this turn"
-                    );
-                    // Non-fatal — entity-based recall still works.
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Embedding task panicked — embedding-based recall will not work for this turn"
-                    );
-                }
-            }
-
-            tracing::info!(
-                target: "reg.memory",
-                thread_id = %thread_id,
-                model = %model,
-                is_curator_turn,
-                "Turn ingested into episodic + semantic memory"
-            );
-
-            // Consolidation is no longer fired from the ingestion path. It runs
-            // on a dedicated background timer (see `start_consolidation_timer`)
-            // so ingestion completes quickly and consolidation doesn't contend
-            // with the recall path or hold the ingestion semaphore.
-
-            Ok(())
+            // Delegate the writes to the extracted write path. The semaphore
+            // permit is held across the full write (episodic + semantic +
+            // embedding); `write_turn` borrows the port's fields via `WriteContext`.
+            let ctx = WriteContext {
+                store: &self.store,
+                curator_store: &self.curator_store,
+                embedding_port: &self.embedding_port,
+                embedding_model: &self.embedding_model,
+                user_webid: self.user_webid,
+                curator_webid: self.curator_webid,
+                tokio_handle: &self.tokio_handle,
+                curator_consolidation: &self.curator_consolidation,
+                consolidation_cadence_secs: self.consolidation_cadence_secs,
+            };
+            ingest::write_turn(&ctx, record).await
         })
     }
 
@@ -925,7 +690,6 @@ impl MemoryPort for RealMemoryPort {
             .await
         })
     }
-
 }
 
 impl RealMemoryPort {

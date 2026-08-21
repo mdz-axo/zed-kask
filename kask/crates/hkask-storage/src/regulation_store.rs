@@ -292,30 +292,6 @@ impl RegulationArchive {
         Ok(())
     }
 
-    /// Persist a loop cursor value for crash recovery.
-    ///
-    /// Loop cursors (e.g., `curation_last_review_ms`) track the last-processed
-    /// event timestamp. Persisting them ensures the system doesn't re-process
-    /// all historical events after a restart.
-    ///
-    /// expect: "The system provides durable storage for event data"
-    /// \[P3\] Motivating: Generative Space — persist replay cursor
-    /// pre:  key is non-empty
-    /// post: cursor value stored
-    pub fn persist_cursor(&self, key: &str, value: i64) -> Result<(), InfrastructureError> {
-        self.driver
-            .execute(
-                "INSERT OR REPLACE INTO reg_cursors (key, value, updated_at) VALUES (?1, ?2, ?3)",
-                &[
-                    DbValue::Text(key.to_string()),
-                    DbValue::Integer(value),
-                    DbValue::Text(now_rfc3339()),
-                ],
-            )
-            .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        Ok(())
-    }
-
     /// Load a persisted loop cursor value.
     ///
     /// Returns `Ok(None)` if no cursor has been persisted for the given key
@@ -332,78 +308,6 @@ impl RegulationArchive {
             &[DbValue::Text(key.to_string())],
             |row| row.get_int(0),
         )
-        .map_err(|e| InfrastructureError::database(e.to_string()))
-    }
-
-    /// Query events by span_category prefix (e.g., "reg.outcome" matches "reg.outcome.action_blocked",
-    /// "reg.outcome.action_substituted", etc.).
-    ///
-    /// The stored `span_category` column holds the short name (e.g., "outcome",
-    /// "regulation", "tool"). Callers pass the short-name prefix (e.g., "outcome",
-    /// "regulation", "tool") — NOT the full `reg.*` namespace.
-    ///
-    /// expect: "The system provides durable storage for event data"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — query Regulation span history
-    /// pre:  `namespace_prefix` is a non-empty short-name prefix (e.g., "outcome", "regulation", "tool")
-    /// post: returns Vec of RegulationRecords with span_category starting with the prefix, since the given
-    ///       timestamp, ordered by timestamp ASC, limited to `limit` results
-    pub fn query_by_namespace(
-        &self,
-        namespace_prefix: &str,
-        since: chrono::DateTime<chrono::Utc>,
-        limit: u64,
-    ) -> Result<Vec<RegulationRecord>, InfrastructureError> {
-        let since_str = since.to_rfc3339();
-        let prefix_pattern = format!("{}%", namespace_prefix);
-        let sql = "SELECT id, timestamp, observer_webid, span_category, span_path, phase, \
-                   observation, regulation, outcome, recursion_depth, parent_event, visibility \
-                   FROM reg_records \
-                   WHERE timestamp > ?1 AND span_category LIKE ?2 \
-                   ORDER BY timestamp ASC \
-                   LIMIT ?3";
-        let params: Vec<DbValue> = vec![
-            DbValue::Text(since_str),
-            DbValue::Text(prefix_pattern),
-            DbValue::Integer(limit as i64),
-        ];
-        query_map(&*self.driver, sql, &params, |row| {
-            row_to_regulation_record(row).map_err(|e| db_error(e.to_string()))
-        })
-        .map_err(|e| InfrastructureError::database(e.to_string()))
-    }
-
-    /// Count events by span_category prefix, grouped by exact span_category.
-    ///
-    /// The stored `span_category` column holds the short name (e.g., "guard.input",
-    /// "regulation", "variety"). Callers pass the short-name prefix.
-    ///
-    /// expect: "The system provides durable storage for event data"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — aggregate Regulation span stats
-    /// pre:  `namespace_prefix` is a non-empty short-name prefix
-    /// post: returns Vec of (span_category, count) tuples, ordered by count DESC
-    pub fn query_span_stats(
-        &self,
-        namespace_prefix: &str,
-        since: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<(String, u64)>, InfrastructureError> {
-        let since_str = since.to_rfc3339();
-        let prefix_pattern = format!("{}%", namespace_prefix);
-        let sql = "SELECT span_category, COUNT(*) as cnt \
-                   FROM reg_records \
-                   WHERE timestamp > ?1 AND span_category LIKE ?2 \
-                   GROUP BY span_category \
-                   ORDER BY cnt DESC";
-        let params: Vec<DbValue> = vec![DbValue::Text(since_str), DbValue::Text(prefix_pattern)];
-        query_map(&*self.driver, sql, &params, |row| {
-            let cat: String = row
-                .get_str(0)
-                .map_err(|e| crate::database::types::DbError::Database(e.to_string()))?
-                .to_string();
-            let cnt: i64 = row
-                .get_int(1)
-                .map_err(|e| crate::database::types::DbError::Database(e.to_string()))?;
-            Ok((cat, cnt as u64))
-        })
         .map_err(|e| InfrastructureError::database(e.to_string()))
     }
 

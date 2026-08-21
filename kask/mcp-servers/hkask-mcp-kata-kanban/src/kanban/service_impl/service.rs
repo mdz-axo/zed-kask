@@ -55,7 +55,7 @@ impl KanbanService {
     /// Create a task-scoped rJoule accountant bound to a specific kanban task.
     ///
     /// The accountant decrements `task.rjoule_remaining` via `task_consume_rjoules`
-    /// after each inference call. Attach it to the skill cascade's executor
+    /// after each inference call. Attach it to skill execution
     /// to close the per-task rJoule feedback loop.
     ///
     /// pre:  task_id refers to an existing task with an rJoule budget set

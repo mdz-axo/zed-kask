@@ -4,11 +4,11 @@
 //! for display in the chat stream. They are **not** the authoritative kata
 //! methodology — that lives in the `kata-coaching` and `kata-improvement`
 //! skills (`.agents/skills/kata-*/SKILL.md`) and their registry templates
-//! (`kask/registry/templates/kata-*/`), which execute via the skill cascade
+//! (`kask/registry/templates/kata-*/`), which execute via skill execution
 //! the inference port with structured JSON output.
 //!
 //! The split is deliberate: the MCP tools return a sync `String` for immediate
-//! human display; the registry templates run the async skill cascade with
+//! human display; the registry templates run skill execution with
 //! rJoule accounting and step chaining. This module gathers the task-specific
 //! evidence (criteria, deliverables, comments, status) that makes the display
 //! useful, then points the learner to the canonical skill for the methodology.

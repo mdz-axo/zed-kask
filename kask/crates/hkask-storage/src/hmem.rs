@@ -144,18 +144,6 @@ impl HMem {
             .as_ref()
             .is_some_and(|o| o.pko_procedure.is_some())
     }
-    /// Check if this is a semantic h_mem (no PKO procedure in its ontology
-    /// blob). See [`is_episodic`](Self::is_episodic) for the discriminator
-    /// rationale.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — predicate for semantic
-    /// post: returns true iff the ontology blob has no PKO procedure
-    pub fn is_semantic(&self) -> bool {
-        self.ontology
-            .as_ref()
-            .is_some_and(|o| o.pko_procedure.is_none())
-    }
 }
 /// HMem store — backed by a provider-agnostic DatabaseDriver.
 #[derive(Clone)]
@@ -181,14 +169,6 @@ impl HMemStore {
             driver,
             encryptor: None,
         })
-    }
-
-    /// Attach an encryptor for value encryption (passphrase-derived).
-    pub fn with_passphrase(mut self, passphrase: &str) -> Self {
-        self.encryptor = Some(Arc::new(
-            crate::database::encrypt::Encryptor::from_passphrase(passphrase),
-        ));
-        self
     }
 
     /// Access the underlying driver for bulk operations.
@@ -632,57 +612,6 @@ impl HMemStore {
             &[],
         )
     }
-    /// Count semantic h_mems for a given entity.
-    /// Count semantic h_mems for an entity.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — count per entity
-    /// pre:  entity is non-empty
-    /// post: returns count for entity
-    pub fn count_semantic_by_entity(&self, entity: &str) -> Result<usize, HMemError> {
-        self.count_rows(
-            &format!("SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND {SEMANTIC_PREDICATE} AND valid_to IS NULL"),
-            &[DbValue::Text(entity.to_string())],
-        )
-    }
-    /// Count h_mems for a given perspective (episodic).
-    /// Count h_mems by perspective.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — count per perspective
-    /// pre:  perspective is valid
-    /// post: returns count for perspective
-    pub fn count_by_perspective(&self, perspective: &WebID) -> Result<usize, HMemError> {
-        self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE perspective = ?1 AND valid_to IS NULL",
-            &[DbValue::Text(perspective.to_string())],
-        )
-    }
-    /// Query semantic h_mems older than N days, grouped by entity for condensation.
-    ///
-    /// Returns h_mems with `perspective IS NULL AND valid_to IS NULL` and
-    /// `valid_from` earlier than the cutoff date, ordered by entity then
-    /// confidence descending (best first), then valid_from descending (most recent first).
-    /// This ordering enables the condensation loop to identify the best candidate
-    /// to keep per entity group (first in each entity group).
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — query old h_mems for condensation
-    /// \[P9\] Constraining: Homeostatic Self-Regulation — enables semantic condensation trigger
-    /// pre:  days > 0, limit > 0
-    /// post: returns up to limit h_mems older than cutoff, ordered by entity, confidence DESC, valid_from DESC
-    pub fn query_semantic_older_than(
-        &self,
-        days: u32,
-        limit: usize,
-    ) -> Result<Vec<HMem>, HMemError> {
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days as i64)).to_rfc3339();
-        self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND valid_from < ?1 ORDER BY entity ASC, confidence DESC, valid_from DESC LIMIT ?2"),
-            &[DbValue::Text(cutoff), DbValue::Integer(limit as i64)],
-        )
-    }
-
     // ── Ontology query paths (P5.4 dual-axis anchoring) ──────────────────
     //
     // The `ontology` column is a JSON blob, so these queries reach into it
@@ -826,21 +755,6 @@ impl HMemStore {
             &[DbValue::Text(id.to_string())],
         )?;
         Ok(())
-    }
-    /// Hard-delete all h_mems whose entity starts with the given prefix.
-    /// Returns the number of rows deleted.
-    /// Delete h_mems by entity prefix.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — delete by entity prefix
-    /// pre:  prefix is non-empty
-    /// post: matching h_mems deleted
-    /// post: returns count of deleted h_mems
-    pub fn delete_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
-        self.exec(
-            "DELETE FROM hmems WHERE entity LIKE ?1",
-            &[DbValue::Text(format!("{}%", prefix))],
-        )
     }
     /// HMemRow → HMem: parse timestamps + JSON value.
     fn row_to_triple(row: HMemRow) -> Result<HMem, HMemError> {

@@ -981,7 +981,7 @@ pub enum ThreadEvent {
     AgentThinking(String),
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
-    /// Real-time thinking trace from a tool's execution (e.g. skill cascade
+    /// Real-time thinking trace from a tool's execution (e.g. skill execution
     /// step reasoning). Appended to the tool call's `thoughts` buffer so the
     /// user sees a live thinking trace, not just a one-line title.
     ToolCallThinking {
@@ -3073,41 +3073,38 @@ impl Thread {
                         // injected (upstream zed, or before composition root runs),
                         // this is a no-op.
                         if let Some(port) = crate::memory_port() {
-                            let record = this.update(cx, |thread, _cx| {
-                                crate::ThreadTurnRecord {
-                                    thread_id: thread.id().to_string(),
-                                    user_input: thread
-                                        .messages
-                                        .iter()
-                                        .rev()
-                                        .find_map(|msg| {
-                                            if let crate::thread::Message::User(user_msg) = &**msg {
-                                                Some(user_msg.to_markdown())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_default(),
-                                    agent_response: thread
-                                        .messages
-                                        .iter()
-                                        .rev()
-                                        .find_map(|msg| {
-                                            if let crate::thread::Message::Agent(agent_msg) = &**msg
-                                            {
-                                                Some(agent_msg.to_markdown())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_default(),
-                                    model: thread
-                                        .model()
-                                        .map(|m| m.name().0.to_string())
-                                        .unwrap_or_default(),
-                                    thread_title: thread.title().map(|t| t.to_string()),
-                                    agent_id: thread.agent_id().cloned(),
-                                }
+                            let record = this.update(cx, |thread, _cx| crate::ThreadTurnRecord {
+                                thread_id: thread.id().to_string(),
+                                user_input: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::User(user_msg) = &**msg {
+                                            Some(user_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                agent_response: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::Agent(agent_msg) = &**msg {
+                                            Some(agent_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                model: thread
+                                    .model()
+                                    .map(|m| m.name().0.to_string())
+                                    .unwrap_or_default(),
+                                thread_title: thread.title().map(|t| t.to_string()),
+                                agent_id: thread.agent_id().cloned(),
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();

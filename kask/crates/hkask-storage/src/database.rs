@@ -5,7 +5,6 @@
 
 pub mod driver;
 pub mod encrypt;
-pub(crate) mod regulation;
 pub mod sqlite;
 pub mod transaction;
 pub mod types;

@@ -35,12 +35,12 @@ pub const HARD_CAP: u32 = 5;
 
 /// Per-tool hard-cap overrides. Tools listed here use the override value
 /// instead of `HARD_CAP`. The `skill` tool runs a multi-step PDCA cascade
-/// (skill cascade) that can legitimately fail several times in a row
-/// while the cascade iterates toward convergence — the default cap of 5
+/// (skill execution) that can legitimately fail several times in a row
+/// while skill execution iterates toward convergence — the default cap of 5
 /// is too tight for a single skill invocation that may retry internally.
 /// Raising the cap for `skill` only (not all tools) preserves the
 /// death-spiral guard for read_file/grep/terminal/etc. while allowing
-/// the skill cascade room to converge.
+/// skill execution room to converge.
 ///
 /// zed-kask: per-tool override for the `skill` tool. Test:
 /// `skill_tool_uses_override_hard_cap`.

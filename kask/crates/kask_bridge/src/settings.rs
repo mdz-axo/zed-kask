@@ -328,8 +328,8 @@ pub struct KaskMemorySettings {
     pub auto_inject: bool,
 
     /// Number of recent turns from the invoking thread to include as
-    /// short-term context for skill cascades. 0 disables short-term
-    /// injection (cascades run isolated, as before). Default: 6.
+    /// short-term context for skill execution. 0 disables short-term
+    /// injection (skill execution runs isolated, as before). Default: 6.
     pub cascade_short_term_turns: u32,
 
     /// Saliency floor for cascade memory recall. A memory chunk is injected
@@ -337,7 +337,7 @@ pub struct KaskMemorySettings {
     /// 0.3 (same as `recall_min_confidence`).
     pub cascade_memory_saliency_floor: f64,
 
-    /// Maximum memory chunks to inject into a skill cascade, after merging
+    /// Maximum memory chunks to inject into skill execution, after merging
     /// across all participant stores (user, curator, swarm). Default: 5.
     pub cascade_memory_max_chunks: u32,
 
@@ -665,7 +665,7 @@ pub struct KaskTrainingSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
-    /// When set, overrides the kask default for Curator, skill cascade, and
+    /// When set, overrides the kask default for Curator, skill execution, and
     /// kask panel inference.
     pub default_model: String,
 
@@ -776,6 +776,27 @@ impl KaskSettings {
     /// This is the **config** half of the env map. The full env for a server
     /// child process — config + keychain credentials + the inference socket —
     /// is assembled by [`build_mcp_server_env`](crate::build_mcp_server_env)
+    /// Effective embedding model, resolving the documented precedence:
+    /// `models.embedding_model` (if non-empty) → `corpus.embedding_model`
+    /// (if non-default) → the `DEFAULT_EMBEDDING_MODEL` constant.
+    ///
+    /// This is the single source of truth for the `HKASK_EMBEDDING_MODEL`
+    /// env emission. Previously two separate `env.insert` blocks in
+    /// `mcp_env()` targeted the same env var, with precedence enforced only
+    /// by statement order — a silent reorder would flip which setting won.
+    /// The precedence is now explicit and pinned by
+    /// `mcp_env_models_embedding_model_overrides_corpus`.
+    #[must_use]
+    pub fn effective_embedding_model(&self) -> String {
+        if !self.models.embedding_model.trim().is_empty() {
+            self.models.embedding_model.clone()
+        } else if self.corpus.embedding_model != default_embedding_model() {
+            self.corpus.embedding_model.clone()
+        } else {
+            default_embedding_model()
+        }
+    }
+
     /// in `mcp_servers`, the single canonical path. It composes this crate's
     /// `mcp_env()` with the per-server credential/config allowlists. There
     /// is no other env-construction path; do not re-introduce one.
@@ -879,11 +900,14 @@ impl KaskSettings {
                 self.corpus.embedding_dim.to_string(),
             );
         }
-        if self.corpus.embedding_model != corpus_default.embedding_model {
-            env.insert(
-                "HKASK_EMBEDDING_MODEL".to_string(),
-                self.corpus.embedding_model.clone(),
-            );
+        // ── Embedding model ──
+        // Precedence: models.embedding_model → corpus.embedding_model →
+        // default. Resolved once by `effective_embedding_model` so the
+        // emission cannot drift from the documented precedence. See its
+        // doc comment and the `mcp_env_models_embedding_model_overrides_corpus` test.
+        let effective_embedding = self.effective_embedding_model();
+        if effective_embedding != corpus_default.embedding_model {
+            env.insert("HKASK_EMBEDDING_MODEL".to_string(), effective_embedding);
         }
         if self.corpus.ocr_concurrency != corpus_default.ocr_concurrency {
             env.insert(
@@ -1075,12 +1099,9 @@ impl KaskSettings {
                 self.models.default_model.clone(),
             );
         }
-        if !self.models.embedding_model.is_empty() {
-            env.insert(
-                "HKASK_EMBEDDING_MODEL".to_string(),
-                self.models.embedding_model.clone(),
-            );
-        }
+        // Embedding model already emitted above via `effective_embedding_model`,
+        // which encodes the `models`-over-`corpus` precedence. Do not emit it
+        // again here — a second insert would be a silent duplicate.
         if !self.models.classifier_model.is_empty() {
             env.insert(
                 "HKASK_CLASSIFIER_MODEL".to_string(),
@@ -1919,6 +1940,43 @@ mod tests {
             env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
             Some("OpenAI/text-embedding-3-large")
         );
+    }
+
+    // Precedence pin: when BOTH `corpus.embedding_model` and
+    // `models.embedding_model` are set, the kask-wide `models` override must
+    // win. Previously this precedence existed only as statement order in
+    // `mcp_env()` (the `models` block overwrote the `corpus` block). It is now
+    // explicit in `effective_embedding_model`; this test locks the contract so a
+    // reorder cannot silently flip which setting wins.
+    #[test]
+    fn mcp_env_models_embedding_model_overrides_corpus() {
+        let mut settings = KaskSettings::default();
+        settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
+        settings.models.embedding_model = "voyage/voyage-3".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
+            Some("voyage/voyage-3")
+        );
+    }
+
+    // When `models.embedding_model` is empty, the effective value falls back
+    // to the corpus setting (if non-default), then to the constant.
+    #[test]
+    fn effective_embedding_model_falls_back_to_corpus_when_models_empty() {
+        let mut settings = KaskSettings::default();
+        assert_eq!(
+            settings.effective_embedding_model(),
+            default_embedding_model()
+        );
+        settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
+        assert_eq!(
+            settings.effective_embedding_model(),
+            "OpenAI/text-embedding-3-large"
+        );
+        // The kask-wide override takes precedence over the corpus setting.
+        settings.models.embedding_model = "voyage/voyage-3".to_string();
+        assert_eq!(settings.effective_embedding_model(), "voyage/voyage-3");
     }
 
     // Swarm settings: `Default` is the single source of truth — default

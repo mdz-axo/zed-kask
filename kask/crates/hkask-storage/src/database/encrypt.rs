@@ -4,7 +4,6 @@
 //! storage and decrypted on retrieval. Format: `ENCv1:<base64(nonce || tag || ct)>`.
 //! The ENCv1: prefix enables automatic detection — plaintext passes through.
 
-use super::value::{DbRow, DbValue};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
@@ -82,34 +81,5 @@ impl Encryptor {
             .decrypt(nonce, &combined[NONCE_LEN..])
             .map(|pt| String::from_utf8_lossy(&pt).into_owned())
             .unwrap_or_else(|_| value.to_string())
-    }
-
-    /// Encrypt text params in-place.
-    pub fn encrypt_params(&self, params: &mut [DbValue]) {
-        for p in params.iter_mut() {
-            if let DbValue::Text(s) = p {
-                *p = DbValue::Text(self.encrypt(s));
-            }
-        }
-    }
-
-    /// Decrypt text values in query results, returning new rows.
-    pub fn decrypt_rows(&self, rows: Vec<DbRow>) -> Vec<DbRow> {
-        rows.into_iter().map(|row| self.decrypt_row(row)).collect()
-    }
-
-    fn decrypt_row(&self, row: DbRow) -> DbRow {
-        let columns = row.column_names().to_vec();
-        let values: Vec<DbValue> = (0..row.len())
-            .map(|i| {
-                row.get(i)
-                    .map(|v| match v {
-                        DbValue::Text(s) => DbValue::Text(self.decrypt(s)),
-                        other => other.clone(),
-                    })
-                    .unwrap_or(DbValue::Null)
-            })
-            .collect();
-        DbRow::new(columns, values)
     }
 }

@@ -235,14 +235,6 @@ impl DbRow {
     pub fn get_int(&self, idx: usize) -> Result<i64, DbError> {
         self.get(idx)?.as_int()
     }
-    /// Extract an f64 from column `idx`.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  idx is within bounds; column value is Real or Integer
-    /// post: returns Ok(f64) if valid, Err(DbError) on bounds or type error
-    pub fn get_real(&self, idx: usize) -> Result<f64, DbError> {
-        self.get(idx)?.as_real()
-    }
     /// Extract a bool from column `idx`.
     ///
     /// expect: "The system provides positional and named access to database query results"
@@ -250,49 +242,6 @@ impl DbRow {
     /// post: returns Ok(bool) if valid, Err(DbError) on bounds or type error
     pub fn get_bool(&self, idx: usize) -> Result<bool, DbError> {
         self.get(idx)?.as_bool()
-    }
-    /// Extract a byte slice from column `idx`.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  idx is within bounds; column value is Blob
-    /// post: returns Ok(&[u8]) if valid, Err(DbError) on bounds or type error
-    pub fn get_blob(&self, idx: usize) -> Result<&[u8], DbError> {
-        self.get(idx)?.as_blob()
-    }
-
-    // ── Typed named accessors ──
-
-    /// Extract a string from the named column.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  column exists; column value is Text
-    /// post: returns Ok(&str) if valid, Err(DbError) on missing column or type error
-    pub fn get_str_named(&self, name: &str) -> Result<&str, DbError> {
-        self.get_named(name)?.as_text()
-    }
-    /// Extract an i64 from the named column.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  column exists; column value is Integer
-    /// post: returns Ok(i64) if valid, Err(DbError) on missing column or type error
-    pub fn get_int_named(&self, name: &str) -> Result<i64, DbError> {
-        self.get_named(name)?.as_int()
-    }
-    /// Extract an f64 from the named column.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  column exists; column value is Real or Integer
-    /// post: returns Ok(f64) if valid, Err(DbError) on missing column or type error
-    pub fn get_real_named(&self, name: &str) -> Result<f64, DbError> {
-        self.get_named(name)?.as_real()
-    }
-    /// Extract a bool from the named column.
-    ///
-    /// expect: "The system provides positional and named access to database query results"
-    /// pre:  column exists; column value is Bool or Integer(0|1)
-    /// post: returns Ok(bool) if valid, Err(DbError) on missing column or type error
-    pub fn get_bool_named(&self, name: &str) -> Result<bool, DbError> {
-        self.get_named(name)?.as_bool()
     }
 
     // ── JSON accessor (common pattern: column is TEXT containing JSON) ──

@@ -5,7 +5,7 @@
 //! - **Non-streaming** (`generate`): collects the stream into a single `InferenceResult`.
 //!   Used by MCP servers and code that needs the complete result.
 //! - **Streaming** (`generate_stream`): forwards `InferenceStreamChunk`s as they arrive.
-//!   Used by the skill cascade for live thinking traces.
+//!   Used by skill execution for live thinking traces.
 //!
 //! `AsyncApp` is not `Send` (GPUI's `ForegroundExecutor` holds `Rc`-based state),
 //! so the bridge uses channels: trait methods send a request to a GPUI-side task
@@ -196,9 +196,9 @@ impl LanguageModelInferencePort {
             // Process both channels on the GPUI foreground executor.
             // `stream_completion` needs `&AsyncApp` which is not `Send`,
             // so both must run here. Streaming requests are spawned as
-            // concurrent tasks so multiple skill cascades can stream
+            // concurrent tasks so multiple skill execution can stream
             // inference concurrently. Awaiting each inline serialized all
-            // cascades behind whichever request the loop picked up first,
+            // skill execution behind whichever request the loop picked up first,
             // defeating the parallel fan-out in `skill_bundle`.
             loop {
                 tokio::select! {
@@ -324,7 +324,7 @@ impl LanguageModelInferencePort {
     }
 
     /// Handle a streaming inference request — forwards `InferenceStreamChunk`s
-    /// as they arrive so the caller (skill cascade) can emit live thinking
+    /// as they arrive so the caller (skill execution) can emit live thinking
     /// traces. The final chunk carries the accumulated `usage`, `cost_usd`,
     /// and `finish_reason`.
     async fn handle_streaming(
@@ -601,7 +601,7 @@ impl InferencePort for LanguageModelInferencePort {
 
     /// Streaming override — forwards `InferenceStreamChunk`s as they arrive
     /// from zed's `LanguageModel::stream_completion`. This is the live
-    /// thinking-trace path used by the skill cascade: `reasoning_delta` chunks
+    /// thinking-trace path used by skill execution: `reasoning_delta` chunks
     /// appear in the thinking trace in real time, not after the full response
     /// completes.
     ///

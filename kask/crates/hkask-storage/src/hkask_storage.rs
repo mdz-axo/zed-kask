@@ -10,7 +10,7 @@ pub mod core;
 pub mod database;
 
 pub use core::DatabaseDriverTrait;
-pub use core::database::{Database, DatabaseError};
+pub use core::connection::{Database, DatabaseError};
 pub use core::{
     DEFAULT_EMBEDDING_DIM, check_passphrase, embedding_dim, open_database, open_or_repair,
     sanitize_path,
