@@ -61,6 +61,8 @@ All servers follow these patterns:
 
 Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern.
 
+**Visibility step when adding a suite.** The `mcp_server!` macro generates `pub struct Server { pub field: Type, ... }` and `pub fn new(...)`, but a server's field types are `pub(crate)` by default — they are internal state, not composition surface (cross-crate composition is via library modules and the MCP tool surface, not via constructing `Server::new` in another crate). To construct the server in an external `tests/` crate, widen the field types (and any transitively-required types) to `pub`; narrow any `pub` method that would then expose a `pub(crate)` type to `pub(crate)`. This is the per-server enablement step already done for kata-kanban, scenarios, curator, and research; apply the same when bringing an allowlisted server off the ratchet.
+
 ## Cross-links
 
 - [Companies MCP Server Reference](companies.md) — 45 `#[tool]` methods, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)

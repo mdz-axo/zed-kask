@@ -2899,24 +2899,47 @@ impl Render for SwarmPanel {
                             .gap_1p5()
                             .justify_between()
                             .child(Headline::new("Agent Swarm").size(HeadlineSize::Large))
-                            // The algedonic channel: the operator's ABW credit
-                            // balance is always visible when known, so a spend
-                            // never happens out of sight. Hidden when unknown
-                            // (unauthenticated) — never a fabricated zero.
-                            // Scoped "ABW" because credits are a cloud concept
-                            // only: local swarms have no credit budget, so no
-                            // local balance is shown here.
-                            .when_some(self.spend.wallet_balance, |this, balance| {
-                                this.child(
-                                    Label::new(format!("{balance} ABW credits"))
-                                        .size(LabelSize::Small)
-                                        .color(if balance <= 0 {
-                                            Color::Warning
-                                        } else {
-                                            Color::Muted
-                                        }),
-                                )
-                            }),
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    // The algedonic channel: the operator's ABW credit
+                                    // balance is always visible when known, so a spend
+                                    // never happens out of sight. Hidden when unknown
+                                    // (unauthenticated) — never a fabricated zero.
+                                    // Scoped "ABW" because credits are a cloud concept
+                                    // only: local swarms have no credit budget, so no
+                                    // local balance is shown here.
+                                    .when_some(self.spend.wallet_balance, |this, balance| {
+                                        this.child(
+                                            Label::new(format!("{balance} ABW credits"))
+                                                .size(LabelSize::Small)
+                                                .color(if balance <= 0 {
+                                                    Color::Warning
+                                                } else {
+                                                    Color::Muted
+                                                }),
+                                        )
+                                    })
+                                    // Always-visible manual refresh, mirroring the
+                                    // kanban panel's refresh button. Automatic retries
+                                    // are bounded (MAX_FETCH_RETRIES); once exhausted,
+                                    // the operator needs a way back without closing
+                                    // and reopening the panel. Disabled while a fetch
+                                    // is in flight to prevent duplicate dispatch.
+                                    .child(
+                                        IconButton::new("swarm-refresh", IconName::RotateCw)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .disabled(self.is_fetching())
+                                            .tooltip(Tooltip::text(
+                                                "Refresh agents and swarms",
+                                            ))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.refresh_now(cx);
+                                            })),
+                                    ),
+                            ),
                     )
                     .children(self.render_consent_banner(cx))
                     .children(self.render_publish_banner(cx))

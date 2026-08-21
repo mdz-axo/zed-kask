@@ -714,8 +714,10 @@ impl NativeAgent {
         // never overwritten (user edits are sovereign). Must run before the
         // disk load below so freshly-seeded skills appear in the catalog.
         // Skipped on the fake filesystem used in tests so skill-count
-        // assertions aren't polluted by the 42 shipped skills; seeding is
-        // unit-tested directly in `agent_skills`.
+        // assertions aren't polluted by the shipped skills; seeding is
+        // unit-tested directly in `agent_skills`. Startup seeding in
+        // `main.rs` also writes the skills and populates the SkillIndex
+        // global so the Settings UI displays them without the agent panel.
         if !fs.is_fake() {
             seed_shipped_skills(fs.as_ref(), &skills_dir).await;
         }

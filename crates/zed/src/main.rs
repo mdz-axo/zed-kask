@@ -779,6 +779,33 @@ fn main() {
             agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
         }).detach();
 
+        // zed-kask: Seed shipped skills to disk and populate the SkillIndex
+        // global at startup so the Settings → AI → Skills page displays all
+        // shipped skills without requiring the agent panel to be opened first.
+        // The lazy scan in `run_skills_scan` (triggered by agent-panel
+        // interaction) will refresh the SkillIndex with project skills when
+        // a project context is built; `NativeAgent::new` preserves an existing
+        // SkillIndex rather than overwriting it with an empty default.
+        let skills_dir = agent_skills::global_skills_dir();
+        let skills_fs: Arc<dyn Fs> = fs.clone();
+        cx.spawn(async move |cx| {
+            agent_skills::seed_shipped_skills(skills_fs.as_ref(), &skills_dir).await;
+            let loaded = agent_skills::load_skills_from_directory(
+                &skills_fs,
+                &skills_dir,
+                agent_skills::SkillSource::Global,
+            )
+            .await;
+            let global_skills: Vec<agent_skills::Skill> =
+                loaded.into_iter().filter_map(|result| result.ok()).collect();
+            let _ = cx.update(|cx| {
+                cx.set_global(agent_skills::SkillIndex {
+                    global_skills,
+                    project_skills: Vec::new(),
+                });
+            });
+        }).detach();
+
         // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
         // scale `SetPoints.variety_max_deficit` (default 100.0). Higher
