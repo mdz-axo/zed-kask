@@ -17,7 +17,7 @@ use hkask_keystore::derive_key;
 use thiserror::Error;
 
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
-pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
+pub(crate) const DEFAULT_EMBEDDING_DIM: usize = 1024;
 pub fn embedding_dim() -> usize {
     match std::env::var("HKASK_EMBEDDING_DIM") {
         Ok(raw) => match raw.parse::<usize>() {
@@ -410,7 +410,7 @@ impl Drop for Database {
     }
 }
 
-pub fn check_passphrase(path: &str, passphrase: &str) -> Result<(), DatabaseError> {
+pub(crate) fn check_passphrase(path: &str, passphrase: &str) -> Result<(), DatabaseError> {
     let db = Database::open(path, passphrase)?;
     // Verification happens during connect() — if the passphrase is wrong,
     // pool.get() returns an error that maps to PassphraseMismatch.

@@ -108,12 +108,4 @@ impl TaskSpec {
         self.phase_id = Some(phase_id);
         self
     }
-
-    /// Set the rJoule budget for the subagent working on this task.
-    /// rJoule measures inference/API expenditure (250k rJoules ≈ $1).
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_rjoule_budget(mut self, rj: u64) -> Self {
-        self.rjoule_budget = Some(rj);
-        self
-    }
 }

@@ -8,6 +8,14 @@ domain: "Inference"
 mds_categories: [domain, composition]
 ---
 
+<!-- STALE — predates the hkask-inference refactor (Candidates A/B/C + follow-ups). Symbols cited
+below that were REMOVED: `chat_protocol` (module + file), `openai_compatible_generate`,
+`openai_compatible_generate_messages`, `openai_chat_roundtrip`, `RouterModelEntry`, `from_model_entry`,
+`infer_vision_support`, `DEFAULT_VISION_MODEL`, `InferenceConfig::build_client`, and
+`InferenceConfig::timeout_secs`/`pool_max_idle`. `openai_compat` now holds only `sanitize_error_body`/
+`redact_secret_tokens`; chat/vision/embed route through the IPC bridge (`InferenceIpcClient`), not direct
+HTTP. Line numbers have shifted — consult the source until this doc is regenerated. -->
+
 # hkask-inference — Reference
 
 `hkask-inference` is the MCP-server-local inference abstraction layer for

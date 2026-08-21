@@ -8,6 +8,12 @@ domain: "Inference"
 mds_categories: [composition]
 ---
 
+<!-- STALE — predates the hkask-inference refactor (Candidates A/B/C + follow-ups). The
+`openai_compat::openai_compatible_generate[_messages]` helper it references was REMOVED — the
+direct-HTTP chat path was deleted when inference routing moved to the IPC bridge (`InferenceIpcClient`).
+`MediaProvider` backends and the `ProviderRegistry`/`MediaRouter` described here do not exist in the
+current crate. Consult the source before following this how-to. -->
+
 # hkask-inference — How-to: Configure a New Provider
 
 This guide shows how to add a new inference provider to `hkask-inference`.

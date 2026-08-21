@@ -8,6 +8,14 @@ domain: "MCP"
 mds_categories: [domain]
 ---
 
+<!-- STALE — predates the hkask-mcp-server refactor (Candidates F + E). Symbols/structure cited
+below that were REMOVED or CHANGED: `McpToolOutput` (inlined into `ToolSpanGuard::ok_json`), the
+`tool_schema` module file (re-export inlined at the lib root), `McpToolError::timeout` constructor,
+`McpToolError.details` field, `CapabilityTier::reg_available()`, and `src/server/mod.rs` (renamed to
+`src/server.rs` per .rules). The SSRF wrappers `validate_tool_url_with_dns`/`validate_tool_url_permissive`
+moved from `validation.rs` to `security.rs`. Line numbers have shifted — consult the source until this
+doc is regenerated. -->
+
 # hkask-mcp-server — Reference: API Surface
 
 A lookup reference for the public types, functions, macros, and error

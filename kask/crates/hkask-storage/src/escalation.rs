@@ -353,7 +353,7 @@ impl EscalationQueue {
 /// The algedonic channel's value is inversely proportional to its traffic
 /// (VSM algedonic paradox). Batching reduces noise while preserving signal fidelity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EscalationBatch {
+pub(crate) struct EscalationBatch {
     pub id: EscalationID,
     pub entries: Vec<EscalationEntry>,
     pub domain: String,
@@ -397,7 +397,7 @@ impl EscalationBatch {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EscalationStats {
+pub(crate) struct EscalationStats {
     pub total: i64,
     pub pending: i64,
     pub resolved: i64,

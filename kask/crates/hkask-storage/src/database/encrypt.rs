@@ -13,7 +13,7 @@ use rand::RngCore;
 const PREFIX: &str = "ENCv1:";
 const NONCE_LEN: usize = 12;
 
-pub struct Encryptor {
+pub(crate) struct Encryptor {
     key: Key<Aes256Gcm>,
 }
 
