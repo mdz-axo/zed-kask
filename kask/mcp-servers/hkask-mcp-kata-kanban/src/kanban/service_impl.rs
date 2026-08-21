@@ -25,10 +25,9 @@ use crate::kanban::{
 };
 use hkask_types::NotFound;
 use hkask_types::WebID;
-use hkask_types::id::{BoardId, PhaseId, TaskId};
+use hkask_types::id::{BoardId, TaskId};
 
 pub(crate) mod comments;
-pub(crate) mod decompose;
 pub(crate) mod dejam;
 pub(crate) mod kata;
 pub(crate) mod phases;
