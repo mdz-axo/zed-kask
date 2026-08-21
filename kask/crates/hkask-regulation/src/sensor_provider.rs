@@ -21,7 +21,7 @@
 //! fragmentation where each loop had inline `sense()` methods that couldn't
 //! be discovered or managed from a central point.
 
-use super::types::loops::{LoopId, Signal, SignalMetric};
+use super::loops::{LoopId, Signal, SignalMetric};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;

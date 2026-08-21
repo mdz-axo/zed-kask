@@ -1581,7 +1581,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub condenser: Option<KaskCondenserSettingsContent>,
 
-
     /// Research MCP server configuration.
     #[serde(default)]
     pub research: Option<KaskResearchSettingsContent>,
@@ -1643,7 +1642,7 @@ pub struct KaskSettingsContent {
 
 /// Kask-wide general configuration: global inference concurrency + batching.
 /// The limiter is process-global (one `Arc` shared across all consumers —
-/// skill cascades, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
+/// skill execution, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
 /// for the wiring.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskGeneralSettingsContent {
@@ -1742,13 +1741,13 @@ pub struct KaskMemorySettingsContent {
     pub recall_min_confidence: Option<f64>,
     pub auto_inject: Option<bool>,
     /// Number of recent turns from the invoking thread to include as
-    /// short-term context for skill cascades. 0 disables short-term
+    /// short-term context for skill execution. 0 disables short-term
     /// injection.
     pub cascade_short_term_turns: Option<u32>,
     /// Saliency floor for cascade memory recall. A memory chunk is injected
     /// only if `relevance_score * confidence >= saliency_floor`.
     pub cascade_memory_saliency_floor: Option<f64>,
-    /// Maximum memory chunks to inject into a skill cascade, after merging
+    /// Maximum memory chunks to inject into a skill execution, after merging
     /// across all participant stores (user, curator, swarm).
     pub cascade_memory_max_chunks: Option<u32>,
     /// Maximum tokens per turn for cascade short-term context. Turns
@@ -1897,7 +1896,7 @@ pub struct KaskToolRouterSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskModelsSettingsContent {
     /// Default inference model for kask subsystems (provider-prefixed).
-    /// When set, overrides the kask default for the Curator, skill cascade,
+    /// When set, overrides the kask default for the Curator, skill execution,
     /// and kask panel inference.
     pub default_model: Option<String>,
     /// Embedding model for corpus indexing and memory semantic recall

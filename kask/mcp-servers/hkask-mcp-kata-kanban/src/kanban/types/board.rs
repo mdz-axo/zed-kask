@@ -41,13 +41,6 @@ impl Board {
 
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  self.columns is sorted by position
-    /// post: returns the first column (by position) — typically Backlog
-    pub fn first_column(&self) -> Option<&ColumnDef> {
-        self.columns.first()
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self.columns is sorted by position
     /// post: returns the last column (by position) — typically Done
     pub fn last_column(&self) -> Option<&ColumnDef> {
         self.columns.last()

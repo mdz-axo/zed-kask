@@ -5,7 +5,7 @@
 //! `cybernetics_loop.rs`. Each `RegulationRule` defines what actions
 //! to take when a specific metric deviates in a specific direction.
 
-use crate::types::loops::{
+use crate::loops::{
     ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData, SignalMetric,
 };
 

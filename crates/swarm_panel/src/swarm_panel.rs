@@ -142,7 +142,7 @@ const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 /// Build the Steer-mode system prompt for the curator agent.
 ///
 /// Design tradeoff (R7): the `mode` variable reaches the `swarm-intelligence`
-/// skill cascade via the curator's `context` argument, which is prompt-level
+/// skill execution via the curator's `context` argument, which is prompt-level
 /// instruction — not a hard-enforced input. The manifest defaults `mode` to
 /// `'abw'` when the context lacks it (`{{ mode | default('abw') }}`). A
 /// prompt-injected curator could omit `mode` to force ABW, or pass

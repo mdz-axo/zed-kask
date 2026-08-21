@@ -29,6 +29,7 @@ mod validation;
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 
+pub use crate::security::{validate_tool_url_permissive, validate_tool_url_with_dns};
 pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
 pub use credentials::{load_dotenv, parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
@@ -40,5 +41,5 @@ pub use validation::{
 };
 pub use validation::{
     map_infra_error, map_io_error, map_join_error, map_memory_store_error, validate_identifier,
-    validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
+    validate_path,
 };

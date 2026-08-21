@@ -223,10 +223,10 @@ pub(crate) fn render_memory_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(SettingsSectionHeader::new("Skill Cascade Context"))
+                .child(SettingsSectionHeader::new("Skill Execution Context"))
                 .child(
                     Label::new(
-                        "Skill cascades inject short-term thread context (recent turns) \
+                        "Skill execution injects short-term thread context (recent turns) \
                          and long-term memory (salient chunks from participant stores) \
                          into every template step's inference call. These settings \
                          control the injection defaults.",
@@ -243,7 +243,7 @@ pub(crate) fn render_memory_page(
                 .child(
                     Label::new(
                         "Number of recent turns from the invoking thread to include \
-                         as short-term context for skill cascades. 0 disables \
+                         as short-term context for skill execution. 0 disables \
                          short-term injection (cascades run isolated).",
                     )
                     .size(LabelSize::Small)
@@ -283,7 +283,7 @@ pub(crate) fn render_memory_page(
                 .child(
                     Label::new(
                         "Minimum saliency (relevance × confidence) for a memory chunk \
-                         to be injected into a skill cascade. Chunks below this \
+                         to be injected into a skill execution. Chunks below this \
                          threshold are filtered out. 0.0 = inject everything.",
                     )
                     .size(LabelSize::Small)

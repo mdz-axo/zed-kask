@@ -72,16 +72,6 @@ impl FadeHorizon {
         }
     }
 
-    /// Map from MAIA moat classification string.
-    pub fn from_moat(moat: &str) -> Self {
-        match moat {
-            "wide" => FadeHorizon::Wide,
-            "narrow" => FadeHorizon::Narrow,
-            "none" => FadeHorizon::None,
-            _ => FadeHorizon::Default,
-        }
-    }
-
     /// Override from user input: "wide", "narrow", "none", "default".
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -539,23 +529,6 @@ pub fn adj_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
     let raw_ic = extract_invested_capital(balance_entry)?;
     let ts = extract_treasury_stock(balance_entry);
     Some(raw_ic + 2.0 * ts)
-}
-
-/// Adjusted Owner's Equity: raw equity + 2 × |treasury stock|.
-pub fn adj_equity(balance_entry: &serde_json::Value) -> Option<f64> {
-    let raw_eq = balance_entry
-        .get("totalStockholdersEquity")
-        .or_else(|| balance_entry.get("totalEquity"))
-        .and_then(|v| v.as_f64())?;
-    let ts = extract_treasury_stock(balance_entry);
-    Some(raw_eq + 2.0 * ts)
-}
-
-/// Adjusted Total Assets: raw total assets + 2 × |treasury stock|.
-pub fn adj_total_assets(balance_entry: &serde_json::Value) -> Option<f64> {
-    let raw_ta = extract_invested_capital(balance_entry)?;
-    let ts = extract_treasury_stock(balance_entry);
-    Some(raw_ta + 2.0 * ts)
 }
 
 // ── ROIC from key_metrics (pre-computed) ──────────────────────────────────────

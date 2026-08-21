@@ -212,13 +212,21 @@ impl EventStore {
         let row = self
             .driver
             .query_optional("SELECT MAX(position) FROM events", &[])?;
-        // Empty log => Ok(None) (query_optional returns None). A row whose
-        // position column can't be read as an int => Err(Database(...))
-        // — do NOT silently coerce a column-read failure to "empty log"
-        // (`row.and_then(|r| r.get_int(0).ok())` swallowed the error).
-        row.map(|r| r.get_int(0))
-            .transpose()
-            .map_err(EventStoreError::from)
+        // `SELECT MAX(position)` is an aggregate: it always returns exactly one
+        // row, with a NULL column when the log is empty. So "empty log" surfaces
+        // as `Some(row)` with a `Null` column, not as `None` from
+        // `query_optional`. Treat `Null` as `Ok(None)` (the empty-log signal)
+        // but propagate any other type mismatch as `Err(Database(...))`. The
+        // prior `Ok(row.and_then(|r| r.get_int(0).ok()))` silently coerced a
+        // real column-read error to "empty log" (`None`) — a broken feedback
+        // loop — so this distinguishes the three cases explicitly.
+        match row {
+            None => Ok(None),
+            Some(r) => match r.get(0)? {
+                DbValue::Null => Ok(None),
+                value => Ok(Some(value.as_int()?)),
+            },
+        }
     }
 }
 
@@ -537,5 +545,187 @@ mod tests {
             RolloutKind::from_str(kind_str),
             Some(RolloutKind::Delegation)
         );
+    }
+
+    // ── Clock seam + retention-boundary tests ────────────────────────────
+    //
+    // `fn() -> String` cannot capture mutable state, so the controllable
+    // test clock reads a process-global `Mutex<String>`. Tests that need to
+    // advance time between appends set the clock before each `append`. The
+    // static is process-global, so these tests must not run concurrently with
+    // each other — `--test-threads=1` is not required because each test resets
+    // the clock to a fixed value before its first append and never reads the
+    // clock outside its own appends, but the tests below are written to be
+    // independent of one another's timing.
+
+    static TEST_CLOCK: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    // Clock-based tests read/write the shared `TEST_CLOCK`; without serialization
+    // one test's `set_test_clock` could land between another test's appends and
+    // corrupt its boundary. This guard serializes only the clock-based tests —
+    // the non-clock tests still run in parallel.
+    static CLOCK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_driver() -> Arc<dyn DatabaseDriver> {
+        SqliteDriver::in_memory_driver()
+    }
+
+    fn test_clock() -> String {
+        TEST_CLOCK
+            .lock()
+            .expect("test clock mutex poisoned")
+            .clone()
+    }
+
+    fn set_test_clock(timestamp: &str) {
+        *TEST_CLOCK.lock().expect("test clock mutex poisoned") = timestamp.to_string();
+    }
+
+    #[test]
+    fn compact_drops_old_rollouts_keeps_recent_at_boundary() {
+        :        let _guard = CLOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Two rollouts written at distinct instants; the cutoff falls exactly
+        // between them. The old rollout (last event at t1) must be dropped; the
+        // new one (last event at t2) must survive. This pins the boundary:
+        // `MAX(created_at) < cutoff` is strictly less-than, so an event written
+        // exactly at the cutoff would survive (not tested here, but the
+        // boundary is at the midpoint, not at an event instant).
+        let store = EventStore::from_driver_with_clock(test_driver(), test_clock).expect("store");
+        set_test_clock("2026-08-20T10:00:00.000Z");
+        store
+            .append("old", "model_request", &model_request_event("a"))
+            .unwrap();
+        set_test_clock("2026-08-20T12:00:00.000Z");
+        store
+            .append("new", "model_request", &model_request_event("b"))
+            .unwrap();
+        // Cutoff between t1 (10:00) and t2 (12:00).
+        let dropped = store.compact("2026-08-20T11:00:00.000Z").unwrap();
+        assert_eq!(
+            dropped, 1,
+            "old rollout (last event at 10:00) should be dropped"
+        );
+        let events = store.query(&EventFilter::default()).unwrap();
+        assert!(
+            events.iter().any(|e| e.rollout_id == "new"),
+            "new rollout survives"
+        );
+        assert!(
+            !events.iter().any(|e| e.rollout_id == "old"),
+            "old rollout is gone"
+        );
+    }
+
+    #[test]
+    fn strip_bodies_strips_old_keeps_recent_at_boundary() {
+        :        let _guard = CLOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // One model_request before the cutoff (stripped), one after (kept).
+        // The boundary is the cutoff itself; `created_at < cutoff` is strict.
+        let store = EventStore::from_driver_with_clock(test_driver(), test_clock).expect("store");
+        set_test_clock("2026-08-20T09:00:00.000Z");
+        store
+            .append(
+                "r-old",
+                "model_request",
+                &serde_json::json!({
+                    "model": "m", "request_body": "old task", "response_body": "old answer"
+                }),
+            )
+            .unwrap();
+        set_test_clock("2026-08-20T13:00:00.000Z");
+        store
+            .append(
+                "r-recent",
+                "model_request",
+                &serde_json::json!({
+                    "model": "m", "request_body": "keep me", "response_body": "keep me too"
+                }),
+            )
+            .unwrap();
+        let stripped = store.strip_bodies("2026-08-20T11:00:00.000Z").unwrap();
+        assert_eq!(stripped, 1, "only the pre-cutoff model_request is stripped");
+
+        let events = store.query(&EventFilter::default()).unwrap();
+        let old_event = events
+            .iter()
+            .find(|e| e.rollout_id == "r-old")
+            .expect("old event present");
+        assert!(
+            old_event.payload.get("request_body").is_none(),
+            "old bodies stripped"
+        );
+        assert!(old_event.payload.get("response_body").is_none());
+        let recent_event = events
+            .iter()
+            .find(|e| e.rollout_id == "r-recent")
+            .expect("recent event present");
+        assert_eq!(
+            recent_event.payload.get("request_body").unwrap(),
+            "keep me",
+            "recent bodies survive"
+        );
+        assert_eq!(
+            recent_event.payload.get("response_body").unwrap(),
+            "keep me too"
+        );
+    }
+
+    #[test]
+    fn query_surfaces_corrupt_payload_as_error_not_null() {
+        :        let _guard = CLOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A row whose payload column is not valid JSON is corruption, not a
+        // nullable field. `query` must return Err(PayloadParse(...)) rather
+        // than silently coercing the bad payload to `Value::Null` (which would
+        // hide the corrupted row behind a plausible-looking event).
+        let store = EventStore::from_driver_with_clock(test_driver(), test_clock).expect("store");
+        set_test_clock("2026-08-20T10:00:00.000Z");
+        store
+            .append("r", "model_request", &model_request_event("a"))
+            .unwrap();
+        // Inject a corrupt row directly, bypassing `append`'s serialization.
+        store
+            .driver()
+            .execute(
+                "INSERT INTO events (rollout_id, kind, payload, created_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                &[
+                    DbValue::Text("r-bad".to_string()),
+                    DbValue::Text("model_request".to_string()),
+                    DbValue::Text("this is not json".to_string()),
+                    DbValue::Text("2026-08-20T10:00:00.000Z".to_string()),
+                ],
+            )
+            .unwrap();
+        let result = store.query(&EventFilter::default());
+        assert!(
+            matches!(result, Err(EventStoreError::PayloadParse(_))),
+            "corrupt payload must surface as PayloadParse, not silently coerce to Null; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn cursor_is_none_on_empty_then_some_with_exact_max_after_appends() {
+        :        let _guard = CLOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // `cursor` returns Ok(None) on an empty log and Ok(Some(max_position))
+        // after appends — with the exact max, not just "some value". The
+        // column-read path must not silently coerce a read failure to None.
+        let store = EventStore::from_driver_with_clock(test_driver(), test_clock).expect("store");
+        set_test_clock("2026-08-20T10:00:00.000Z");
+        assert_eq!(store.cursor().unwrap(), None, "empty log cursor is None");
+        let first = store
+            .append("r1", "model_request", &model_request_event("a"))
+            .unwrap();
+        let second = store
+            .append("r2", "verdict", &serde_json::json!({"pass": true}))
+            .unwrap();
+        assert_eq!(store.cursor().unwrap(), Some(second));
+        assert!(second > first, "sanity: positions are monotonic");
     }
 }

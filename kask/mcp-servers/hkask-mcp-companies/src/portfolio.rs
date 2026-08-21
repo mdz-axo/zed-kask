@@ -192,10 +192,6 @@ impl PortfolioManager {
         self.store.list()
     }
 
-    pub fn add_transaction(&self, name: &str, tx: &Transaction) -> Result<(), PortfolioError> {
-        self.store.apply(name, tx)
-    }
-
     pub fn append_note(&self, name: &str, tx_id: &str, note: &str) -> Result<(), PortfolioError> {
         let conn = self.open()?;
         let existing: String = conn

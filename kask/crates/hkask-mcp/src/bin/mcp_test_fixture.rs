@@ -1,5 +1,9 @@
-//! A minimal, controllable MCP server used only by
-//! `tests/reconnect_integration.rs`.
+//! A minimal, controllable MCP server intended for a future
+//! `tests/reconnect_integration.rs` (not yet written). Kept feature-gated so it
+//! does not affect normal builds. The connection-healing unit tests in
+//! `runtime.rs` cover the bookkeeping around the healing paths, but cannot
+//! prove a killed server is actually reconnected end-to-end — that is the
+//! not-yet-written integration test's job.
 //!
 //! The connection-healing paths in `McpRuntime` (reap-on-death, liveness-on-read,
 //! reconnect-on-demand) can only be exercised against a **real child process**

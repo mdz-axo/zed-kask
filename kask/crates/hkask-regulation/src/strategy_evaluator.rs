@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use crate::types::loops::SignalMetric;
+use crate::loops::SignalMetric;
 
 /// Maximum history entries considered for strategy scoring.
 const STRATEGY_SCORE_WINDOW: usize = 20;

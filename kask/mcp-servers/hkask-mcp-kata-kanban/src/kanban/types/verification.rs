@@ -25,15 +25,6 @@ impl VerificationCriterion {
             llm_prompt: None,
         }
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is valid; llm_prompt is non-empty
-    /// post: returns self with llm_prompt set
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_llm_prompt(mut self, prompt: String) -> Self {
-        self.llm_prompt = Some(prompt);
-        self
-    }
 }
 
 // ── Verification Result ────────────────────────────────────────────────────

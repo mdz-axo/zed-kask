@@ -13,7 +13,7 @@ use crate::error::SwarmError;
 use crate::request_types::*;
 use crate::sanitize::{
     sanitize_abw_response, sanitize_abw_response_plain, sanitize_run_status_message,
-    sanitize_workspace_payload,
+    sanitize_workspace_payload, unwrap_abw_envelope,
 };
 use crate::spend_gate;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
@@ -835,9 +835,8 @@ impl SwarmServer {
                             .map(|d| d.with_timezone(&chrono::Utc))
                             .unwrap_or(chrono::Utc::now());
                         if sender == req.agent_name && msg_time > post_time {
-                            let content = sanitize_abw_response(
-                                msg.get("content").or_else(|| msg.get("response")),
-                            );
+                            let content =
+                                sanitize_abw_response(unwrap_abw_envelope(msg));
                             agent_response = Some(serde_json::json!({
                                 "content": content,
                                 "created_at": msg_time_str,

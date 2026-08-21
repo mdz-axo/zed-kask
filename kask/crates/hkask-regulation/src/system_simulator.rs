@@ -9,7 +9,7 @@
 //! - Energy budget model: `dE/dt = -consumption_rate + replenishment_rate`
 //! - Queue depth model: `dQ/dt = arrival_rate - processing_rate`
 
-use crate::types::loops::SignalMetric;
+use crate::loops::SignalMetric;
 
 /// A predicted future state for a single metric.
 #[derive(Debug, Clone)]

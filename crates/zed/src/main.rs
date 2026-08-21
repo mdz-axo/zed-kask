@@ -220,7 +220,7 @@ static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 /// `hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING` and logs the gap instead of
 /// refusing (RR-0057) — the prior fail-closed behavior silently broke the two
 /// paths that mint *different* personas (`kask-panel` on the inference-IPC
-/// dispatch, the skill cascade), since those derive
+/// dispatch, the skill execution), since those derive
 /// different WebIDs than the one seeded here. This seed now only sets an
 /// explicit ceiling for the panel persona.
 const SWARM_PANEL_CALL_CAP: u32 = 10_000;
@@ -997,8 +997,8 @@ fn main() {
         // LanguageModelRegistry.
         //
         // D3: McpRuntime is constructed above so it's available for both the
-        // skill cascade and the post-settings auto-launch. The
-        // model-dependent wiring (skill cascade, guard, panel) is
+        // skill execution and the post-settings auto-launch. The
+        // model-dependent wiring (skill execution, guard, panel) is
         // deferred to after language_model::init(). The memory port is wired
         // in the deferred task once the Zed user resolves (thread.rs no-ops
         // when the hook is unset).
@@ -1249,7 +1249,7 @@ fn main() {
         sync_kask_mcp_servers(cx);
         cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
 
-        // The governed McpRuntime instances (kask panel + skill cascade) are
+        // The governed McpRuntime instances (kask panel + skill execution) are
         // started once at login and keep their startup env. A settings change
         // that alters a server's env (e.g. `kask.swarm.mode` →
         // `HKASK_SWARM_MODE`) must restart them; the per-project
@@ -1350,10 +1350,10 @@ fn main() {
         // happens immediately on the first watch tick. If not, the task waits
         // until `authenticate()` (spawned below) completes.
         //
-        // Clone `tool_port` for the model-dependent skill cascade task
+        // Clone `tool_port` for the model-dependent skill execution task
         // (below) before it's moved into the deferred task. The model-dependent
         // task fires on `LanguageModelRegistry` events, independent of user
-        // login — the skill cascade only needs the model + tool_port, not
+        // login — the skill execution only needs the model + tool_port, not
         // the username.
         let _tool_port_for_model_task: std::sync::Arc<dyn hkask_tool_port::ToolPort> =
             tool_port.clone();
@@ -1789,7 +1789,7 @@ fn main() {
                 // This block was originally in the synchronous startup, but
                 // moved here because LanguageModelRegistry::default_model()
                 // returns None until the user authenticates. Running it at
-                // startup left all OnceLock-based hooks (skill cascade,
+                // startup left all OnceLock-based hooks (skill execution,
                 // panel tool invoker, scoped inference, regulation status,
                 // thread condenser) unwired when no model was configured at
                 // startup — the "Process-global hooks set at runtime need a
@@ -2112,9 +2112,9 @@ fn main() {
                 }
 
                 // zed-kask: Registry path resolution is now handled by the
-                // model-dependent skill cascade task (below the deferred
+                // model-dependent skill execution task (below the deferred
                 // task block), which doesn't need user login. The skill
-                // cascade is the only consumer of the registry paths, and
+                // execution is the only consumer of the registry paths, and
                 // it's wired by that separate task. The IPC server and MCP
                 // server launch below don't need the registry paths.
 
@@ -2128,7 +2128,7 @@ fn main() {
                     // regulation status don't need an inference model at all —
                     // they only need the tool_port and the cybernetics loop /
                     // ledger. The curator session factory uses the same
-                    // LazyInferencePort as the skill cascade: when no model
+                    // LazyInferencePort as the skill execution: when no model
                     // is resolved, curator turns return a clear error with
                     // remediation guidance; when the model resolves, the lazy
                     // port is swapped in and curator turns route through it.
@@ -2259,7 +2259,7 @@ fn main() {
                             }
                         }
 
-                        // The skill cascade is wired by the separate
+                        // The skill execution is wired by the separate
                         // model-dependent task (below the deferred task
                         // block), which fires as soon as the model registry
                         // reports a default model — independent of Zed user
@@ -2272,7 +2272,7 @@ fn main() {
                         // The inference port is still constructed here
                         // because the IPC server (below) needs it. The
                         // model-dependent task constructs its own inference
-                        // port for the skill cascade. This is a small
+                        // port for the skill execution. This is a small
                         // duplication (two ports), but they wrap the same
                         // underlying model — the duplication is harmless.
                         if kask_settings.memory.auto_inject {
@@ -2282,7 +2282,7 @@ fn main() {
                         }
                     } else {
                         // No default model in the registry at this point in
-                        // the deferred task. The skill cascade is wired
+                        // the deferred task. The skill execution is wired
                         // by the separate model-dependent task (not here),
                         // so it's not listed among the unwired hooks. The
                         // hooks listed here are the ones the deferred task
@@ -2361,7 +2361,7 @@ fn main() {
 
                 // Launch MCP servers via McpRuntime for app-global metered
                 // dispatch (call metering + regulation spans). These instances
-                // serve the skill cascade and kask panel.
+                // serve the skill execution and kask panel.
                 //
                 // Zed's ContextServerStore (per-project) launches separate
                 // instances for the agent tool picker — registered via
@@ -2431,13 +2431,13 @@ fn main() {
             }).detach();
         }
 
-        // zed-kask: D1 — Model-dependent skill cascade wiring.
+        // zed-kask: D1 — Model-dependent skill execution wiring.
         //
         // This task wires the edit-prediction port (D24), which needs the
         // cascade) as soon as `LanguageModelRegistry::default_model()` returns
         // `Some`, independent of Zed user login. The model registry is
         // populated from settings.json (`agent.default_model`), not from
-        // cloud auth, so gating the skill cascade on user login was a
+        // cloud auth, so gating the skill execution on user login was a
         // bug: users with a configured default model but no cloud login had
         // skills silently disabled (the `skill` tool returned a no-op
         // envelope instead of the skill body).
@@ -2451,7 +2451,7 @@ fn main() {
         //
         // The registry path resolution (dev source vs seeded) is duplicated
         // from the deferred task because it doesn't need the user and must
-        // run here for the skill cascade. The `tool_port` is the same
+        // run here for the skill execution. The `tool_port` is the same
         // `McpRuntime` Arc used by the deferred task. The inference port
         // is constructed independently from the resolved model — this is a
         // second port (the deferred task's IPC server constructs its own),
@@ -2636,7 +2636,7 @@ fn main() {
 
         // D1/D3/D4/D12: Model-dependent kask wiring is split across two tasks:
         //
-        // 1. The skill cascade (D1) is wired by the model-dependent task
+        // 1. The skill execution (D1) is wired by the model-dependent task
         //    (above), which fires as soon as `LanguageModelRegistry::
         //    default_model()` returns `Some` — independent of Zed user login.
         //    The model registry is populated from settings.json, not cloud auth.
@@ -3202,7 +3202,7 @@ fn changed_env_keys(
 ///
 /// `sync_kask_mcp_servers` (above) re-syncs only the per-project
 /// `ContextServerStore` path. The governed McpRuntime instances — which the
-/// kask panel's `ToolInvoker` and the skill cascade route through — are
+/// kask panel's `ToolInvoker` and the skill execution route through — are
 /// started once at login and would otherwise keep their startup env forever
 /// (a `kask.swarm.mode` toggle would never re-route the panel's own tool
 /// calls). This restarts exactly the servers whose computed env actually

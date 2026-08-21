@@ -186,28 +186,4 @@ impl TaskFilter {
             limit: None,
         }
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  assignee is a valid WebID
-    /// post: returns a filter matching only tasks assigned to the given agent
-    pub fn by_assignee(assignee: WebID) -> Self {
-        Self {
-            status: None,
-            assignee: Some(assignee),
-            priority: None,
-            limit: None,
-        }
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  priority is a valid Priority
-    /// post: returns a filter matching only tasks with the given priority
-    pub fn by_priority(priority: Priority) -> Self {
-        Self {
-            status: None,
-            assignee: None,
-            priority: Some(priority),
-            limit: None,
-        }
-    }
 }

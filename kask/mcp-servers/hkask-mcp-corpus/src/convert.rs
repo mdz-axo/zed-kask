@@ -31,14 +31,6 @@ pub fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
     }
 }
 
-/// Whether a format is supported for text extraction by `corpus_convert`.
-pub fn is_format_supported(format: &str) -> bool {
-    matches!(
-        format,
-        "pdf" | "markdown" | "html" | "plain" | "docx" | "pptx" | "xlsx"
-    )
-}
-
 /// Strip YAML frontmatter (delimited by `---`) from content.
 pub fn strip_frontmatter(content: &str) -> String {
     if content.starts_with("---") {
