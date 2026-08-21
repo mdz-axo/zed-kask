@@ -256,7 +256,7 @@ impl Signal {
 
 /// Deviation detected when comparing a signal against its set-point.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Deviation {
+pub struct Deviation {
     pub signal: Signal,
     pub magnitude: f64,
     pub direction: DeviationDirection,
@@ -282,7 +282,7 @@ impl Deviation {
 
 /// Direction of a deviation relative to the set-point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) enum DeviationDirection {
+pub enum DeviationDirection {
     AboveSetPoint,
     BelowSetPoint,
 }

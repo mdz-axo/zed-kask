@@ -54,14 +54,6 @@ pub struct LedgerTransaction {
     pub metadata: serde_json::Value,
 }
 
-/// A computed balance for an account + asset pair.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct AccountBalance {
-    pub account: String,
-    pub asset: String,
-    pub balance: i64,
-}
-
 /// A time range for querying transactions.
 #[derive(Debug, Clone)]
 pub struct DateRange {

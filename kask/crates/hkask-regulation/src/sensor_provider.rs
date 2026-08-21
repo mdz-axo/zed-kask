@@ -38,26 +38,6 @@ pub(crate) trait Sensor: Send + Sync {
     /// Sense the current state and produce a signal if the metric is
     /// in a reportable state. Returns `None` if nothing to report.
     async fn sense(&self) -> Option<Signal>;
-
-    /// The metric this sensor produces. Used for catalog indexing and
-    /// deduplication. Default implementation returns `None` for backward
-    /// compatibility with sensors that produce dynamic metrics.
-    fn metric(&self) -> Option<SignalMetric> {
-        None
-    }
-
-    /// Human-readable name for this sensor. Used in catalog listings and
-    /// health checks. Default implementation returns the type name.
-    fn name(&self) -> &str {
-        std::any::type_name::<Self>()
-    }
-
-    /// The loop this sensor is registered under. Used by the catalog to
-    /// route signals to the correct loop's `sense()` call. Default
-    /// implementation returns `None` for backward compatibility.
-    fn loop_id(&self) -> Option<LoopId> {
-        None
-    }
 }
 
 /// Sensor bus for a single loop — actively walks sensors each tick.
@@ -96,143 +76,6 @@ impl SensorBus {
             s.source = source;
         }
         signals
-    }
-
-    /// Number of registered providers.
-    pub fn len(&self) -> usize {
-        self.providers.lock().len()
-    }
-
-    /// Whether the registry has no providers.
-    pub fn is_empty(&self) -> bool {
-        self.providers.lock().is_empty()
-    }
-
-    /// List provider names for diagnostics.
-    pub fn provider_names(&self) -> Vec<String> {
-        self.providers
-            .lock()
-            .iter()
-            .map(|p| p.name().to_string())
-            .collect()
-    }
-}
-
-impl Default for SensorBus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Registry of all sensors across all loops in the system.
-///
-/// Provides a single registration point for sensors across ALL loops, not
-/// just Cybernetics. Each loop owns a `SensorBus` for its local sensors,
-/// but the `SensorRegistry` tracks all of them for monitoring, health checks,
-/// and dynamic registration.
-///
-/// This eliminates the fragmentation where each loop had inline `sense()`
-/// methods that couldn't be discovered or managed from a central point.
-///
-/// # Architecture
-///
-/// ```text
-/// SensorRegistry (singleton, system-level)
-/// ├── LoopId::Cybernetics → SensorBus
-/// ├── LoopId::Inference   → SensorBus
-/// ├── LoopId::Episodic    → SensorBus
-/// ├── LoopId::Semantic    → SensorBus
-/// └── LoopId::Curation    → SensorBus
-/// ```
-///
-/// Each loop's `sense()` method calls `registry.sense_all(loop_id)` instead
-/// of containing inline sensing logic. Sensors are registered at startup
-/// via `registry.register_for(loop_id, provider)`.
-pub(crate) struct SensorRegistry {
-    /// Per-loop sensor buses. Each loop owns its own bus.
-    registries: Mutex<HashMap<LoopId, SensorBus>>,
-}
-
-impl SensorRegistry {
-    /// Create a new empty catalog.
-    pub fn new() -> Self {
-        Self {
-            registries: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Get or create the sensor bus for a specific loop.
-    pub fn bus_for(&self, loop_id: LoopId) -> SensorBus {
-        let registries = self.registries.lock();
-        registries
-            .get(&loop_id)
-            .cloned()
-            .unwrap_or_else(SensorBus::new)
-    }
-
-    /// Register a sensor for a specific loop.
-    pub fn register_for(&self, loop_id: LoopId, provider: Arc<dyn Sensor>) {
-        let mut registries = self.registries.lock();
-        registries.entry(loop_id).or_default().register(provider);
-    }
-
-    /// Sense all signals for a specific loop.
-    pub async fn sense_all(&self, loop_id: LoopId) -> Vec<Signal> {
-        let registry = {
-            let registries = self.registries.lock();
-            registries.get(&loop_id).cloned()
-        };
-        match registry {
-            Some(reg) => reg.sense_all(loop_id).await,
-            None => Vec::new(),
-        }
-    }
-
-    /// Total number of sensors across all loops.
-    pub fn total_sensors(&self) -> usize {
-        self.registries.lock().values().map(|r| r.len()).sum()
-    }
-
-    /// List all sensor names grouped by loop.
-    pub fn sensor_inventory(&self) -> Vec<(LoopId, Vec<String>)> {
-        self.registries
-            .lock()
-            .iter()
-            .map(|(loop_id, registry)| (*loop_id, registry.provider_names()))
-            .collect()
-    }
-
-    /// Health check: which loops have no sensors registered?
-    pub fn loops_without_sensors(&self) -> Vec<LoopId> {
-        let registries = self.registries.lock();
-        let all_loops = [
-            LoopId::Inference,
-            LoopId::Episodic,
-            LoopId::Semantic,
-            LoopId::Curation,
-            LoopId::Cybernetics,
-        ];
-        all_loops
-            .iter()
-            .filter(|id| {
-                !registries.contains_key(id) || registries.get(*id).is_none_or(|r| r.is_empty())
-            })
-            .copied()
-            .collect()
-    }
-}
-
-impl Default for SensorRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clone for SensorBus {
-    fn clone(&self) -> Self {
-        Self {
-            providers: Mutex::new(self.providers.lock().clone()),
-        }
     }
 }
 
@@ -277,14 +120,6 @@ impl Sensor for EnergyBudgetSensor {
             self.set_point,
         ))
     }
-
-    fn metric(&self) -> Option<SignalMetric> {
-        Some(SignalMetric::EnergyRemaining)
-    }
-
-    fn loop_id(&self) -> Option<LoopId> {
-        Some(LoopId::Cybernetics)
-    }
 }
 
 /// Senses variety deficit from the Regulation runtime.
@@ -316,14 +151,6 @@ impl Sensor for VarietySensor {
             health.overall_deficit as f64,
             self.set_point,
         ))
-    }
-
-    fn metric(&self) -> Option<SignalMetric> {
-        Some(SignalMetric::VarietyDeficit)
-    }
-
-    fn loop_id(&self) -> Option<LoopId> {
-        Some(LoopId::Cybernetics)
     }
 }
 
@@ -360,14 +187,6 @@ impl Sensor for ToolReliabilitySensor {
             worst,
             self.threshold,
         ))
-    }
-
-    fn metric(&self) -> Option<SignalMetric> {
-        Some(SignalMetric::ToolReliability)
-    }
-
-    fn loop_id(&self) -> Option<LoopId> {
-        Some(LoopId::Cybernetics)
     }
 }
 
@@ -513,14 +332,6 @@ impl Sensor for TestCoverageSensor {
             self.set_point,
         ))
     }
-
-    fn metric(&self) -> Option<SignalMetric> {
-        Some(SignalMetric::TestCoverage)
-    }
-
-    fn loop_id(&self) -> Option<LoopId> {
-        Some(LoopId::Cybernetics)
-    }
 }
 
 /// Senses mutation score from the latest trace run's `metrics.json`.
@@ -593,13 +404,5 @@ impl Sensor for MutationScoreSensor {
             score,
             self.set_point,
         ))
-    }
-
-    fn metric(&self) -> Option<SignalMetric> {
-        Some(SignalMetric::MutationScore)
-    }
-
-    fn loop_id(&self) -> Option<LoopId> {
-        Some(LoopId::Cybernetics)
     }
 }
