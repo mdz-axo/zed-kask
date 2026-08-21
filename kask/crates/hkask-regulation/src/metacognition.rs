@@ -35,8 +35,8 @@ use parking_lot::RwLock;
 use tokio::sync::RwLock as TokioRwLock;
 use tokio::sync::mpsc;
 
+use crate::loops::CurationInput;
 use crate::runtime::{RegulationLedger, StoredSkillSpan};
-use crate::types::loops::CurationInput;
 
 /// Default tick interval for the metacognition loop (30 seconds).
 pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);

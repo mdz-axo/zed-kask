@@ -22,9 +22,12 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 [lints]
 workspace = true
 
-# `reconnect_integration` SIGKILLs the fixture child directly; the repo lint bans
-# the blocking `Command::status` that shelling out to `kill` would need.
-
+# NOTE: `tests/reconnect_integration.rs` is not yet written. The fixture
+# binary below exists to support it when it is — gated to `required-features`
+# so a normal build does not produce it. The connection-healing unit tests in
+# `runtime.rs` cover the bookkeeping; the integration test would add the
+# real-child-process proof (SIGKILL the fixture, assert reconnect).
+#
 # A real child process is the thing under test for connection healing, so the
 # reconnect integration test needs a controllable MCP server binary. Gated to
 # `required-features` so a normal build does not produce it.

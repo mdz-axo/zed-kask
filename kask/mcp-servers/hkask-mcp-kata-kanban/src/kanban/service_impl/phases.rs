@@ -18,24 +18,4 @@ impl KanbanService {
         self.update_board_triple(&board)?;
         Ok(phase)
     }
-
-    pub fn task_set_phase(&self, task_id: TaskId, phase_id: PhaseId) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        task.phase_id = Some(phase_id);
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-        Ok(task)
-    }
-
-    pub fn tasks_by_phase(
-        &self,
-        board_id: BoardId,
-        phase_id: PhaseId,
-    ) -> Result<Vec<Task>, KanbanError> {
-        let all = self.task_list(board_id, TaskFilter::all())?;
-        Ok(all
-            .into_iter()
-            .filter(|t| t.phase_id == Some(phase_id))
-            .collect())
-    }
 }

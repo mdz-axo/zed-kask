@@ -94,25 +94,6 @@ impl LearningState {
             .unwrap_or(0)
     }
 
-    /// Record a temporal snapshot for later coherence checking.
-    pub fn record_temporal_snapshot(
-        &mut self,
-        symbol: &str,
-        provider: Provider,
-        price: f64,
-        latest_filing_date: Option<String>,
-    ) {
-        let key = (symbol.to_string(), provider);
-        self.temporal_snapshots.insert(
-            key,
-            TemporalSnapshot {
-                fetched_at: now_rfc3339(),
-                price_at_fetch: price,
-                latest_filing_date,
-            },
-        );
-    }
-
     /// Check temporal coherence for a symbol/provider: how stale was the
     /// data at fetch time? Returns None if no snapshot exists.
     pub fn check_staleness(&self, symbol: &str, provider: Provider) -> Option<u32> {

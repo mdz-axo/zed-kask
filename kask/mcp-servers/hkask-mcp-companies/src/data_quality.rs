@@ -60,11 +60,6 @@ impl SignalQuality {
         }
     }
 
-    /// Compute quality from a series of historical values.
-    pub fn from_series(values: &[f64]) -> Self {
-        Self::from_series_with_staleness(values, None)
-    }
-
     /// Compute quality from a series with a known staleness in days.
     pub fn from_series_with_staleness(values: &[f64], staleness_days: Option<u32>) -> Self {
         let n = values.len();
@@ -389,20 +384,6 @@ impl ProviderQuality {
             provider: provider.to_string(),
             approximated_fields: Vec::new(),
             provider_confidence: 1.0,
-        }
-    }
-
-    pub fn with_approximations(provider: &str, approximated: Vec<NormalizationAnnotation>) -> Self {
-        let confidence = if approximated.is_empty() {
-            1.0
-        } else {
-            // Each approximation costs ~5% confidence, floor at 0.5
-            (1.0 - 0.05 * approximated.len() as f64).max(0.5)
-        };
-        ProviderQuality {
-            provider: provider.to_string(),
-            approximated_fields: approximated,
-            provider_confidence: confidence,
         }
     }
 }

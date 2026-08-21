@@ -72,7 +72,7 @@ pub struct DelegateResultCard {
     /// (qualified `server/tool` name + ok/error); the card renders a count.
     #[serde(default)]
     pub tool_calls: Vec<serde_json::Value>,
-    /// Summary of skill cascades executed before the LLM call. Opaque JSON
+    /// Summary of skill executions performed before the LLM call. Opaque JSON
     /// values; the card renders a count.
     #[serde(default)]
     pub executed_skills: Vec<serde_json::Value>,

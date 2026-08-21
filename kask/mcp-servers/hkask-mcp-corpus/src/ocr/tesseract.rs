@@ -36,12 +36,6 @@ impl TesseractExecutor {
         self.language = lang.to_string();
         self
     }
-
-    /// Set page segmentation mode (1-13, see tesseract docs).
-    pub fn with_psm(mut self, psm: u8) -> Self {
-        self.psm = Some(psm);
-        self
-    }
 }
 
 impl Default for TesseractExecutor {

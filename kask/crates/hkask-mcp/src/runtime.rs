@@ -411,10 +411,14 @@ impl McpRuntime {
         }
     }
 
-    /// Wire the cybernetic governance membrane (OCAP + call-cap + Regulation spans).
-    /// All subsequent `invoke` calls will verify the token, charge one call against
-    /// the agent's per-tick cap, and emit spans. Must be called before the first
-    /// invocation.
+    /// Wire the cybernetic governance membrane (call-cap metering + Regulation spans).
+    /// All subsequent `invoke` calls charge one call against the agent's per-tick
+    /// cap and emit Regulation spans. There is deliberately **no** per-call OCAP
+    /// capability check (RR-0056): the prior gate compared a `resource_id` built
+    /// from the same tool name passed to `invoke`, so it was a value against
+    /// itself. Authority is enforced upstream — at the inference IPC
+    /// `tool_allowlist`, the swarm card `mcp_tools` allowlist, and per-server env
+    /// allowlists — not re-checked here. Must be called before the first invocation.
     #[must_use]
     pub fn with_governance(
         mut self,
@@ -1064,8 +1068,8 @@ impl McpRuntime {
     /// **Feature-gated to `test-fixture` deliberately.** Reap-on-death is only
     /// observable by reading connection state directly — every production path
     /// (`invoke`) *heals* on a missing peer, so it cannot distinguish "reaped"
-    /// from "never reaped but reconnected". `tests/reconnect_integration.rs`
-    /// needs that distinction to pin the reap independently.
+    /// from "never reaped but reconnected". A future `tests/reconnect_integration.rs`
+    /// (not yet written) would need that distinction to pin the reap independently.
     ///
     /// Not exposed unconditionally because nothing in production consumes it, and
     /// an always-present "for health checks" accessor with no health surface is

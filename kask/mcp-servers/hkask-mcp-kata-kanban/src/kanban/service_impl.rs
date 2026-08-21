@@ -16,7 +16,6 @@
 //! - `kata` — Kata cycle execution on tasks
 //! - `phases` — Board phase management
 //! - `spawn` — Agent spawn from task specs
-//! - `verification` — LLM-based task verification
 
 // Imports needed by child submodules via `use super::*`
 #[allow(unused_imports)]
@@ -36,7 +35,6 @@ pub(crate) mod phases;
 mod service;
 pub(crate) mod spawn;
 mod types;
-pub(crate) mod verification;
 
 pub use service::KanbanService;
 pub use types::{KanbanError, UnjamFix, UnjamItem};

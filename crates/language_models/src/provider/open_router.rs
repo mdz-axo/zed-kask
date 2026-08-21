@@ -453,7 +453,7 @@ pub fn into_open_router(
     let is_anthropic_model = model.id().starts_with("anthropic/");
     let session_id = open_router_session_id(request.thread_id);
     // zed-kask: D13 — read the per-request output budget before `request` is
-    // partially moved by the message loop below. When set (skill cascade), it
+    // partially moved by the message loop below. When set (skill execution), it
     // overrides the model's default `max_output_tokens`; when `None` (agent
     // chat), the model default is used as before.
     let request_max_tokens = request.max_tokens;
@@ -1192,7 +1192,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_per_request_max_tokens_overrides_model_default() {
-        // zed-kask: D13 — the skill cascade sets max_tokens from
+        // zed-kask: D13 — the skill execution sets max_tokens from
         // LLMParameters (typically 2048) so the provider requests a tight
         // output budget instead of the model full default. The per-request
         // value wins; when None (agent chat), the model default is used.

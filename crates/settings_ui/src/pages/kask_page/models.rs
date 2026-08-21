@@ -74,7 +74,7 @@ pub(crate) fn render_models_page(
                 .child(Label::new("Default Inference Model"))
                 .child(
                     Label::new(
-                        "Provider-prefixed model for the Curator, skill cascade, and \
+                        "Provider-prefixed model for the Curator, skill execution, and \
                          kask panel inference. Leave empty to use the kask default \
                          (openrouter/z-ai/glm-5.2).",
                     )

@@ -7,16 +7,16 @@
 //! (`try_substitute`, `persist_alert_to_queue`) are private to this module.
 
 use crate::algedonic::{AlertSeverity, RuntimeAlert};
+use crate::loops::{
+    ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, RegulatoryAction,
+    RegulatoryActionParams, Signal, SignalMetric,
+};
+use crate::loops::{BudgetOption, RegulationData};
 use crate::regulation_policy::{
     self, RegulationPolicy, RegulationReason, classify_decision, default_substitution_ladder,
     extract_deficit_threshold,
 };
 use crate::set_points::InferenceThrottleMode;
-use crate::types::loops::{
-    ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, RegulatoryAction,
-    RegulatoryActionParams, Signal, SignalMetric,
-};
-use crate::types::loops::{BudgetOption, RegulationData};
 use hkask_types::WebID;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
 
@@ -613,6 +613,9 @@ impl super::CyberneticsLoop {
             let mut store_answered = false;
             let (mut before_val, mut metric) = (0.0, SignalMetric::EnergyRemaining);
             let mut after_val = 0.0;
+            // Capture the rollout_id when the store answers so the impact
+            // verdict write-back below can target the same rollout.
+            let mut store_rollout_id: Option<String> = None;
             if let Some(source) = &self.rollout_events
                 && let Some((rollout_id, before_position)) = action.parameters.data.rollout_target()
                 && let Ok(Some((queried_before, queried_after))) = source.metric_before_and_after(
@@ -626,6 +629,7 @@ impl super::CyberneticsLoop {
                 before_val = queried_before;
                 after_val = queried_after;
                 store_answered = true;
+                store_rollout_id = Some(rollout_id.clone());
                 tracing::debug!(
                     target: "reg.cybernetics",
                     rollout = %rollout_id,
@@ -794,6 +798,38 @@ impl super::CyberneticsLoop {
                 }),
             )
             .await;
+
+            // Event-substrate write-back: when the store answered the
+            // before/after query, persist the regulation loop's impact
+            // verdict back to the store as a `regulation_impact`-sourced
+            // verdict event. This closes the feedback loop — downstream
+            // consumers (training bridge, regression monitor, ORIENT) can
+            // see the regulation system's judgment alongside the harness's
+            // deterministic-evaluator verdicts. A write failure is warned
+            // and never silently dropped (the .rules failure-signal rule:
+            // a missing write-back means the loop's judgment is invisible to
+            // store consumers, which must be distinguishable from "no impact
+            // check ran").
+            if store_answered
+                && let Some(source) = &self.rollout_events
+                && let Some(rollout_id) = &store_rollout_id
+            {
+                if let Err(error) = source.append_impact_verdict(
+                    rollout_id,
+                    metric.as_str(),
+                    before_val,
+                    after_val,
+                    improved,
+                    &format!("{:?}", decision),
+                ) {
+                    tracing::warn!(
+                        target: "reg.cybernetics",
+                        rollout = %rollout_id,
+                        error = %error,
+                        "impact verdict write-back failed — the loop's judgment is not persisted to the store"
+                    );
+                }
+            }
 
             reports.push(ImpactReport::new(
                 action.action_type,

@@ -16,11 +16,6 @@ impl KanbanService {
         Ok(comment)
     }
 
-    pub fn task_comments(&self, task_id: TaskId) -> Result<Vec<Comment>, KanbanError> {
-        let task = self.require_task(task_id)?;
-        Ok(task.comments)
-    }
-
     /// Fetch comments starting from a given index (for incremental polling).
     pub fn task_comments_since(
         &self,

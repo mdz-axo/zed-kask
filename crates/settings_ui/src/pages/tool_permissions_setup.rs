@@ -1426,11 +1426,11 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
-            // skill_bundle delegates to the skill cascade (same as skill);
+            // skill_bundle delegates to the skill execution (same as skill);
             // permission checks happen inside the composed cascade's tool calls.
             "skill_bundle",
             // run_pipeline executes a pipeline manifest via the same
-            // inference path as skill. No skill cascade —
+            // inference path as skill. No skill execution —
             // is contained via find_project_path (same as ReadFileTool), and
             // permission checks happen inside the cascade's tool calls.
             "run_pipeline",

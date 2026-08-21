@@ -8629,7 +8629,7 @@ impl ThreadView {
                     )
                 }
             })
-            // Render the live thinking trace from the skill cascade (if any).
+            // Render the live thinking trace from the skill execution (if any).
             // This is the accumulating reasoning the user sees while the
             // cascade runs — not just a one-line title.
             .when_some(tool_call.thoughts.clone(), |this, thoughts| {

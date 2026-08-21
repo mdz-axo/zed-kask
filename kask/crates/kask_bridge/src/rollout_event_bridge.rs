@@ -140,6 +140,41 @@ impl RolloutEventSource for BridgeRolloutEventSource {
             _ => Ok(None),
         }
     }
+
+    fn append_impact_verdict(
+        &self,
+        rollout_id: &str,
+        metric: &str,
+        before: f64,
+        after: f64,
+        improved: bool,
+        decision: &str,
+    ) -> Result<(), String> {
+        // Write the regulation loop's impact verdict back to the store as
+        // a verdict event with source = regulation_impact. This closes the
+        // feedback loop: downstream consumers (training bridge, regression
+        // monitor, ORIENT) can see the regulation system's judgment
+        // alongside the harness's deterministic-evaluator verdicts.
+        //
+        // The payload carries typed wire strings (VerdictSource::RegulationImpact,
+        // RolloutKind::Delegation) so consumers can parse them back without
+        // the store parsing payloads. The metric name identifies what was
+        // measured; before/after/improved/decision carry the judgment.
+        let payload = serde_json::json!({
+            "pass": improved,
+            "source": hkask_event_store::VerdictSource::RegulationImpact.as_str(),
+            "rollout_kind": hkask_event_store::RolloutKind::Delegation.as_str(),
+            "metric": metric,
+            "before": before,
+            "after": after,
+            "improved": improved,
+            "decision": decision,
+        });
+        self.store
+            .append(rollout_id, "verdict", &payload)
+            .map_err(|e| format!("impact verdict write-back failed: {e}"))?;
+        Ok(())
+    }
 }
 
 /// Scan the event store for new `harness_summary` events since `last_cursor`,
@@ -373,5 +408,46 @@ mod tests {
         let (_cursor, regressions) = check_harness_regressions(&store, None).unwrap();
         assert_eq!(regressions.len(), 1);
         assert_eq!(regressions[0].agent_name, "alpha");
+    }
+
+    #[test]
+    fn append_impact_verdict_writes_regulation_impact_event() {
+        let store = memory_store();
+        write_summary(&store, "alpha", 0.80);
+        let bridge = BridgeRolloutEventSource::from_store(Arc::new(store.clone()));
+        bridge
+            .append_impact_verdict("alpha", "pass_rate", 0.80, 0.50, false, "Worsen")
+            .unwrap();
+        let events = store
+            .query(&EventFilter {
+                rollout: Some("alpha".into()),
+                kind: Some("verdict".into()),
+                ..EventFilter::default()
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        let payload = &events[0].payload;
+        assert_eq!(payload["source"], "regulation_impact");
+        assert_eq!(payload["rollout_kind"], "delegation");
+        assert_eq!(payload["metric"], "pass_rate");
+        assert_eq!(payload["before"], 0.80);
+        assert_eq!(payload["after"], 0.50);
+        assert_eq!(payload["improved"], false);
+        assert_eq!(payload["decision"], "Worsen");
+        assert_eq!(
+            hkask_event_store::VerdictSource::from_str(
+                payload["source"].as_str().unwrap()
+            ),
+            Some(hkask_event_store::VerdictSource::RegulationImpact)
+        );
+    }
+
+    #[test]
+    fn append_impact_verdict_errors_on_empty_rollout_id() {
+        let store = memory_store();
+        let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
+        assert!(bridge
+            .append_impact_verdict("", "pass_rate", 0.8, 0.5, false, "Worsen")
+            .is_err());
     }
 }

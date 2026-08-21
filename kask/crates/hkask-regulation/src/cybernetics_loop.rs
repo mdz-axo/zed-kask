@@ -93,8 +93,8 @@ use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
 use crate::tool_stats::ToolStats;
 
-use crate::types::loops::RegulationData;
-use crate::types::loops::{
+use crate::loops::RegulationData;
+use crate::loops::{
     ActionDecision, ActionType, CurationInput, LoopId, LoopMetrics, RegulatoryAction,
     RegulatoryActionParams, TriggerOrigin,
 };

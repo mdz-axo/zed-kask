@@ -18,11 +18,11 @@ pub(crate) mod regulation_policy;
 pub mod set_points;
 pub mod skill_span;
 
+pub mod loops;
 pub mod sensor_provider;
 pub(crate) mod strategy_evaluator;
 pub(crate) mod system_simulator;
 pub(crate) mod tool_stats;
-pub mod types;
 
 pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
@@ -38,6 +38,7 @@ pub use metacognition::{
 
 pub use hkask_types::regulation::QueueDepth;
 pub use infra_span::InfraSpan;
+pub use loops::{CurationInput, ExperienceClassification, RegulatoryAction};
 pub use qa_span::QaSpan;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
@@ -53,4 +54,3 @@ pub use set_points::{
 };
 pub use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;
-pub use types::loops::{CurationInput, ExperienceClassification, RegulatoryAction};
