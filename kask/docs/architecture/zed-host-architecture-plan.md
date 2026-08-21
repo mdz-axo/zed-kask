@@ -262,7 +262,7 @@ D9a/D9b/D9c are ✅ DONE. `KaskSettings` struct registered with zed's settings s
 
 ## 12. Kask Panel (removed)
 
-**Status (2026-08-04):** The `crates/kask_panel/` crate was **deleted**. The chat panel (tab strip over `ConversationView` per MCP server) was redundant with the agent panel + curator threads. The standalone visualization views (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`) were replaced by inline chat-stream widgets (`hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`) registered with `hkask-viz-core` (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/hkask-tool-invoker/src/hkask_tool_invoker.rs` (the only remaining consumer). The call-cap persona was renamed from `kask-panel` to `swarm-panel`.
+Deleted — visualization views are inline chat-stream widgets under D18.
 
 ---
 

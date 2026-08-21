@@ -154,8 +154,7 @@ Only the *provably unreachable* form survives as Category 4.
   length warnings disabled — "skills execute via body injection"; pinned by `test_select_catalog_skills_*` in
   `crates/agent/src/agent.rs:4966,5010` and `test_parse_description_too_long_loads_with_warning`
   in `crates/agent_skills/agent_skills.rs:1733`); `DIVERGENCE.md` D3 L24
-  ("Daemon transport deleted; identity from `ServerContext.webid`"); D10 (removed from DIVERGENCE.md)
-  (`kask_panel` crate deleted, replaced by inline widgets D18);
+  ("Daemon transport deleted; identity from `ServerContext.webid`");
   `crates/auto_update/src/auto_update.rs:1382`
   (`test_auto_update_defaults_to_false`); `DIVERGENCE.md` D16 L37 (upstream
   update actions removed, replaced by `RunZedKaskUpdate`);
@@ -314,7 +313,6 @@ traps (verified against the codebase per `.rules:464-475`):
 | 9 | Upstream update menu actions removed | D16 L37 | C1+C3 (co-occurrence) |
 | 10 | `auto_update` default false | `auto_update.rs:1382` | C1 |
 | 11 | kask_extensions_ui provides filter + upsell banners removed | `kask_extensions_ui.rs:1403` | C3 |
-| 12 | `kask_panel` crate deleted (replaced by inline widgets) | D10 (removed) | C3 (zed-kask-side, classifiable) |
 
 (Kask-side dead-surface removals — ocap/`OcapConfig`, `required_capabilities`,
 `AdapterPort`/`AdapterRouter`, folded services, no-consumer hooks — validate
@@ -403,7 +401,7 @@ load-bearing).
       Brier 0.09 against retrospective proxy, with the prospective limitation
       and residual risk stated — not a bare claim).
 - [x] Every citation is a real file:line (verified: `.rules:787-821`,
-      `DIVERGENCE.md` D7 L28 / D16 L37 / D1 L22 / D3 L24 / D10 (removed),
+      `DIVERGENCE.md` D7 L28 / D16 L37 / D1 L22 / D3 L24,
       `crates/agent/src/agent.rs:4966,5010`,
       `crates/agent_skills/agent_skills.rs:1733`,
       `crates/auto_update/src/auto_update.rs:1382`,

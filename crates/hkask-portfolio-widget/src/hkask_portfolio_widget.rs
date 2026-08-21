@@ -1,9 +1,8 @@
 #![forbid(unsafe_code)]
 //! GPUI portfolio widget for rendering ```` ```portfolio ```` fenced blocks
-//! inline in agent markdown. Replaces the deleted standalone
-//! `PortfolioDashboardView` (from the removed `kask_panel` crate) with a
-//! passive inline renderer that consumes the combined `companies` MCP tool
-//! output the curator agent emits as a fenced block.
+//! inline in agent markdown. A passive inline renderer that consumes the
+//! combined `companies` MCP tool output the curator agent emits as a fenced
+//! block.
 //!
 //! Wired behind the D18 seam via [`hkask_viz_core::block_renderer`], which
 //! composes this renderer with the media and graph renderers. The agent emits a

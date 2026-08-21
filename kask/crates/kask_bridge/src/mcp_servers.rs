@@ -1,9 +1,9 @@
 //! Canonical registry of built-in kask MCP servers.
 //!
 //! Single source of truth for the server ID → binary name → description mapping.
-//! Previously duplicated in three places (`zed/src/main.rs`, `settings_ui/src/pages/kask_page.rs`,
-//! the now-removed `kask_panel` crate) with drift between them. This module consolidates
-//! the list so all consumers reference the same data.
+//! Previously duplicated in `zed/src/main.rs` and `settings_ui/src/pages/kask_page.rs`
+//! with drift between them. This module consolidates the list so all consumers
+//! reference the same data.
 //!
 //! The server IDs here match the keys used in `KaskMcpSettingsContent::overrides`
 //! and the `context_servers` entries registered with zed's `ContextServerStore`.

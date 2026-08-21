@@ -50,7 +50,7 @@ capability types live in their owning domain crates.
 | `McpErrorKind`                                        | MCP tool error classification (retryable / requires-intervention)  |
 | `RegulationRecord`                                    | Regulation event with namespace, category, observation             |
 | `ObservableSpan`                                      | Trait for domain spans that emit Regulation events                 |
-| `InferencePort` / `MemoryPort` / `SkillRegistryIndex` | Hexagonal port traits (implemented in downstream crates)           |
+| `InferencePort` / `MemoryPort` | Hexagonal port traits (implemented in downstream crates)           |
 | `ChatMessage`                                         | Foundation inference message type (`role` + `content`)             |
 | `LLMParameters`                                       | Temperature, top_p, max_tokens configuration                       |
 | `ToolTaint`                                           | FIDES IFC label for MCP tools (Source/Sink/Pure/Endorser)          |

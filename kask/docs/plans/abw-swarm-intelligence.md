@@ -163,9 +163,7 @@ re-confirming (`refund`). The panel renders the gate as a consent banner
    `swarm-panel` persona cap (`SWARM_PANEL_CALL_CAP = 10_000` in
    `crates/zed/src/main.rs`, reset to the ceiling each regulation tick), which
    is the account every governed tool call — panel, skill cascade, and swarm
-   `tool_invoke` dispatch — charges (one call per invocation). This replaces the
-   former `GasBudgetManager` gas hold-settle (`KASK_PANEL_GAS_BUDGET_CAP = 100_000`,
-   10% replenish/tick), which was removed as the gas ritual.
+   `tool_invoke` dispatch — charges (one call per invocation).
 
 Known limit → resolved (2026-08-02): consent tokens previously lived in
 in-memory stores **per server process**, so the panel's hire flow and the
