@@ -108,7 +108,7 @@ per-server MCP env/credential allowlists.
 
 Information flow is not gated anywhere. Defense **Layer 5 is absent by decision**,
 in the same register as Layer 3 (instruction hierarchy, RR-0010) — see
-`DIVERGENCE.md` D4 and `kask/security/regressions/RR-0053.yaml`.
+`kask/security/regressions/RR-0053.yaml`.
 
 ## Related
 

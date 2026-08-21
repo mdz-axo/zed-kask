@@ -136,7 +136,7 @@ The D18 viz widgets render fenced code blocks (`graph, `kanban, `portfolio, ```s
 | DIAG-VIZ-PORTFOLIO | `kask/crates/hkask-portfolio-widget` | `portfolio`   | portfolio dashboard (replaces deleted `PortfolioDashboardView`)                                    | `diagrams/class-hkask-portfolio-widget.md` | `crates/hkask-portfolio-widget/src/{block,view}.rs`                                              | ✅ VERIFIED 2026-08-03 |
 | DIAG-VIZ-SCENARIOS | `kask/crates/hkask-scenarios-widget` | `scenarios`   | scenario pipeline / matrix / timeline (replaces deleted `ScenariosView`)                           | `diagrams/class-hkask-scenarios-widget.md` | `crates/hkask-scenarios-widget/src/{block,view}.rs`                                              | ✅ VERIFIED 2026-08-03 |
 
-Wiring seam: `crates/agent_ui/src/conversation_view.rs` — `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`. See `DIVERGENCE.md` D10 and D18.
+Wiring seam: `crates/agent_ui/src/conversation_view.rs` — `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`. See `DIVERGENCE.md` D18.
 
 ## 15. Kanban State Diagrams
 
@@ -182,7 +182,7 @@ The `docs/diataxis/` set carries one diagram per artifact across 9 crates (`hkas
 
 [^doc-standards]: hKask Team. (2026). _Documentation Standards_. `docs/architecture/DOCUMENTATION_STANDARDS.md`.
 
-[^divergence]: zed-kask Team. (2026). _Divergence surface_. `DIVERGENCE.md` — D10 (kask_panel removal), D18 (viz widgets).
+[^divergence]: zed-kask Team. (2026). _Divergence surface_. `DIVERGENCE.md` — D18 (viz widgets).
 
 ---
 

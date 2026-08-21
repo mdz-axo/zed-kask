@@ -228,7 +228,6 @@ impl TrainingServer {
                             passed_with_bodies.iter().zip(failed_with_bodies.iter())
                         {
                             let chosen_messages = parse_message_pairs(&chosen.0);
-                            let rejected_messages = parse_message_pairs(&rejected.0);
                             let prompt = chosen_messages
                                 .iter()
                                 .find(|(role, _)| role == "user")

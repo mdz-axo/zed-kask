@@ -60,7 +60,6 @@ impl KanbanService {
     ///
     /// pre:  task_id refers to an existing task with an rJoule budget set
     /// post: returns a callback that deducts from the task's rJoule budget
-    #[must_use]
     pub(super) fn require_task_actor(task: &Task, actor: WebID) -> Result<(), KanbanError> {
         if task.owner == actor || task.assignee == Some(actor) {
             Ok(())
@@ -823,6 +822,10 @@ impl KanbanService {
     ///
     /// pre:  task_id is valid; actor is the task owner
     /// post: provided fields are updated; task.updated_at refreshed
+    // The double-Option fields are inherent to this patch API; grouping them
+    // into a struct would obscure the None / Some(None) / Some(Some(x)) trichotomy
+    // documented above, so we accept the argument count.
+    #[allow(clippy::too_many_arguments)]
     #[must_use = "result must be used"]
     pub fn task_update(
         &self,
