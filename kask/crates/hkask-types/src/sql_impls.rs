@@ -18,7 +18,8 @@
 //! (newtype wrappers) because Rust's orphan rules forbid implementing
 //! foreign traits for foreign types.
 
-use crate::id::{BotID, EventID, GoalID, HMemId, TemplateID, UserID, WebID};
+use crate::id::core::{GoalID, UserID};
+use crate::id::{BotID, EventID, HMemId, TemplateID, WebID};
 use crate::visibility::Confidence;
 use crate::visibility::Visibility;
 use rusqlite::ToSql;

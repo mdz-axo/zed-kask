@@ -58,7 +58,7 @@ pub(crate) struct CostDistribution {
 
 /// Per-tool reliability alert, emitted when success probability drops.
 #[derive(Debug, Clone)]
-pub(crate) struct ToolReliabilityAlert {
+pub struct ToolReliabilityAlert {
     pub tool_name: String,
     pub success_probability: f64,
     pub threshold: f64,

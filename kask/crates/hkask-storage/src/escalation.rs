@@ -348,54 +348,6 @@ impl EscalationQueue {
         })
     }
 }
-/// Aggregated stats over escalation queue.
-///
-/// The algedonic channel's value is inversely proportional to its traffic
-/// (VSM algedonic paradox). Batching reduces noise while preserving signal fidelity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct EscalationBatch {
-    pub id: EscalationID,
-    pub entries: Vec<EscalationEntry>,
-    pub domain: String,
-    pub created_at: DateTime<Utc>,
-    pub threshold: usize,
-}
-impl EscalationBatch {
-    /// Create a new escalation summary.
-    ///
-    /// expect: "The system provides durable storage for escalation data"
-    /// \[P3\] Motivating: Generative Space — create escalation summary
-    /// pre:  domain is non-empty, threshold > 0
-    /// post: returns EscalationSummary
-    pub fn new(entries: Vec<EscalationEntry>, domain: &str, threshold: usize) -> Self {
-        Self {
-            id: EscalationID::new(),
-            entries,
-            domain: domain.to_string(),
-            created_at: Utc::now(),
-            threshold,
-        }
-    }
-    /// Generate a human-readable summary.
-    ///
-    /// expect: "The system provides durable storage for escalation data"
-    /// \[P3\] Motivating: Generative Space — generate summary text
-    /// post: returns summary string with counts and threshold info
-    pub fn summary(&self) -> String {
-        let count = self.entries.len();
-        let domains: std::collections::HashSet<&str> = self
-            .entries
-            .iter()
-            .map(|e| e.output.split(':').next().unwrap_or("unknown"))
-            .collect();
-        format!(
-            "System attention required: {} escalation(s) across {} domain(s) [{}]",
-            count,
-            domains.len(),
-            self.domain
-        )
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EscalationStats {
     pub total: i64,

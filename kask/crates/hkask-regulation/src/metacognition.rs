@@ -110,7 +110,7 @@ pub struct EscalationAlert {
 
 /// What triggered an escalation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EscalationTrigger {
+pub enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
     LowEffectiveness,
@@ -123,7 +123,7 @@ pub(crate) enum EscalationTrigger {
 
 /// Metacognition loop configuration.
 #[derive(Debug, Clone)]
-pub(crate) struct MetacognitionConfig {
+pub struct MetacognitionConfig {
     pub tick_interval: Duration,
     pub variety_deficit_threshold: u64,
     pub critical_alert_threshold: usize,

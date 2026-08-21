@@ -31,7 +31,7 @@ pub(crate) struct ToolConsumptionEvent {
 /// Replaces `LoopPayload::GoalTransition`. Sent on a dedicated
 /// `tokio::sync::mpsc::Sender<GoalTransitionEvent>` channel to CurationLoop's inbox.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct GoalTransitionEvent {
+pub struct GoalTransitionEvent {
     pub goal_id: String,
     pub from_state: String,
     pub to_state: String,
@@ -74,7 +74,7 @@ impl GoalLifecycle {
 /// Sent via the curation inbox so the Curator can sense and respond to
 /// agent-to-agent or human-to-agent Matrix activity.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct CommunicationEvent {
+pub struct CommunicationEvent {
     /// Span category (e.g., "communication.message", "communication.thread").
     pub span_category: String,
     /// Span path within the category (e.g., "observed", "created").

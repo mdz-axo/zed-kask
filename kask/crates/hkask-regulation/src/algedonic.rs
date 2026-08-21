@@ -27,7 +27,7 @@ pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
 
 /// Alert severity levels — simple binary threshold classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum AlertSeverity {
+pub enum AlertSeverity {
     /// Informational - deficit detected but below threshold
     Info,
     /// Warning - deficit approaching threshold

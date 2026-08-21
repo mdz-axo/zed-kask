@@ -11,7 +11,7 @@ use super::core::LoopId;
 /// (Fowler H7: Replace Type Code with Strategy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SignalMetric {
+pub enum SignalMetric {
     /// Fraction of energy budget remaining (Cybernetics Loop 6)
     EnergyRemaining,
     /// Raw variety deficit count (Cybernetics Loop 6)

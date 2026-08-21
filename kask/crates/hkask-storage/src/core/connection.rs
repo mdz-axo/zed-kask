@@ -410,14 +410,6 @@ impl Drop for Database {
     }
 }
 
-pub(crate) fn check_passphrase(path: &str, passphrase: &str) -> Result<(), DatabaseError> {
-    let db = Database::open(path, passphrase)?;
-    // Verification happens during connect() — if the passphrase is wrong,
-    // pool.get() returns an error that maps to PassphraseMismatch.
-    let _ = db.sqlite_pool()?;
-    Ok(())
-}
-
 /// expect: "A passphrase mistake never destroys my encrypted database."
 /// \[P1\] Motivating: User Sovereignty — user data remains under the user's control.
 /// pre: `path` identifies a SQLCipher database and `passphrase` is non-empty.
