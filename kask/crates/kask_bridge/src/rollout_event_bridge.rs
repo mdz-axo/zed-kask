@@ -435,9 +435,7 @@ mod tests {
         assert_eq!(payload["improved"], false);
         assert_eq!(payload["decision"], "Worsen");
         assert_eq!(
-            hkask_event_store::VerdictSource::from_str(
-                payload["source"].as_str().unwrap()
-            ),
+            hkask_event_store::VerdictSource::from_str(payload["source"].as_str().unwrap()),
             Some(hkask_event_store::VerdictSource::RegulationImpact)
         );
     }
@@ -446,8 +444,10 @@ mod tests {
     fn append_impact_verdict_errors_on_empty_rollout_id() {
         let store = memory_store();
         let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
-        assert!(bridge
-            .append_impact_verdict("", "pass_rate", 0.8, 0.5, false, "Worsen")
-            .is_err());
+        assert!(
+            bridge
+                .append_impact_verdict("", "pass_rate", 0.8, 0.5, false, "Worsen")
+                .is_err()
+        );
     }
 }

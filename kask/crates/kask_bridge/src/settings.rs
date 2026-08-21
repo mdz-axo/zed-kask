@@ -94,11 +94,6 @@ pub struct KaskSettings {
 
     /// Inference provider toggles (non-secret — API keys are in the keychain).
     pub inference_providers: KaskInferenceProvidersSettings,
-
-    /// Local collab server configuration. When enabled, zed-kask launches a
-    /// local collab server at startup so the kask extensions panel can fetch
-    /// `/api/kask-skills` without depending on the deployed `zed.dev` server.
-    pub collab: KaskCollabSettings,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -220,40 +215,6 @@ impl KaskInferenceProvidersSettings {
 /// having the kask route. The server uses SQLite for local dev; S3 is
 /// only required for publish/download/vote.
 ///
-/// `Default` is the single source of truth — `From<Content>` reads from it
-/// via `unwrap_or(default.field)`. The defaults launch a server on
-/// `localhost:3000` with a `sqlite:./kask_marketplace.db` database.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskCollabSettings {
-    /// Whether to auto-launch the local collab server at startup.
-    pub enabled: bool,
-
-    /// SQLite connection string (e.g. `sqlite:./kask_marketplace.db`).
-    pub database_url: String,
-
-    /// HTTP port the collab server listens on.
-    pub http_port: u16,
-
-    /// Zed environment (`development`, `staging`, `production`).
-    pub zed_environment: String,
-
-    /// Marketplace base URL the extensions panel uses. When set and non-empty,
-    /// overrides the `server_url`-based resolution in `kask_marketplace_base_url`.
-    pub marketplace_url: String,
-}
-
-impl Default for KaskCollabSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            database_url: "sqlite:kask_marketplace.db?mode=rwc".into(),
-            http_port: 3000,
-            zed_environment: "development".into(),
-            marketplace_url: "http://localhost:3000".into(),
-        }
-    }
-}
-
 /// Curator configuration.
 ///
 /// `Default` is the single source of truth for defaults — `From<Content>` reads
@@ -1493,19 +1454,6 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
     }
 }
 
-impl From<settings_content::KaskCollabSettingsContent> for KaskCollabSettings {
-    fn from(c: settings_content::KaskCollabSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            enabled: c.enabled.unwrap_or(default.enabled),
-            database_url: c.database_url.unwrap_or(default.database_url),
-            http_port: c.http_port.unwrap_or(default.http_port),
-            zed_environment: c.zed_environment.unwrap_or(default.zed_environment),
-            marketplace_url: c.marketplace_url.unwrap_or(default.marketplace_url),
-        }
-    }
-}
-
 impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
@@ -1530,7 +1478,6 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .inference_providers
                 .map(Into::into)
                 .unwrap_or_else(KaskInferenceProvidersSettings::from_env),
-            collab: c.collab.map(Into::into).unwrap_or_default(),
         }
     }
 }
@@ -1794,75 +1741,7 @@ mod tests {
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
     }
-
-    // Collab server defaults: the local collab server is enabled by default
-    // with SQLite on port 3000. This pins the zero-config behavior — without
-    // these defaults, the kask extensions panel hits 404 on zed.dev because
-    // the deployed server doesn't have the /api/kask-skills route.
-    #[test]
-    fn collab_settings_default_is_enabled_with_sqlite() {
-        let default = KaskCollabSettings::default();
-        assert!(
-            default.enabled,
-            "KaskCollabSettings::default() must be enabled"
-        );
-        assert_eq!(default.database_url, "sqlite:kask_marketplace.db?mode=rwc");
-        assert_eq!(default.http_port, 3000);
-        assert_eq!(default.zed_environment, "development");
-        assert_eq!(default.marketplace_url, "http://localhost:3000");
-    }
-
-    #[test]
-    fn kask_settings_from_empty_content_uses_collab_defaults() {
-        let settings = KaskSettings::from(KaskSettingsContent::default());
-        assert!(settings.collab.enabled);
-        assert_eq!(settings.collab.http_port, 3000);
-        assert_eq!(settings.collab.marketplace_url, "http://localhost:3000");
-    }
-
-    #[test]
-    fn kask_settings_from_present_collab_subsection_with_null_fields_uses_defaults() {
-        let content = KaskSettingsContent {
-            collab: Some(settings_content::KaskCollabSettingsContent {
-                enabled: None,
-                database_url: None,
-                http_port: None,
-                zed_environment: None,
-                marketplace_url: None,
-            }),
-            ..Default::default()
-        };
-        let settings = KaskSettings::from(content);
-        assert!(settings.collab.enabled);
-        assert_eq!(settings.collab.http_port, 3000);
-        assert_eq!(
-            settings.collab.database_url,
-            "sqlite:kask_marketplace.db?mode=rwc"
-        );
-    }
-
-    #[test]
-    fn kask_settings_from_present_collab_subsection_preserves_explicit_overrides() {
-        let content = KaskSettingsContent {
-            collab: Some(settings_content::KaskCollabSettingsContent {
-                enabled: Some(false),
-                database_url: Some("sqlite:./custom.db".into()),
-                http_port: Some(4000),
-                zed_environment: Some("staging".into()),
-                marketplace_url: Some("https://market.example.com".into()),
-            }),
-            ..Default::default()
-        };
-        let settings = KaskSettings::from(content);
-        assert!(!settings.collab.enabled);
-        assert_eq!(settings.collab.database_url, "sqlite:./custom.db");
-        assert_eq!(settings.collab.http_port, 4000);
-        assert_eq!(settings.collab.zed_environment, "staging");
-        assert_eq!(
-            settings.collab.marketplace_url,
-            "https://market.example.com"
-        );
-    }
+:
 
     // `mcp_env()` must not emit env vars for settings that match `Default`.
     // Previously `mcp_env()` compared against inlined magic numbers (1024, 4,

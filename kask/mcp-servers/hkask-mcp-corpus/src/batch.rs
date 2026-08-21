@@ -23,8 +23,7 @@ pub(crate) enum BatchStatus {
     Degraded,
 }
 
-impl BatchStatus {
-}
+impl BatchStatus {}
 
 /// Outcome of a batch run, classifying the failure rate against the degraded threshold.
 #[derive(Debug, Clone, Copy)]

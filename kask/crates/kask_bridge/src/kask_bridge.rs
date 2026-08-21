@@ -50,8 +50,8 @@ pub use memory::{
 };
 pub use model_resolution::resolve_model_names;
 pub use settings::{
-    KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
-    KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskGeneralSettings,
+    KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
+    KaskCuratorSettings, KaskDataServiceSettings, KaskGeneralSettings,
     KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
     KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
     KaskSettings, KaskSwarmSettings, KaskToolRouterSettings, KaskTrainingSettings, SwarmModeConfig,

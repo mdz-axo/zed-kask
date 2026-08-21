@@ -1941,31 +1941,6 @@ fn main() {
                 // remediation guidance.
                 let collab_settings = kask_settings.collab.clone();
                 if collab_settings.enabled {
-                    // Propagate the marketplace URL to the process env so the
-                    // zed-kask: D9 — F17: kask extensions panel wiring (Guideline).
-                    // kask extensions panel (which resolves via
-                    // `HKASK_MARKETPLACE_URL` → server_url → localhost:3000)
-                    // picks up the local collab server's URL without needing a
-                    // direct kask_bridge dependency. Only set it when not
-                    // already configured by the operator — shell env wins.
-                    if std::env::var("HKASK_MARKETPLACE_URL").is_err() {
-                        let marketplace_url =
-                            collab_settings.marketplace_url.trim_end_matches('/');
-                        if !marketplace_url.is_empty() {
-                            // SAFETY: process-global mutation during startup
-                            // before any marketplace request is in flight.
-                            unsafe {
-                                std::env::set_var(
-                                    "HKASK_MARKETPLACE_URL",
-                                    marketplace_url,
-                                );
-                            }
-                            log::info!(
-                                "hKask marketplace URL set to {marketplace_url} \
-                                 from kask.collab.marketplace_url"
-                            );
-                        }
-                    }
                     // zed-kask: D7 — F18: collab binary path resolution (dev, Guideline).
                     // Resolve the collab binary path. In dev this is
                     // `target/<profile>/collab`; in installed binaries it's
@@ -2105,9 +2080,7 @@ fn main() {
                 } else {
                     log::info!(
                         "hKask local collab server disabled \
-                         (kask.collab.enabled = false) — the kask extensions panel \
-                         will resolve the marketplace URL via \
-                         HKASK_MARKETPLACE_URL / server_url / localhost:3000"
+                         (kask.collab.enabled = false)"
                     );
                 }
 

@@ -11,7 +11,7 @@
 #   bash kask/scripts/build/install.sh --debug --skip-deps
 #
 # Environment variables:
-#   HKASK_VERSION       Tag to clone (default: 0.32.0; falls back to main only
+#   HKASK_VERSION       Tag to clone (default: 0.36.0; falls back to main only
 #                       if HKASK_ALLOW_FALLBACK=true)
 #   HKASK_BUILD_TYPE    release or debug (default: release)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
@@ -82,7 +82,7 @@ clone_repo() {
             HKASK_VERSION="$(awk -F'"' '/^version *=* "/{print $2; exit}' "$local_root/Cargo.toml")"
         fi
         if [ -z "$HKASK_VERSION" ]; then
-            HKASK_VERSION="0.32.0"
+            HKASK_VERSION="0.36.0"
             log_warning "Could not derive version from Cargo.toml — using default $HKASK_VERSION"
         fi
     fi
@@ -587,16 +587,11 @@ Options:
 
 Environment Variables:
     HKASK_VERSION         Tag to install (default: derived from workspace
-                          Cargo.toml version, or 0.32.0 if unreadable)
+                          Cargo.toml version, or 0.36.0 if unreadable)
     HKASK_BUILD_TYPE      release or debug (default: release)
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
     HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
-    HKASK_MARKETPLACE_URL URL of the kask skill marketplace API
-                          (default: http://localhost:3000 for local dev).
-                          Set to your kask-aware collab server in production.
-                          Decoupled from server_url (which points at Zed's
-                          cloud for login/collab/telemetry).
     INSTALL_DIR           Installation directory (default: $HOME/.local)
     HKASK_SYSTEM_INSTALL  Force system-wide install (default: false)
     HKASK_REMOVE_CONFIG   Remove config and data on uninstall (default: false)

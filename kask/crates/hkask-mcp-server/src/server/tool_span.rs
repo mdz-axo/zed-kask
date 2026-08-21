@@ -99,8 +99,9 @@ impl ToolSpanGuard {
     #[must_use]
     pub fn ok_json(self, value: Value) -> String {
         self.ok(
-            serde_json::to_string(&serde_json::json!({"content": value}))
-                .unwrap_or_else(|e| serde_json::json!({"content": format!("serialization error: {e}")}).to_string()),
+            serde_json::to_string(&serde_json::json!({"content": value})).unwrap_or_else(|e| {
+                serde_json::json!({"content": format!("serialization error: {e}")}).to_string()
+            }),
         )
     }
 

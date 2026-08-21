@@ -194,7 +194,6 @@ classDiagram
         +database_url: String
         +http_port: u16
         +zed_environment: String
-        +marketplace_url: String
     }
     KaskSettings --> KaskMcpSettings
     KaskSettings --> KaskCuratorSettings
