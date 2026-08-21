@@ -37,7 +37,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 | `inference_providers` | `KaskInferenceProvidersSettings` | derived `Default` (all false) |
-| `collab` | `KaskCollabSettings` | `Default` (enabled, localhost:3000, sqlite) |
 
 ## MCP Servers (`KaskMcpSettings`)
 
@@ -107,21 +106,6 @@ explicitly toggled it.
 
 **To add models**: After enabling a provider, go to Settings → AI → LLM
 Providers, find the provider, and add models via its configuration sub-page.
-
-## Collab (`KaskCollabSettings`)
-
-Local collab server configuration (settings.rs:199-227). When `enabled` is
-true, zed-kask launches a local `collab serve api` process at startup so the
-kask extensions panel can fetch `/api/kask-skills` without depending on the
-deployed `zed.dev` server. The server uses SQLite (no Postgres/S3 needed)
-for local dev; S3 is only required for publish/download/vote.
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `enabled` | `bool` | `true` | Auto-launch the local collab server at startup |
-| `database_url` | `String` | `"sqlite:kask_marketplace.db?mode=rwc"` | SQLite connection string |
-| `http_port` | `u16` | `3000` | HTTP port the collab server listens on |
-| `zed_environment` | `String` | `"development"` | `development`, `staging`, or `production` |
 
 ## Curator (`KaskCuratorSettings`)
 

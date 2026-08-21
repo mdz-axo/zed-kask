@@ -352,7 +352,7 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          `kanban_board_export` (mermaid markdown), `kanban_board_import` (mermaid markdown).\n\
          **Task tools**: `kanban_task_create`, `kanban_task_list`, `kanban_task_move`, \
          `kanban_task_assign`, `kanban_task_unassign`, `kanban_task_update`, `kanban_task_delete`, \
-         `kanban_task_verify`, `kanban_task_reopen`.\n\
+         `kanban_task_verify`, `kanban_task_reopen`, `kanban_task_add_rjoules` (inference/API budget).\n\
          **Communication**: `kanban_task_comment`, `kanban_task_comments_since`, `kanban_task_add_deliverable`.\n\
          **Swarm delegation**: `kanban_task_spawn` (delegates a task to a subagent or swarm agent), \
          `kanban_task_delegate_result` (reads the structured delegation result and verdict).\n\
