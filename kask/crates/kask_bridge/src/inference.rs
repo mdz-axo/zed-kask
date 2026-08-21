@@ -259,31 +259,6 @@ impl LanguageModelInferencePort {
         }
     }
 
-    /// F12: Upgrade `tool_choice` from `Auto` to `Any` when the model
-    /// supports it and tools are present.
-    ///
-    /// `build_request` sets `Auto` (model-agnostic — it doesn't have the
-    /// model handle). With `Auto`, the model may skip the structured-output
-    /// tool and emit prose or nothing, which then fails JSON parsing. With
-    /// `Any`/`Required`, the provider forces a tool call. This is the
-    /// LangGraph/Swarm pattern: enforce the output contract at the inference
-    /// API layer, not the prompt layer.
-    ///
-    /// Called from `handle_non_streaming` and `handle_streaming` where the
-    /// resolved model is available for the capability check. If the model
-    /// doesn't support `Any`, `Auto` is retained (the A2 empty-output guard
-    /// catches that fallback case).
-    fn upgrade_tool_choice(request: &mut LanguageModelRequest, model: &Arc<dyn LanguageModel>) {
-        if request.tools.is_empty() {
-            return;
-        }
-        if request.tool_choice == Some(LanguageModelToolChoice::Auto)
-            && model.supports_tool_choice(LanguageModelToolChoice::Any)
-        {
-            request.tool_choice = Some(LanguageModelToolChoice::Any);
-        }
-    }
-
     /// Handle a non-streaming inference request — collects the full stream
     /// into a single `InferenceResult` before replying.
     async fn handle_non_streaming(
@@ -293,9 +268,7 @@ impl LanguageModelInferencePort {
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
-        // F12: upgrade tool_choice from Auto to Any when the model supports it.
-        let mut request = req.request;
-        Self::upgrade_tool_choice(&mut request, &model);
+        let request = req.request;
         let result = async move {
             let stream_result = model
                 .stream_completion(request, &cx)
@@ -334,9 +307,7 @@ impl LanguageModelInferencePort {
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
-        // F12: upgrade tool_choice from Auto to Any when the model supports it.
-        let mut request = req.request;
-        Self::upgrade_tool_choice(&mut request, &model);
+        let request = req.request;
         let reply = req.reply;
 
         async move {

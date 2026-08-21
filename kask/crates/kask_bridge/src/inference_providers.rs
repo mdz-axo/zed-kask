@@ -76,53 +76,11 @@ impl InferenceProviderDescriptor {
     }
 }
 
-/// Data service credential descriptors: `(env_var, credential_key)`.
-///
-/// Whether a data service credential is a secret or a non-secret config value.
-///
-/// `Secret` credentials (API keys, tokens, passphrases, passwords) are mirrored
-/// from `.env` into the OS keychain by `mirror_env_keys_to_keychain` and
-/// injected into MCP server child processes via `build_mcp_server_env`
-/// (which reads the keychain). They appear in MCP server `credentials`
-/// allowlists.
-///
-/// `Config` credentials (IDs, paths, template names) are NOT mirrored to the
-/// keychain — they're non-secret and belong in the process environment, which
-/// child processes inherit directly. They appear in MCP server `config_env`
-/// allowlists and are read via `std::env::var`, not `ctx.credentials.get`.
-/// Routing config values through the keychain treats a project ID as a
-/// password (keychain UI shows it as masked, can't be diffed in config) and
-/// adds a keychain round-trip for non-secret data.
-///
-/// Note: no current `DATA_SERVICES` entry uses `Config` — `RUNPOD_TEMPLATE_ID`,
-/// `NEBIUS_PROJECT_ID`, and `NEBIUS_SUBNET_ID` are architecturally config
-/// values but are classified as `Secret` because the training server reads
-/// them via `ctx.credentials.get` (keychain injection path). Moving them to
-/// `Config` requires changing the read sites to `std::env::var` and moving
-/// them from `credentials` to `config_env` in the MCP server allowlist —
-/// the same pattern applied to `HKASK_KANBAN_DB`. Deferred to a future
-/// refactor to avoid changing the training server's provider abstraction.
-pub(crate) enum DataServiceKind {
-    Secret,
-    /// Reserved for future `Config`-kind entries (non-secret values routed
-    /// via `mcp_env()` + `config_env`, not the keychain). No `DATA_SERVICES`
-    /// entry uses this variant today — `RUNPOD_TEMPLATE_ID`,
-    /// `NEBIUS_PROJECT_ID`, and `NEBIUS_SUBNET_ID` are architecturally config
-    /// but stay `Secret` because the training server reads them via
-    /// `ctx.credentials.get` (keychain path). Moving them to `Config` is
-    /// deferred (requires changing the training server's read sites +
-    /// adding settings fields — a feature, not a refactor).
-    #[allow(dead_code)]
-    Config,
-}
-
 /// A typed descriptor for a data service credential — the single source of
-/// truth for data service env vars, credential keys, display metadata, and
-/// secret/config classification. Replaces the former `DATA_SERVICE_CREDENTIALS`
-/// `&[(&str, &str)]` 2-tuple and the settings UI's parallel `DATA_SERVICES`
-/// `&[(&str, &str, &str, &str)]` 4-tuple, which had overlapping fields in
-/// different positions and no type-level distinction between secrets and
-/// config values.
+/// truth for data service env vars, credential keys, and display metadata.
+/// Replaces the former `DATA_SERVICE_CREDENTIALS` `&[(&str, &str)]` 2-tuple
+/// and the settings UI's parallel `DATA_SERVICES` `&[(&str, &str, &str, &str)]`
+/// 4-tuple, which had overlapping fields in different positions.
 pub struct DataServiceDescriptor {
     /// The env var name that MCP servers read for this credential.
     pub env_var: &'static str,
@@ -133,8 +91,6 @@ pub struct DataServiceDescriptor {
     pub label: &'static str,
     /// Dashboard URL where the user can obtain or manage the credential.
     pub dashboard_url: &'static str,
-    /// Whether this is a secret (keychain) or config (env-only) value.
-    pub(crate) kind: DataServiceKind,
     /// The settings toggle key for this credential in the Data Services UI,
     /// or `None` if the credential should not appear in the UI (managed
     /// elsewhere, e.g. `HKASK_SMTP_PASSWORD` in the Curator page, or
@@ -148,11 +104,6 @@ impl DataServiceDescriptor {
     /// The keychain URL for this credential in the kask namespace.
     pub fn credential_url(&self) -> String {
         format!("{KASK_CREDENTIAL_NAMESPACE}/{}", self.credential_key)
-    }
-
-    /// Whether this credential should be mirrored to the keychain.
-    pub fn is_secret(&self) -> bool {
-        matches!(self.kind, DataServiceKind::Secret)
     }
 
     /// Whether this credential should appear as a row in the Data Services
@@ -175,7 +126,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "eodhd",
         label: "EODHD",
         dashboard_url: "https://eodhd.com/dashboard",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("eodhd"),
     },
     DataServiceDescriptor {
@@ -183,7 +133,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "fmp",
         label: "FMP (Financial Modeling Prep)",
         dashboard_url: "https://site.financialmodelingprep.com/developer/docs",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("fmp"),
     },
     DataServiceDescriptor {
@@ -191,7 +140,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "exa",
         label: "Exa",
         dashboard_url: "https://dashboard.exa.ai/api-keys",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("exa"),
     },
     DataServiceDescriptor {
@@ -199,7 +147,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "tavily",
         label: "Tavily",
         dashboard_url: "https://app.tavily.com/api-key",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("tavily"),
     },
     DataServiceDescriptor {
@@ -207,7 +154,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "brave",
         label: "Brave Search",
         dashboard_url: "https://api.search.brave.com/app/subscriptions",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("brave"),
     },
     DataServiceDescriptor {
@@ -215,7 +161,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "serpapi",
         label: "SerpAPI (Google Search)",
         dashboard_url: "https://serpapi.com/dashboard",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("serpapi"),
     },
     DataServiceDescriptor {
@@ -223,7 +168,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "firecrawl",
         label: "Firecrawl (web scraping)",
         dashboard_url: "https://firecrawl.dev/",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("firecrawl"),
     },
     DataServiceDescriptor {
@@ -231,7 +175,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "browserbase",
         label: "Browserbase (headless browser)",
         dashboard_url: "https://browserbase.com/",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("browserbase"),
     },
     // ABW API key — not shown in the Data Services UI (no toggle, managed
@@ -241,7 +184,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_abw_api_key",
         label: "ABW API Key",
         dashboard_url: "",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     // curator, corpus, training, kata-kanban, research) via
@@ -253,7 +195,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_db_passphrase",
         label: "DB Passphrase",
         dashboard_url: "",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     // Swarm memory SQLCipher passphrase — read by the swarm server at
@@ -268,7 +209,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_swarm_memory_passphrase",
         label: "Swarm Memory Passphrase",
         dashboard_url: "",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     // Curator SMTP password — managed in the Curator Email settings page,
@@ -278,7 +218,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_smtp_password",
         label: "SMTP Password",
         dashboard_url: "",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     DataServiceDescriptor {
@@ -286,7 +225,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "runpod",
         label: "RunPod (GPU cloud for training)",
         dashboard_url: "https://runpod.io/",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("runpod"),
     },
     // RunPod S3 credentials — not read by any MCP server (no allowlist
@@ -298,7 +236,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "runpod_s3_access_key",
         label: "RunPod S3 Access Key (adapter storage)",
         dashboard_url: "https://runpod.io/",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     DataServiceDescriptor {
@@ -306,7 +243,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "runpod_s3_secret",
         label: "RunPod S3 Secret (adapter storage)",
         dashboard_url: "https://runpod.io/",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     // RunPod template ID — architecturally a non-secret config value, but
@@ -321,7 +257,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "runpod_template_id",
         label: "RunPod Template ID",
         dashboard_url: "https://runpod.io/",
-        kind: DataServiceKind::Secret,
         ui_toggle: None,
     },
     // Nebius project ID — same note as RUNPOD_TEMPLATE_ID above. Shown in
@@ -332,7 +267,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "nebius_project_id",
         label: "Nebius Project ID (GPU cloud for training)",
         dashboard_url: "https://nebius.com/",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("nebius_project_id"),
     },
     // Nebius subnet ID — same note as NEBIUS_PROJECT_ID above.
@@ -341,7 +275,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "nebius_subnet_id",
         label: "Nebius Subnet ID",
         dashboard_url: "https://nebius.com/",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("nebius_subnet_id"),
     },
     DataServiceDescriptor {
@@ -349,7 +282,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hf_token",
         label: "HuggingFace Token",
         dashboard_url: "https://huggingface.co/settings/tokens",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("hf_token"),
     },
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
@@ -364,7 +296,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "fred",
         label: "FRED API Key",
         dashboard_url: "https://fred.stlouisfed.org/docs/api/api_key.html",
-        kind: DataServiceKind::Secret,
         ui_toggle: Some("fred"),
     },
 ];
@@ -382,15 +313,11 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // the toggle; services without a toggle (ABW, DB passphrase, SMTP, RunPod
     // S3/template, FRED, and the no-field services like SerpAPI/Firecrawl/
     // Browserbase/HF token) are injected unconditionally when the keychain
-    // entry exists — they have no enable/disable control. `Config` entries are
-    // skipped (non-secret, routed via `mcp_env()`). The per-MCP-server
+    // entry exists — they have no enable/disable control. The per-MCP-server
     // `credentials` allowlist is the final filter, so listing a key here does
     // not reach a server that doesn't declare it. `build_mcp_server_env`
     // also skips env vars already set in the process environment.
     for desc in DATA_SERVICES {
-        if !desc.is_secret() {
-            continue;
-        }
         let enabled = match desc.credential_key {
             "eodhd" => settings.data_services.eodhd_enabled,
             "fmp" => settings.data_services.fmp_enabled,
@@ -447,12 +374,11 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 /// duplicate it in the LLM picker. OpenRouter's kask toggle still mirrors its
 /// key to MCP servers via `credential_urls_for_mcp` (which iterates
 /// `INFERENCE_PROVIDERS` directly, not this function).
-pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut App) {
+pub fn ensure_openai_compatible_entries(cx: &mut App) {
     // No kask `openai_compatible` providers remain to write: OpenRouter and
     // RunPod are skipped (built-in / dedicated zed providers), and the former
     // kask-registered providers have been removed. This function now only
     // scrubs stale entries so user settings.json stays clean.
-    let _ = settings;
 
     // Stale `openai_compatible` entries to scrub. The api_url guard avoids
     // removing a user's custom provider that happens to share an id.
@@ -741,14 +667,11 @@ fn collect_env_keys_for_mirror() -> Vec<MirrorTarget> {
         .collect();
 
     // Data service secrets: no OpenAI-compatible api_url, so only the
-    // credential_url is written. Config entries are skipped (non-secret).
-    // RunPod is skipped here because it's in `INFERENCE_PROVIDERS` (which
-    // writes both `api_url` and `credential_url`), so the `DataService`
-    // duplicate would only re-write `credential_url`.
+    // credential_url is written. RunPod is skipped here because it's in
+    // `INFERENCE_PROVIDERS` (which writes both `api_url` and
+    // `credential_url`), so the `DataService` duplicate would only re-write
+    // `credential_url`.
     for desc in DATA_SERVICES {
-        if !desc.is_secret() {
-            continue;
-        }
         if desc.credential_key == "runpod" {
             continue;
         }

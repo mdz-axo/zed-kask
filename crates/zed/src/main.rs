@@ -1122,7 +1122,7 @@ fn main() {
         // existing `register_compatible_providers` machinery in `language_models`.
         // Must run before `language_models::init` so the providers are registered
         // on the first settings observation.
-        kask_bridge::ensure_openai_compatible_entries(&kask_settings_for_mcp, cx);
+        kask_bridge::ensure_openai_compatible_entries(cx);
 
         // zed-kask: D8/D12 — F12: openai_compatible re-sync on settings change (Guardrail).
         // Re-sync `openai_compatible` entries whenever kask settings change so
@@ -1130,8 +1130,7 @@ fn main() {
         // (without requiring a restart). The `language_models` crate's own
         // `SettingsStore` observer then registers/unregisters the provider.
         cx.observe_global::<SettingsStore>(move |cx| {
-            let settings = kask_bridge::KaskSettings::get_global(cx).clone();
-            kask_bridge::ensure_openai_compatible_entries(&settings, cx);
+            kask_bridge::ensure_openai_compatible_entries(cx);
         })
         .detach();
 
