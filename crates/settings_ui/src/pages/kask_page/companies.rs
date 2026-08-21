@@ -98,7 +98,7 @@ pub(crate) fn render_companies_page(
                     Label::new(
                         "Directory for portfolio transaction files (CSV/JSON). The portfolio \
                          dashboard auto-loads new files from this directory. Leave empty for \
-                         the default (<kask_data_dir>/transactions/). Or set \
+                         the default (<kask_data_dir>/mcp/portfolio/transactions/). Or set \
                          HKASK_TRANSACTIONS_DIR.",
                     )
                     .size(LabelSize::Small)

@@ -123,7 +123,7 @@ pub(crate) fn render_general_page(
                          tool-directed requests, reducing the tool list the model must \
                          reason about. Activation threshold is the score for inclusion \
                          (0.0–1.0); complex-word threshold is the minimum word count \
-                         that triggers routing. Defaults: 0.30 / 40.",
+                         that triggers routing. Defaults: 0.30 / 6.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

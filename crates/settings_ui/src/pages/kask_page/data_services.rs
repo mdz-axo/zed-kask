@@ -46,22 +46,26 @@ pub(crate) fn render_data_services_page(
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for (key, label, dashboard_url, env_var) in data_service_descriptors() {
-        let enabled = match key {
-            "eodhd" => data_services.eodhd_enabled,
-            "fmp" => data_services.fmp_enabled,
-            "exa" => data_services.exa_enabled,
-            "tavily" => data_services.tavily_enabled,
-            "brave" => data_services.brave_enabled,
-            "runpod" => data_services.runpod_enabled,
-            "runpod_s3_access_key" | "runpod_s3_secret" => data_services.runpod_enabled,
-            "nebius_project_id" | "nebius_subnet_id" => data_services.nebius_enabled,
-            // These services don't have individual toggles — they're enabled
-            // when their API key is present. We show them as enabled if the
-            // key is in the keychain (checked via env var for display).
-            "serpapi" | "firecrawl" | "browserbase" | "hf_token" | "fred" => {
-                std::env::var(env_var).is_ok()
+        let has_toggle = kask_bridge::DATA_SERVICES
+            .iter()
+            .any(|d| d.credential_key == key && d.has_toggle());
+        let enabled = if has_toggle {
+            match key {
+                "eodhd" => data_services.eodhd_enabled,
+                "fmp" => data_services.fmp_enabled,
+                "exa" => data_services.exa_enabled,
+                "tavily" => data_services.tavily_enabled,
+                "brave" => data_services.brave_enabled,
+                "runpod" => data_services.runpod_enabled,
+                "runpod_s3_access_key" | "runpod_s3_secret" => data_services.runpod_enabled,
+                "nebius_project_id" | "nebius_subnet_id" => data_services.nebius_enabled,
+                _ => false,
             }
-            _ => false,
+        } else {
+            // Key-only services (no settings toggle) are always shown as
+            // enabled — the API key input is visible regardless, and the
+            // service is active when the key is present in the keychain.
+            true
         };
         rows.push(render_data_service_row(
             key,
@@ -69,6 +73,7 @@ pub(crate) fn render_data_services_page(
             dashboard_url,
             env_var,
             enabled,
+            has_toggle,
             provider.clone(),
             cx,
         ));
@@ -107,34 +112,12 @@ fn render_data_service_row(
     dashboard_url: &'static str,
     env_var: &'static str,
     enabled: bool,
+    has_toggle: bool,
     provider: Arc<dyn CredentialsProvider>,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/{key}");
     let has_key = has_credential(&provider, &[&credential_url], env_var);
-
-    let toggle_id = format!("kask-{key}-enabled");
-    let enable_toggle = SwitchField::new(
-        toggle_id,
-        Some(label),
-        Some(
-            format!(
-                "Enable {label}. API key is stored in the keychain under \
-             kask://credentials/{key}. Or set the {env_var} environment variable."
-            )
-            .into(),
-        ),
-        if enabled {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
-        },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            set_data_service_enabled(key, enabled, cx);
-        },
-    )
-    .tab_index(0);
 
     let key_input = if has_key {
         let reset_id = format!("kask-{key}-reset");
@@ -231,11 +214,54 @@ fn render_data_service_row(
             .into_any_element()
     };
 
-    v_flex()
-        .gap_2()
-        .child(enable_toggle)
-        .when(enabled, |this| this.child(key_input))
-        .into_any_element()
+    if has_toggle {
+        let toggle_id = format!("kask-{key}-enabled");
+        let enable_toggle = SwitchField::new(
+            toggle_id,
+            Some(label),
+            Some(
+                format!(
+                    "Enable {label}. API key is stored in the keychain under \
+                 kask://credentials/{key}. Or set the {env_var} environment variable."
+                )
+                .into(),
+            ),
+            if enabled {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            },
+            move |state, _window, cx| {
+                let enabled = *state == ToggleState::Selected;
+                set_data_service_enabled(key, enabled, cx);
+            },
+        )
+        .tab_index(0);
+
+        v_flex()
+            .gap_2()
+            .child(enable_toggle)
+            .when(enabled, |this| this.child(key_input))
+            .into_any_element()
+    } else {
+        // Key-only service: no toggle, always show the key input.
+        // The service is active when the key is present.
+        v_flex()
+            .gap_2()
+            .child(
+                v_flex().gap_0p5().child(Label::new(label)).child(
+                    Label::new(format!(
+                        "Enabled when the API key is present. Stored in the \
+                                 keychain under kask://credentials/{key}, or set the \
+                                 {env_var} environment variable."
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+            )
+            .child(key_input)
+            .into_any_element()
+    }
 }
 
 fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
@@ -256,7 +282,9 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
             "nebius_project_id" | "nebius_subnet_id" => {
                 data_services.nebius_enabled = Some(enabled);
             }
-            // These services don't have individual toggles — no-op.
+            // Key-only services (serpapi, firecrawl, browserbase, hf_token,
+            // fred) have no settings toggle — the UI renders them without a
+            // SwitchField, so this function is never called with those keys.
             _ => {}
         }
     });
