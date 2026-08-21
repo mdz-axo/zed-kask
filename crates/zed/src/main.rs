@@ -763,7 +763,7 @@ fn main() {
                 std::path::Path::new("skills/registry/templates"),
             )
         };
-        agent::set_template_base_path(template_base_path.clone());
+        agent::set_template_base_path(template_base_path);
 
         // Seed templates to the data-dir path so MCP servers (corpus,
         // training) find them regardless of dev/prod. The `render_template`
@@ -1656,7 +1656,7 @@ fn main() {
                                 // the asymmetry this block fixes.
                                 let curator_injector = std::sync::Arc::new(
                                     kask_bridge::BridgeContextInjector::new_curator(
-                                        real_memory_typed.clone(),
+                                        real_memory_typed,
                                         kask_settings.memory.recall_limit,
                                         kask_settings.memory.recall_min_confidence,
                                         auto_inject,
@@ -4559,7 +4559,7 @@ mod tests {
     ///
     /// Respects the `.rules` trap "Advertised invariants need enforcement
     /// points."
-
+    ///
     /// When no env var is set and the binary is not found next to the running
     /// exe, `resolve_mcp_binary` falls back to the bare name. This pins the
     /// last-resort fallback so GUI launches without the binary installed

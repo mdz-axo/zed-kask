@@ -365,3 +365,34 @@ fn match_column_name_to_status(name: &str) -> Option<TaskStatus> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::slugify_task_id;
+
+    #[test]
+    fn slugify_alphanumeric_id_keeps_content_under_t_prefix() {
+        assert_eq!(slugify_task_id("task-42"), "t_task_42");
+    }
+
+    #[test]
+    fn slugify_digit_leading_id_still_gets_letter_prefix() {
+        // Mermaid node ids must start with a letter. A raw id beginning with a
+        // digit must still be prefixed with `t_`; the prefix is load-bearing,
+        // not cosmetic.
+        assert_eq!(slugify_task_id("9start"), "t_9start");
+        assert!(slugify_task_id("9start").starts_with('t'));
+    }
+
+    #[test]
+    fn slugify_empty_or_all_symbols_id_falls_back_to_t_task() {
+        assert_eq!(slugify_task_id(""), "t_task");
+        assert_eq!(slugify_task_id("!!!"), "t_task");
+        assert_eq!(slugify_task_id("___"), "t_task");
+    }
+
+    #[test]
+    fn slugify_trims_leading_and_trailing_underscores() {
+        assert_eq!(slugify_task_id("_foo_"), "t_foo");
+    }
+}

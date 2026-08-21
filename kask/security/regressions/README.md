@@ -43,8 +43,8 @@ status: pending | enforced           # pending = known bug, not yet fixed; enfor
    history infrastructure not yet implemented'). A deferred regression is a
    documented gap, not a silent pass.
 4. **obsolete** — the machinery the regression checked was deleted. The note
-   field records what was deleted and when (e.g., 'hkask-guard crate deleted
-   2026-08-10'). The entry is retained as historical record.
+   field records what was deleted and when. The entry is retained as historical
+   record.
 5. **retired** — the regression was de-advertised rather than deployed: the
    defense layer it checked for was never present in this repo, and the
    catalog references were removed. The note field records the decision.

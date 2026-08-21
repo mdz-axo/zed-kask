@@ -2,10 +2,8 @@
 //! calibration summary, event matrix, event tree list, and recent forecasts
 //! inline in agent markdown. Read-only.
 //!
-//! This replaces the deleted standalone `ScenariosView` from `kask_panel`.
-//! Data comes from the parsed `ScenariosBlockBody` instead of from `ToolInvoker`
-//! MCP tool fetches — the agent (curator) calls `scenario_status` and emits
-//! the result as a ```scenarios fenced block.
+//! Data comes from the parsed `ScenariosBlockBody` — the agent (curator) calls
+//! `scenario_status` and emits the result as a ```scenarios fenced block.
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, Focusable, IntoElement, ParentElement, Render, Styled,

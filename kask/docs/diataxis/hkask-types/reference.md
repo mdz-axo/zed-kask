@@ -46,9 +46,6 @@ prevention — see `Cargo.toml:13`).
 | `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:113` |
 | `TurnRecord` / `to_chat_turn_value` | `kask/crates/hkask-types/src/ports/memory_port.rs:29,62` |
 | `MemorySnippet` / `MemoryError` / `MemoryFuture` | `kask/crates/hkask-types/src/ports/memory_port.rs:80,93,101` |
-| `SkillRegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:286` |
-| `RegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:309` |
-| `Skill` / `RegistryEntry` / `SkillZone` / `RegistryError` | `kask/crates/hkask-types/src/ports/registry.rs:99,9,57,269` |
 | `ConsolidationRequest` / `ConsolidationOutcome` | `kask/crates/hkask-types/src/ports/regulation.rs:3,20` |
 | `EmbeddingGenerationError` | `kask/crates/hkask-types/src/ports/embedding.rs:3` |
 | `RegulationRecord` / `Span` / `SpanNamespace` / `SpanKind` / `CyclePhase` / `RegulationSink` | `kask/crates/hkask-types/src/event.rs:16,670,101,722,803,839` |
@@ -240,14 +237,6 @@ snippet recall. `ingest_turn` is required; `recall_context` and
 (`memory_port.rs:29`), `MemorySnippet` (`memory_port.rs:80`), `MemoryError`
 (`memory_port.rs:93`), `MemoryFuture` (`memory_port.rs:101`).
 
-### Registry cluster (removed)
-
-`SkillRegistryIndex` and `RegistryIndex` (`ports/registry.rs`) were **deleted** —
-the skill-visibility chain they advertised (`list_skills_visible_to`) was never
-enforced (zero callers outside the trait definition), so the entire
-`ports/registry.rs` file was removed per the advertised-invariant rule. The
-`Visibility` enum itself is retained in `visibility.rs` (live via `AccessControl`/
-`HMem`). See `DIVERGENCE.md` for the removal record.
 
 ### Regulation cluster
 

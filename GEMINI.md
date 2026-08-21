@@ -389,11 +389,10 @@ before the model resolves) and once in the deferred task (post-login, to
 upgrade). The `Mutex` pattern allows the deferred call to replace the early
 one.
 
-`set_tool_invoker` (now in `crates/swarm_panel/src/tool_invoker.rs`, moved from
-the deleted `kask_panel` crate) is `Mutex`-based and wired once in the
-deferred task — it only needs the `tool_port`, which is available before the
-model resolves, but the swarm panel's lifecycle actions are rarely used before
-login so the single deferred wiring is sufficient.
+`set_tool_invoker` (in `crates/swarm_panel/src/tool_invoker.rs`) is `Mutex`-based
+and wired once in the deferred task — it only needs the `tool_port`, which is
+available before the model resolves, but the swarm panel's lifecycle actions
+are rarely used before login so the single deferred wiring is sufficient.
 
 Note: `set_curator_session_factory`, `set_regulation_status`, and
 `set_scoped_inference` were removed when curator turns were routed through
@@ -644,13 +643,7 @@ equality. All tokens are no-expiry. If token expiry is re-introduced, add an
 rejects expired tokens, and wire it into `McpRuntime::invoke` in the same
 change — then update this rule.
 
-`RegistryEntry.required_capabilities` and the `template_capabilities` SQL table
-were removed as dead — they fed only `CapabilityAwareValidator`, which has zero
-production call sites (do not rely on it; it expects flat strings while
-manifests historically wrote objects, so it could not have consumed the data
-even if called). `RegistryIndex::list_with_capabilities` is retained for API
-compat but is a no-op — its `capabilities` param is unused, since OCAP is
-enforced at the runtime tool gate, not the registry-list level.
+OCAP is enforced at the runtime tool gate, not the registry-list level.
 
 This is the OCAP-specific form of "Advertised invariants need enforcement
 points": the manifest block advertises a security membrane; the membrane is

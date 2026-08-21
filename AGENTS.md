@@ -48,7 +48,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 ## Divergence & Upstream Seam
 
-`zed-kask` is a minimal-divergence fork of Zed. **`DIVERGENCE.md`** (repo root) is the authoritative map of every upstream edit — the D1–D33 seams. Everything under `kask/` is ours (additive; upstream never touches → near-zero merge conflict). Everything else tracks upstream; the only divergences are the D-seams + the `[workspace.members]` / `[workspace.dependencies]` arrays in the root `Cargo.toml`.
+`zed-kask` is a minimal-divergence fork of Zed. **`DIVERGENCE.md`** (repo root) is the authoritative map of every upstream edit — the D1–D32 seams. Everything under `kask/` is ours (additive; upstream never touches → near-zero merge conflict). Everything else tracks upstream; the only divergences are the D-seams + the `[workspace.members]` / `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
 - **Don't "fix" upstream files speculatively.** Push behavior into `kask/` behind a D-seam. If an upstream edit is unavoidable, add a D-seam entry + a pinning test in the same PR.
 - **Every `// zed-kask:` comment** disabling upstream behavior needs a test pinning the disabled behavior.
