@@ -285,6 +285,18 @@ impl SwarmServer {
                     {
                         Ok(r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            // Episodic turn memory (shared knowledgebase) — mirrors
+                            // swarm_delegate_local so fan-out delegations build
+                            // the KB too. Non-fatal.
+                            local_knowledge::ingest_turn(
+                                &self.local_memory,
+                                &runtime.inference(),
+                                &entry.agent_name,
+                                &entry.task,
+                                &r.response,
+                                &r.model,
+                            )
+                            .await;
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -393,6 +405,21 @@ impl SwarmServer {
                     {
                         Ok(r) => {
                             self.validate_produces(&step.agent_name, &agent.produces, &r.response);
+                            // Episodic turn memory (shared knowledgebase) —
+                            // mirrors swarm_delegate_local so pipeline steps
+                            // build the KB too. `task` carries the
+                            // {prev_output}-substituted prompt the agent actually
+                            // received, so the recorded turn is the real input.
+                            // Non-fatal.
+                            local_knowledge::ingest_turn(
+                                &self.local_memory,
+                                &runtime.inference(),
+                                &step.agent_name,
+                                &task,
+                                &r.response,
+                                &r.model,
+                            )
+                            .await;
                             prev_output = r.response.clone();
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;

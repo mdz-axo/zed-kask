@@ -45,7 +45,6 @@ loops the SKILL.md bodies describe.
 | `KaskCuratorEmailSettings` | `kask/crates/kask_bridge/src/settings.rs:270-295` |
 | `KaskMemorySettings` | `kask/crates/kask_bridge/src/settings.rs:298-314` |
 | `KaskCondenserSettings` | `kask/crates/kask_bridge/src/settings.rs:332-353` |
-| `KaskCodegraphSettings` | `kask/crates/kask_bridge/src/settings.rs:367-371` |
 | `KaskResearchSettings` | `kask/crates/kask_bridge/src/settings.rs:374-379` |
 | `KaskCompaniesSettings` | `kask/crates/kask_bridge/src/settings.rs:382-395` |
 | `KaskCorpusSettings` | `kask/crates/kask_bridge/src/settings.rs:398-425` |

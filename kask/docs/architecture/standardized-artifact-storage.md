@@ -58,7 +58,7 @@ erDiagram
 | Artifact class | Root | Subdir pattern | Naming rule | Programmatic contract |
 |---|---|---|---|---|
 | MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |
-| User skills | `{data_dir}` | `skills/{skill_name}/` (marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`) | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `manifest.yaml`, `*.j2`, `SKILL.md` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
+| User skills | `{data_dir}` | `skills/{skill_name}/` (marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`) | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
 | User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 
@@ -141,7 +141,7 @@ under `mcp/{server_id}/`.
   (`agent_paths.rs:157-187`). An operator `ls {data_dir}/` sees the four
   class names: `agents/`, `mcp/`, `skills/`, `threads/`.
 - **Files:** `{purpose}.db` for databases, `{artifact}.json` for JSON
-  artifacts, `manifest.yaml` / `*.j2` / `SKILL.md` for skills. The filename
+  artifacts, `SKILL.md` / `*.j2` for skills. The filename
   identifies the artifact's purpose without reading its contents.
 - **No opaque IDs at the browse level:** server IDs, tool names, skill names,
   and agent names are all human-readable strings, not UUIDs.

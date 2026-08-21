@@ -175,12 +175,6 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `persona_keywords` | `Vec<String>` | `[]` | Saliency scoring keywords |
 | `saliency_window` | `u32` | `5` | Max tokens budget: `saliency_window * 100`, clamped [150, 2000] |
 
-## Codegraph (`KaskCodegraphSettings`)
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `db_path` | `String` | `""` | Database path; empty = in-memory |
-
 ## Companies (`KaskCompaniesSettings`)
 
 | Field | Type | Default | Notes |

@@ -376,5 +376,5 @@ A skill that encodes this process for reuse. Sketch:
 - **Emits:** `reg.upstream_rebase.*` spans.
 
 This skill would be authored via the `create-skill` skill (which produces the
-full registry-crate structure: `manifest.yaml` + `.j2` templates + `SKILL.md`).
+skill structure: `SKILL.md` + `.j2` templates).
 The process document above becomes the `SKILL.md` companion content.

@@ -45,12 +45,13 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **S5**: SKILL.md has a "When to Use" section
    - **S6**: SKILL.md has an "Instructions" section with numbered steps
    - **S7**: SKILL.md instructions reference concrete tools (`lisp_eval`,
-     MCP tools, `read_file`, `skill`) — not abstract "the system will" language
+     MCP tools, `read_file`, `render_template`, `skill`) — not abstract "the system will" language
    - **S8**: SKILL.md has a "Constraints" section
    - **S9**: No `visibility` field in frontmatter
    - **S10**: SKILL.md does not use removed vocabulary (`compute_ref`,
      `action:`, `template_ref`, `convergence_signal`, `input_mapping`,
-     `on_failure`, `ordinal:`)
+     `on_failure`, `ordinal:`) or vestigial `steps` frontmatter with
+     `id`/`tools` dispatch structure (manifest-executor remnant)
    - **S11**: If `core: true` is declared, the name must be in
      `CORE_SKILL_NAMES` (enforced by `agent_skills` at load time)
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
@@ -60,6 +61,9 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      or schema description)
    - **T4**: No `[inference]` frontmatter in .j2 templates — templates are
      resources, not executed code
+   - **T5**: If a template is referenced for rendering via `render_template`,
+     it is reachable from the `render_template` base path (registry templates
+     directory, not the skill directory)
 2. Evaluate every check for every targeted skill without omissions.
 3. Include specific evidence for any fail results (file path, line number).
 4. Provide actionable fix suggestions for any failures.
@@ -92,7 +96,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - Deterministic computation → `lisp_eval`
    - Data retrieval → appropriate MCP tool
    - Skill composition → `skill` tool
-   - File operations → `read_file`, `write_file`, `edit_file`
+   - Prompt rendering → `render_template`
+   - File operations → `read_file`, `write_file`, `edit_file``
 4. Create .j2 templates for reasoning steps that need structured prompts.
 5. Mark any source concepts with no kask equivalent as
    `[unresolved: no kask equivalent for <source_ref>]`.

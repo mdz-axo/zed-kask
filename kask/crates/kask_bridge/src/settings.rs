@@ -1281,7 +1281,6 @@ impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
         // otherwise construct a zero-dimensional EmbeddingStore that silently
         // rejects every vector (DimensionMismatch { expected: 0, ... }),
         // disabling embedding-based recall with no startup signal.
-        // Mirrors the `dim > 0` guard in codegraph's `resolve_embedding_dim`.
         Self {
             embedding_dim: c
                 .embedding_dim
@@ -1466,7 +1465,7 @@ mod tests {
     // `DimensionMismatch { expected: 0, actual: N }`, silently disabling
     // embedding-based recall. The `unwrap_or(1024)` default only fires for
     // `None`, not for `Some(0)`. This test pins the fix: 0 is treated as
-    // "use default" (mirroring codegraph's `resolve_embedding_dim` guard).
+    // "use default".
     #[test]
     fn corpus_settings_treats_zero_embedding_dim_as_default() {
         let content = KaskSettingsContent {

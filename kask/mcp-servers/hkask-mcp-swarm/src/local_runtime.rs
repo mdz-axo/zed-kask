@@ -245,6 +245,10 @@ impl LocalSwarmRuntime {
                     "usage": { "total_tokens": captured.total_tokens },
                     "tool_calls": captured.tool_calls,
                     "round": captured.round,
+                    // Bodies for the training bridge. Empty on the error path
+                    // (no response) — absent, not fabricated.
+                    "request_body": captured.request_body,
+                    "response_body": captured.response_body,
                 });
                 if let Err(error) = store.append(&captured.rollout_id, "model_request", &payload) {
                     drop_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
