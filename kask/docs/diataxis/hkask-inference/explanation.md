@@ -14,8 +14,8 @@ mds_categories: [trust, curation]
 chat, vision, embedding, tool dispatch, and worktree spawn back to zed's
 `LanguageModelRegistry` over a Unix socket (`HKASK_INFERENCE_SOCKET`), rather
 than holding API keys or speaking HTTP directly. At startup an MCP server
-calls `resolve_inference_port()` (`hkask_inference.rs:93`) or
-`resolve_ports()` (`hkask_inference.rs:289`); both return an
+calls `resolve_inference_port()` (`hkask_inference.rs:94`) or
+`resolve_ports()` (`hkask_inference.rs:290`); both return an
 `InferenceIpcClient`-backed trait object when the socket is reachable, or a
 socket-named `Unavailable*` stub when it is not. There is no second
 `InferencePort` implementation and no in-process media-provider registry in
@@ -27,12 +27,12 @@ and why provider selection is prefix-based.
 
 | Symbol | Location |
 |--------|----------|
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:93` |
-| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:289` |
-| `InferencePorts` struct | `kask/crates/hkask-inference/src/hkask_inference.rs:276` |
-| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:54` |
-| `UnavailableInference` | `kask/crates/hkask-inference/src/hkask_inference.rs:111` |
-| `UnavailableWorktreeSpawn` | `kask/crates/hkask-inference/src/hkask_inference.rs:239` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
+| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:290` |
+| `InferencePorts` struct | `kask/crates/hkask-inference/src/hkask_inference.rs:277` |
+| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:55` |
+| `UnavailableInference` | `kask/crates/hkask-inference/src/hkask_inference.rs:112` |
+| `UnavailableWorktreeSpawn` | `kask/crates/hkask-inference/src/hkask_inference.rs:240` |
 | `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs:173` |
 | `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:197` |
 | `ipc_roundtrip` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:218` |
@@ -59,11 +59,11 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-004
 verified_date: 2026-08-20
-verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:54-102,228-308; kask/crates/hkask-inference/src/inference_ipc_client.rs:184-201
+verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:55-103,229-309; kask/crates/hkask-inference/src/inference_ipc_client.rs:184-201
 status: VERIFIED
 -->
 
-`connect_bridge(label)` (`hkask_inference.rs:54`) is the single match+log
+`connect_bridge(label)` (`hkask_inference.rs:55`) is the single match+log
 site shared by all three resolvers. On `Some(Ok(client))` it logs at `info`
 that the port is routed through the bridge; on `Some(Err(e))` it warns with
 the error; on `None` (env var unset) it logs at `info`. Every `None` branch
@@ -94,8 +94,8 @@ cannot get standalone:
    records why.
 2. **Governed tool dispatch / worktree spawn.** These capabilities only
    exist on the zed side. `resolve_tool_dispatch_port`
-   (`hkask_inference.rs:188`) and `resolve_worktree_spawn_port`
-   (`hkask_inference.rs:228`) return the IPC bridge client when the socket
+   (`hkask_inference.rs:189`) and `resolve_worktree_spawn_port`
+   (`hkask_inference.rs:229`) return the IPC bridge client when the socket
    is available, or an `Unavailable*` stub that returns a clear error naming
    the missing socket. There is no standalone fallback for these — they
    require the zed process.
@@ -107,29 +107,29 @@ cannot get standalone:
 
 ## Why the stubs are never silent
 
-`UnavailableInference` (`hkask_inference.rs:111`) overrides `generate`,
+`UnavailableInference` (`hkask_inference.rs:112`) overrides `generate`,
 `generate_vision`, `embed`, **and** `list_models` with socket-named
 `Connection` errors. This is deliberate: the `InferencePort` trait's default
 `list_models` returns `Ok(Vec::new())`, which a missing bridge would
 otherwise read as an empty model registry — the `.rules`
 broken-feedback-loop trap (`unwrap_or(0)`-class, where a broken bridge reads
-as "no models"). `UnavailableToolDispatch` (`hkask_inference.rs:200`) and
-`UnavailableWorktreeSpawn` (`hkask_inference.rs:239`) likewise return
+as "no models"). `UnavailableToolDispatch` (`hkask_inference.rs:201`) and
+`UnavailableWorktreeSpawn` (`hkask_inference.rs:240`) likewise return
 `Connection` errors naming the missing socket
-(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:43`). The error tells the
+(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:44`). The error tells the
 operator exactly what to fix: set `HKASK_INFERENCE_SOCKET` and ensure zed is
 running.
 
-`UnavailableWorktreeSpawn` is `pub` because `LazyLocalSwarmRuntime` names
+`UnavailableWorktreeSpawn` is `pub(crate)` because `LazyLocalSwarmRuntime` names
 the type when it falls back to in-memory delegation; the other two stubs are
 private because every call site goes through the `Arc<dyn …Port>` trait
 object.
 
 ## Why `resolve_ports` shares one connection
 
-`resolve_ports` (`hkask_inference.rs:289`) connects to the bridge **once**
+`resolve_ports` (`hkask_inference.rs:290`) connects to the bridge **once**
 and clones the single `InferenceIpcClient` into the three trait objects of
-`InferencePorts` (`hkask_inference.rs:276`). The `InferenceIpcClient` is
+`InferencePorts` (`hkask_inference.rs:277`). The `InferenceIpcClient` is
 `#[derive(Clone)]` (`inference_ipc_client.rs:173`); the clone shares the
 `Arc<Mutex<Option<UnixStream>>>` socket and the `Arc<AtomicU64>` id counter,
 so the three objects multiplex on one connection, serialized by the stream

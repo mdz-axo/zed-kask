@@ -42,15 +42,15 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-001
 verified_date: 2026-08-20
-verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:54-102
+verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:55-103
 status: VERIFIED
 -->
 
 ## Step 1: Resolve the inference port at startup
 
-An MCP server calls `resolve_inference_port()` (`hkask_inference.rs:93`) once
+An MCP server calls `resolve_inference_port()` (`hkask_inference.rs:94`) once
 at startup. The function calls `connect_bridge("MCP inference")`
-(`hkask_inference.rs:54`), which tries `InferenceIpcClient::from_env()`
+(`hkask_inference.rs:55`), which tries `InferenceIpcClient::from_env()`
 (`inference_ipc_client.rs:197`); if `HKASK_INFERENCE_SOCKET` is set and the
 socket is reachable, it returns an `Arc<dyn InferencePort>` backed by the IPC
 bridge client. If the env var is unset, or the socket connection fails, it
@@ -58,9 +58,9 @@ returns an `UnavailableInference` stub. Each branch logs at `info` or `warn`
 level so the operator can verify the routing from server startup logs.
 
 Servers that need more than one port should call `resolve_ports()`
-(`hkask_inference.rs:289`) instead — it connects once and clones the single
+(`hkask_inference.rs:290`) instead — it connects once and clones the single
 client into `InferencePorts { inference, tool_dispatch, worktree_spawn }`
-(`hkask_inference.rs:276`).
+(`hkask_inference.rs:277`).
 
 ## Step 2: Call an InferencePort method
 

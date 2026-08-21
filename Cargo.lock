@@ -9214,7 +9214,6 @@ dependencies = [
 name = "hkask-keystore"
 version = "0.36.0"
 dependencies = [
- "aes-gcm",
  "argon2",
  "ed25519-dalek",
  "hex",

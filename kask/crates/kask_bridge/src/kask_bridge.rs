@@ -44,7 +44,6 @@ pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BuiltinMcpServer, build_mcp_server_env, builtin_mcp_server_ids,
     builtin_mcp_server_pairs, filter_credentials_for_server,
 };
-pub(crate) use mcp_servers::{filter_config_env_for_server, find_server};
 pub use memory::{
     BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, open_curator_escalation_queue,
     open_curator_regulation_archive,

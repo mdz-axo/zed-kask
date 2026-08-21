@@ -44,43 +44,50 @@ to the bridge** via `resolve_ports`.
 | `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:275` |
 | `resolve_api_key` | `kask/crates/hkask-inference/src/config.rs:211` |
 | `parse_provider_code` | `kask/crates/hkask-inference/src/config.rs:237` |
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:93` |
-| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:289` |
-| `InferencePorts` struct | `kask/crates/hkask-inference/src/hkask_inference.rs:276` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
+| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:290` |
+| `InferencePorts` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:277` |
 | `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:197` |
 
 ## Procedure A: Wire an MCP server to the bridge
 
 ```mermaid
 flowchart TD
-    A[Call resolve_ports at startup] --> B{HKASK_INFERENCE_SOCKET set + reachable?}
-    B -- yes --> C[One InferenceIpcClient cloned into three trait objects]
-    B -- no --> D[Three Unavailable* stubs, socket-named errors]
-    C --> E[Use inference / tool_dispatch / worktree_spawn]
+    A[Call per-port resolver at startup] --> B{HKASK_INFERENCE_SOCKET set + reachable?}
+    B -- yes --> C[InferenceIpcClient-backed Arc dyn Port]
+    B -- no --> D[Unavailable* stub, socket-named error]
+    C --> E[Use the Arc dyn Port trait object]
     D --> E
 ```
 
-### Step 1: Call `resolve_ports` once at startup
+### Step 1: Resolve the port(s) at startup
 
-An MCP server that needs more than one port should call
-`resolve_ports()` (`hkask_inference.rs:289`) once at startup. It connects to
-the bridge a single time and clones the one `InferenceIpcClient` into all
-three trait objects on a shared socket + id counter
-(`InferencePorts { inference, tool_dispatch, worktree_spawn }`,
-`hkask_inference.rs:276`). Servers that need only inference can call
-`resolve_inference_port()` (`hkask_inference.rs:93`) instead.
+An MCP server calls the per-port resolver it needs once at startup. The
+real hKask MCP servers (`hkask-mcp-corpus`, `hkask-mcp-training`,
+`hkask-mcp-prediction-markets`, `hkask-mcp-swarm`) call
+`resolve_inference_port()` (`hkask_inference.rs:94`); servers that also need
+tool dispatch or worktree spawn call `resolve_tool_dispatch_port()`
+(`hkask_inference.rs:189`) or `resolve_worktree_spawn_port()`
+(`hkask_inference.rs:229`) alongside it. Each resolver returns an
+`Arc<dyn …Port>` backed by the IPC bridge client when
+`HKASK_INFERENCE_SOCKET` is set and reachable, or by its `Unavailable*` stub
+when it is not.
 
 ```rust
-use hkask_inference::resolve_ports;
+use hkask_inference::resolve_inference_port;
 
-let ports = resolve_ports().await;
-let inference = ports.inference;           // Arc<dyn InferencePort>
-let tool_dispatch = ports.tool_dispatch;   // Arc<dyn ToolDispatchPort>
-let worktree_spawn = ports.worktree_spawn; // Arc<dyn WorktreeSpawnPort>
+let inference = resolve_inference_port().await; // Arc<dyn InferencePort>
 ```
 
-When `HKASK_INFERENCE_SOCKET` is unset or unreachable, `resolve_ports`
-returns the three unavailable stubs (`UnavailableInference`,
+The crate-internal convenience `resolve_ports()` (`hkask_inference.rs:290`)
+connects once and clones the single client into `InferencePorts`
+(`hkask_inference.rs:277`, `pub(crate)`) for kask-internal consumers that
+need all three ports — external MCP server crates use the per-port resolvers
+above (the `InferencePorts` type is `pub(crate)`, so it is not nameable
+outside the crate).
+
+When `HKASK_INFERENCE_SOCKET` is unset or unreachable, each per-port resolver
+returns its own unavailable stub (`UnavailableInference`,
 `UnavailableToolDispatch`, `UnavailableWorktreeSpawn`). Every stub method
 returns a `Connection` error naming the missing socket — never an empty
 success. In particular `UnavailableInference::list_models` returns `Err`
