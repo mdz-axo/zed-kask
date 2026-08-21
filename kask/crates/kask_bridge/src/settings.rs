@@ -767,15 +767,6 @@ impl Settings for KaskSettings {
 }
 
 impl KaskSettings {
-    /// Build the environment variable map for MCP server child processes.
-    ///
-    /// Translates all kask settings into the env vars that MCP servers read
-    /// at startup. Only non-empty/non-default values are included — MCP
-    /// servers have their own fallback defaults for unset env vars.
-    ///
-    /// This is the **config** half of the env map. The full env for a server
-    /// child process — config + keychain credentials + the inference socket —
-    /// is assembled by [`build_mcp_server_env`](crate::build_mcp_server_env)
     /// Effective embedding model, resolving the documented precedence:
     /// `models.embedding_model` (if non-empty) → `corpus.embedding_model`
     /// (if non-default) → the `DEFAULT_EMBEDDING_MODEL` constant.
@@ -797,6 +788,15 @@ impl KaskSettings {
         }
     }
 
+    /// Build the environment variable map for MCP server child processes.
+    ///
+    /// Translates all kask settings into the env vars that MCP servers read
+    /// at startup. Only non-empty/non-default values are included — MCP
+    /// servers have their own fallback defaults for unset env vars.
+    ///
+    /// This is the **config** half of the env map. The full env for a server
+    /// child process — config + keychain credentials + the inference socket —
+    /// is assembled by [`build_mcp_server_env`](crate::build_mcp_server_env)
     /// in `mcp_servers`, the single canonical path. It composes this crate's
     /// `mcp_env()` with the per-server credential/config allowlists. There
     /// is no other env-construction path; do not re-introduce one.
@@ -817,340 +817,418 @@ impl KaskSettings {
                     .to_string()
             })
         };
-        env.insert("HKASK_DATA_DIR".to_string(), data_dir.clone());
+        emit_data_dir_env(&data_dir, &mut env);
+        emit_curator_webid_env(&mut env);
+        emit_mcp_server_ids_env(&mut env);
+        emit_condenser_env(&self.condenser, &mut env);
+        emit_research_env(&self.research, &mut env);
+        emit_companies_env(&self.companies, &mut env);
+        let effective_embedding = self.effective_embedding_model();
+        emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
+        emit_corpus_ocr_env(&self.corpus, &mut env);
+        emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
+        emit_media_env(&self.media, &mut env);
+        emit_scenarios_env(&self.scenarios, &mut env);
+        emit_prediction_markets_env(&self.prediction_markets, &mut env);
+        emit_swarm_env(&self.swarm, &mut env);
+        emit_training_env(&self.training, &mut env);
+        emit_models_env(&self.models, &mut env);
+        emit_curator_email_env(&self.curator.email, &mut env);
+        env
+    }
+}
 
-        // Map the curator's WebID (stashed in `HKASK_CURATOR_WEBID` by the
-        // deferred task) to `HKASK_WEBID` so the curator MCP server picks it
-        // up as its identity. The `config_env` allowlist filters this to the
-        // curator server only — other servers don't receive `HKASK_WEBID`
-        // from this mapping and fall through to their own identity resolution.
-        if let Ok(curator_webid) = std::env::var("HKASK_CURATOR_WEBID") {
-            env.insert("HKASK_WEBID".to_string(), curator_webid);
-        }
+// ── mcp_env translator functions ──────────────────────────────────────────
+//
+// Defaults are read from each subsection's `Default` impl so there's a
+// single source of truth — changing `Default` automatically updates the
+// comparison here. Do not inline magic numbers; they drift from
+// `Default` (the same drift class that silently disabled all 10 kask
+// MCP servers when `KaskMcpSettings::default()` disagreed with the
+// serde default).
 
-        // Pass the governed server id set to the swarm server so it can
-        // filter cloned cards' declared `mcp_tools` to these servers (the
-        // provenance boundary for third-party ABW cards). Only the swarm
-        // server's `config_env` allowlist includes this var, so no other
-        // child receives it.
+pub(crate) fn emit_data_dir_env(
+    data_dir: &str,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    env.insert("HKASK_DATA_DIR".to_string(), data_dir.to_string());
+}
+
+pub(crate) fn emit_curator_webid_env(env: &mut std::collections::HashMap<String, String>) {
+    // Map the curator's WebID (stashed in `HKASK_CURATOR_WEBID` by the
+    // deferred task) to `HKASK_WEBID` so the curator MCP server picks it
+    // up as its identity. The `config_env` allowlist filters this to the
+    // curator server only — other servers don't receive `HKASK_WEBID`
+    // from this mapping and fall through to their own identity resolution.
+    if let Ok(curator_webid) = std::env::var("HKASK_CURATOR_WEBID") {
+        env.insert("HKASK_WEBID".to_string(), curator_webid);
+    }
+}
+
+pub(crate) fn emit_mcp_server_ids_env(env: &mut std::collections::HashMap<String, String>) {
+    // Pass the governed server id set to the swarm server so it can
+    // filter cloned cards' declared `mcp_tools` to these servers (the
+    // provenance boundary for third-party ABW cards). Only the swarm
+    // server's `config_env` allowlist includes this var, so no other
+    // child receives it.
+    env.insert(
+        "HKASK_MCP_SERVER_IDS".to_string(),
+        crate::builtin_mcp_server_ids().join(","),
+    );
+}
+
+pub(crate) fn emit_condenser_env(
+    condenser: &KaskCondenserSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let condenser_default = KaskCondenserSettings::default();
+    if !condenser.persona_keywords.is_empty() {
         env.insert(
-            "HKASK_MCP_SERVER_IDS".to_string(),
-            crate::builtin_mcp_server_ids().join(","),
+            "HKASK_CONDENSER_PERSONA_KEYWORDS".to_string(),
+            condenser.persona_keywords.join(","),
         );
+    }
+    if condenser.saliency_window != condenser_default.saliency_window {
+        env.insert(
+            "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
+            condenser.saliency_window.to_string(),
+        );
+    }
+}
 
-        // Defaults are read from each subsection's `Default` impl so there's a
-        // single source of truth — changing `Default` automatically updates
-        // the comparison here. Do not inline magic numbers; they drift from
-        // `Default` (the same drift class that silently disabled all 10 kask
-        // MCP servers when `KaskMcpSettings::default()` disagreed with the
-        // serde default).
-        let condenser_default = KaskCondenserSettings::default();
-        let corpus_default = KaskCorpusSettings::default();
+pub(crate) fn emit_research_env(
+    research: &KaskResearchSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !research.rss_db.is_empty() {
+        env.insert("HKASK_RSS_DB".to_string(), research.rss_db.clone());
+    }
+}
 
-        // ── Condenser ──
-        if !self.condenser.persona_keywords.is_empty() {
-            env.insert(
-                "HKASK_CONDENSER_PERSONA_KEYWORDS".to_string(),
-                self.condenser.persona_keywords.join(","),
-            );
-        }
-        if self.condenser.saliency_window != condenser_default.saliency_window {
-            env.insert(
-                "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
-                self.condenser.saliency_window.to_string(),
-            );
-        }
+pub(crate) fn emit_companies_env(
+    companies: &KaskCompaniesSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if companies.chronic_staleness_days > 0 {
+        env.insert(
+            "HKASK_CHRONIC_STALENESS_DAYS".to_string(),
+            companies.chronic_staleness_days.to_string(),
+        );
+    }
+    if !companies.fermi_defaults.is_empty() {
+        env.insert(
+            "HKASK_FERMI_DEFAULTS".to_string(),
+            companies.fermi_defaults.clone(),
+        );
+    }
+    // D28 — Standardized Artifact Storage. Emit HKASK_TRANSACTIONS_DIR
+    // so the portfolio server can auto-load transaction files. Default
+    // is `mcp/portfolio/transactions/` under the kask data root.
+    let transactions_dir = if !companies.transactions_dir.is_empty() {
+        companies.transactions_dir.clone()
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+            "mcp/portfolio/transactions",
+        ))
+        .to_string_lossy()
+        .to_string()
+    };
+    env.insert("HKASK_TRANSACTIONS_DIR".to_string(), transactions_dir);
+}
 
-        // ── Research ──
-        if !self.research.rss_db.is_empty() {
-            env.insert("HKASK_RSS_DB".to_string(), self.research.rss_db.clone());
-        }
+pub(crate) fn emit_corpus_embedding_env(
+    corpus: &KaskCorpusSettings,
+    effective_embedding_model: &str,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let corpus_default = KaskCorpusSettings::default();
+    if corpus.embedding_dim != corpus_default.embedding_dim {
+        env.insert(
+            "HKASK_EMBEDDING_DIM".to_string(),
+            corpus.embedding_dim.to_string(),
+        );
+    }
+    // ── Embedding model ──
+    // Precedence: models.embedding_model → corpus.embedding_model →
+    // default. Resolved once by `effective_embedding_model` so the
+    // emission cannot drift from the documented precedence. See its
+    // doc comment and the `mcp_env_models_embedding_model_overrides_corpus` test.
+    if effective_embedding_model != corpus_default.embedding_model {
+        env.insert(
+            "HKASK_EMBEDDING_MODEL".to_string(),
+            effective_embedding_model.to_string(),
+        );
+    }
+}
 
-        // ── Companies ──
-        if self.companies.chronic_staleness_days > 0 {
-            env.insert(
-                "HKASK_CHRONIC_STALENESS_DAYS".to_string(),
-                self.companies.chronic_staleness_days.to_string(),
-            );
-        }
-        if !self.companies.fermi_defaults.is_empty() {
-            env.insert(
-                "HKASK_FERMI_DEFAULTS".to_string(),
-                self.companies.fermi_defaults.clone(),
-            );
-        }
-        // D28 — Standardized Artifact Storage. Emit HKASK_TRANSACTIONS_DIR
-        // so the portfolio server can auto-load transaction files. Default
-        // is `mcp/portfolio/transactions/` under the kask data root.
-        let transactions_dir = if !self.companies.transactions_dir.is_empty() {
-            self.companies.transactions_dir.clone()
-        } else {
-            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-                "mcp/portfolio/transactions",
-            ))
+pub(crate) fn emit_corpus_ocr_env(
+    corpus: &KaskCorpusSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let corpus_default = KaskCorpusSettings::default();
+    if corpus.ocr_concurrency != corpus_default.ocr_concurrency {
+        env.insert(
+            "HKASK_OCR_CONCURRENCY".to_string(),
+            corpus.ocr_concurrency.to_string(),
+        );
+    }
+    if (corpus.ocr_simple_max - corpus_default.ocr_simple_max).abs() > f64::EPSILON {
+        env.insert(
+            "HKASK_OCR_SIMPLE_MAX".to_string(),
+            corpus.ocr_simple_max.to_string(),
+        );
+    }
+    if (corpus.ocr_moderate_max - corpus_default.ocr_moderate_max).abs() > f64::EPSILON {
+        env.insert(
+            "HKASK_OCR_MODERATE_MAX".to_string(),
+            corpus.ocr_moderate_max.to_string(),
+        );
+    }
+    if (corpus.ocr_sample_rate - corpus_default.ocr_sample_rate).abs() > f64::EPSILON {
+        env.insert(
+            "HKASK_OCR_SAMPLE_RATE".to_string(),
+            corpus.ocr_sample_rate.to_string(),
+        );
+    }
+    if corpus.ocr_tuneable != corpus_default.ocr_tuneable {
+        env.insert("HKASK_OCR_TUNEABLE".to_string(), "false".to_string());
+    }
+}
+
+pub(crate) fn emit_corpus_template_root_env(
+    corpus: &KaskCorpusSettings,
+    data_dir: &str,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let corpus_default = KaskCorpusSettings::default();
+    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training)
+    // find templates in production where the CWD-relative default does not
+    // exist. When the operator hasn't overridden the default, resolve to
+    // `{data_dir}/skills/registry/` — the path where `seed_templates` writes.
+    // When overridden, use the operator's value.
+    let template_root = if corpus.template_root != corpus_default.template_root {
+        corpus.template_root.clone()
+    } else {
+        std::path::Path::new(data_dir)
+            .join("skills")
+            .join("registry")
             .to_string_lossy()
             .to_string()
-        };
-        env.insert("HKASK_TRANSACTIONS_DIR".to_string(), transactions_dir);
+    };
+    env.insert("HKASK_TEMPLATE_ROOT".to_string(), template_root);
+}
 
-        // ── Corpus ──
-        if self.corpus.embedding_dim != corpus_default.embedding_dim {
-            env.insert(
-                "HKASK_EMBEDDING_DIM".to_string(),
-                self.corpus.embedding_dim.to_string(),
-            );
-        }
-        // ── Embedding model ──
-        // Precedence: models.embedding_model → corpus.embedding_model →
-        // default. Resolved once by `effective_embedding_model` so the
-        // emission cannot drift from the documented precedence. See its
-        // doc comment and the `mcp_env_models_embedding_model_overrides_corpus` test.
-        let effective_embedding = self.effective_embedding_model();
-        if effective_embedding != corpus_default.embedding_model {
-            env.insert("HKASK_EMBEDDING_MODEL".to_string(), effective_embedding);
-        }
-        if self.corpus.ocr_concurrency != corpus_default.ocr_concurrency {
-            env.insert(
-                "HKASK_OCR_CONCURRENCY".to_string(),
-                self.corpus.ocr_concurrency.to_string(),
-            );
-        }
-        if (self.corpus.ocr_simple_max - corpus_default.ocr_simple_max).abs() > f64::EPSILON {
-            env.insert(
-                "HKASK_OCR_SIMPLE_MAX".to_string(),
-                self.corpus.ocr_simple_max.to_string(),
-            );
-        }
-        if (self.corpus.ocr_moderate_max - corpus_default.ocr_moderate_max).abs() > f64::EPSILON {
-            env.insert(
-                "HKASK_OCR_MODERATE_MAX".to_string(),
-                self.corpus.ocr_moderate_max.to_string(),
-            );
-        }
-        if (self.corpus.ocr_sample_rate - corpus_default.ocr_sample_rate).abs() > f64::EPSILON {
-            env.insert(
-                "HKASK_OCR_SAMPLE_RATE".to_string(),
-                self.corpus.ocr_sample_rate.to_string(),
-            );
-        }
-        if self.corpus.ocr_tuneable != corpus_default.ocr_tuneable {
-            env.insert("HKASK_OCR_TUNEABLE".to_string(), "false".to_string());
-        }
-        // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training)
-        // find templates in production where the CWD-relative default does not
-        // exist. When the operator hasn't overridden the default, resolve to
-        // `{data_dir}/skills/registry/` — the path where `seed_templates` writes.
-        // When overridden, use the operator's value.
-        let template_root = if self.corpus.template_root != corpus_default.template_root {
-            self.corpus.template_root.clone()
-        } else {
-            std::path::Path::new(&data_dir)
-                .join("skills")
-                .join("registry")
-                .to_string_lossy()
-                .to_string()
-        };
-        env.insert("HKASK_TEMPLATE_ROOT".to_string(), template_root);
+pub(crate) fn emit_media_env(
+    media: &KaskMediaSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !media.tts_model.is_empty() {
+        env.insert("HKASK_MEDIA_TTS_MODEL".to_string(), media.tts_model.clone());
+    }
+    if !media.stt_model.is_empty() {
+        env.insert("HKASK_MEDIA_STT_MODEL".to_string(), media.stt_model.clone());
+    }
+    if !media.vision_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_VISION_MODEL".to_string(),
+            media.vision_model.clone(),
+        );
+    }
+    if !media.image_gen_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
+            media.image_gen_model.clone(),
+        );
+    }
+}
 
-        // ── Media ──
-        if !self.media.tts_model.is_empty() {
-            env.insert(
-                "HKASK_MEDIA_TTS_MODEL".to_string(),
-                self.media.tts_model.clone(),
-            );
-        }
-        if !self.media.stt_model.is_empty() {
-            env.insert(
-                "HKASK_MEDIA_STT_MODEL".to_string(),
-                self.media.stt_model.clone(),
-            );
-        }
-        if !self.media.vision_model.is_empty() {
-            env.insert(
-                "HKASK_MEDIA_VISION_MODEL".to_string(),
-                self.media.vision_model.clone(),
-            );
-        }
-        if !self.media.image_gen_model.is_empty() {
-            env.insert(
-                "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
-                self.media.image_gen_model.clone(),
-            );
-        }
+pub(crate) fn emit_scenarios_env(
+    scenarios: &KaskScenariosSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !scenarios.data_dir.is_empty() {
+        env.insert(
+            "HKASK_SCENARIOS_DATA".to_string(),
+            scenarios.data_dir.clone(),
+        );
+    }
+}
 
-        // ── Scenarios ──
-        if !self.scenarios.data_dir.is_empty() {
-            env.insert(
-                "HKASK_SCENARIOS_DATA".to_string(),
-                self.scenarios.data_dir.clone(),
-            );
-        }
+pub(crate) fn emit_prediction_markets_env(
+    prediction_markets: &KaskPredictionMarketsSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !prediction_markets.data_dir.is_empty() {
+        env.insert(
+            "HKASK_PREDICTION_MARKETS_DATA".to_string(),
+            prediction_markets.data_dir.clone(),
+        );
+    }
+    if prediction_markets.cache_ttl_secs > 0 {
+        env.insert(
+            "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS".to_string(),
+            prediction_markets.cache_ttl_secs.to_string(),
+        );
+    }
+    if !prediction_markets.base_events.is_empty() {
+        env.insert(
+            "HKASK_PREDICTION_MARKETS_BASE_EVENTS".to_string(),
+            prediction_markets.base_events.clone(),
+        );
+    }
+}
 
-        // ── Prediction markets ──
-        if !self.prediction_markets.data_dir.is_empty() {
-            env.insert(
-                "HKASK_PREDICTION_MARKETS_DATA".to_string(),
-                self.prediction_markets.data_dir.clone(),
-            );
-        }
-        if self.prediction_markets.cache_ttl_secs > 0 {
-            env.insert(
-                "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS".to_string(),
-                self.prediction_markets.cache_ttl_secs.to_string(),
-            );
-        }
-        if !self.prediction_markets.base_events.is_empty() {
-            env.insert(
-                "HKASK_PREDICTION_MARKETS_BASE_EVENTS".to_string(),
-                self.prediction_markets.base_events.clone(),
-            );
-        }
+pub(crate) fn emit_swarm_env(
+    swarm: &KaskSwarmSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    // ── Swarm (ABW + Local) ──
+    // The API key is a credential (injected by `build_mcp_server_env`
+    // from the keychain), not config — only non-secret fields are here.
+    let swarm_default = KaskSwarmSettings::default();
+    if swarm.mode != swarm_default.mode {
+        env.insert("HKASK_SWARM_MODE".to_string(), swarm.mode.to_string());
+    }
+    if !swarm.api_url.is_empty() {
+        env.insert("HKASK_ABW_API_URL".to_string(), swarm.api_url.clone());
+    }
+    if swarm.max_credits_per_dispatch != swarm_default.max_credits_per_dispatch {
+        env.insert(
+            "HKASK_ABW_MAX_CREDITS".to_string(),
+            swarm.max_credits_per_dispatch.to_string(),
+        );
+    }
+    if swarm.curator_consent_default != swarm_default.curator_consent_default {
+        env.insert(
+            "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
+            swarm.curator_consent_default.to_string(),
+        );
+    }
+    if !swarm.local_agents_dir.is_empty() {
+        env.insert(
+            "HKASK_LOCAL_AGENTS_DIR".to_string(),
+            swarm.local_agents_dir.clone(),
+        );
+    }
+    if !swarm.local_swarms_dir.is_empty() {
+        env.insert(
+            "HKASK_LOCAL_SWARMS_DIR".to_string(),
+            swarm.local_swarms_dir.clone(),
+        );
+    }
+    if !swarm.skills_dir.is_empty() {
+        env.insert("HKASK_SKILLS_DIR".to_string(), swarm.skills_dir.clone());
+    }
+    if !swarm.default_agent_model.is_empty() {
+        env.insert(
+            "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
+            swarm.default_agent_model.clone(),
+        );
+    }
+    if swarm.a2a_http_enabled != swarm_default.a2a_http_enabled {
+        env.insert(
+            "HKASK_A2A_HTTP_ENABLE".to_string(),
+            swarm.a2a_http_enabled.to_string(),
+        );
+    }
+    if !swarm.memory_passphrase.is_empty() {
+        env.insert(
+            "HKASK_SWARM_MEMORY_PASSPHRASE".to_string(),
+            swarm.memory_passphrase.clone(),
+        );
+    }
+    if !swarm.memory_db_path.is_empty() {
+        env.insert(
+            "HKASK_SWARM_MEMORY_DB".to_string(),
+            swarm.memory_db_path.clone(),
+        );
+    }
+    if swarm.embedding_dim != swarm_default.embedding_dim {
+        env.insert(
+            "HKASK_SWARM_EMBEDDING_DIM".to_string(),
+            swarm.embedding_dim.to_string(),
+        );
+    }
+}
 
-        // ── Swarm (ABW + Local) ──
-        // The API key is a credential (injected by `build_mcp_server_env`
-        // from the keychain), not config — only non-secret fields are here.
-        let swarm_default = KaskSwarmSettings::default();
-        if self.swarm.mode != swarm_default.mode {
-            env.insert("HKASK_SWARM_MODE".to_string(), self.swarm.mode.to_string());
-        }
-        if !self.swarm.api_url.is_empty() {
-            env.insert("HKASK_ABW_API_URL".to_string(), self.swarm.api_url.clone());
-        }
-        if self.swarm.max_credits_per_dispatch != swarm_default.max_credits_per_dispatch {
-            env.insert(
-                "HKASK_ABW_MAX_CREDITS".to_string(),
-                self.swarm.max_credits_per_dispatch.to_string(),
-            );
-        }
-        if self.swarm.curator_consent_default != swarm_default.curator_consent_default {
-            env.insert(
-                "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
-                self.swarm.curator_consent_default.to_string(),
-            );
-        }
-        if !self.swarm.local_agents_dir.is_empty() {
-            env.insert(
-                "HKASK_LOCAL_AGENTS_DIR".to_string(),
-                self.swarm.local_agents_dir.clone(),
-            );
-        }
-        if !self.swarm.local_swarms_dir.is_empty() {
-            env.insert(
-                "HKASK_LOCAL_SWARMS_DIR".to_string(),
-                self.swarm.local_swarms_dir.clone(),
-            );
-        }
-        if !self.swarm.skills_dir.is_empty() {
-            env.insert(
-                "HKASK_SKILLS_DIR".to_string(),
-                self.swarm.skills_dir.clone(),
-            );
-        }
-        if !self.swarm.default_agent_model.is_empty() {
-            env.insert(
-                "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
-                self.swarm.default_agent_model.clone(),
-            );
-        }
-        if self.swarm.a2a_http_enabled != swarm_default.a2a_http_enabled {
-            env.insert(
-                "HKASK_A2A_HTTP_ENABLE".to_string(),
-                self.swarm.a2a_http_enabled.to_string(),
-            );
-        }
-        if !self.swarm.memory_passphrase.is_empty() {
-            env.insert(
-                "HKASK_SWARM_MEMORY_PASSPHRASE".to_string(),
-                self.swarm.memory_passphrase.clone(),
-            );
-        }
-        if !self.swarm.memory_db_path.is_empty() {
-            env.insert(
-                "HKASK_SWARM_MEMORY_DB".to_string(),
-                self.swarm.memory_db_path.clone(),
-            );
-        }
-        if self.swarm.embedding_dim != swarm_default.embedding_dim {
-            env.insert(
-                "HKASK_SWARM_EMBEDDING_DIM".to_string(),
-                self.swarm.embedding_dim.to_string(),
-            );
-        }
+pub(crate) fn emit_training_env(
+    training: &KaskTrainingSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !training.host.is_empty() {
+        env.insert("HKASK_TRAINING_HOST".to_string(), training.host.clone());
+    }
+    if !training.cache_dir.is_empty() {
+        env.insert(
+            "HKASK_TRAINING_CACHE_DIR".to_string(),
+            training.cache_dir.clone(),
+        );
+    }
+}
 
-        // ── Training ──
-        if !self.training.host.is_empty() {
-            env.insert(
-                "HKASK_TRAINING_HOST".to_string(),
-                self.training.host.clone(),
-            );
-        }
-        if !self.training.cache_dir.is_empty() {
-            env.insert(
-                "HKASK_TRAINING_CACHE_DIR".to_string(),
-                self.training.cache_dir.clone(),
-            );
-        }
+pub(crate) fn emit_models_env(
+    models: &KaskModelsSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    // ── Kask-wide model overrides ──
+    // These take precedence over the per-server model settings above.
+    if !models.default_model.is_empty() {
+        env.insert(
+            "HKASK_DEFAULT_MODEL".to_string(),
+            models.default_model.clone(),
+        );
+    }
+    // Embedding model already emitted above via `effective_embedding_model`,
+    // which encodes the `models`-over-`corpus` precedence. Do not emit it
+    // again here — a second insert would be a silent duplicate.
+    if !models.classifier_model.is_empty() {
+        env.insert(
+            "HKASK_CLASSIFIER_MODEL".to_string(),
+            models.classifier_model.clone(),
+        );
+    }
+    if !models.ocr_model.is_empty() {
+        env.insert("HKASK_OCR_MODEL".to_string(), models.ocr_model.clone());
+    }
+}
 
-        // ── Kask-wide model overrides ──
-        // These take precedence over the per-server model settings above.
-        if !self.models.default_model.is_empty() {
+pub(crate) fn emit_curator_email_env(
+    email: &KaskCuratorEmailSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    // ── Curator email (non-secret) ──
+    // The SMTP password is injected separately by `build_mcp_server_env`
+    // from the keychain entry `kask://credentials/hkask_smtp_password`.
+    if !email.mxroute_server.is_empty() {
+        env.insert(
+            "HKASK_MXROUTE_SERVER".to_string(),
+            email.mxroute_server.clone(),
+        );
+    }
+    if !email.smtp_username.is_empty() {
+        env.insert(
+            "HKASK_SMTP_USERNAME".to_string(),
+            email.smtp_username.clone(),
+        );
+        // `HKASK_CURATOR_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
+        // email crate; only inject when explicitly set.
+        if !email.curator_email.is_empty() {
             env.insert(
-                "HKASK_DEFAULT_MODEL".to_string(),
-                self.models.default_model.clone(),
+                "HKASK_CURATOR_EMAIL".to_string(),
+                email.curator_email.clone(),
             );
         }
-        // Embedding model already emitted above via `effective_embedding_model`,
-        // which encodes the `models`-over-`corpus` precedence. Do not emit it
-        // again here — a second insert would be a silent duplicate.
-        if !self.models.classifier_model.is_empty() {
-            env.insert(
-                "HKASK_CLASSIFIER_MODEL".to_string(),
-                self.models.classifier_model.clone(),
-            );
+        // `HKASK_ALERT_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
+        // email crate; only inject when explicitly set.
+        if !email.alert_email.is_empty() {
+            env.insert("HKASK_ALERT_EMAIL".to_string(), email.alert_email.clone());
         }
-        if !self.models.ocr_model.is_empty() {
-            env.insert("HKASK_OCR_MODEL".to_string(), self.models.ocr_model.clone());
-        }
-
-        // ── Curator email (non-secret) ──
-        // The SMTP password is injected separately by `build_mcp_server_env`
-        // from the keychain entry `kask://credentials/hkask_smtp_password`.
-        if !self.curator.email.mxroute_server.is_empty() {
-            env.insert(
-                "HKASK_MXROUTE_SERVER".to_string(),
-                self.curator.email.mxroute_server.clone(),
-            );
-        }
-        if !self.curator.email.smtp_username.is_empty() {
-            env.insert(
-                "HKASK_SMTP_USERNAME".to_string(),
-                self.curator.email.smtp_username.clone(),
-            );
-            // `HKASK_CURATOR_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
-            // email crate; only inject when explicitly set.
-            if !self.curator.email.curator_email.is_empty() {
-                env.insert(
-                    "HKASK_CURATOR_EMAIL".to_string(),
-                    self.curator.email.curator_email.clone(),
-                );
-            }
-            // `HKASK_ALERT_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
-            // email crate; only inject when explicitly set.
-            if !self.curator.email.alert_email.is_empty() {
-                env.insert(
-                    "HKASK_ALERT_EMAIL".to_string(),
-                    self.curator.email.alert_email.clone(),
-                );
-            }
-        }
-        if !self.curator.email.authorized_emails.is_empty() {
-            env.insert(
-                "HKASK_AUTHORIZED_EMAILS".to_string(),
-                self.curator.email.authorized_emails.join(","),
-            );
-        }
-
-        env
+    }
+    if !email.authorized_emails.is_empty() {
+        env.insert(
+            "HKASK_AUTHORIZED_EMAILS".to_string(),
+            email.authorized_emails.join(","),
+        );
     }
 }
 

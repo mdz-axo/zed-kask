@@ -618,25 +618,58 @@ impl super::CyberneticsLoop {
             let mut store_rollout_id: Option<String> = None;
             if let Some(source) = &self.rollout_events
                 && let Some((rollout_id, before_position)) = action.parameters.data.rollout_target()
-                && let Ok(Some((queried_before, queried_after))) = source.metric_before_and_after(
+            {
+                // Only `RolloutImpactCheck` reaches here (rollout_target is
+                // Some only for that variant). Handle every store outcome
+                // explicitly — a silent fall-through to the struct-walk below
+                // would drop the submitted check with no signal, which is
+                // indistinguishable from "the check never ran" (the .rules
+                // broken-feedback-loop trap: never silently discard errors).
+                match source.metric_before_and_after(
                     &rollout_id,
                     action.parameters.data.metric_name(),
                     before_position,
-                )
-            {
-                metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
-                    .unwrap_or(SignalMetric::EnergyRemaining);
-                before_val = queried_before;
-                after_val = queried_after;
-                store_answered = true;
-                store_rollout_id = Some(rollout_id.clone());
-                tracing::debug!(
-                    target: "reg.cybernetics",
-                    rollout = %rollout_id,
-                    before = queried_before,
-                    after = queried_after,
-                    "verify_impact answered from the rollout event store"
-                );
+                ) {
+                    Ok(Some((queried_before, queried_after))) => {
+                        metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
+                            .unwrap_or(SignalMetric::EnergyRemaining);
+                        before_val = queried_before;
+                        after_val = queried_after;
+                        store_answered = true;
+                        store_rollout_id = Some(rollout_id.clone());
+                        tracing::debug!(
+                            target: "reg.cybernetics",
+                            rollout = %rollout_id,
+                            before = queried_before,
+                            after = queried_after,
+                            "verify_impact answered from the rollout event store"
+                        );
+                    }
+                    Ok(None) => {
+                        // The store has no before/after for this rollout/metric.
+                        // A submitted check with no store answer must be visible
+                        // — warn so "no baseline" is distinguishable from "no
+                        // check ran." There is nothing to fall back to (a
+                        // RolloutImpactCheck carries no before value), so skip.
+                        tracing::warn!(
+                            target: "reg.cybernetics",
+                            rollout = %rollout_id,
+                            metric = action.parameters.data.metric_name(),
+                            "rollout impact check found no events for this metric — no baseline to verify against"
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "reg.cybernetics",
+                            rollout = %rollout_id,
+                            metric = action.parameters.data.metric_name(),
+                            error = %error,
+                            "rollout impact check store query failed — verdict not computed"
+                        );
+                        continue;
+                    }
+                }
             }
             if !store_answered {
                 // Fallback: determine metric and pre-action value from the
@@ -816,7 +849,7 @@ impl super::CyberneticsLoop {
             {
                 if let Err(error) = source.append_impact_verdict(
                     rollout_id,
-                    metric.as_str(),
+                    action.parameters.data.metric_name(),
                     before_val,
                     after_val,
                     improved,

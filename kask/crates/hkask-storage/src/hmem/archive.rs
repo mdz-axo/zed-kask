@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 use utoipa::ToSchema;
 #[derive(Debug, Error)]
-pub enum ArchiveError {
+pub(crate) enum ArchiveError {
     #[error("Database error: {0}")]
     Database(String),
     #[error("IO error: {0}")]
@@ -39,7 +39,7 @@ impl From<DbError> for ArchiveError {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackupMeta {
+pub(crate) struct BackupMeta {
     pub webid: String,
     pub source_server_url: String,
     pub exported_at: String,
@@ -47,13 +47,13 @@ pub struct BackupMeta {
     pub schema_version: i32,
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MigrationReceipt {
+pub(crate) struct MigrationReceipt {
     /// Number of h_mems imported.
     pub triple_count: i64,
 }
 type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
 
-pub struct BackupArchive {
+pub(crate) struct BackupArchive {
     pool: Pool,
     path: PathBuf,
 }

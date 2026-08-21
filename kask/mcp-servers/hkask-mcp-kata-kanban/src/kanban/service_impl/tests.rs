@@ -443,7 +443,8 @@ fn rjoule_exhaust_stamps_rjoule_reason() {
     // rJoule exhaustion marks the task Done with an rJoule-specific
     // verification reason.
     let (svc, board, owner) = make_service_with_board();
-    let spec = TaskSpec::new("Inference-heavy task".into()).with_rjoule_budget(0);
+    let mut spec = TaskSpec::new("Inference-heavy task".into());
+    spec.rjoule_budget = Some(0);
     let task = svc.task_create(board.id, spec, owner).unwrap();
 
     let exhausted = svc.task_rjoule_exhaust(task.id).unwrap();

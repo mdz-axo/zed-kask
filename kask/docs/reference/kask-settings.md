@@ -8,6 +8,12 @@ domain: "Composition"
 mds_categories: [composition, domain]
 ---
 
+<!-- STALE — predates the hkask-inference refactor. `DEFAULT_VISION_MODEL` was removed from
+`model_constants` (zero callers); `InferenceConfig::timeout_secs`/`pool_max_idle` and their env vars
+`HKASK_HTTP_TIMEOUT_SECS`/`HKASK_HTTP_POOL_MAX_IDLE` were removed (orphaned — they configured the
+deleted direct-HTTP client). The "Multi-provider inference router" framing is obsolete — inference
+routes through the IPC bridge (`InferenceIpcClient`). Verify against source before relying on citations below. -->
+
 # Kask Settings Reference
 
 The **Settings → Kask** section configures hKask features in zed-kask. It has
