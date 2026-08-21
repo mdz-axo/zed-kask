@@ -417,4 +417,72 @@ mod tests {
         // prevents a no-op rewrite from counting.
         assert_eq!(store.strip_bodies("9999-01-01T00:00:00Z").unwrap(), 0);
     }
+
+    // ── VerdictSource / RolloutKind wire round-trips ──────────────────
+
+    #[test]
+    fn verdict_source_as_str_round_trips() {
+        for variant in [
+            VerdictSource::DeterministicEvaluator,
+            VerdictSource::Operator,
+            VerdictSource::LlmJudged,
+            VerdictSource::RegulationImpact,
+        ] {
+            let s = variant.as_str();
+            assert_eq!(VerdictSource::from_str(s), Some(variant));
+        }
+        // Unknown string returns None, not a fabricated default.
+        assert_eq!(VerdictSource::from_str("bogus"), None);
+    }
+
+    #[test]
+    fn verdict_source_trust_classification() {
+        assert!(VerdictSource::DeterministicEvaluator.is_trusted_for_task_success());
+        assert!(VerdictSource::Operator.is_trusted_for_task_success());
+        assert!(!VerdictSource::LlmJudged.is_trusted_for_task_success());
+        assert!(!VerdictSource::RegulationImpact.is_trusted_for_task_success());
+    }
+
+    #[test]
+    fn rollout_kind_as_str_round_trips() {
+        for variant in [
+            RolloutKind::Delegation,
+            RolloutKind::Turn,
+            RolloutKind::HarnessRun,
+        ] {
+            let s = variant.as_str();
+            assert_eq!(RolloutKind::from_str(s), Some(variant));
+        }
+        assert_eq!(RolloutKind::from_str("bogus"), None);
+    }
+
+    #[test]
+    fn verdict_event_carries_typed_source_in_payload() {
+        // The store does not parse payloads, but the verdict event's
+        // `source` field must be a `VerdictSource` wire string so consumers
+        // can parse it back — not a hardcoded string that could drift.
+        let store = memory_store();
+        let payload = serde_json::json!({
+            "pass": true,
+            "source": VerdictSource::DeterministicEvaluator.as_str(),
+            "rollout_kind": RolloutKind::Delegation.as_str(),
+        });
+        store.append("r1", "verdict", &payload).unwrap();
+        let events = store
+            .query(&EventFilter {
+                kind: Some("verdict".into()),
+                ..EventFilter::default()
+            })
+            .unwrap();
+        let source_str = events[0].payload["source"].as_str().unwrap();
+        assert_eq!(
+            VerdictSource::from_str(source_str),
+            Some(VerdictSource::DeterministicEvaluator)
+        );
+        let kind_str = events[0].payload["rollout_kind"].as_str().unwrap();
+        assert_eq!(
+            RolloutKind::from_str(kind_str),
+            Some(RolloutKind::Delegation)
+        );
+    }
 }

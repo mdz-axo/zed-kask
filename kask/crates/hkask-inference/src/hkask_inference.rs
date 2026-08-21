@@ -1,30 +1,30 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
-//! hKask Inference — media generation + IPC bridge client.
+//! hKask Inference — the IPC bridge client + shared inference configuration.
 //!
-//! In zed-kask, chat inference routes through the zed IPC bridge
-//! (`InferenceIpcClient` → `LanguageModelRegistry`). This crate provides:
-//!   `MediaProvider` backends, not covered by zed's `LanguageModel` abstraction.
-//! - `InferenceIpcClient` — the IPC bridge client used by MCP servers to route
-//!   chat/vision/embed through zed's `LanguageModelRegistry`.
-//! - `InferenceConfig` — shared configuration (base URLs, API keys, default model).
-//! - `ProviderId` — provider routing enum used by the training adapter router.
+//! In zed-kask, MCP server child processes do not hold API keys. Inference
+//! (chat, vision, embed, tool dispatch, worktree spawn, model listing) routes
+//! through a Unix-socket IPC bridge back to the zed process, which resolves it
+//! via zed's `LanguageModelRegistry` (with zed's configured credentials). This
+//! crate provides the MCP-server side of that bridge:
 //!
-//! # Architecture
-//!
-//! ```text
-//!   └── ProviderRegistry — dispatches to registered MediaProvider backends
-//!       they are added back)
-//!
-//! InferenceIpcClient (implements InferencePort — chat/vision/embed via zed)
-//!   └── Unix socket → zed LanguageModelRegistry
-//!
-//! ```rust,no_run
+//! - [`InferenceIpcClient`] — `InferencePort` / `ToolDispatchPort` /
+//!   `WorktreeSpawnPort` implementation over the Unix socket. Construct it via
+//!   [`resolve_inference_port`] / [`resolve_tool_dispatch_port`] /
+//!   [`resolve_worktree_spawn_port`], which return an unavailable stub (with a
+//!   clear, socket-named error) when `HKASK_INFERENCE_SOCKET` is not set.
+//! - [`InferenceConfig`] — shared configuration (base URLs, default model).
+//! - [`ProviderId`] — provider-prefix routing enum.
+//! - [`model_constants`] — env-overridable default model ids.
+//! - [`openai_compat::sanitize_error_body`] — response-body redaction shared
+//!   across inference/MCP provider error paths.
 //!
 //! # Model Naming
 //!
-//! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
-//! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
+//! Model ids are provider-prefixed (e.g. `OpenRouter/z-ai/glm-5.2`,
+//! `ollama/nomic-embed-text`, `RunPod/kask-ocr`). The prefix selects the
+//! provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
+//! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`).
 
 pub mod config;
 pub mod inference_ipc_client;
@@ -34,94 +34,6 @@ pub mod openai_compat;
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
-
-/// Unified model entry from any provider, with provider prefix applied.
-#[derive(Debug, Clone)]
-pub struct RouterModelEntry {
-    /// Full model name with provider prefix (e.g., "ollama/qwen3:8b")
-    pub prefixed_name: String,
-    /// Provider this model belongs to
-    pub provider: ProviderId,
-    /// Raw model name without prefix
-    pub model: String,
-    /// Model family (e.g., "llama", "qwen2")
-    pub family: Option<String>,
-    /// Parameter count (e.g., "8B", "70B")
-    pub parameter_size: Option<String>,
-    /// Quantization level (e.g., "Q4_0")
-    pub quantization_level: Option<String>,
-    /// Model size in bytes (if available)
-    pub size_bytes: Option<u64>,
-    /// Whether the model supports vision/multimodal input.
-    /// Populated via heuristic on model family name (not runtime probing).
-    pub supports_vision: Option<bool>,
-}
-
-impl RouterModelEntry {
-    /// Heuristic: known vision-capable model families.
-    ///
-    /// Checks model name and family against a compiled-in allowlist
-    /// plus any models listed in the `HKASK_VISION_FAMILIES` env var
-    /// (comma-separated). Runtime-addition avoids recompiles.
-    #[must_use]
-    pub fn infer_vision_support(model: &str, family: Option<&str>) -> Option<bool> {
-        const DEFAULT_VISION_FAMILIES: &[&str] = &[
-            "llava",
-            "bakllava",
-            "minicpm-v",
-            "gemma3",
-            "llama3.2-vision",
-            "cogvlm",
-            "moondream",
-            "pixtral",
-            "florence",
-            "paligemma",
-            "qwen2-vl",
-            "qwen2.5-vl",
-            "qwen3-vl",
-            "qwen-vl",
-            "internvl",
-            "phi-3-vision",
-            "lighton",
-            "paddleocr",
-            "nemotron-parse",
-            "olmocr",
-            "deepseek-ocr",
-        ];
-
-        let model_lower = model.to_lowercase();
-        let family_lower = family.map(|f| f.to_lowercase());
-
-        // Check compiled-in families
-        for vf in DEFAULT_VISION_FAMILIES {
-            if model_lower.contains(vf) {
-                return Some(true);
-            }
-            if let Some(ref fam) = family_lower
-                && fam.contains(vf)
-            {
-                return Some(true);
-            }
-        }
-
-        // Check env-configured families
-        if let Ok(extra) = std::env::var("HKASK_VISION_FAMILIES") {
-            for vf in extra.split(',').map(|s| s.trim().to_lowercase()) {
-                if !vf.is_empty() && model_lower.contains(&vf) {
-                    return Some(true);
-                }
-                if let Some(ref fam) = family_lower
-                    && !vf.is_empty()
-                    && fam.contains(&vf)
-                {
-                    return Some(true);
-                }
-            }
-        }
-
-        None
-    }
-}
 
 /// Resolve the best available `InferencePort` for an MCP server.
 ///

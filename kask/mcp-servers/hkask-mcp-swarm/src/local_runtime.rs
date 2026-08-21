@@ -738,26 +738,14 @@ impl LocalDelegateResult {
     }
 }
 
-/// How a [`TaskSuccessVerdict`] was produced. The determinism constraint
-/// (Cybernetic Swarm Plan C0) requires a deterministic judge; an `llm_judged`
-/// provenance is flagged so ORIENT can warn rather than trust the verdict —
-/// the audit's Gap S3 (advertised determinism, enforced by convention).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskSuccessProvenance {
-    /// Deterministic evaluator: test pass/fail, schema validation, exit code,
-    /// regex/reference match. The only provenance ORIENT trusts for the C0
-    /// `s` axis of the swarm-state distance.
-    Deterministic,
-    /// LLM-jged. ORIENT must downgrade this to a hypothesis (warn), not a
-    /// trusted `s` — the determinism constraint forbids an LLM judging
-    /// `task_success`.
-    LlmJudged,
-    /// Unknown / not declared by the executor. Treated as untrusted.
-    Unknown,
-}
+/// Re-export the canonical verdict provenance type from the event store.
+/// `VerdictSource` is the single provenance enum for all verdicts in the
+/// system (event-store layer + runtime layer), grounded in Agent
+/// Lightning's `RewardData.source` model. The former runtime-only
+/// `TaskSuccessProvenance` was merged into it to eliminate the parallel
+/// duplication — see `hkask_event_store::types::VerdictSource` for the
+/// canonical definition and trust-level documentation.
+pub use hkask_event_store::VerdictSource;
 
 /// A deterministic task-success verdict stamped onto a [`LocalDelegateResult`]
 /// by the executor (the Kask Curator or a human in the loop) after running a
@@ -775,7 +763,9 @@ pub struct TaskSuccessVerdict {
     /// Evaluator-readable detail (which check failed, the diff, the exit
     /// code, etc.).
     pub detail: Option<String>,
-    /// How the verdict was produced. `Deterministic` is the only trusted
-    /// provenance; `LlmJudged` triggers an ORIENT warning (Gap S3).
-    pub provenance: TaskSuccessProvenance,
+    /// How the verdict was produced. `DeterministicEvaluator` is the
+    /// only automated source trusted for the C0 `s` axis; `LlmJudged`
+    /// triggers an ORIENT warning (Gap S3). See `VerdictSource` for the
+    /// full trust-level table.
+    pub provenance: VerdictSource,
 }

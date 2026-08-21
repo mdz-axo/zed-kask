@@ -3,7 +3,7 @@ name = "hkask-inference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Multi-provider inference router for hKask — chat (OpenRouter, Ollama) and vision/OCR (RunPod)"
+description = "IPC bridge client + shared inference configuration for hKask MCP servers"
 
 [lib]
 path = "src/hkask_inference.rs"

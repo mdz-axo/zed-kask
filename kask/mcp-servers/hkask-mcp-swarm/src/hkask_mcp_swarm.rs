@@ -128,7 +128,7 @@ pub mod test_utils {
 pub use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 pub use crate::local_runtime::{
     LazyEventStore, LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime,
-    TaskSuccessProvenance, TaskSuccessVerdict,
+    TaskSuccessVerdict, VerdictSource,
 };
 
 use crate::abw_client::SwarmClient;

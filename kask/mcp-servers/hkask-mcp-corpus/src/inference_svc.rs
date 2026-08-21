@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use hkask_inference::{ProviderId, RouterModelEntry};
+use hkask_inference::ProviderId;
 use hkask_types::InferencePort;
 
 use hkask_services_core::ServiceError;
@@ -41,19 +41,6 @@ pub struct ModelInfo {
     pub parameter_size: Option<String>,
     pub quantization_level: Option<String>,
     pub size_bytes: Option<u64>,
-}
-
-impl From<RouterModelEntry> for ModelInfo {
-    fn from(entry: RouterModelEntry) -> Self {
-        Self {
-            name: entry.prefixed_name,
-            provider: entry.provider,
-            family: entry.family,
-            parameter_size: entry.parameter_size,
-            quantization_level: entry.quantization_level,
-            size_bytes: entry.size_bytes,
-        }
-    }
 }
 
 impl From<hkask_types::ModelEntry> for ModelInfo {

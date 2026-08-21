@@ -1,34 +1,24 @@
 //! hKask Condenser — Domain types
 //!
-//! Domain types for the condenser; shares the schema-correct `AnyJsonValue`
-//! type from `hkask_types` so request structs render as provider-safe JSON
-//! Schema. Error types use `String` for `FromStr` impls; MCP servers wrap
-//! these at the boundary.
+//! Domain types for the condenser. Error types use `String` for `FromStr`
+//! impls; MCP servers wrap these at the boundary.
 
-use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Ontology Anchoring (P5.2 / P5.4 / P8.1)
 //
 // The ontology types (`OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`)
 // and the domain-selection logic live in the shared `hkask-bridge-ontology`
-// crate. The condenser re-exports them so its existing call sites
+// crate. The condenser re-exports them internally so its call sites
 // (`crate::types::OntologyAnchor` etc.) keep working without touching every
 // reference; the single source of truth is the bridge crate.
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub use hkask_bridge_ontology::axis::{
+pub(crate) use hkask_bridge_ontology::axis::{
     OntologyAnchor, OntologyAxis, OntologyNamespace, select_ontology_anchor,
 };
-
-// Dublin Core / PKO vocabulary used by the condenser's anchor construction.
-pub use hkask_bridge_ontology::dc_bibo;
-pub use hkask_bridge_ontology::pko;
-pub use hkask_bridge_ontology::sumo;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Request Types
@@ -199,48 +189,9 @@ pub struct CondenserHealthSignal {
     pub budget_filled: Option<usize>,
 }
 
-/// Request for thread summarization via the centralized inference router.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ThreadSummaryRequest {
-    /// Conversation messages to summarize, as an array of {role, content} objects.
-    ///
-    /// Typed as [`AnyJsonValue`] (not `serde_json::Value`) so the generated tool
-    /// input schema is the empty object `{}` rather than the bare boolean `true`
-    /// that schemars emits for `Value` — strict-schema providers (Ollama, Gemini)
-    /// reject boolean property schemas.
-    pub messages: Vec<AnyJsonValue>,
-    /// The current user query for relevance-weighted summarization.
-    pub current_query: String,
-    /// Override the server's default inference model.
-    /// When provided, this model is used instead of the server-configured default.
-    /// Supports provider-prefixed names (ollama/, FW/, OpenRouter/) for backend routing.
-    pub model: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::find_boolean_schema_positions;
-    use schemars::schema_for;
-
-    /// `messages` is typed `Vec<AnyJsonValue>` so its schema is the empty
-    /// object `{}`, never the bare boolean `true` that `serde_json::Value`
-    /// produces. Ollama's Go API rejects boolean property schemas with
-    /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
-    /// chat-completion request. The scanner asserts the *entire* generated
-    /// schema is free of bare-boolean property values, so a future field on this
-    /// struct that reintroduces `serde_json::Value` would be caught here too.
-    #[test]
-    fn thread_summary_request_schema_has_no_boolean_property_values() {
-        let schema = schema_for!(ThreadSummaryRequest);
-        let value = serde_json::to_value(&schema).expect("schema serializes");
-        let violations = find_boolean_schema_positions(&value);
-        assert!(
-            violations.is_empty(),
-            "ThreadSummaryRequest schema has bare-boolean property values \
-             (Ollama/Gemini would reject): {violations:?}"
-        );
-    }
 
     #[test]
     fn profile_parsing_known_values() {

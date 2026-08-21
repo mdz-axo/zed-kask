@@ -158,7 +158,7 @@ pub struct LocalAgentCapabilities {
     /// Per-card declared evaluators (the evaluator contract, event-substrate
     /// phase 4). When present, `swarm_delegate_local` runs each against the
     /// delegation response and stamps the verdict onto `task_success` with
-    /// `provenance: Deterministic` — the card carries its own oracle, so
+    /// `provenance: DeterministicEvaluator` — the card carries its own oracle, so
     /// every delegation is judged without the Curator having to call
     /// `swarm_evaluate_local` manually. An empty list = no declared oracle
     /// (open task; `task_success` stays null, same as before).

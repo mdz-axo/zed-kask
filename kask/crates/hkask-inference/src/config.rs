@@ -1,4 +1,7 @@
-//! Inference configuration — multi-provider routing for 3 chat providers: RunPod (vision/OCR only), OpenRouter, Ollama (local).
+//! Inference configuration for the IPC bridge facade — base URLs, default
+//! model, and provider-prefix routing. The direct-HTTP provider backends were
+//! removed when inference routing moved to the zed IPC bridge; these settings
+//! now feed model-listing metadata only.
 //!
 //! # Environment Variables
 //!
@@ -10,9 +13,10 @@
 //!
 //! # API Key Resolution
 //!
-//! Provider API keys resolve through a 2-tier chain (env-first):
-//! 1. Environment variable (fast path — set via shell or keychain resolution)
-//! 2. OS keychain (encrypted at rest; guarded against concurrent-access SIGABRT from libdbus)
+//! Provider API keys are read **only** from the environment (no keychain
+//! fallback). In zed-kask the parent zed process injects them into MCP server
+//! child processes via `kask_bridge::build_mcp_server_env`; standalone, the
+//! operator's shell sets them. See `resolve_api_key` for the precise contract.
 //!
 //! # Model Naming Convention
 //!
@@ -161,7 +165,7 @@ impl Default for InferenceConfig {
 }
 
 impl InferenceConfig {
-    /// Resolve from environment variables and OS keychain.
+    /// Resolve from environment variables only (no keychain fallback).
     ///
     /// API keys resolve keychain-first, then fall back to environment variables.
     ///
@@ -231,8 +235,8 @@ fn resolve_api_key(env_name: &str) -> String {
 
 /// Resolve the default provider from env var or keychain.
 ///
-/// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
-/// OS keychain). Accepted values: RunPod, OpenRouter,
+/// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var only — no
+/// keychain fallback). Accepted values: RunPod, OpenRouter,
 /// ollama. Defaults to OpenRouter.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");

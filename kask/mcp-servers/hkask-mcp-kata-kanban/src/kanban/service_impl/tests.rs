@@ -352,7 +352,7 @@ fn task_record_delegation_writes_structured_fields() {
         pass: true,
         score: Some(0.9),
         detail: Some("all checks passed".to_string()),
-        provenance: hkask_mcp_swarm::TaskSuccessProvenance::Deterministic,
+        provenance: hkask_mcp_swarm::VerdictSource::DeterministicEvaluator,
     };
 
     let updated = svc
@@ -379,7 +379,7 @@ fn task_record_delegation_writes_structured_fields() {
     assert_eq!(dv.score, Some(0.9));
     assert_eq!(
         dv.provenance,
-        hkask_mcp_swarm::TaskSuccessProvenance::Deterministic
+        hkask_mcp_swarm::VerdictSource::DeterministicEvaluator
     );
 
     // Verify persistence: re-read the task from the store.

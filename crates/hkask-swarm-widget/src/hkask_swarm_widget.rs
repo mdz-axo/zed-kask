@@ -20,7 +20,7 @@
 //!                  "model": "gpt-4o", "tokens_used": 1200, "cost": 50,
 //!                  "cost_uncapped": 50, "balance": 950, "latency_ms": 4200,
 //!                  "tool_calls": [{"name":"web_search","ok":true}],
-//!                  "task_success": {"pass": true, "provenance": "deterministic"} } ] }
+//!                  "task_success": {"pass": true, "provenance": "deterministic_evaluator"} } ] }
 //! ```
 //! ```
 //!

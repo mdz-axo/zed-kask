@@ -944,7 +944,7 @@ pub struct AiAssistRequest {
 
 /// Request for `swarm_evaluate_local` — a deterministic task-success evaluator.
 /// The Curator (or a human) calls this after a `swarm_delegate_local` to stamp
-/// a `TaskSuccessVerdict` with `provenance: Deterministic` onto the delegation
+/// a `TaskSuccessVerdict` with `provenance: DeterministicEvaluator` onto the delegation
 /// result. This is the enforcement point for the C5/C6 fault-attribution loop:
 /// without it, `task_success` is always `None` and ORIENT's highest-fidelity
 /// fault signal is inert.
