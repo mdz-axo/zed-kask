@@ -13,15 +13,12 @@ use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Classification result for a single passage.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ClassifyResult {
     /// The classified section type.
     pub category: String,
-    /// True if the API call failed but token/cost data was recovered.
-    pub failed: bool,
 }
 
 /// Semantic h_mem extraction result for a single passage.
@@ -60,16 +57,10 @@ pub(crate) struct ClassifierDef {
     /// `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. Leave empty in
     #[serde(default)]
     pub model: String,
-    #[serde(default)]
-    pub provider: String,
     pub concurrency: usize,
-    #[serde(default = "default_timeout")]
-    pub timeout_secs: u64,
     pub system_prompt: String,
     #[serde(default)]
     pub temperature: f64,
-    #[serde(default = "default_fallback")]
-    pub fallback_category: String,
     #[serde(default = "default_fallback")]
     pub fallback_category: String,
     /// Disable the model's thinking/reasoning mode for this classifier.
@@ -81,9 +72,7 @@ impl Default for ClassifierDef {
     fn default() -> Self {
         Self {
             model: String::new(),
-            provider: String::new(),
             concurrency: 1,
-            timeout_secs: 30,
             system_prompt: String::new(),
             temperature: 0.0,
             fallback_category: "Statement".to_string(),
@@ -92,9 +81,6 @@ impl Default for ClassifierDef {
     }
 }
 
-fn default_timeout() -> u64 {
-    30
-}
 fn default_fallback() -> String {
     "Statement".to_string()
 }
@@ -201,7 +187,6 @@ async fn classify_one(
             );
             return Ok(ClassifyResult {
                 category: config.fallback_category.clone(),
-                failed: true,
             });
         }
     };
@@ -227,10 +212,7 @@ async fn classify_one(
         }
     };
 
-    Ok(ClassifyResult {
-        category,
-        failed: false,
-    })
+    Ok(ClassifyResult { category })
 }
 
 /// Classify a batch of passages concurrently.
@@ -290,7 +272,6 @@ pub async fn classify_batch(
     texts: &[String],
     config: ClassifierConfig,
     inference_port: Arc<dyn InferencePort>,
-    cost_driver: Option<Arc<dyn hkask_storage::database::driver::DatabaseDriver>>,
 ) -> Result<Vec<ClassifyResult>, ServiceError> {
     tracing::info!(target: "hkask.classify", operation = "classify_batch", item_count = texts.len(), "REG");
 
@@ -300,7 +281,6 @@ pub async fn classify_batch(
             .iter()
             .map(|_| ClassifyResult {
                 category: fallback.clone(),
-                failed: false,
             })
             .collect());
     }
@@ -316,29 +296,6 @@ pub async fn classify_batch(
         },
     )
     .await?;
-
-    // Post aggregate cost to ledger (best-effort)
-    if let Some(driver) = cost_driver {
-        let total_cost_urj: u64 = results.iter().map(|r| r.cost_urj).sum();
-        if total_cost_urj > 0 {
-            let provider = results
-                .first()
-                .map(|r| r.provider.split('/').next().unwrap_or("classify"))
-                .unwrap_or("classify");
-            let reference = format!(
-                "classify-batch-{}-{}",
-                chrono::Utc::now().timestamp_micros(),
-                uuid::Uuid::new_v4()
-            );
-            crate::cost::record_cost_best_effort(
-                &driver,
-                provider,
-                total_cost_urj as i64,
-                &reference,
-                &serde_json::json!({"operation": "classify_batch", "item_count": texts.len(), "model": config.model}),
-            );
-        }
-    }
 
     Ok(results)
 }

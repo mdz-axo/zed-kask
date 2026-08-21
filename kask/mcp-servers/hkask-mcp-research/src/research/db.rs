@@ -707,8 +707,7 @@ pub(crate) fn insert_synthetic_feed(
 }
 
 /// Look up a synthetic feed by its `synthetic://` feed URL.
-/// Returns (feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs,
-///          last_extract_hash, last_error).
+/// Returns (feed_id, source_url, extractor_kind, extractor_spec, last_extract_hash).
 pub(crate) fn lookup_synthetic_by_feed_url(
     conn: &Connection,
     feed_url: &str,
@@ -730,8 +729,7 @@ pub(crate) fn lookup_synthetic_by_feed_id(
 ) -> Result<Option<SyntheticFeedRow>, anyhow::Error> {
     let mut stmt = conn.prepare(
         "SELECT feed_id, source_url, extractor_kind, extractor_spec,
-                cadence_hint_secs, last_extracted_at, last_extract_hash,
-                last_new_count, last_error
+                last_extract_hash
          FROM synthetic_feeds WHERE feed_id = ?1",
     )?;
     let row = stmt
@@ -741,11 +739,7 @@ pub(crate) fn lookup_synthetic_by_feed_id(
                 source_url: row.get(1)?,
                 extractor_kind: row.get(2)?,
                 extractor_spec: row.get(3)?,
-                cadence_hint_secs: row.get(4)?,
-                last_extracted_at: row.get(5)?,
-                last_extract_hash: row.get(6)?,
-                last_new_count: row.get(7)?,
-                last_error: row.get(8)?,
+                last_extract_hash: row.get(4)?,
             })
         })
         .optional()?;
@@ -758,11 +752,7 @@ pub(crate) struct SyntheticFeedRow {
     pub source_url: String,
     pub extractor_kind: String,
     pub extractor_spec: String,
-    pub cadence_hint_secs: Option<i64>,
-    pub last_extracted_at: Option<String>,
     pub last_extract_hash: Option<String>,
-    pub last_new_count: Option<i64>,
-    pub last_error: Option<String>,
 }
 
 /// Update the extraction status after a fetch attempt.
@@ -786,7 +776,9 @@ pub(crate) fn update_synthetic_status(
 }
 
 /// List all synthetic feeds with their feed metadata.
-pub(crate) fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+pub(crate) fn list_synthetic_feeds(
+    conn: &Connection,
+) -> Result<Vec<serde_json::Value>, anyhow::Error> {
     let mut stmt = conn.prepare(
         "SELECT sf.feed_id, sf.source_url, sf.extractor_kind, sf.extractor_spec,
                 sf.cadence_hint_secs, sf.last_extracted_at, sf.last_extract_hash,
@@ -822,7 +814,10 @@ pub(crate) fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::
 /// Delete a synthetic feed binding. The `feeds` row is deleted by the
 /// ON DELETE CASCADE on `synthetic_feeds.feed_id`, which in turn cascades
 /// to `entries` and `subscriptions`.
-pub(crate) fn delete_synthetic_feed(conn: &Connection, feed_id: i64) -> Result<usize, anyhow::Error> {
+pub(crate) fn delete_synthetic_feed(
+    conn: &Connection,
+    feed_id: i64,
+) -> Result<usize, anyhow::Error> {
     let removed = conn.execute(
         "DELETE FROM feeds WHERE id = ?1 AND url LIKE 'synthetic://%'",
         [feed_id],

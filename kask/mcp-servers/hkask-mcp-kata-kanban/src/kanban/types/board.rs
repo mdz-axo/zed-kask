@@ -40,13 +40,6 @@ impl Board {
     }
 
     /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self.columns is sorted by position
-    /// post: returns the last column (by position) — typically Done
-    pub fn last_column(&self) -> Option<&ColumnDef> {
-        self.columns.last()
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  status is a valid TaskStatus
     /// post: returns the ColumnDef matching the given status, if present
     pub fn column_for_status(&self, status: TaskStatus) -> Option<&ColumnDef> {

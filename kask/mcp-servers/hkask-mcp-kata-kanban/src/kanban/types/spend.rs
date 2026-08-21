@@ -18,14 +18,6 @@ pub(crate) struct SpendEntry {
 }
 
 impl SpendEntry {
-    pub fn rjoule_spend(amount: u64, reason: String) -> Self {
-        Self {
-            amount,
-            kind: "rjoule_spend".into(),
-            reason,
-            at: Utc::now(),
-        }
-    }
     pub fn rjoule_refill(amount: u64) -> Self {
         Self {
             amount,

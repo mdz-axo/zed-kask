@@ -870,19 +870,4 @@ impl KanbanService {
         }
         Ok(())
     }
-
-    pub(crate) fn update_board_triple(&self, board: &Board) -> Result<(), KanbanError> {
-        let new_value = serde_json::to_value(board)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(BOARD_ENTITY, &board.id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        if let Some(t) = h_mems.into_iter().next() {
-            self.store
-                .update(&t.id, new_value, 1.0f64)
-                .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
-        }
-        Ok(())
-    }
 }
