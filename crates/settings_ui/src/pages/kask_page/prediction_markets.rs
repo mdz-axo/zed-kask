@@ -84,6 +84,7 @@ pub(crate) fn render_prediction_markets_page(
                 )
                 .child(data_dir_input),
         )
+        .child(Divider::horizontal())
         .child(
             v_flex()
                 .gap_1()
@@ -95,6 +96,7 @@ pub(crate) fn render_prediction_markets_page(
                 )
                 .child(cache_ttl_input),
         )
+        .child(Divider::horizontal())
         .child(
             v_flex()
                 .gap_1()

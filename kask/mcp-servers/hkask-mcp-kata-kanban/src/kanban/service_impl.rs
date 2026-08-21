@@ -9,7 +9,7 @@
 //! ## Module Structure
 //!
 //! - `service` — `KanbanService` struct and all coordination methods
-//! - `types` — `KanbanError`, `UnjamItem`, `UnjamFix`
+//! - `types` — `KanbanError`
 //! - `comments` — Task-level comment threads
 //! - `decompose` — Task decomposition operations
 //! - `dejam` — Stuck-task detection and auto-fix
@@ -23,9 +23,8 @@ use crate::kanban::{
     Comment, KanbanPhase, Priority, SpawnSpec, SpendEntry, Task, TaskFilter, TaskSpec, TaskStatus,
     Verification, VerificationCriterion,
 };
-use hkask_types::NotFound;
 use hkask_types::WebID;
-use hkask_types::id::{BoardId, TaskId};
+use hkask_types::id::TaskId;
 
 pub(crate) mod comments;
 pub(crate) mod dejam;

@@ -29,7 +29,6 @@ pub(crate) mod batch;
 pub(crate) mod compose;
 pub(crate) mod convert;
 pub(crate) mod corpus;
-pub(crate) mod cost;
 mod helpers;
 pub(crate) mod inference_svc;
 pub(crate) mod ocr;

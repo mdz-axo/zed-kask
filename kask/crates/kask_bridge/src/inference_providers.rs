@@ -112,6 +112,20 @@ impl DataServiceDescriptor {
     pub fn shows_in_ui(&self) -> bool {
         self.ui_toggle.is_some()
     }
+
+    /// Whether this service has a functional enable/disable toggle backed by a
+    /// `KaskDataServiceSettings` field. Key-only services (SerpAPI, Firecrawl,
+    /// Browserbase, HF Token, FRED) have `ui_toggle: Some(...)` so they appear
+    /// in the UI for API key entry, but they have no settings.json toggle —
+    /// they're enabled unconditionally when the key is present. The UI renders
+    /// these without a SwitchField, always showing the key input.
+    pub fn has_toggle(&self) -> bool {
+        self.ui_toggle.is_some()
+            && !matches!(
+                self.credential_key,
+                "serpapi" | "firecrawl" | "browserbase" | "hf_token" | "fred"
+            )
+    }
 }
 
 /// The canonical registry of data service credentials. The single source of

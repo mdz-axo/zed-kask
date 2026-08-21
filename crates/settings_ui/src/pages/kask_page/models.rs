@@ -1,5 +1,5 @@
 //! Models sub-page — kask-wide model defaults (default inference model,
-//! embedding model, classifier model).
+//! embedding model, classifier model, OCR model).
 
 use super::*;
 
@@ -18,6 +18,7 @@ pub(crate) fn render_models_page(
     let default_model = models.default_model;
     let embedding_model = models.embedding_model;
     let classifier_model = models.classifier_model;
+    let ocr_model = models.ocr_model;
 
     let default_model_input = kask_string_input(
         "kask-models-default",
@@ -43,6 +44,14 @@ pub(crate) fn render_models_page(
         "models",
         "classifier_model",
     );
+    let ocr_model_input = kask_string_input(
+        "kask-models-ocr",
+        "OCR Model",
+        "RunPod/kask-ocr",
+        ocr_model,
+        "models",
+        "ocr_model",
+    );
 
     v_flex()
         .id("kask-models-page")
@@ -61,7 +70,7 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Kask-wide model configuration. These provider-prefixed model \
                          names (e.g. \"openrouter/z-ai/glm-5.2\") override the kask \
-                         defaults for inference, embedding, and classification.",
+                         defaults for inference, embedding, classification, and OCR.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -113,6 +122,21 @@ pub(crate) fn render_models_page(
                     .color(Color::Muted),
                 )
                 .child(classifier_model_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("OCR Model"))
+                .child(
+                    Label::new(
+                        "Provider-prefixed model for scanned document OCR. \
+                         Leave empty to use the kask default (RunPod/kask-ocr).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(ocr_model_input),
         )
         .into_any_element()
 }

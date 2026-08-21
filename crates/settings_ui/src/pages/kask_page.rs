@@ -361,6 +361,10 @@ pub(crate) fn kask_string_input(
                                 kask.models.get_or_insert_default().classifier_model =
                                     Some(parsed.clone());
                             }
+                            ("models", "ocr_model") => {
+                                kask.models.get_or_insert_default().ocr_model =
+                                    Some(parsed.clone());
+                            }
                             ("collab", "database_url") => {
                                 kask.collab.get_or_insert_default().database_url =
                                     Some(parsed.clone());
@@ -703,8 +707,9 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: Some("kask.models"),
             description: Some(
                 "Configure kask-wide model defaults: default inference model, \
-                 embedding model for corpus/memory, and classifier model for \
-                 guard/regulation. These are provider-prefixed strings (e.g. \
+                 embedding model for corpus/memory, classifier model for \
+                 guard/regulation, and OCR model for scanned document OCR. \
+                 These are provider-prefixed strings (e.g. \
                  \"openrouter/z-ai/glm-5.2\") that override the kask built-in defaults."
                     .into(),
             ),
@@ -714,6 +719,7 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "embedding model",
                 "classifier model",
                 "inference model",
+                "ocr model",
             ],
             in_json: true,
             files: USER,
