@@ -34,7 +34,7 @@ pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
 pub use credentials::{load_dotenv, parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::classify_http_error;
-pub use tool_span::{ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic};
+pub use tool_span::{ToolContext, execute_tool, execute_tool_semantic};
 pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
 pub use validation::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped, resolve_max_read_bytes,

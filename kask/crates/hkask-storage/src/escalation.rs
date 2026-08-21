@@ -318,40 +318,4 @@ impl EscalationQueue {
         }
         Ok(())
     }
-    /// Get escalation statistics.
-    ///
-    /// expect: "The system provides durable storage for escalation data"
-    /// \[P8\] Motivating: Semantic Grounding — escalation statistics
-    /// post: returns EscalationStats with counts by status
-    #[must_use = "result must be used"]
-    pub fn stats(&self) -> Result<EscalationStats, EscalationError> {
-        let rows = self
-            .driver
-            .query(
-                r#"SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
-                SUM(CASE WHEN status = 'dismissed' THEN 1 ELSE 0 END) as dismissed
-             FROM escalations"#,
-                &[],
-            )
-            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
-        let row = rows.first().ok_or_else(|| {
-            EscalationError::Infra(InfrastructureError::database("empty stats result"))
-        })?;
-        Ok(EscalationStats {
-            total: row.get(0)?.as_int()?,
-            pending: row.get(1)?.as_int()?,
-            resolved: row.get(2)?.as_int()?,
-            dismissed: row.get(3)?.as_int()?,
-        })
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EscalationStats {
-    pub total: i64,
-    pub pending: i64,
-    pub resolved: i64,
-    pub dismissed: i64,
 }

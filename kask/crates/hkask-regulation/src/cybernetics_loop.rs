@@ -373,7 +373,7 @@ impl CyberneticsLoop {
     /// Set tool stats on an already-constructed loop (post-build wiring).
     ///
     /// expect: "The system provides configurable cybernetic self-regulation"
-    pub fn set_tool_stats(&mut self, stats: Arc<ToolStats>) {
+    pub(crate) fn set_tool_stats(&mut self, stats: Arc<ToolStats>) {
         self.sensor_registry
             .register(Arc::new(ToolReliabilitySensor::new(
                 Arc::clone(&stats),
@@ -460,7 +460,7 @@ impl CyberneticsLoop {
     /// Consume one call. Returns `Err` if the agent has no cap or it is exhausted.
     ///
     /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
+    pub(crate) async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
         self.call_cap_manager.read().await.charge(agent).await
     }
 

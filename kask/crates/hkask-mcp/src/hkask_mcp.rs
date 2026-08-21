@@ -13,6 +13,6 @@
 
 pub mod runtime;
 
-pub use runtime::{McpRuntime, McpServer, McpTool, ServerStartError};
+pub use runtime::{McpRuntime, McpServer, McpTool};
 
 // ── Canonical MCP server registry ─────────────────────────────────────────

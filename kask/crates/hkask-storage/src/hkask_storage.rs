@@ -6,7 +6,7 @@
 //! Database driver abstraction and storage core foundation are now modules
 //! within this crate. Domain-specific storage modules follow.
 
-pub mod core;
+pub(crate) mod core;
 pub mod database;
 
 pub use core::DatabaseDriverTrait;
@@ -15,15 +15,13 @@ pub use core::{embedding_dim, open_database, open_or_repair, sanitize_path};
 pub use database::{DatabaseDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas};
 pub use hkask_types::time::now_rfc3339;
 
-pub mod embeddings;
-pub mod escalation;
-pub mod hmem;
-pub mod regulation_store;
+pub(crate) mod embeddings;
+pub(crate) mod escalation;
+pub(crate) mod hmem;
+pub(crate) mod regulation_store;
 
-pub use embeddings::StoredEmbedding;
 pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult};
 pub use escalation::{EscalationEntry, EscalationError, EscalationQueue, EscalationStatus};
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore};
-pub use regulation_store::WeightedEvent;
 pub use regulation_store::{DecayConfig, RegulationArchive};

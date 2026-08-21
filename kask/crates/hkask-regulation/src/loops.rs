@@ -46,7 +46,3 @@ pub(crate) use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
 pub(crate) use signals::Signal;
 pub(crate) use signals::{Deviation, DeviationDirection, SignalMetric};
-
-// Backward-compatible re-export — CuratorDirective was previously re-exported
-// from here but lives in hkask_types::curator.
-pub(crate) use hkask_types::curator::CuratorDirective;

@@ -564,7 +564,6 @@ mod tests {
                         total_tokens: 2,
                     },
                     finish_reason: "stop".into(),
-                    token_probabilities: None,
                     tool_calls: vec![],
                     reasoning: None,
                     cost_usd: None,

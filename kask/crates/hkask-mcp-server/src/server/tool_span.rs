@@ -7,7 +7,7 @@ use std::time::Instant;
 use super::error::McpToolError;
 
 /// RAII guard — emits Regulation tool span on drop. Use `span.ok(output)` or `span.error(kind, output)`.
-pub struct ToolSpanGuard {
+pub(crate) struct ToolSpanGuard {
     tool_name: String,
     start: Instant,
     caller: hkask_types::WebID,

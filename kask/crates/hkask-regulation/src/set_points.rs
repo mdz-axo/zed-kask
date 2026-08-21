@@ -237,16 +237,10 @@ pub struct SetPoints {
     pub max_alerts: usize,
 }
 
-/// Configurable thresholds for Curation decisions (spec coherence, drift).
-/// Loaded from YAML via `HKASK_REG_CONFIG` (same pattern as `SetPointsConfig`).
-///
-/// Type definition lives in `hkask_types::curator`; YAML loading lives here.
-pub use hkask_types::curator::CurationThresholdConfig;
-
 /// YAML-configurable set-points. Fields are Optional so partial configs work.
 /// Missing fields fall back to the `SetPoints::default()` values.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct SetPointsConfig {
+pub(crate) struct SetPointsConfig {
     pub energy_min_remaining: Option<f64>,
     pub variety_max_deficit: Option<f64>,
     pub error_rate_max: Option<f64>,
@@ -321,7 +315,7 @@ impl Default for SetPoints {
 impl SetPoints {
     /// expect: "The system provides configurable regulation thresholds for the cybernetic control loop"
     /// Create SetPoints from a config, using defaults for missing fields.
-    pub fn from_config(config: &SetPointsConfig) -> Self {
+    pub(crate) fn from_config(config: &SetPointsConfig) -> Self {
         let defaults = SetPoints::default();
         Self {
             energy_min_remaining: config

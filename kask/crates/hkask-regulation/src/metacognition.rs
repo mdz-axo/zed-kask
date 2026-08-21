@@ -493,27 +493,26 @@ impl MetacognitionLoop {
         if let Some(ref rx) = self.alert_rx {
             let mut rx_guard = rx.lock().await;
             while let Ok(input) = rx_guard.try_recv() {
-                if let CurationInput::Alert(alert) = input {
-                    tracing::warn!(
-                        target: "reg.curator.metacognition",
-                        domain = %alert.domain,
-                        deficit = alert.deficit,
-                        threshold = alert.threshold,
-                        severity = ?alert.severity,
-                        message = %alert.message,
-                        "CyberneticsLoop algedonic alert received"
-                    );
-                    // Forward critical CyberneticsLoop alerts to the same
-                    // user-facing sink so well exhaustion and variety
-                    // deficits escalate to the user, not just the logs.
-                    if alert.is_critical()
-                        && let Some(ref sink) = self.alert_sink
-                    {
-                        sink.on_alert(&AlertEvent {
-                            message: alert.message.clone(),
-                            critical: true,
-                        });
-                    }
+                let CurationInput::Alert(alert) = input;
+                tracing::warn!(
+                    target: "reg.curator.metacognition",
+                    domain = %alert.domain,
+                    deficit = alert.deficit,
+                    threshold = alert.threshold,
+                    severity = ?alert.severity,
+                    message = %alert.message,
+                    "CyberneticsLoop algedonic alert received"
+                );
+                // Forward critical CyberneticsLoop alerts to the same
+                // user-facing sink so well exhaustion and variety
+                // deficits escalate to the user, not just the logs.
+                if alert.is_critical()
+                    && let Some(ref sink) = self.alert_sink
+                {
+                    sink.on_alert(&AlertEvent {
+                        message: alert.message.clone(),
+                        critical: true,
+                    });
                 }
             }
         }

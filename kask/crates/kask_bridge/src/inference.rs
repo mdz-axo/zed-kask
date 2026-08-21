@@ -142,7 +142,6 @@ impl StreamAccumulator {
             model: self.model_name,
             usage: self.usage,
             finish_reason: self.finish_reason,
-            token_probabilities: None,
             tool_calls: self.tool_calls,
             reasoning: if self.reasoning.is_empty() {
                 None

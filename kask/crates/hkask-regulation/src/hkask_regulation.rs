@@ -6,6 +6,7 @@
 //! tool-call caps, OCAP governance, sovereignty enforcement. Per Ashby's Law
 //! of Requisite Variety.
 
+pub(crate) mod algedonic;
 pub(crate) mod cybernetics_loop;
 pub(crate) mod dampener;
 pub(crate) mod energy;
