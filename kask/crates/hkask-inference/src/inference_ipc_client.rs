@@ -150,8 +150,8 @@ fn unexpected_outcome_msg(method: &InferenceMethod, variant: &'static str) -> St
 
 /// Strip the provider prefix (the first `/`-segment) from a model id.
 ///
-/// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`; `"ollama/nomic-embed-text"`
-/// → `"nomic-embed-text"`; `"no-slash"` → `"no-slash"`. Used by `list_models`
+/// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`; `"ollama/qwen3-embedding:0.6b"`
+/// → `"qwen3-embedding:0.6b"`; `"no-slash"` → `"no-slash"`. Used by `list_models`
 /// to produce the `ModelEntry.model` ("raw model name without prefix") from
 /// the bridge's `ModelListEntry.name` ("full name with provider prefix").
 ///
@@ -364,7 +364,7 @@ impl InferenceIpcClient {
     /// Generate embeddings for a batch of texts via the IPC bridge.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `ollama/nomic-embed-text`). The zed process strips the
+    /// `DEFAULT_EMBEDDING_MODEL`). The zed process strips the
     /// prefix and resolves credentials from its `LanguageModelRegistry`.
     pub async fn embed(
         &self,
@@ -681,8 +681,8 @@ mod tests {
             "z-ai/glm-5.2"
         );
         assert_eq!(
-            strip_provider_prefix("ollama/nomic-embed-text"),
-            "nomic-embed-text"
+            strip_provider_prefix("ollama/qwen3-embedding:0.6b"),
+            "qwen3-embedding:0.6b"
         );
         assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
         assert_eq!(strip_provider_prefix("/leading-slash"), "leading-slash");

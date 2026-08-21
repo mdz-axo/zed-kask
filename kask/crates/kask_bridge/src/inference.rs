@@ -923,7 +923,7 @@ impl LanguageModelEmbeddingPort {
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `ollama/nomic-embed-text`). The prefix is stripped
+    /// `DEFAULT_EMBEDDING_MODEL`). The prefix is stripped
     /// before the API call.
     pub async fn embed(
         &self,

@@ -188,7 +188,7 @@ pub(crate) fn ocr_concurrency() -> usize {
 }
 
 /// Default embedding model — env var first, then HkaskSettings from disk.
-/// Consolidates 6 hardcoded "ollama/nomic-embed-text" references (Q3).
+/// Consolidates 6 hardcoded `DEFAULT_EMBEDDING_MODEL` references (Q3).
 /// Result is cached in a OnceLock to avoid repeated disk reads and eliminate
 /// the `String::leak` anti-pattern (BUG-1 fix, BUG-2 fix).
 pub(crate) fn default_embedding_model() -> &'static str {

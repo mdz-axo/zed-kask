@@ -67,6 +67,20 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         credential_key: "runpod",
         dashboard_url: "https://www.runpod.io/",
     },
+    // Ollama is a local LLM/embedding service (default port 11434). It's
+    // OpenAI-compatible at `/v1` and requires no API key — an empty `env_var`
+    // signals "no key needed" to `resolve_embedding_credentials`. Listed here
+    // so the default embedding model resolves
+    // without a warning. Skipped in `credential_urls_for_mcp` (no key to
+    // inject) and `collect_env_keys_for_mirror` (empty env_var filters out).
+    InferenceProviderDescriptor {
+        id: "ollama",
+        name: "Ollama",
+        api_url: "http://localhost:11434/v1",
+        env_var: "",
+        credential_key: "ollama",
+        dashboard_url: "https://ollama.com/",
+    },
 ];
 
 impl InferenceProviderDescriptor {
@@ -354,7 +368,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // `LanguageModelProvider` finds the key), but MCP env injection is handled
     // by the `DATA_SERVICES` loop above via `runpod_enabled`.
     for provider in INFERENCE_PROVIDERS {
-        if provider.credential_key == "runpod" {
+        if provider.credential_key == "runpod" || provider.env_var.is_empty() {
             continue;
         }
         let enabled = match provider.credential_key {
@@ -434,7 +448,7 @@ pub fn ensure_openai_compatible_entries(cx: &mut App) {
 /// the `INFERENCE_PROVIDERS` table + env var.
 ///
 /// This is the direct path: parse the provider prefix from the model string
-/// (e.g. `ollama/nomic-embed-text` → `ollama`), look up the descriptor in
+/// (e.g. `DEFAULT_EMBEDDING_MODEL` → the provider prefix), look up the descriptor in
 /// `INFERENCE_PROVIDERS`, and read the API key from the env var named in the
 /// descriptor (`OPENROUTER_API_KEY`, etc.). No `LanguageModelRegistry` lookup,
 /// no GPUI access, no case-sensitivity traps.
@@ -443,6 +457,9 @@ pub fn ensure_openai_compatible_entries(cx: &mut App) {
 /// - The model string has no recognized provider prefix.
 /// - The provider is not in `INFERENCE_PROVIDERS`.
 /// - The env var is not set (key not loaded).
+///
+/// Providers with an empty `env_var` (e.g. ollama) are local services that
+/// require no API key — the function returns an empty key for them.
 pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, String)> {
     let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
         tracing::warn!(
@@ -454,6 +471,13 @@ pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, S
         );
         None
     })?;
+
+    // Local providers (e.g. ollama) don't require an API key — an empty
+    // `env_var` signals "no key needed." Return an empty key so the embedding
+    // port can connect without authentication.
+    if provider.env_var.is_empty() {
+        return Some((provider.api_url.to_string(), String::new()));
+    }
 
     let api_key = std::env::var(provider.env_var).ok().or_else(|| {
         tracing::warn!(

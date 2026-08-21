@@ -29,7 +29,7 @@ pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 /// `HKASK_EMBEDDING_MODEL` (or the corpus embedding settings) to a provider
 /// they have credentials for — embedding calls fail with a clear error
 /// otherwise.
-pub const DEFAULT_EMBEDDING_MODEL: &str = "ollama/nomic-embed-text";
+pub const DEFAULT_EMBEDDING_MODEL: &str = "ollama/qwen3-embedding:0.6b";
 
 /// Default OCR model for scanned PDF fallback.
 /// Uses OLMOCR-2 on RunPod serverless (endpoint `hsldzov6932wf5`, named `kask-ocr`

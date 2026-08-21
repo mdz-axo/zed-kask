@@ -23,7 +23,7 @@ pub(crate) fn render_models_page(
     let default_model_input = kask_string_input(
         "kask-models-default",
         "Default Inference Model",
-        "OpenRouter/z-ai/glm-5.2",
+        kask_bridge::DEFAULT_FALLBACK_MODEL,
         default_model,
         "models",
         "default_model",
@@ -31,7 +31,7 @@ pub(crate) fn render_models_page(
     let embedding_model_input = kask_string_input(
         "kask-models-embedding",
         "Embedding Model",
-        "ollama/nomic-embed-text",
+        kask_bridge::DEFAULT_EMBEDDING_MODEL,
         embedding_model,
         "models",
         "embedding_model",
@@ -39,7 +39,7 @@ pub(crate) fn render_models_page(
     let classifier_model_input = kask_string_input(
         "kask-models-classifier",
         "Classifier Model",
-        "OpenRouter/z-ai/glm-5.2",
+        kask_bridge::DEFAULT_CLASSIFIER_MODEL,
         classifier_model,
         "models",
         "classifier_model",
@@ -47,7 +47,7 @@ pub(crate) fn render_models_page(
     let ocr_model_input = kask_string_input(
         "kask-models-ocr",
         "OCR Model",
-        "RunPod/kask-ocr",
+        kask_bridge::DEFAULT_OCR_MODEL,
         ocr_model,
         "models",
         "ocr_model",

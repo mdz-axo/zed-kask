@@ -26,7 +26,7 @@ pub(crate) fn render_corpus_page(
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",
         "Embedding Model",
-        "ollama/nomic-embed-text",
+        kask_bridge::DEFAULT_EMBEDDING_MODEL,
         embedding_model,
         "corpus",
         "embedding_model",
@@ -137,7 +137,7 @@ pub(crate) fn render_corpus_page(
                 .gap_1()
                 .child(Label::new("Embedding Model"))
                 .child(
-                    Label::new("Override the embedding model (e.g., DI/Qwen/Qwen3-Embedding-0.6B). Leave empty for default.")
+                    Label::new("Override the embedding model. Leave empty for the default (DEFAULT_EMBEDDING_MODEL).")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )

@@ -22,7 +22,7 @@
 //! # Model Naming
 //!
 //! Model ids are provider-prefixed (e.g. `OpenRouter/z-ai/glm-5.2`,
-//! `ollama/nomic-embed-text`, `RunPod/kask-ocr`). The prefix selects the
+//! `DEFAULT_EMBEDDING_MODEL`, `RunPod/kask-ocr`). The prefix selects the
 //! provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
 //! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`).
 

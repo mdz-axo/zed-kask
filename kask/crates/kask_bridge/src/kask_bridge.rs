@@ -23,7 +23,9 @@ mod settings;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
-pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
+pub use hkask_inference::model_constants::{
+    DEFAULT_CLASSIFIER_MODEL, DEFAULT_EMBEDDING_MODEL, DEFAULT_FALLBACK_MODEL, DEFAULT_OCR_MODEL,
+};
 pub use hkask_types::agent_paths::resolve_data_dir;
 
 pub use identity::{

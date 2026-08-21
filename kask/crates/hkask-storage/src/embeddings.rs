@@ -91,7 +91,7 @@ impl EmbeddingStore {
                  clamping to 1024 to avoid a zero-dimensional store. \
                  Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
                  to match the embedding model's output (default 1024 for
-                 ollama/nomic-embed-text)."
+                 `DEFAULT_EMBEDDING_MODEL`)."
             );
             1024
         } else {
