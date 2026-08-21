@@ -125,11 +125,6 @@ impl GammaMarket {
         serde_json::from_str(field).unwrap_or_default()
     }
 
-    /// Outcome names decoded from the embedded JSON string.
-    pub fn outcome_names(&self) -> Vec<String> {
-        Self::decode_string_array(&self.outcomes)
-    }
-
     /// Outcome prices decoded and parsed; unparsable entries are dropped
     /// (index alignment with names is preserved for parseable prefixes).
     pub fn prices(&self) -> Vec<f64> {
@@ -137,11 +132,6 @@ impl GammaMarket {
             .iter()
             .filter_map(|p| p.parse::<f64>().ok())
             .collect()
-    }
-
-    /// CLOB token IDs decoded from the embedded JSON string.
-    pub fn token_ids(&self) -> Vec<String> {
-        Self::decode_string_array(&self.clob_token_ids)
     }
 
     /// Yes-leg implied probability: `outcomePrices[0]` by Gamma convention

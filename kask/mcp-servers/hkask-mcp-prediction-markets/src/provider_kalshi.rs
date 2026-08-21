@@ -159,24 +159,6 @@ pub async fn fetch_markets(
     Ok(response.markets)
 }
 
-/// Fetch all markets scoped to a single event ticker — the stage-2 contract
-/// fetch. One small, targeted, independently-retryable request per matched
-/// event. Returns markets of any status (open + closed + resolved) so the
-/// caller can inventory expirations across the full contract ladder.
-pub async fn fetch_markets_for_event(
-    client: &reqwest::Client,
-    event_ticker: &str,
-    limit: u32,
-) -> Result<Vec<KalshiMarket>, McpToolError> {
-    let query = vec![
-        ("limit", limit.to_string()),
-        ("event_ticker", event_ticker.to_string()),
-    ];
-    let response: KalshiMarketsResponse =
-        get_json(client, &format!("{KALSHI_BASE}/markets"), &query).await?;
-    Ok(response.markets)
-}
-
 /// One candlestick period (T0-verified shape: bid/ask OHLC as `_dollars`
 /// strings; `price` sub-object is empty for quote-driven markets).
 #[derive(Debug, Clone, Deserialize, Default)]

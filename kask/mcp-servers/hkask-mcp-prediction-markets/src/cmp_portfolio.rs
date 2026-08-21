@@ -334,54 +334,6 @@ pub fn maturity_window(target_days: u32, config: &CmpConfig) -> (f64, f64) {
     (target - half, target + half)
 }
 
-/// Full eligibility pipeline for one record against one index (C0.2): base
-/// event classification → materiality level → orientation → maturity window →
-/// reliability floor. Returns the matched base event and orientation when
-/// eligible, else a rejection with the reason.
-///
-/// `reference` is the current factor level; `volatility` is the underlying's
-/// trailing volatility in the family's type units (None when unmeasured — the
-/// materiality override then governs, or eligibility fails honestly).
-pub fn evaluate_record(
-    input: &EligibilityInput,
-    index_base_event: crate::base_event::BaseEvent,
-    index_orientation: Orientation,
-    reference: f64,
-    volatility: Option<f64>,
-    target_days: u32,
-    config: &CmpConfig,
-) -> Result<(crate::base_event::BaseEvent, Orientation), EligibilityRejection> {
-    let reject = |reason: String| EligibilityRejection {
-        market_id: input.record.market_id.clone(),
-        reason,
-    };
-
-    // Semantic base-event match.
-    let base_event = crate::base_event::classify_base_event(input.record)
-        .ok_or_else(|| reject("not a base-event contract".into()))?;
-    if base_event != index_base_event {
-        return Err(reject(format!(
-            "base event {base_event:?} does not match index {index_base_event:?}"
-        )));
-    }
-
-    // Materiality level for this family and target maturity.
-    let setting = base_event.default_materiality();
-    let level = materiality_level(&setting, volatility, target_days, config)
-        .ok_or_else(|| reject("no materiality level (no volatility, no override)".into()))?;
-
-    // Orientation + maturity + reliability.
-    let orientation = check_eligibility(
-        input,
-        index_orientation,
-        reference,
-        level,
-        target_days,
-        config,
-    )?;
-    Ok((base_event, orientation))
-}
-
 /// Test a contract's eligibility for an index of the given orientation.
 /// Returns Ok(orientation) when eligible, or records a rejection.
 pub fn check_eligibility(

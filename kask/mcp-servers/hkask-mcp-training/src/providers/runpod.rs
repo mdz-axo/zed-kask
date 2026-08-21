@@ -184,23 +184,11 @@ impl RunpodHost {
         }
     }
 
-    /// Borrow the job_id → pod_id map for lookup (used by smoke test examples).
-    pub fn jobs_for_lookup(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     /// Get the SSH command for a job, if available. Under v2 this is always
     /// `None` — the REST API v2 does not surface per-port SSH IP/port info in
     /// the pod response. Use the RunPod console or `runpodctl ssh` instead.
     pub fn ssh_for_job(&self, job_id: &str) -> Option<String> {
         self.ssh_commands.lock().ok()?.get(job_id).cloned()
-    }
-
-    /// Inject a synthetic job_id → pod_id mapping where the job_id equals the
-    /// pod_id (used by smoke test examples that only have the pod_id).
-    pub fn inject_pod_id(&self, pod_id: &str) {
-        let mut map = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        map.insert(pod_id.to_string(), pod_id.to_string());
     }
 
     /// Load persisted pod IDs from the JSON file.

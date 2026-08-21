@@ -146,11 +146,6 @@ impl ForecastStore {
         }
     }
 
-    /// Force compaction regardless of threshold.
-    pub fn force_compact(&self) {
-        self.compact();
-    }
-
     pub fn len(&self) -> usize {
         self.records.len()
     }

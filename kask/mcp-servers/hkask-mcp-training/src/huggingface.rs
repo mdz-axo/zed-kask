@@ -190,37 +190,6 @@ pub enum TrainingArtifactError {
     InvalidManifest(String),
 }
 
-impl CompletionManifest {
-    pub fn validate_for(
-        &self,
-        job_id: &str,
-        dataset_sha256: &str,
-    ) -> Result<(), TrainingArtifactError> {
-        if self.job_id != job_id {
-            return Err(TrainingArtifactError::InvalidManifest(
-                "job ID does not match the submitted job".to_string(),
-            ));
-        }
-        if self.status != "success" && self.status != "succeeded" {
-            return Err(TrainingArtifactError::InvalidManifest(format!(
-                "status is not success or succeeded (got: {})",
-                self.status
-            )));
-        }
-        if self.dataset_sha256 != dataset_sha256 {
-            return Err(TrainingArtifactError::InvalidManifest(
-                "dataset hash does not match the submitted dataset".to_string(),
-            ));
-        }
-        if self.adapter.repository.is_empty() || self.adapter.path.is_empty() {
-            return Err(TrainingArtifactError::InvalidManifest(
-                "adapter reference is incomplete (repository and path required)".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
 /// Hugging Face Hub configuration for remote training artifacts.
 ///
 /// All repositories are addressed through an explicit owner and are private.

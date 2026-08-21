@@ -20,7 +20,6 @@ pub const TAVILY_API_BASE: &str = "https://api.tavily.com";
 pub const SERPAPI_BASE: &str = "https://serpapi.com/search";
 pub const EXA_API_BASE: &str = "https://api.exa.ai";
 pub const BROWSERBASE_API_BASE: &str = "https://api.browserbase.com/v1";
-pub const FIRECRAWL_API_VERSION: &str = "v2";
 pub const DEFAULT_CACHE_TTL_SECS: u64 = 300;
 pub const MAX_CACHE_TTL_SECS: u64 = 7200;
 pub const DEFAULT_CACHE_MAX_ENTRIES: usize = 50;

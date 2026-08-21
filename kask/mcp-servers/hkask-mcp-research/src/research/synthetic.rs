@@ -28,11 +28,6 @@ use scraper::{ElementRef, Html, Selector};
 
 // ── Spec types ─────────────────────────────────────────────────────────────
 
-/// A field selector. For `css`, this is a CSS selector with an optional
-/// `@attr` suffix (e.g. `"a@href"`). For `json_path`, this is a JSONPath
-/// expression (e.g. `"$.title"`). For `diff_hash`, this is unused.
-pub type FieldSelector = String;
-
 /// The extractor kind. Determines how `extractor_spec` is interpreted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
