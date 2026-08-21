@@ -3218,7 +3218,7 @@ fn sync_kask_mcp_runtime_servers(
     >,
     cx: &mut gpui::App,
 ) {
-    let server_ids: Vec<&'static str> = kask_bridge::BUILT_IN_MCP_SERVERS_IDS.to_vec();
+    let server_ids: Vec<&'static str> = kask_bridge::builtin_mcp_server_ids();
     cx.spawn(async move |cx| {
         // Build the changed-server list on the foreground — `kask_server_env`
         // needs `AsyncApp` (not `Send`). Do NOT hold a tokio `enter()` guard

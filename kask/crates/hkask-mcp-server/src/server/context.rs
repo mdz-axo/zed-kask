@@ -117,17 +117,6 @@ impl CapabilityTier {
             Err(hkask_keystore::KeychainError::Platform(_)) => false,
         }
     }
-
-    /// Regulation spans are meaningful only in embedded mode (consumed by hKask Regulation).
-    /// In standalone mode, spans go to stderr via the tracing subscriber.
-    /// Check if Regulation is available (all required credentials present).
-    ///
-    /// expect: "The system provides authenticated tool execution context for MCP servers"
-    /// post: returns true iff embedded (Regulation spans consumed by runtime, not stderr)
-    #[must_use]
-    pub fn reg_available(&self) -> bool {
-        self.embedded
-    }
 }
 
 /// Server construction context. No ambient authority — all deps injected here.

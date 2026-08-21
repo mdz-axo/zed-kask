@@ -32,12 +32,20 @@ mod directive;
 
 use crate::dampener::{Dampener, StagnationDetector};
 
-/// A read-only view of rollout events for impact verification (event-
-/// substrate phase 6). The regulation crate defines the port; the swarm
-/// side implements it over `hkask-event-store`. This keeps the regulation
-/// crate dependency-light (no storage dep) while letting `verify_impact`
-/// answer "for rollout R, what was the metric before action A and after
-/// it?" as a query instead of a special-case struct walk.
+/// A read-and-write view of rollout events for impact verification and
+/// impact- verdict write-back (event-substrate phase 6). The regulation
+/// crate defines the port; the swarm side implements it over
+/// `hkask-event-store`. This keeps the regulation crate dependency-light
+/// (no storage dep) while letting `verify_impact` answer "for rollout R,
+/// what was the metric before action A and after it?" as a query instead
+/// of a special-case struct walk, and write its impact verdict back so
+/// downstream consumers (training bridge, regression monitor, ORIENT)
+/// can see "the regulation system verified this action's impact."
+///
+/// Canonical model: Agent Lightning's `RewardData.source` — the
+/// regulation loop's impact verdict is a `regulation_impact`-sourced
+/// verdict event, distinct from `deterministic_evaluator` (the harness's
+/// check) and `operator` (a human stamp).
 pub trait RolloutEventSource: Send + Sync {
     /// The value of `metric` for `rollout_id` at the event position
     /// `before_position` (the last event before the action) and at the
@@ -49,6 +57,32 @@ pub trait RolloutEventSource: Send + Sync {
         metric: &str,
         before_position: i64,
     ) -> Result<Option<(f64, f64)>, String>;
+
+    /// Write the regulation loop's impact verdict back to the event store
+    /// as a `verdict` event with `source: regulation_impact`. Closes the
+    /// feedback loop: the loop measured the action's impact and persists
+    /// its judgment so downstream consumers can see it alongside the
+    /// deterministic-evaluator verdicts the harness wrote.
+    ///
+    /// Takes primitives (not `VerdictSource`) so the regulation crate stays
+    /// dependency-light — the adapter maps to the typed wire string.
+    ///
+    /// `before`/`after` are the metric values the loop measured.
+    /// `improved` is the loop's directional judgment. `decision` is the
+    /// `ActionDecision` string ("Accept"/"Worsen"/"Block").
+    ///
+    /// A write failure returns `Err` — the caller warns and continues
+    /// (the loop's internal `ImpactReport` is unaffected; only the
+    /// store write-back is lost). Never silently drops.
+    fn append_impact_verdict(
+        &self,
+        rollout_id: &str,
+        metric: &str,
+        before: f64,
+        after: f64,
+        improved: bool,
+        decision: &str,
+    ) -> Result<(), String>;
 }
 use crate::energy::{CallCapError, CallCapManager, CallMeterOutcome};
 

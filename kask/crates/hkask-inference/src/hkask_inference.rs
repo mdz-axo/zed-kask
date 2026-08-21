@@ -35,60 +35,79 @@ pub mod openai_compat;
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 
-/// Resolve the best available `InferencePort` for an MCP server.
+/// The shared "no IPC bridge" reason. Every stub method names the socket so the
+/// operator can distinguish "not configured" from "configured but broken" — a
+/// missing socket is never reported as an empty success (the `.rules`
+/// broken-feedback-loop trap: `unwrap_or(0)`-class, where a broken bridge would
+/// read as "no models" / "no results").
+const IPC_BRIDGE_UNAVAILABLE: &str =
+    "HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — the zed process is required";
+
+/// One IPC-bridge connection attempt, with the result logged once. The match
+/// and logging live here so the three `resolve_*_port` entry points do not
+/// triplicate them.
 ///
-/// This is the canonical entry point for MCP servers at startup. It tries
-/// the IPC bridge first (connecting back to zed's `LanguageModelRegistry`
-/// from env-var API keys when the IPC socket is not available.
-///
-/// # Priority
-///
-/// 1. `InferenceIpcClient` — if `HKASK_INFERENCE_SOCKET` is set and the
-///    socket is reachable. This routes inference through zed's
-///    `LanguageModelRegistry` (with guard and zed's configured
-///    API keys). Chat, vision, embed, and list_models all go through here.
-///    This handles only media generation. Chat/vision/
-///    embed return a clear error directing the operator to the IPC bridge.
-///    Used when running standalone or when the IPC socket is not available.
-///
-/// # Logs
-///
-/// Logs which path was taken at `info` level so operators can verify the
-/// inference routing from server startup logs.
-///
-/// pre:  none (reads env vars)
-/// post: returns an `Arc<dyn InferencePort>` ready for inference calls
-#[must_use]
-pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
+/// Returns `Some(client)` when the bridge connected, `None` when the socket is
+/// unset or unreachable. The `None` carries no payload — every caller returns its
+/// own socket-named stub — so `Option` is the exact type; a bespoke enum would be
+/// speculative generality (`Unavailable` had no fields).
+async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
     match InferenceIpcClient::from_env().await {
         Some(Ok(client)) => {
             tracing::info!(
                 target: "hkask.inference",
-                "MCP inference routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+                "{label} routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
             );
-            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::InferencePort>
+            Some(client)
         }
         Some(Err(e)) => {
             tracing::warn!(
                 target: "hkask.inference",
                 error = %e,
-                "IPC bridge connection failed — inference unavailable (the zed process is required)"
+                "IPC bridge connection failed — {label} unavailable ({IPC_BRIDGE_UNAVAILABLE})"
             );
-            std::sync::Arc::new(UnavailableInference)
+            None
         }
         None => {
             tracing::info!(
                 target: "hkask.inference",
-                "HKASK_INFERENCE_SOCKET not set — inference unavailable (the zed process is required)"
+                "{label} unavailable ({IPC_BRIDGE_UNAVAILABLE})"
             );
-            std::sync::Arc::new(UnavailableInference)
+            None
         }
     }
 }
 
-/// Inference stub for MCP servers without the IPC bridge. Every method
-/// returns a clear error naming the missing socket so callers can
-/// distinguish "dispatch unavailable" from other failures.
+/// Resolve the best available `InferencePort` for an MCP server.
+///
+/// Routes through the zed IPC bridge ([`InferenceIpcClient`]) when
+/// `HKASK_INFERENCE_SOCKET` is set and reachable; otherwise returns an
+/// [`UnavailableInference`] stub whose **every** method returns a clear,
+/// socket-named error — never an empty success. In particular `list_models`
+/// returns `Err` (not `Ok(Vec::new())`) so a missing bridge is not misread as
+/// an empty model registry.
+///
+/// `pre`: none (reads env vars). `post`: an `Arc<dyn InferencePort>` ready for
+/// inference calls.
+#[must_use]
+pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
+    match connect_bridge("MCP inference").await {
+        Some(client) => {
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::InferencePort>
+        }
+        None => std::sync::Arc::new(UnavailableInference),
+    }
+}
+
+/// Inference stub for MCP servers without the IPC bridge. Every method returns
+/// a clear, socket-named error so callers can distinguish "dispatch
+/// unavailable" from "no models" / "backend doesn't implement vision" / other
+/// failures. The trait's default impls are overridden for `generate_vision`,
+/// `embed`, and `list_models` specifically because their defaults are **not**
+/// socket-named: `list_models` defaults to `Ok(Vec::new())` (a broken bridge
+/// read as an empty registry), `generate_vision` to a generic
+/// `VisionUnsupported`, and `embed` to a generic `Connection`. Overriding them
+/// keeps the "every method names the missing socket" contract honest.
 struct UnavailableInference;
 
 impl hkask_types::InferencePort for UnavailableInference {
@@ -106,54 +125,78 @@ impl hkask_types::InferencePort for UnavailableInference {
         >,
     > {
         Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(
-                "inference unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable —                  inference requires the zed process".to_string(),
-            ))
+            Err(hkask_types::InferenceError::Connection(format!(
+                "inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn generate_vision(
+        &self,
+        _prompt: &str,
+        _images: &[String],
+        _parameters: &hkask_types::template::LLMParameters,
+        _model_override: Option<&str>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "vision inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn embed<'a>(&'a self, _model: &str, _texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        Box::pin(async {
+            Err(hkask_types::EmbeddingGenerationError::Connection(format!(
+                "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn list_models<'a>(
+        &'a self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Vec<hkask_types::ModelEntry>, hkask_types::InferenceError>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "list_models unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
         })
     }
 }
 
 /// Resolve the tool-dispatch port for an MCP server.
 ///
-/// Returns the IPC-bridge client when the socket is available (the zed
-/// process dispatches governed tools through its `McpRuntime`), or a stub
-/// that returns a clear error. Unlike `resolve_inference_port` there is no
-/// media fallback — tool dispatch only exists on the zed side.
-///
-/// Mirrors `resolve_inference_port`'s structure so MCP servers resolve both
-/// ports in one startup step (e.g. `hkask-mcp-swarm`'s local delegate loop
-/// reads `Arc<dyn ToolDispatchPort>`).
+/// Returns the IPC-bridge client when the socket is available (the zed process
+/// dispatches governed tools through its `McpRuntime`), or a stub that returns
+/// a clear, socket-named error. Tool dispatch only exists on the zed side —
+/// there is no standalone fallback.
 #[must_use]
 pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::ToolDispatchPort> {
-    match InferenceIpcClient::from_env().await {
-        Some(Ok(client)) => {
-            tracing::info!(
-                target: "hkask.inference",
-                "MCP tool dispatch routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
-            );
+    match connect_bridge("MCP tool dispatch").await {
+        Some(client) => {
             std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::ToolDispatchPort>
         }
-        Some(Err(e)) => {
-            tracing::warn!(
-                target: "hkask.inference",
-                error = %e,
-                "IPC bridge connection failed — tool dispatch unavailable"
-            );
-            std::sync::Arc::new(UnavailableToolDispatch)
-        }
-        None => {
-            tracing::info!(
-                target: "hkask.inference",
-                "HKASK_INFERENCE_SOCKET not set — tool dispatch unavailable"
-            );
-            std::sync::Arc::new(UnavailableToolDispatch)
-        }
+        None => std::sync::Arc::new(UnavailableToolDispatch),
     }
 }
 
-/// Tool-dispatch stub for MCP servers without the IPC bridge. Returns a
-/// clear error naming the missing socket so the caller can distinguish
-/// "dispatch unavailable" from "tool not found".
+/// Tool-dispatch stub for MCP servers without the IPC bridge. Returns a clear
+/// error naming the missing socket so the caller can distinguish "dispatch
+/// unavailable" from "tool not found".
 struct UnavailableToolDispatch;
 
 impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
@@ -171,10 +214,10 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
         >,
     > {
         Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(
-                "tool dispatch unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — \
-                 MCP tool calls from delegated agents require the zed process".to_string(),
-            ))
+            Err(hkask_types::InferenceError::Connection(format!(
+                "tool dispatch unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
+                 MCP tool calls from delegated agents require the zed process"
+            )))
         })
     }
 }
@@ -183,29 +226,11 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
 /// `UnavailableWorktreeSpawn` stub when the socket is absent or unreachable —
 /// the MCP server falls back to in-memory `LazyLocalSwarmRuntime::delegate()`.
 pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::WorktreeSpawnPort> {
-    match InferenceIpcClient::from_env().await {
-        Some(Ok(client)) => {
-            tracing::info!(
-                target: "hkask.inference",
-                "MCP worktree spawn routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
-            );
+    match connect_bridge("MCP worktree spawn").await {
+        Some(client) => {
             std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>
         }
-        Some(Err(e)) => {
-            tracing::warn!(
-                target: "hkask.inference",
-                error = %e,
-                "IPC bridge connection failed — worktree spawn unavailable, falling back to in-memory spawn"
-            );
-            std::sync::Arc::new(UnavailableWorktreeSpawn)
-        }
-        None => {
-            tracing::info!(
-                target: "hkask.inference",
-                "HKASK_INFERENCE_SOCKET not set — worktree spawn unavailable, falling back to in-memory spawn"
-            );
-            std::sync::Arc::new(UnavailableWorktreeSpawn)
-        }
+        None => std::sync::Arc::new(UnavailableWorktreeSpawn),
     }
 }
 
@@ -228,10 +253,9 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
         >,
     > {
         Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(
-                "HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — worktree spawn requires the zed process"
-                    .to_string(),
-            ))
+            Err(hkask_types::InferenceError::Connection(format!(
+                "worktree spawn unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
         })
     }
 }

@@ -9149,6 +9149,7 @@ version = "0.36.0"
 dependencies = [
  "chrono",
  "hkask-storage",
+ "hkask-types",
  "schemars 1.0.4",
  "serde",
  "serde_json",

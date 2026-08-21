@@ -26,19 +26,6 @@ impl std::fmt::Display for InfraSpan {
     }
 }
 
-impl std::str::FromStr for InfraSpan {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "reg.ci.invariant.violation" => Ok(InfraSpan::CiInvariantViolation),
-            "reg.curator.consolidation" => Ok(InfraSpan::CuratorConsolidation),
-            "reg.chat" => Ok(InfraSpan::Chat),
-            "reg.wallet.conversion" => Ok(InfraSpan::WalletConversion),
-            _ => Err(()),
-        }
-    }
-}
-
 impl ObservableSpan for InfraSpan {
     fn as_str(&self) -> &'static str {
         InfraSpan::as_str(self)

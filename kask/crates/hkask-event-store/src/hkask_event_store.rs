@@ -35,14 +35,53 @@ pub use types::{EventFilter, EventRecord, EventStoreError, RolloutKind, VerdictS
 
 use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::value::DbValue;
-use hkask_storage::define_driver_store;
+use hkask_types::time::now_rfc3339_z;
 use std::sync::Arc;
 
-define_driver_store!(EventStore, EventStoreError);
+/// Store backed by a provider-agnostic `DatabaseDriver`, with an injectable
+/// clock for testable retention boundaries.
+///
+/// The `clock` field is the seam: production construction wires the real
+/// `hkask_types::time::now_rfc3339_z` clock; tests inject a controllable clock
+/// so retention cutoffs (`compact`, `strip_bodies`) can be exercised at exact
+/// boundary instants without sleeping. The clock returns a `Z`-suffixed
+/// RFC3339 string so stored `created_at` values sort lexically against
+/// `Z`-suffixed cutoffs (see `now_rfc3339_z`).
+#[derive(Clone)]
+pub struct EventStore {
+    driver: Arc<dyn DatabaseDriver>,
+    clock: fn() -> String,
+}
 
 impl EventStore {
+    /// Create a store backed by the given driver, using the real clock.
+    ///
+    /// Calls `Self::init_schema` for idempotent schema setup and propagates
+    /// any schema-init failure rather than proceeding with a missing table.
+    pub fn from_driver(driver: Arc<dyn DatabaseDriver>) -> Result<Self, EventStoreError> {
+        Self::from_driver_with_clock(driver, now_rfc3339_z)
+    }
+
+    /// Create a store backed by the given driver with an injected clock.
+    ///
+    /// The clock fn returns the `created_at` timestamp assigned to each
+    /// appended event. Tests inject a controllable clock to place events at
+    /// exact instants relative to a retention cutoff.
+    pub fn from_driver_with_clock(
+        driver: Arc<dyn DatabaseDriver>,
+        clock: fn() -> String,
+    ) -> Result<Self, EventStoreError> {
+        Self::init_schema(&driver)?;
+        Ok(Self { driver, clock })
+    }
+
+    /// Access the underlying driver for direct queries.
+    pub fn driver(&self) -> &Arc<dyn DatabaseDriver> {
+        &self.driver
+    }
+
     /// Initialize the event schema. Idempotent — safe on an existing
-    /// database. Called by the macro-generated `from_driver`.
+    /// database. Called by both constructors.
     fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), EventStoreError> {
         driver.execute_batch(SCHEMA_DDL)?;
         Ok(())
@@ -62,7 +101,7 @@ impl EventStore {
         if kind.trim().is_empty() {
             return Err(EventStoreError::EmptyKind);
         }
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = (self.clock)();
         // INSERT ... RETURNING executes insert + position read as ONE
         // statement on ONE connection. The prior INSERT-then-SELECT-MAX pair
         // raced under concurrent writers (the capture drainer and the
@@ -79,7 +118,13 @@ impl EventStore {
                 DbValue::Text(now),
             ],
         )?;
-        row.map(|r| r.get_int(0).unwrap_or(0))
+        // Propagate the get_int failure instead of silently coercing it to
+        // 0 (`unwrap_or(0)`): a column-read error must surface, not be read
+        // as position 0. NoPosition covers the case where INSERT succeeded
+        // but RETURNING yielded no row.
+        row.map(|r| r.get_int(0))
+            .transpose()
+            .map_err(EventStoreError::from)?
             .ok_or(EventStoreError::NoPosition)
     }
 
@@ -116,8 +161,10 @@ impl EventStore {
                     position: row.get_int(0)?,
                     rollout_id: row.get_str(1)?.to_string(),
                     kind: row.get_str(2)?.to_string(),
-                    payload: serde_json::from_str(row.get_str(3)?)
-                        .unwrap_or(serde_json::Value::Null),
+                    // A stored payload that fails to parse is corruption, not
+                    // a silently-nullable field — surface it rather than
+                    // coercing to Null (which would hide the bad row).
+                    payload: serde_json::from_str(row.get_str(3)?)?,
                     created_at: row.get_str(4)?.to_string(),
                 })
             })
@@ -165,7 +212,13 @@ impl EventStore {
         let row = self
             .driver
             .query_optional("SELECT MAX(position) FROM events", &[])?;
-        Ok(row.and_then(|r| r.get_int(0).ok()))
+        // Empty log => Ok(None) (query_optional returns None). A row whose
+        // position column can't be read as an int => Err(Database(...))
+        // — do NOT silently coerce a column-read failure to "empty log"
+        // (`row.and_then(|r| r.get_int(0).ok())` swallowed the error).
+        row.map(|r| r.get_int(0))
+            .transpose()
+            .map_err(EventStoreError::from)
     }
 }
 

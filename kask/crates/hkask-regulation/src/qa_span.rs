@@ -41,21 +41,6 @@ impl std::fmt::Display for QaSpan {
     }
 }
 
-impl std::str::FromStr for QaSpan {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "reg.qa.repair_attempted" => Ok(QaSpan::QaRepairAttempted),
-            "reg.qa.repair_verified" => Ok(QaSpan::QaRepairVerified),
-            "reg.qa.repair_exhausted" => Ok(QaSpan::QaRepairExhausted),
-            "reg.qa.run.pass" => Ok(QaSpan::QaRunPass),
-            "reg.qa.run.fail" => Ok(QaSpan::QaRunFail),
-            "reg.qa.run.skipped" => Ok(QaSpan::QaRunSkipped),
-            _ => Err(()),
-        }
-    }
-}
-
 impl ObservableSpan for QaSpan {
     fn as_str(&self) -> &'static str {
         QaSpan::as_str(self)

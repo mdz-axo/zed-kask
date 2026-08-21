@@ -27,11 +27,13 @@ pub use server::{
     map_join_error, map_memory_store_error, read_capped,
 };
 
-pub use tool_schema::AnyJsonValue;
-pub use tool_schema::find_boolean_schema_positions;
-
-/// Tool input schema helpers for MCP servers.
-pub mod tool_schema;
+// Re-exported from `hkask-types::tool_schema` so consumers can use
+// `hkask_mcp_server::AnyJsonValue` / `find_boolean_schema_positions` without
+// pulling `rmcp`/`reqwest`/`hkask-keystore`/`hkask-storage`/
+// `tracing-subscriber` (which this crate drags in). The dedicated
+// `tool_schema` module file was inlined here — the `tool_schema::` path had
+// no external users.
+pub use hkask_types::tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 
 /// Run an MCP server with stdio transport.
 ///

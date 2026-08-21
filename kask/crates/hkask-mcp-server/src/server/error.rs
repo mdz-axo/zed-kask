@@ -6,7 +6,6 @@
 
 use hkask_types::McpErrorKind;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 
 /// Unified error type for hkask-mcp library operations.
@@ -49,8 +48,6 @@ impl From<rmcp::RmcpError> for McpError {
 pub struct McpToolError {
     pub kind: McpErrorKind,
     pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    details: Option<Value>,
 }
 
 impl McpToolError {
@@ -64,7 +61,6 @@ impl McpToolError {
         Self {
             kind,
             message: message.into(),
-            details: None,
         }
     }
     /// Create an internal error.
@@ -98,14 +94,6 @@ impl McpToolError {
     #[must_use]
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self::new(McpErrorKind::Unavailable, message)
-    }
-    /// Create a timeout error.
-    ///
-    /// expect: "The system reports tool dispatch failures with structured classification"
-    /// post: returns McpToolError with Timeout kind
-    #[must_use]
-    pub fn timeout(message: impl Into<String>) -> Self {
-        Self::new(McpErrorKind::Timeout, message)
     }
     /// Create a permission-denied error.
     ///

@@ -835,7 +835,7 @@ impl KaskSettings {
         // child receives it.
         env.insert(
             "HKASK_MCP_SERVER_IDS".to_string(),
-            crate::BUILT_IN_MCP_SERVERS_IDS.join(","),
+            crate::builtin_mcp_server_ids().join(","),
         );
 
         // Defaults are read from each subsection's `Default` impl so there's a

@@ -29,7 +29,8 @@
 //!
 //! # Module layout
 //!
-//! - `mod.rs` (this file) — enum definition, `From` impls, `Display`
+//! - `error.rs` (this file) — enum definition, `From` impls, `Display`
+//! - `message_key.rs` — `message_key()` derivation
 //! - `retryable.rs` — `is_retryable()` logic
 
 use thiserror::Error;

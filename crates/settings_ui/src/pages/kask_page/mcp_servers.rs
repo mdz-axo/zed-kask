@@ -47,8 +47,8 @@ pub(crate) fn render_mcp_servers_page(
     .tab_index(0);
 
     let mut server_rows: Vec<AnyElement> = Vec::new();
-    for (server_id, description) in BUILT_IN_MCP_SERVERS {
-        let loaded = load_default && *overrides.get(*server_id).unwrap_or(&true);
+    for (server_id, description) in builtin_mcp_servers() {
+        let loaded = load_default && *overrides.get(server_id).unwrap_or(&true);
         server_rows.push(render_mcp_server_toggle(
             server_id,
             description,

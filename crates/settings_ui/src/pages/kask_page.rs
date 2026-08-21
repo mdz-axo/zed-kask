@@ -24,9 +24,8 @@ mod data_services;
 mod general;
 mod inference_providers;
 pub(crate) use {
-collab::render_collab_page, companies::render_companies_page,
-    condenser::render_condenser_page, corpus::render_corpus_page,
-    curator::render_curator_email_page, curator::render_curator_page,
+    collab::render_collab_page, companies::render_companies_page, condenser::render_condenser_page,
+    corpus::render_corpus_page, curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
     media::render_media_page, memory::render_memory_page, models::render_models_page,
@@ -99,8 +98,10 @@ pub(crate) fn unmark_recently_written(url: &str) {
 }
 
 /// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
-/// Re-bound here as `(&str, &str)` for the settings UI's `(id, description)` pattern.
-pub(crate) const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS;
+/// Re-bound here as `(id, description)` pairs for the settings UI's rendering pattern.
+pub(crate) fn builtin_mcp_servers() -> Vec<(&'static str, &'static str)> {
+    kask_bridge::builtin_mcp_server_pairs()
+}
 
 /// Data service descriptors, sourced from the bridge's canonical registry
 /// (`kask_bridge::DATA_SERVICES`). The bridge's `DataServiceDescriptor` is the

@@ -178,6 +178,8 @@ pub struct EventFilter {
 pub enum EventStoreError {
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
+    #[error("stored payload was not valid JSON: {0}")]
+    PayloadParse(#[from] serde_json::Error),
     #[error("rollout id must be non-empty")]
     EmptyRolloutId,
     #[error("event kind must be non-empty")]
