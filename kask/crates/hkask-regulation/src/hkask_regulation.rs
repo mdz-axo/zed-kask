@@ -27,30 +27,31 @@ pub(crate) mod tool_stats;
 pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::{CyberneticsLoop, RolloutEventSource};
-pub use energy::{
-    AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome,
-    DEFAULT_CALL_CAP_ALERT_THRESHOLD, DEFAULT_RUNAWAY_CALL_CEILING,
+pub(crate) use energy::{
+    AgentCallCapStatus, CallCapError, CallCapManager, DEFAULT_CALL_CAP_ALERT_THRESHOLD,
 };
+pub use energy::{CallCap, CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{
-    AlertEvent, AlertSink, EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig,
-    MetacognitionLoop,
+    AlertEvent, AlertSink, EscalationAlert, HealthSnapshot, MetacognitionLoop,
 };
+pub(crate) use metacognition::{EscalationTrigger, MetacognitionConfig};
 
 pub use hkask_types::regulation::QueueDepth;
-pub use infra_span::InfraSpan;
-pub use loops::{CurationInput, ExperienceClassification, RegulatoryAction};
-pub use qa_span::QaSpan;
+pub(crate) use infra_span::InfraSpan;
+pub use loops::RegulatoryAction;
+pub(crate) use loops::{CurationInput, ExperienceClassification};
+pub(crate) use qa_span::QaSpan;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
-pub use runtime::StoredSkillSpan;
-pub use sensor_provider::{
+pub(crate) use runtime::StoredSkillSpan;
+pub(crate) use sensor_provider::{
     EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,
 };
-pub use set_points::{
+pub(crate) use set_points::{
     DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD, DEFAULT_CONNECTOR_LATENCY_MAX_SECS,
     DEFAULT_ENERGY_MIN_REMAINING_RATIO, DEFAULT_ERROR_RATE_MAX, DEFAULT_MAX_ITERATIONS,
-    DEFAULT_VARIETY_MAX_DEFICIT, InferenceThrottleMode, SetPoints, SetPointsConfig,
-    load_set_points,
+    InferenceThrottleMode, SetPointsConfig,
 };
-pub use skill_span::SkillFeedbackSpan;
+pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};
+pub(crate) use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;

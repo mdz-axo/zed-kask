@@ -18,7 +18,7 @@ use hkask_types::WebID;
 /// Replaces `LoopPayload::ToolConsumption`. Sent on a dedicated
 /// `tokio::sync::mpsc::Sender<ToolConsumptionEvent>` channel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ToolConsumptionEvent {
+pub(crate) struct ToolConsumptionEvent {
     pub tool_name: String,
     pub agent: WebID,
     pub success: bool,
@@ -31,7 +31,7 @@ pub struct ToolConsumptionEvent {
 /// Replaces `LoopPayload::GoalTransition`. Sent on a dedicated
 /// `tokio::sync::mpsc::Sender<GoalTransitionEvent>` channel to CurationLoop's inbox.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct GoalTransitionEvent {
+pub(crate) struct GoalTransitionEvent {
     pub goal_id: String,
     pub from_state: String,
     pub to_state: String,
@@ -46,7 +46,7 @@ pub struct GoalTransitionEvent {
 /// canonical variants. This enum makes the Curation-relevant classification
 /// explicit instead of magic-string matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GoalLifecycle {
+pub(crate) enum GoalLifecycle {
     /// Goal has been Active past its staleness window — attention recommended.
     Stale,
     /// Goal has passed its deadline without completion.
@@ -74,7 +74,7 @@ impl GoalLifecycle {
 /// Sent via the curation inbox so the Curator can sense and respond to
 /// agent-to-agent or human-to-agent Matrix activity.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CommunicationEvent {
+pub(crate) struct CommunicationEvent {
     /// Span category (e.g., "communication.message", "communication.thread").
     pub span_category: String,
     /// Span path within the category (e.g., "observed", "created").
@@ -91,7 +91,7 @@ pub struct CommunicationEvent {
 /// CommunicationWatcher sends `Communication`.
 /// All flow through one `mpsc::Sender<CurationInput>` channel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum CurationInput {
+pub(crate) enum CurationInput {
     /// Algedonic alert from Cybernetics (variety deficit escalation)
     Alert(RuntimeAlert),
     /// Goal state transition from GoalStore

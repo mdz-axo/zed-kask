@@ -15,7 +15,7 @@ use crate::loops::{
 /// now verifies that every policy-table entry has a corresponding dispatch
 /// arm (or falls through to the generic `_` arm).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegulationReason {
+pub(crate) enum RegulationReason {
     EnergyBudgetLow,
     BudgetGuardEscalation,
     EnergyDepletionAutoAdjust,
@@ -96,7 +96,7 @@ impl RegulationReason {
 /// override `action_type` via the stagnation ladder, and mode-specific
 /// filtering may skip the action entirely.
 #[derive(Debug, Clone)]
-pub struct ProposedAction {
+pub(crate) struct ProposedAction {
     pub target: LoopId,
     pub action_type: ActionType,
     pub reason: RegulationReason,
@@ -104,7 +104,7 @@ pub struct ProposedAction {
 
 /// A single regulation rule: when `metric` deviates in `direction`,
 /// produce `proposed` actions with the given severity classification.
-pub struct RegulationRule {
+pub(crate) struct RegulationRule {
     pub metric: SignalMetric,
     pub direction: DeviationDirection,
     /// The proposed actions for this rule. A single rule can produce
@@ -118,7 +118,7 @@ pub struct RegulationRule {
 /// Fuel source: declaration of what actions to propose when a metric
 /// deviates. Runtime concerns (substitution ladders, throttle modes)
 /// are handled by the caller in `compute()`.
-pub struct RegulationPolicy {
+pub(crate) struct RegulationPolicy {
     rules: Vec<RegulationRule>,
 }
 

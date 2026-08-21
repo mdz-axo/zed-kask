@@ -13,7 +13,7 @@ use crate::loops::SignalMetric;
 
 /// A predicted future state for a single metric.
 #[derive(Debug, Clone)]
-pub struct MetricPrediction {
+pub(crate) struct MetricPrediction {
     /// Trend direction: +1 = rising, -1 = falling, 0 = flat.
     pub trend: f64,
     /// Whether the prediction is reliable (enough data for the model).
@@ -26,7 +26,7 @@ pub struct MetricPrediction {
 ///
 /// Fits a linear trend to the last N observations and projects forward.
 /// No learning, no configuration — always available as a baseline.
-pub struct MovingAverageExtrapolator {
+pub(crate) struct MovingAverageExtrapolator {
     /// Per-metric observation history.
     history: std::sync::Mutex<std::collections::HashMap<SignalMetric, Vec<f64>>>,
     /// Number of observations to use for trend fitting.

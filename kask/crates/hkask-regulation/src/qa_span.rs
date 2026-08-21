@@ -10,7 +10,7 @@ use hkask_types::ObservableSpan;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum QaSpan {
+pub(crate) enum QaSpan {
     QaRepairAttempted,
     QaRepairVerified,
     QaRepairExhausted,

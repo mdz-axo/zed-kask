@@ -45,7 +45,7 @@ use crate::inference::LanguageModelEmbeddingPort;
 /// dispatch task to the GPUI-side task via a channel (same pattern as
 /// `ListModels`). The GPUI-side task calls the `WorktreeSpawner` and returns
 /// the result via the oneshot reply channel.
-pub type WorktreeSpawnRequest = (
+pub(crate) type WorktreeSpawnRequest = (
     String,         // prompt
     String,         // title
     Option<String>, // worktree_name

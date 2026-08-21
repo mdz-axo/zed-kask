@@ -10,7 +10,7 @@ use hkask_types::regulation::QueueDepth;
 ///
 /// When energy remaining drops below this ratio, the Cybernetics Loop produces
 /// a throttle action to reduce consumption.
-pub const DEFAULT_ENERGY_MIN_REMAINING_RATIO: f64 = 0.2;
+pub(crate) const DEFAULT_ENERGY_MIN_REMAINING_RATIO: f64 = 0.2;
 
 /// Default maximum variety deficit before escalation (100).
 ///
@@ -21,19 +21,19 @@ pub const DEFAULT_VARIETY_MAX_DEFICIT: f64 = 100.0;
 ///
 /// When the error rate exceeds this ratio, the Cybernetics Loop produces
 /// a calibration action.
-pub const DEFAULT_ERROR_RATE_MAX: f64 = 0.3;
+pub(crate) const DEFAULT_ERROR_RATE_MAX: f64 = 0.3;
 
 /// Default maximum connector latency in seconds.
 ///
 /// When connector latency exceeds this threshold, the Cybernetics Loop
 /// produces a throttle action.
-pub const DEFAULT_CONNECTOR_LATENCY_MAX_SECS: f64 = 30.0;
+pub(crate) const DEFAULT_CONNECTOR_LATENCY_MAX_SECS: f64 = 30.0;
 
 /// Default communication queue depth threshold for backpressure regulation.
 ///
 /// When the Communication Loop's queue depth exceeds this value,
 /// the Cybernetics Loop produces a Throttle(Communication) action.
-pub const DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD: QueueDepth =
+pub(crate) const DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD: QueueDepth =
     QueueDepth::DEFAULT_BACKPRESSURE;
 
 /// Default minimum seam coverage ratio before alert.
@@ -41,12 +41,12 @@ pub const DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD: QueueDepth =
 /// When per-crate coverage drops below its previous snapshot value,
 /// Fires an algedonic alert. Default: 0.0 (alert on ANY regression —
 /// \[NORMATIVE\] coverage should never go down). (P9 — Homeostatic Self-Regulation).
-pub const DEFAULT_SEAM_COVERAGE_MIN: f64 = 0.0;
+pub(crate) const DEFAULT_SEAM_COVERAGE_MIN: f64 = 0.0;
 
 /// Default maximum number of regulation iterations per cycle.
 ///
 /// Prevents unbounded cascading in the compute→act pipeline.
-pub const DEFAULT_MAX_ITERATIONS: u32 = 100;
+pub(crate) const DEFAULT_MAX_ITERATIONS: u32 = 100;
 
 /// Inference throttle consent mode.
 ///
@@ -57,7 +57,7 @@ pub const DEFAULT_MAX_ITERATIONS: u32 = 100;
 ///   If user doesn't respond within the timeout, apply gentle throttle as fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum InferenceThrottleMode {
+pub(crate) enum InferenceThrottleMode {
     /// No automatic throttle. User manages budget manually.
     Off,
     /// Throttle directly — pre-authorized by user (P2 consent via config).
@@ -69,77 +69,77 @@ pub enum InferenceThrottleMode {
 /// Default dampener window in seconds (60s).
 ///
 /// Within this window, repeated identical directives are suppressed.
-pub const DEFAULT_DAMPEN_WINDOW_SECS: u64 = 60;
+pub(crate) const DEFAULT_DAMPEN_WINDOW_SECS: u64 = 60;
 
 /// Default metacognitive dampener window in seconds (300s).
 ///
 /// Metacognitive overrides are dampened at a longer window.
-pub const DEFAULT_METACOGNITIVE_WINDOW_SECS: u64 = 300;
+pub(crate) const DEFAULT_METACOGNITIVE_WINDOW_SECS: u64 = 300;
 
 /// Default override cooldown in seconds (120s).
 ///
 /// After any metacognitive override passes dedup, ALL subsequent overrides
 /// are suppressed for this duration.
-pub const DEFAULT_OVERRIDE_COOLDOWN_SECS: u64 = 120;
+pub(crate) const DEFAULT_OVERRIDE_COOLDOWN_SECS: u64 = 120;
 
 /// Default outcome warning threshold (0.50 = 50% success rate).
 ///
 /// When outcome success rate drops below this, a warning alert is emitted.
-pub const DEFAULT_OUTCOME_WARNING_THRESHOLD: f64 = 0.50;
+pub(crate) const DEFAULT_OUTCOME_WARNING_THRESHOLD: f64 = 0.50;
 
 /// Default outcome critical threshold (0.25 = 25% success rate).
 ///
 /// When outcome success rate drops below this, a critical alert is emitted.
-pub const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
+pub(crate) const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
 
 /// Default stagnation detection threshold (5 cycles).
 ///
 /// After this many consecutive cycles of the same ineffective (metric, action)
 /// pair, a `RegulatoryPlateau` alert is triggered.
-pub const DEFAULT_STAGNATION_THRESHOLD: u32 = 5;
+pub(crate) const DEFAULT_STAGNATION_THRESHOLD: u32 = 5;
 
 /// Default stage threshold for ActionDecision: 5% relative worsening.
 ///
 /// When an action worsens its target metric by less than this ratio,
 /// it's accepted as noise. Between this and `DEFAULT_BLOCK_WORSENING_RATIO`,
 /// it's staged for review.
-pub const DEFAULT_STAGE_WORSENING_RATIO: f64 = 0.05;
+pub(crate) const DEFAULT_STAGE_WORSENING_RATIO: f64 = 0.05;
 
 /// Default block threshold for ActionDecision: 20% relative worsening.
 ///
 /// When an action worsens its target metric by this ratio or more,
 /// the (metric, action_type) pair is blocked until Curation intervenes.
-pub const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
+pub(crate) const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
 
 /// Default substitution activation threshold: try alternatives after this
 /// many consecutive ineffective cycles (default: 2 — half the stagnation
 /// default of 5). When a (metric, action_type) pair hits this count,
 /// `compute()` tries the next action in the substitution ladder.
-pub const DEFAULT_SUBSTITUTION_AFTER: u32 = 2;
+pub(crate) const DEFAULT_SUBSTITUTION_AFTER: u32 = 2;
 
 /// Default test coverage floor (0.70 = 70% coverage).
 ///
 /// When the latest trace run's `coverage_pct` drops below this, the
 /// Cybernetics Loop's `TestCoverageSensor` produces a signal.
-pub const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
+pub(crate) const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
 
 /// Default mutation score floor (0.50 = 50% of mutants killed).
 ///
 /// When the latest trace run's `mutation_score` drops below this, the
 /// Cybernetics Loop's `MutationScoreSensor` produces a signal.
-pub const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
+pub(crate) const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
 
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
 /// long autonomous swarm may want more history; one on a memory-constrained
 /// box may want less.
-pub const DEFAULT_MAX_REGULATION_HISTORY: usize = 100;
+pub(crate) const DEFAULT_MAX_REGULATION_HISTORY: usize = 100;
 
 /// Default maximum skill feedback spans retained per skill+phase.
 ///
 /// Bounds memory growth for skill self-improvement signal storage.
-pub const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
+pub(crate) const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 
 /// Default maximum algedonic alerts retained in the in-memory log.
 ///
@@ -148,7 +148,7 @@ pub const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 /// separately, so eviction from this log loses only the diagnostic trail.
 /// When the log approaches this cap, the `algedonic-review` skill should be
 /// invoked to review and clear reviewed entries.
-pub const DEFAULT_MAX_ALERTS: usize = 200;
+pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
 
 /// Homeostatic set-points for the Cybernetics Loop.
 ///
@@ -246,7 +246,7 @@ pub use hkask_types::curator::CurationThresholdConfig;
 /// YAML-configurable set-points. Fields are Optional so partial configs work.
 /// Missing fields fall back to the `SetPoints::default()` values.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct SetPointsConfig {
+pub(crate) struct SetPointsConfig {
     pub energy_min_remaining: Option<f64>,
     pub variety_max_deficit: Option<f64>,
     pub error_rate_max: Option<f64>,

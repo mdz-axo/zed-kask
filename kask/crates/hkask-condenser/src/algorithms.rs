@@ -30,7 +30,7 @@ pub(crate) fn compute_budget(lines: usize, profile: Profile) -> (usize, bool) {
     (budget, budget >= lines)
 }
 
-pub trait CondenserAlgorithm: Send + Sync {
+pub(crate) trait CondenserAlgorithm: Send + Sync {
     fn name(&self) -> &str;
     fn default_for(&self) -> &[ContextCategory];
     /// Compress the input and return (compressed_content, health_signals).
@@ -112,7 +112,7 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
     }
 }
 
-pub struct WordRankAlgorithm;
+pub(crate) struct WordRankAlgorithm;
 
 impl WordRankAlgorithm {
     fn compute_word_frequencies(lines: &[&str]) -> std::collections::HashMap<String, f64> {
@@ -460,7 +460,7 @@ impl CondenserAlgorithm for FlashrankAlgorithm {
     }
 }
 
-pub struct AlgorithmRegistry {
+pub(crate) struct AlgorithmRegistry {
     algorithms: Vec<Box<dyn CondenserAlgorithm>>,
 }
 

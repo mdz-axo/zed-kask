@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 
 /// Directed relationship between two ontology concepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OntologyRelation {
+pub(crate) enum OntologyRelation {
     PartOf,
     Precedes,
     HasProperty,
@@ -38,7 +38,7 @@ pub enum OntologyRelation {
 /// Value: related concepts with relationship type.
 /// Lookup is substring-based — a line containing the related keyword
 /// adjacent to the anchored concept gets a saliency bonus.
-pub struct OntologyGraph {
+pub(crate) struct OntologyGraph {
     edges: HashMap<&'static str, Vec<(&'static str, OntologyRelation)>>,
 }
 
@@ -281,7 +281,7 @@ pub fn graph() -> &'static OntologyGraph {
 
 /// Extract search keywords from an ontology anchor for graph lookup.
 /// Returns a list of lowercase keywords to search for related concepts.
-pub fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'static str> {
+pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'static str> {
     match anchor {
         crate::types::OntologyAnchor::Core => vec![],
         crate::types::OntologyAnchor::DualAxis {

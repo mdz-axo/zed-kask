@@ -43,7 +43,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-030
-verified_date: 2026-08-13
+verified_date: 2026-08-20
 verified_against: kask/crates/hkask-mcp-server/src/server/transport.rs:84-192
 status: VERIFIED
 -->
@@ -137,7 +137,7 @@ The `emitted` flag prevents double-emission: `ok`/`error`/`finish` set it to
 
 `execute_tool_semantic` accepts `Option<&'static str>` for the ontology
 concept. When the caller passes `None`, it emits a `tracing::warn!` naming
-the tool (`tool_span.rs:212-220`). This is an algedonic signal — a registered
+the tool (`tool_span.rs:215-222`). This is an algedonic signal — a registered
 tool that lacks an ontology anchor is visible at runtime, not silently
 producing an untagged span.
 
@@ -147,17 +147,17 @@ silently emitting an untagged span (which the loop would ignore), the
 framework makes the gap loud so a maintainer adds an arm to the server's
 `ontology_anchor` fn. The concept must be a `&'static str` from
 `hkask-bridge-ontology` so the type system prevents arbitrary debug strings
-from masquerading as ontology concepts (`tool_span.rs:36-55`).
+from masquerading as ontology concepts (`tool_span.rs:35-53`).
 
 ## Why two error layers — `McpError` and `McpToolError`
 
 The framework has two distinct error types because the two failure domains
 have different audiences.
 
-- `McpError` (`error.rs:17-37`) is for server-level failures: missing
+- `McpError` (`error.rs:16-36`) is for server-level failures: missing
   credentials, storage, transport. The audience is the operator starting the
   server. These errors stop the server before it serves a single request.
-- `McpToolError` (`error.rs:48-54`) is for tool-level failures: a tool was
+- `McpToolError` (`error.rs:48-51`) is for tool-level failures: a tool was
   invoked and the invocation failed with a semantic classification. The
   audience is the MCP client (and the agent behind it). These errors are
   serialized into the MCP wire format and returned as the tool result.
@@ -219,7 +219,7 @@ unsuitable for arbitrary untrusted input (`security.rs:42-50`).
 A TOCTOU between DNS resolution and the downstream `reqwest` connect (DNS
 rebinding) remains; closing that requires a custom reqwest connector that
 re-checks the resolved IP at connect time (see the `validate_url_with_dns`
-doc comment, `security.rs:138-203`). The framework documents the gap rather
+doc comment, `security.rs:147-151`). The framework documents the gap rather
 than pretending the check is complete.
 
 ## Why `AnyJsonValue` is re-exported from `hkask-types`
@@ -263,21 +263,21 @@ same code path.
 | Missing required credential fails fast | `kask/crates/hkask-mcp-server/src/server/transport.rs:118-131` |
 | `CapabilityTier::detect` computes three booleans | `kask/crates/hkask-mcp-server/src/server/context.rs:91-104` |
 | `embedded` compares WebID to anonymous persona | `kask/crates/hkask-mcp-server/src/server/context.rs:79-96` |
-| `reg_available` returns `embedded` | `kask/crates/hkask-mcp-server/src/server/context.rs:128-130` |
+| `embedded` field is the capability signal (no `reg_available`) | `kask/crates/hkask-mcp-server/src/server/context.rs:67-74` |
 | `mcp_server!` macro generates struct + ctor + ToolContext | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:128-181` |
 | `impl_tool_context!` reusable standalone | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:102-111` |
 | `ToolSpanGuard::Drop` emits dropped span | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:119-134` |
 | `emitted` flag prevents double-emission | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:63, 82, 121` |
-| `execute_tool_semantic` warns on `None` ontology | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:212-220` |
-| Ontology concept must be `&'static str` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:36-55` |
-| `McpError` server-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:13-37` |
-| `McpToolError` tool-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:48-54` |
-| Wire-format golden-string tests | `kask/crates/hkask-mcp-server/src/server/mod.rs:106-140` |
+| `execute_tool_semantic` warns on `None` ontology | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:215-222` |
+| Ontology concept must be `&'static str` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:35-53` |
+| `McpError` server-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:11-36` |
+| `McpToolError` tool-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:48-51` |
+| Wire format pinned by `to_json_string` impl | `kask/crates/hkask-mcp-server/src/server/error.rs:127-129` |
 | Per-variant error mappers | `kask/crates/hkask-mcp-server/src/server/validation.rs:82-162` |
 | Path containment in framework | `kask/crates/hkask-mcp-server/src/server/validation.rs:222-282` |
 | `MAX_READ_BYTES` default | `kask/crates/hkask-mcp-server/src/server/validation.rs:166` |
-| Two URL validation modes | `kask/crates/hkask-mcp-server/src/server/validation.rs:303-324` |
-| `UrlValidationConfig::permissive` rationale | `kask/crates/hkask-mcp-server/src/security.rs:42-50` |
-| TOCTOU DNS rebinding caveat | `kask/crates/hkask-mcp-server/src/server/validation.rs:289-294` |
-| `AnyJsonValue` re-export rationale | `kask/crates/hkask-mcp-server/src/tool_schema.rs:1-18` |
+| Two URL validation modes | `kask/crates/hkask-mcp-server/src/security.rs:240,251` |
+| `UrlValidationConfig::permissive` rationale | `kask/crates/hkask-mcp-server/src/security.rs:45-62` |
+| TOCTOU DNS rebinding caveat | `kask/crates/hkask-mcp-server/src/security.rs:147-151,236-238` |
+| `AnyJsonValue` re-export rationale | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:30-36` |
 | `open_database` in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:165-174` |

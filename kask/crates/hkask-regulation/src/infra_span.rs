@@ -2,7 +2,7 @@
 use hkask_types::ObservableSpan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InfraSpan {
+pub(crate) enum InfraSpan {
     CiInvariantViolation,
     CuratorConsolidation,
     Chat,

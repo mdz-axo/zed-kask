@@ -124,11 +124,6 @@ pub fn agent_db(name: &str) -> PathBuf {
     agent_dir(name).join(format!("{sanitized}.db"))
 }
 
-/// Memory database — episodic + semantic tool storage.
-pub(crate) fn agent_memory_db(name: &str) -> PathBuf {
-    agent_dir(name).join("memory.db")
-}
-
 /// Sanitize an agent name for filesystem use.
 ///
 /// Replaces characters that are problematic in filenames with hyphens.
