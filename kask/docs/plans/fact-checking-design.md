@@ -1,41 +1,398 @@
 # Fact-Checking and Hypothesis-Verification Design for the Company-Research-Deep Pipeline
 
-**Status:** Draft
+**Status:** Implemented (grounding-verify skill created + company-research-deep wired)
 **Last-Updated:** 2026-08-21
 **Audience:** Skill authors, pipeline maintainers
 **MDS Categories:** trust, composition
 **Domain:** company-research-deep
 
+**Implementation notes:**
+- Standalone skill: `.agents/skills/grounding-verify/SKILL.md` (7-step process, 3 registry templates)
+- Pipeline integration: `company-research-deep/SKILL.md` updated with `verify-early-anchor` and `verify-late-gate` steps
+- Registry templates: `kask/registry/templates/grounding-verify/extract-claims.j2`, `assign-provenance.j2`, `scan-narrative.j2`
+- All skill-maintenance validation checks pass (S1-S11, T1-T5)
+
+---
+
+## 0. Fermi Pattern Analysis — Deep Module Study
+
+### Source
+
+The Fermi codebase (`Clones/fermi`) has a mature, production-tested grounding
+and verification system built across six interlocking contracts. This section
+analyzes the architecture, extracts the transferable patterns, and maps each to
+our hKask skill/tool idiom. The analysis is grounded in the actual source:
+`src/grounding_trust.rs`, `src/schema_trust.rs`, `src/rollup_trust.rs`,
+`src/port_trust.rs`, `src/hud_contract.rs`, `src/card_contract.rs`,
+`src/workflows/agent_contract.rs`, `src/calibration.rs`, and
+`tests/grounding_contract.rs`.
+
+### The Four-Question Separation
+
+Fermi separates trust into orthogonal axes, each with its own contract,
+enforcement mechanism, and test suite. This is the foundational deep module
+insight: **do not build one "fact checker" — build separate contracts for
+separate failure classes, because each class is invisible to the checks that
+catch the others.**
+
+| Fermi Contract | Question | Enforcement | Failure Class It Catches |
+|----------------|----------|-------------|--------------------------|
+| `schema_trust` | Is the column **present**? | Boot-time `pg_catalog` probe | Shape drift (missing tables, columns, functions) |
+| `rollup_trust` | Is the column **telling the truth**? | CI + live `mismatch_sql` query | Content drift (present, correctly typed, permanently wrong) |
+| `grounding_trust` | **Could this value have come from anywhere?** | `enforce()` at write time + `cross_check_sql` in CI | Fabrication (model fills fields no tool can supply) |
+| `port_trust` | **Is the caller sending what the agent said it takes?** | Server-side `bind_input` check | Interface mismatch (prose sent to a structured port) |
+| `hud_contract` | **Can the wearer SEE which answer is which?** | `enforce()` + `Treatment` markers | Provenance invisibility (correct tag, indistinguishable rendering) |
+| `card_contract` | **Does the card declare where each field comes from?** | `validate()` at publish time | Missing grounding declarations (field nobody classified) |
+
+**Transfer to our pipeline:** Our fact score should be decomposed along the
+same axes. The current design has three sub-metrics (SAR, CVR, HFR) but they
+are all content-level checks. Fermi's architecture shows we need a **shape
+tier** (does the template output contain the expected provenance fields?), a
+**content tier** (do cited values match source outputs?), and a **provenance
+tier** (could each claim have come from a tool the pipeline actually called?).
+See §1 revisions below.
+
+### Pattern 1: The Provenance Lattice (strength as ordinal, floor as minimum)
+
+Fermi defines provenance as a **floor, not a stamp** — a lattice with three
+levels:
+
+| Strength | Provenance Values | Meaning |
+|----------|-------------------|---------|
+| 2 | `tool_verified`, `platform_derived`, `human_sourced` | Reproducible — re-run the tool, apply the transform, follow the citation |
+| 1 | `model_inference`, `human_endorsed` | Judgment — legitimate, but not a retrieval |
+| 0 | `unavailable_no_tool_source`, `tool_no_match`, `pending_*`, `rejected` | Absent — nothing to rely on yet |
+
+The `floor()` function takes the minimum strength across all sources in a
+derivation chain. A derived value is never stronger than its weakest source.
+
+**The Extraction Ceiling:** `EXTRACTION_CEILING = PROV_INFERRED`. An extracted
+rule is capped at `model_inference` however well-sourced its inputs were. The
+ontologist reading prose and writing "teams with higher ELO win 62%" has made
+a judgment, not performed a lookup. **A knowledge-graph fact can never be
+presented as `tool_verified`** — it is at best a judgment, and at worst a
+laundered invention.
+
+**Transfer to our pipeline:** Our fact score should use a provenance lattice,
+not a single ratio. A claim that the LLM synthesizes from tool outputs (e.g.,
+"gross margin expanded 200bps due to mix shift") is `model_inference`, not
+`tool_verified` — the LLM is the ontologist, and synthesis is extraction. Only
+direct citations (verbatim transcript quotes, exact numbers copied from MCP
+tool output) can be `tool_verified`. This creates a two-tier provenance within
+our SAR sub-metric and prevents the self-confirming loop where the LLM's own
+synthesis is treated as equally trustworthy as the source data.
+
+The extraction ceiling directly addresses our self-reference problem (§5):
+the verifier's own claims about what it verified are capped at
+`model_inference`, not `tool_verified`. The verifier can say "I found this
+quote in the transcript" (strength 1), but only the mechanical substring match
+(strength 2) can elevate it to `tool_verified`.
+
+### Pattern 2: The Cross-Check SQL (empirical verification against an independent copy)
+
+Each `FieldContract` carries an optional `cross_check_sql`: a read-only query
+returning one row with one `bigint` column `mismatches` — the number of rows
+where an agent's output disagrees with an independently-held copy of the same
+fact. Non-zero means fabrication, in production, now.
+
+The critical design rule: **a `Sourced` field that is neither cross-checked
+nor explicitly exempt is a claim nobody can falsify, and the contract refuses
+to allow it.** `every_sourced_field_is_verifiable_or_admits_it_is_not` is a
+compile-time test that fails if a `Sourced` field has no `cross_check_sql` and
+no entry in `CROSS_CHECK_EXEMPTIONS`.
+
+**Transfer to our pipeline:** Each claim in the `verified_claims` registry
+should carry a `cross_check` specification — for `tool_verified` claims, this
+is the `lisp_eval` call that checks the cited value against the MCP tool
+output. A `tool_verified` claim with no cross-check is a claim nobody can
+falsify. The verifier must either provide a cross-check or explicitly declare
+why it cannot (analogous to Fermi's `CROSS_CHECK_EXEMPTIONS`).
+
+### Pattern 3: The Narrative Leak Scan (prose channel checking)
+
+Fermi scans `Narrative` fields for claims that exceed what the `Sourced`
+blocks can support. The `NARRATIVE_LEAKS` table pairs a block name with a
+`LeakRule` (either `Word` for distinctive keywords or `Quantity` for
+unit-preceded-by-number patterns). If a narrative field contains a genome-size
+keyword but the genome block is `Unsourced`, the narrative is nulled and a
+violation is recorded.
+
+The critical insight: **a prose channel that is not checked is the channel the
+fabrication moves to.** Stripping a structured field is not sufficient — the
+`summary` field restates the numbers in prose, and that prose is what a user
+reads.
+
+**Transfer to our pipeline:** The thesis statement, the company-8part prose
+sections, and the IMAGINE scenario narratives are all `Narrative` fields. We
+should scan them for claims that exceed what the `Sourced` blocks (MCP tool
+outputs, transcript quotes) can support. Domain-specific `LeakRule` needles:
+
+| Block | Needle | Why |
+|-------|-------|-----|
+| `financial_profile` | `Quantity("bps")` | Basis-point claims must trace to income statement data |
+| `financial_profile` | `Quantity("x")` | Multiple claims must trace to comparable analysis output |
+| `financial_profile` | `Word("EBITDA")` | EBITDA figures must trace to income statement or transcript |
+| `management_skill` | `Word("said")` | Attributed quotes must trace to transcript chunk |
+| `gorilla` | `Word("market share")` | Market share claims must trace to web_search or comparable_analysis |
+| `imagine` | `Quantity("%")` | Growth rate claims must trace to DCF or scenario_build |
+
+The `Quantity` variant avoids false positives: a `%` needle only fires when a
+number precedes it, so "100% committed" in prose doesn't trigger a financial
+claim check. This is Fermi's exact fix for the `" gb"`/`"GBIF"` collision — a
+check that fires on correct output is worse than no check.
+
+### Pattern 4: The Pre-Contract Marker (provenance is about how a value was obtained, not what is obtainable now)
+
+Fermi's `PRE_CONTRACT_MARKER` (`_grounding_review`) is written onto profiles
+produced before any grounding contract existed. When `ncbi_genome_search` was
+added, `genome.estimated_size_mb` moved from `Unsourced` to `Sourced` — and
+`enforce` stopped stripping it. The 13 cached profiles written while the field
+was fabricated suddenly had their invented values **un-stripped**, because the
+field had become sourceable in general even though those particular values
+were never sourced.
+
+**Transfer to our pipeline:** When we add a new MCP tool call to the pipeline
+(e.g., adding `reverse_dcf` in a future version), it must not retroactively
+make claims in prior pipeline iterations sourced. Each pipeline iteration's
+provenance is fixed at the time of generation. The `verified_claims` registry
+from the early anchor is immutable — the late gate checks new claims against
+it but does not re-classify already-verified claims.
+
+### Pattern 5: The Cohort Scoping (current prompt only vs. all history)
+
+Fermi's cross-checks are scoped to the current prompt hash. A defect found
+once is found forever, but the suite only **fails** on current-prompt rows.
+Historical rows are reported as context. This prevents a suite that cannot go
+green after a fix from being ignored.
+
+**Transfer to our pipeline:** The fact score for pipeline iteration N should
+only count claims from iteration N. When the convergence loop re-enters
+COMPANY with fact-check gaps injected, the new iteration's fact score starts
+fresh. Prior iteration failures are reported as `historical_findings` context,
+not as current-pipeline failures. Without this, a pipeline that fails
+iteration 1 and re-enters would carry iteration 1's failures into iteration
+2's fact score, making it impossible to go green after a fix.
+
+### Pattern 6: The `why` Mandatory Justification
+
+Every `FieldContract` and `card_contract` grounding entry carries a `why`
+field with a minimum length (40 chars). An unexplained disposition is how a
+contract rots: the next author cannot tell a considered `unavailable` from a
+lazy one, so they copy whichever is nearest.
+
+**Transfer to our pipeline:** Each entry in the `verified_claims` registry
+carries a `why` field explaining its provenance status. A claim marked
+`sourced` explains which tool and which response field supplied it. A claim
+marked `inferred` explains what it was inferred from. A claim marked
+`unavailable` explains why no tool can supply it. Short justifications are
+rejected by the verifier — "n/a" and "tool" do not pass.
+
+### Pattern 7: The Closed Vocabulary (provenance values are a closed set)
+
+Fermi's `PROVENANCE_VALUES` is a closed set of 10 strings, asserted by tests
+on both the Rust constants and every card's declared enums. An open set would
+let a future edit invent `"estimated"`, which is the fabrication reappearing
+as a metadata value. The DB CHECK constraint and the Rust constants are tested
+for agreement by `the_migration_check_matches_the_runtime_vocabulary`.
+
+**Transfer to our pipeline:** The provenance vocabulary for claims is a closed
+set: `tool_verified`, `model_inference`, `platform_derived`, `unavailable`,
+`tool_no_match`, `pending_check`, `rejected`. The `lisp_eval` scoring call
+rejects unrecognized provenance values. A test asserts the vocabulary is
+closed — `provenance_values_are_closed`.
+
+### Pattern 8: The Un-Stripping Trap
+
+When a field moves from `Unsourced` to `Sourced`, `enforce` stops stripping
+previously-fabricated values. The `PRE_CONTRACT_MARKER` prevents this
+retroactive blessing.
+
+**Transfer to our pipeline:** Explicitly documented in the early anchor's
+output contract: the `verified_claims` registry is append-only within a
+pipeline run. A claim verified as `tool_verified` in iteration 1 stays
+`tool_verified`. A claim that failed verification in iteration 1 stays
+`rejected` — it does not get re-classified when new sources are added in
+iteration 2. The late gate adds new entries but does not modify existing ones.
+
+### Pattern 9: The Card-Declared Contract (self-declaration checked by a separate verifier)
+
+Fermi's `card_contract` moves the grounding map from a Rust const table into
+the agent card itself. The card declares, per output field, where the value
+comes from. Rust keeps only the checker. The critical check with teeth: **a
+field marked `sourced` must name a tool the agent actually declares in
+`mcp_tools`** — a field marked `sourced` against a tool the agent cannot call
+is the original defect, restated inside the mechanism built to catch it.
+
+**Transfer to our pipeline:** This is the correct version of Pattern D
+(continuous/embedded) from our pattern exploration. Each template declares its
+own grounding contract — which output fields are `sourced` (from which MCP
+tool), which are `inferred` (from what), which are `narrative`. But the
+verifier (running as `spawn_agent`) checks the declaration against the actual
+tool calls — the declaration is not self-verified. This gives us the coverage
+of Pattern D without the self-confirming loop.
+
+This revises our recommendation: instead of only two blocking verification
+steps (Pattern B), each template should carry a **grounding declaration**
+that the verifier cross-checks. The declaration is cheap (template authors
+write it once), and the cross-check is deterministic (does the named tool
+appear in the pipeline's tool call log?).
+
+### Pattern 10: The Two-Tier Test Architecture (offline shape + live content)
+
+Fermi separates verification into two tiers:
+- **Tier 1 (offline, blocking, no DB):** `cargo test --lib` — checks the
+  contract's shape: every field classified, every justification written, every
+  `Sourced` field either cross-checkable or explicitly exempt.
+- **Tier 2 (live, `#[ignore]`, needs DB):** `scripts/grounding_contract_live.sh`
+  — runs `cross_check_sql` against a real database. Catches content failures
+  invisible to shape checks.
+
+**Transfer to our pipeline:**
+- **Tier 1 (offline, at authoring time):** A `lisp_eval` check or test that
+  verifies each template's grounding declaration is complete — every output
+  field has a grounding entry, every `sourced` field names a tool the pipeline
+  actually calls, every entry has a `why` of sufficient length. This runs
+  without any MCP tool calls.
+- **Tier 2 (live, at pipeline run time):** The verifier runs during the
+  pipeline and checks actual claim values against actual tool outputs.
+  Mechanical substring match for quotes, `lisp_eval` numeric match for numbers,
+  falsifiability counterfactual for hallucination detection.
+
+### Pattern 11: The Liveness Problem (zero mismatches over zero rows is not clean)
+
+Fermi's `cohort_size_sql` counts how many rows the agent has under its current
+prompt. Zero mismatches over zero rows is not clean — it is unknown. Without
+this, the scoped reading would report every agent perfect the instant its
+card changed.
+
+**Transfer to our pipeline:** The fact score carries a `claims_checked` count
+alongside the score. A fact score of 1.0 with zero claims checked is not a
+perfect score — it is `nil` (our existing nil-propagation invariant already
+handles this for zero factual claims, but we should extend it: a fact score
+computed from a pipeline run where all MCP tools failed is also `nil`, not
+1.0, because there are no sources to verify against).
+
+### Pattern 12: The `cost_basis` Provenance (two rows reading the same value are no longer indistinguishable)
+
+Fermi's `episodes.cost_basis` records whether a computed figure was
+`measured_split` vs `assumed_split` vs `unknown_model`. Two rows reading
+`$0.31` are no longer indistinguishable when one measured and one assumed.
+
+**Transfer to our pipeline:** The `verified_claims` registry carries a
+`provenance_basis` for each claim: `tool_verified` (the value was found in the
+tool output via mechanical match), `model_inference` (the LLM synthesized it
+from tool outputs), `platform_derived` (a `lisp_eval` call computed it from
+sourced values), `unavailable` (no tool could supply it). A reader of the
+registry can tell a verified number from a synthesized one — they are not
+both just "present in the report."
+
+### Pattern 13: The Confidence Band (derived from the provenance floor, never accepted from the model)
+
+Fermi's `hud_contract` overwrites `card.confidence_display` from the measured
+floor — never accepts it from the model. The confidence band is computed from
+the weakest provenance verdict on the card: `high` (all sourced), `medium`
+(weakest is inference), `low` (tool was asked and had nothing), `flagged`
+(something has no possible source).
+
+**Transfer to our pipeline:** The confidence adjustment fed to the THESIS
+quality gate should be derived from the provenance floor of the report, not
+from the LLM's self-assessed confidence. If the weakest claim in the report is
+`model_inference`, the confidence band is `medium` regardless of what the
+thesis template says. If any claim is `unavailable`, the band is `flagged`.
+This prevents the LLM from rating its own hallucinations as high-confidence.
+
+### Pattern 14: The Treatment Marker (provenance visible without reading a tag)
+
+Fermi's `hud_contract` renders every line with a typographic marker derived
+from its provenance: `Verified` (no marker — the unmarked case must be the
+trustworthy one), `Inferred` (`~`), `NoMatch` (`?`), `Pending` (`*`),
+`Rejected` (`x`), `Unavailable` (`!`). A renderer that drops markers degrades
+to *less* confident rather than more.
+
+**Transfer to our pipeline:** The final report (thesis + supporting analysis)
+could carry provenance markers on each claim: unmarked for `tool_verified`,
+`~` for `model_inference`, `?` for `tool_no_match`, `!` for `unavailable`.
+This makes the fact score visible to the reader without requiring them to
+inspect the `verified_claims` registry. A report section that drops markers
+degrades to less confident — the reader knows something was stripped.
+
+### Pattern Synthesis: How Fermi Changes Our Design
+
+| Fermi Pattern | Design Impact | Section Revised |
+|---------------|---------------|-----------------|
+| Four-question separation | Add shape tier to fact score | §1 |
+| Provenance lattice + extraction ceiling | Two-tier SAR (tool_verified vs model_inference) | §1, §5 |
+| Cross-check SQL | Every `tool_verified` claim needs a deterministic cross-check | §1, §3 |
+| Narrative leak scan | New sub-check: scan prose for unsupported claims | §1, §3 |
+| Pre-contract marker | `verified_claims` registry is append-only within a run | §3 |
+| Cohort scoping | Fact score only counts current-iteration claims | §4 |
+| `why` mandatory | Each registry entry carries a justification | §3 |
+| Closed vocabulary | Provenance values are a closed set, tested | §1, §7 |
+| Card-declared contract | Templates carry grounding declarations, checked by verifier | §3, §6 |
+| Two-tier test architecture | Offline shape check + live content check | §3, §6 |
+| Liveness problem | `claims_checked` count alongside fact score | §1 |
+| `cost_basis` provenance | `provenance_basis` per claim | §3 |
+| Confidence band from floor | Confidence adjustment derived from provenance floor, not LLM | §4 |
+| Treatment marker | Provenance visible in the report text | §3 |
+
 ---
 
 ## 1. Fact Score Definition
 
-### Formula
+### Formula (revised — Fermi provenance lattice integration)
 
 ```
-fact_score = 0.35 × SAR + 0.35 × CVR + 0.30 × HFR
+fact_score = 0.30 × SAR + 0.25 × CVR + 0.20 × HFR + 0.25 × NLR
 ```
 
 Where:
 
 | Symbol | Name | Range | Weight |
 |--------|------|-------|--------|
-| SAR | Source-Anchored claim Ratio | [0, 1] or nil | 0.35 |
-| CVR | Citation-Verified Ratio | [0, 1] or nil | 0.30 |
-| HFR | Hallucination-Free Ratio | [0, 1] or nil | 0.30 |
+| SAR | Source-Anchored claim Ratio | [0, 1] or nil | 0.30 |
+| CVR | Citation-Verified Ratio | [0, 1] or nil | 0.25 |
+| HFR | Hallucination-Free Ratio | [0, 1] or nil | 0.20 |
+| NLR | Narrative-Leak Ratio | [0, 1] or nil | 0.25 |
 
-Weights sum to 1.00. SAR and CVR carry equal weight (0.35) because they
-are complementary evidence-grounding measures — SAR measures whether a
-claim *has* a source, CVR measures whether the source *actually says*
-what the claim asserts. HFR carries slightly less weight (0.30) because
-it is the residual check after the first two have done the heavy lifting,
-but it catches the class of errors the first two cannot (fabricated
-numbers that happen to cite a real source for a different number).
+Weights sum to 1.00. The revised formula adds NLR (Narrative-Leak Ratio)
+from Fermi's `NARRATIVE_LEAKS` pattern and rebalances weights: SAR remains
+the heaviest (0.30) because source-anchoring is the foundational check; NLR
+is 0.25 because unchecked prose is the channel fabrications move to; CVR is
+0.25 (down from 0.35) because the extraction ceiling means many legitimately
+synthesized claims cannot be mechanically verified; HFR is 0.20 (down from
+0.30) because it is the residual check after the first three have done the
+heavy lifting.
+
+### The Provenance Lattice (Fermi pattern)
+
+Each factual claim in the report is classified into a provenance tier:
+
+| Tier | Provenance Value | Strength | Meaning |
+|------|-----------------|----------|--------|
+| 2 | `tool_verified` | 2 | Value found in MCP tool output via mechanical match (substring or numeric) |
+| 2 | `platform_derived` | 2 | Value computed by `lisp_eval` from sourced values (reproducible) |
+| 1 | `model_inference` | 1 | LLM synthesized from tool outputs — the extraction ceiling caps this here |
+| 0 | `unavailable` | 0 | No tool the pipeline called can supply this claim |
+| 0 | `tool_no_match` | 0 | Tool was called but returned nothing for this subject |
+| 0 | `pending_check` | 0 | Check exists but has not run yet |
+| 0 | `rejected` | 0 | Checked and found wrong |
+
+**The extraction ceiling** (Fermi's `EXTRACTION_CEILING`): a claim that the
+LLM synthesizes from tool outputs is `model_inference`, never
+`tool_verified`. The LLM is the ontologist; synthesis is extraction. Only
+direct citations — verbatim transcript quotes, exact numbers copied from MCP
+tool output — can be `tool_verified`. This prevents the self-confirming loop
+where the LLM's own synthesis is treated as equally trustworthy as the
+source data.
+
+The provenance vocabulary is a **closed set** (Fermi pattern 7). The
+`lisp_eval` scoring call rejects unrecognized provenance values. A test
+asserts the vocabulary is closed.
 
 **Deterministic validation** (via `lisp_eval`):
 
 ```
-(+ (* 0.35 0.85) (* 0.35 0.90) (* 0.30 0.95)) = 0.8975
+(+ (* 0.30 0.85) (* 0.25 0.90) (* 0.20 0.95) (* 0.25 0.88)) = 0.89
 ```
 
 ### Nil-Propagation Invariant
@@ -47,6 +404,14 @@ not a zero score." A nil `fact_score` surfaces as a `data_gap` entry
 naming the failed sub-metric and propagates a confidence penalty to the
 THESIS quality gate.
 
+**Liveness signal** (Fermi pattern 11): the fact score carries a
+`claims_checked` count alongside the score. A fact score of 1.0 with
+zero claims checked is not a perfect score — it is `nil` (measurement
+meaningless). A fact score computed from a pipeline run where all MCP
+tools failed is also `nil`, not 1.0, because there are no sources to
+verify against. The `lisp_eval` scoring call checks
+`(> claims_checked 0)` before computing the weighted sum.
+
 Enforcement: the `lisp_eval` scoring call checks `(member nil (list SAR
 CVR HFR))` before computing the weighted sum. If any element is nil, the
 call returns `nil`, not a numeric value. The consuming template treats a
@@ -56,10 +421,10 @@ penalty for a failed valuation MCP tool).
 
 ### Measurement Method
 
-#### SAR — Source-Anchored claim Ratio
+#### SAR — Source-Anchored claim Ratio (revised — provenance lattice)
 
 **Definition:** fraction of factual claims in the pipeline output that
-trace to a named source.
+trace to a named source, weighted by provenance strength.
 
 **Measurement:**
 
@@ -73,10 +438,28 @@ trace to a named source.
    as "factual claims" — OUGHT claims (recommendations), subjunctive
    claims (scenarios), and probabilistic claims (forecasts) are excluded
    from the denominator.
-3. **Source tracing**: for each factual claim, check whether it carries
-   a source reference (MCP tool name + output key, transcript chunk_id,
-   web search URL). A claim is "source-anchored" if and only if it
-   references a named source that was actually called in the pipeline.
+3. **Provenance classification** (Fermi lattice): for each factual claim,
+   assign a provenance tier:
+   - `tool_verified` (strength 2): the claim's value was found in an MCP
+     tool output via mechanical match (substring match for quotes,
+     `lisp_eval` numeric match for numbers). Only direct citations can
+     achieve this tier — the extraction ceiling caps LLM synthesis at
+     `model_inference`.
+   - `platform_derived` (strength 2): the claim's value was computed by
+     a `lisp_eval` call from sourced values (e.g., GORILLA scoring).
+   - `model_inference` (strength 1): the LLM synthesized the claim from
+     tool outputs (e.g., "gross margin expanded due to mix shift").
+     Legitimate, but not a retrieval — the extraction ceiling.
+   - `unavailable` (strength 0): no tool the pipeline called can supply
+     this claim. The model could only produce it from parametric
+     knowledge.
+   - `tool_no_match` (strength 0): the tool was called but returned
+     nothing for this subject.
+   - `pending_check` (strength 0): a check exists but has not run yet.
+   - `rejected` (strength 0): checked and found wrong.
+4. **Source tracing**: a claim is "source-anchored" if its provenance
+   strength is ≥ 1 (i.e., `tool_verified`, `platform_derived`, or
+   `model_inference`). Claims with strength 0 are not source-anchored.
 
 ```
 SAR = source_anchored_claims / total_factual_claims
@@ -85,33 +468,50 @@ SAR = source_anchored_claims / total_factual_claims
 If `total_factual_claims = 0` (the report made no factual claims — a
 degenerate case), SAR = nil (measurement meaningless, not 1.0).
 
-#### CVR — Citation-Verified Ratio
+**The extraction ceiling in practice:** A claim like "the company's
+revenue grew 12% year-over-year" can be `tool_verified` if the income
+statement MCP tool output contains revenue figures that yield 12%
+growth. But a claim like "the growth was driven by strong demand in the
+enterprise segment" is `model_inference` — the LLM synthesized it from
+the revenue numbers and its own reasoning. Both are source-anchored
+(strength ≥ 1), but only the first is `tool_verified` (strength 2).
 
-**Definition:** fraction of cited quotes and numbers that can be
-verified against the source text via the listening skill's
-retrieve-cite-verify process.
+**The closed vocabulary** (Fermi pattern 7): the provenance values are a
+closed set. The `lisp_eval` scoring call rejects unrecognized values.
+
+#### CVR — Citation-Verified Ratio (revised — cross-check requirement)
+
+**Definition:** fraction of `tool_verified` claims whose cited values can
+be mechanically verified against the source text.
 
 **Measurement:**
 
 1. **Citation extraction**: extract all cited quotes and cited numbers
-   from the pipeline output. A "cited quote" is a verbatim string
-   attributed to a source. A "cited number" is a numeric value
-   attributed to a source (transcript, 10-K, MCP tool output).
+   from claims classified as `tool_verified` in the SAR step. A "cited
+   quote" is a verbatim string attributed to a source. A "cited number"
+   is a numeric value attributed to a source (transcript, 10-K, MCP tool
+   output).
 2. **Retrieve-cite-verify** (listening skill process): for each cited
    quote, verify that the exact substring exists in the referenced
    source chunk (mechanical substring match — not model-mediated). For
    each cited number, verify that the numeric value appears in the
    referenced source output (deterministic numeric match via
    `lisp_eval`).
-3. A citation is "verified" if and only if the mechanical check passes.
+3. **Cross-check requirement** (Fermi pattern 2): every `tool_verified`
+   claim must carry a `cross_check` specification — the `lisp_eval` call
+   that checks the cited value against the MCP tool output. A
+   `tool_verified` claim with no cross-check is a claim nobody can
+   falsify. The verifier must either provide a cross-check or explicitly
+   declare why it cannot (analogous to Fermi's `CROSS_CHECK_EXEMPTIONS`).
+4. A citation is "verified" if and only if the mechanical check passes.
 
 ```
-CVR = verified_citations / total_citations
+CVR = verified_citations / total_tool_verified_citations
 ```
 
-If `total_citations = 0`, CVR = nil. If the source text is unavailable
-(MCP tool failed, transcript not fetched), CVR = nil for that citation
-— not 0.0.
+If `total_tool_verified_citations = 0`, CVR = nil. If the source text is
+unavailable (MCP tool failed, transcript not fetched), CVR = nil for
+that citation — not 0.0.
 
 #### HFR — Hallucination-Free Ratio
 
@@ -142,6 +542,49 @@ HFR = surviving_claims / total_factual_claims
 ```
 
 If `total_factual_claims = 0`, HFR = nil.
+
+#### NLR — Narrative-Leak Ratio (new — Fermi pattern 3)
+
+**Definition:** fraction of narrative (prose) fields that do NOT contain
+claims exceeding what the sourced blocks can support.
+
+**Measurement:**
+
+1. **Narrative field identification**: identify all prose fields in the
+   pipeline output — the thesis statement, company-8part prose sections,
+   IMAGINE scenario narratives, GORILLA elevator pitch. These are
+   `Narrative` grounding fields (Fermi's `Grounding::Narrative`).
+2. **Leak rule matching** (Fermi's `NARRATIVE_LEAKS` pattern): scan each
+   narrative field against a table of domain-specific leak rules. Each
+   rule pairs a source block with a `LeakRule` (either `Word` for
+distinctive keywords or `Quantity` for unit-preceded-by-number
+   patterns). If a narrative field contains a keyword from a block that
+   is NOT sourced (provenance strength 0), it is a narrative leak.
+3. **Domain-specific leak rules** for the equity research pipeline:
+
+   | Block | Needle | Rule Type | Why |
+   |-------|--------|-----------|-----|
+   | `financial_profile` | `"bps"` | Quantity | Basis-point claims must trace to income statement data |
+   | `financial_profile` | `"x"` (preceded by digit) | Quantity | Multiple claims must trace to comparable analysis output |
+   | `financial_profile` | `"EBITDA"` | Word | EBITDA figures must trace to income statement or transcript |
+   | `financial_profile` | `"free cash flow"` | Word | FCF claims must trace to cash flow statement or DCF output |
+   | `management_skill` | `"said"` | Word | Attributed quotes must trace to transcript chunk |
+   | `gorilla` | `"market share"` | Word | Market share claims must trace to web_search or comparable_analysis |
+   | `imagine` | `"%"` (preceded by digit) | Quantity | Growth rate claims must trace to DCF or scenario_build |
+   | `wardley` | `"commoditiz"` | Word | Commoditization claims must trace to Wardley map output |
+
+4. The `Quantity` variant only fires when a number precedes the unit —
+   Fermi's fix for the `" gb"`/`"GBIF"` collision. A check that fires on
+   correct output is worse than no check: it gets switched off, and the
+   switching-off looks like cleanup.
+
+```
+NLR = clean_narrative_fields / total_narrative_fields
+```
+
+If `total_narrative_fields = 0`, NLR = nil. A narrative field is "clean"
+if no leak rule fires against it, or if every leak rule that fires is
+backed by a sourced block (provenance strength ≥ 2).
 
 ### Target Threshold
 
@@ -631,7 +1074,26 @@ source contain the claim?" This is a retrieve-cite-verify check, not an
 LLM judgment — but the falsifiability skill's framing ensures the
 verifier approaches the check adversarially, not confirmatorily.
 
-#### 5.5 What Remes Unverifiable (Honest Disclosure)
+#### 5.5 The Extraction Ceiling as Self-Reference Guard (Fermi pattern)
+
+The provenance lattice's extraction ceiling is itself a self-reference
+safeguard. The verifier's own claims about what it verified are capped
+at `model_inference` (strength 1), never `tool_verified` (strength 2).
+The verifier can say "I found this quote in the transcript" — but only
+the mechanical substring match can elevate that claim to
+`tool_verified`. This prevents the verifier from laundering its own
+potential hallucinations through the verification process.
+
+In practice: the verifier LLM extracts a cited quote and points to
+where it found it (strength 1, `model_inference`). The post-processing
+substring match checks whether the quote actually exists in the
+referenced chunk (elevation to strength 2, `tool_verified`). If the
+substring match fails, the claim stays at `model_inference` and is
+flagged as a `rejected` citation — checked and found wrong. The
+verifier cannot fabricate a `tool_verified` status because it does not
+control the mechanical check.
+
+#### 5.6 What Remains Unverifiable (Honest Disclosure)
 
 The verifier cannot detect:
 - **Plausible fabrications**: a claim that is false but consistent with
@@ -797,7 +1259,9 @@ non-obvious, repeatedly encountered, specific enough to act on.
 ```markdown
 # Fact-checking pipeline traps
 
-* Fact score sub-metrics use nil-propagation, not zero-fallback. If SAR, CVR, or HFR is nil (measurement failed), fact_score is nil — never `unwrap_or(0)`. A nil fact_score surfaces as `data_gap: "fact_score_measurement_failed"` with confidence penalty -0.20. This is the same pattern as "missing THESIS verdict surfaces as 1.0 (worst case)."
+* Fact score sub-metrics use nil-propagation, not zero-fallback. If SAR, CVR, HFR, or NLR is nil (measurement failed), fact_score is nil — never `unwrap_or(0)`. A nil fact_score surfaces as `data_gap: "fact_score_measurement_failed"` with confidence penalty -0.20. This is the same pattern as "missing THESIS verdict surfaces as 1.0 (worst case)."
+
+* Fact score carries a `claims_checked` count alongside the score. A fact score of 1.0 with zero claims checked is nil, not perfect — zero mismatches over zero rows is unknown, not clean (Fermi liveness pattern). A fact score computed from a pipeline run where all MCP tools failed is also nil — there are no sources to verify against.
 
 * Verification steps must run as `spawn_agent` calls, not inline LLM calls. The verifier that checks for hallucinations can itself hallucinate — decoupling via `spawn_agent` (separate agent context, no shared conversation history) is the self-improvement §9.1 enforcement. Inline verification is the self-confirming loop.
 
@@ -805,7 +1269,23 @@ non-obvious, repeatedly encountered, specific enough to act on.
 
 * Cited numbers must be verified via `lisp_eval` (deterministic numeric match against source output), not by LLM judgment. A number that "looks right" is not a verified number — it must appear in the source output or be derivable via a stated formula from source numbers.
 
+* The provenance lattice has an extraction ceiling: LLM-synthesized claims are `model_inference` (strength 1), never `tool_verified` (strength 2). Only direct citations (verbatim quotes, exact numbers from MCP tool output) can be `tool_verified`. The verifier's own claims about what it verified are also capped at `model_inference` — only the mechanical check elevates to `tool_verified`. This prevents the verifier from laundering its own hallucinations through the verification process.
+
+* Every `tool_verified` claim must carry a `cross_check` specification — the `lisp_eval` call that checks the cited value against the MCP tool output. A `tool_verified` claim with no cross-check is a claim nobody can falsify. The verifier must either provide a cross-check or explicitly declare why it cannot (Fermi cross-check exemption pattern).
+
+* Narrative (prose) fields must be scanned for claims that exceed what the sourced blocks can support. A prose channel that is not checked is the channel the fabrication moves to — stripping a structured field is not sufficient if the `summary` restates the fabricated number in prose. Leak rules use the `Quantity` variant (number-preceded-by-unit) to avoid false positives on honest text.
+
+* The `verified_claims` registry is append-only within a pipeline run. A claim verified as `tool_verified` in iteration 1 stays `tool_verified`. A claim that failed verification stays `rejected` — it does not get re-classified when new sources are added in iteration 2. This prevents the un-stripping trap (Fermi pre-contract marker pattern).
+
+* The fact score for pipeline iteration N only counts claims from iteration N. Prior iteration failures are reported as `historical_findings` context, not as current-pipeline failures. Without this, a pipeline that fails iteration 1 and re-enters would carry iteration 1's failures into iteration 2's fact score, making it impossible to go green after a fix (Fermi cohort scoping pattern).
+
+* Each entry in the `verified_claims` registry carries a `why` field explaining its provenance status. A claim marked `sourced` explains which tool and which response field supplied it. A claim marked `inferred` explains what it was inferred from. Short justifications are rejected — "n/a" and "tool" do not pass. An unexplained disposition is how a contract rots (Fermi `why` mandatory pattern).
+
+* The provenance vocabulary is a closed set: `tool_verified`, `platform_derived`, `model_inference`, `unavailable`, `tool_no_match`, `pending_check`, `rejected`. The `lisp_eval` scoring call rejects unrecognized values. A test asserts the vocabulary is closed — `provenance_values_are_closed` (Fermi closed vocabulary pattern).
+
 * The fact_score feeds the THESIS quality gate as additional evidence — it does not replace the `goal-analysis/judge` semantic evaluation. fact_score < 0.60 triggers `needs_work` directly (a thesis on hallucinated facts cannot be semantically evaluated), but fact_score ≥ 0.60 still requires the semantic quality gate. Two independent gates, not one.
+
+* The confidence adjustment fed to the THESIS quality gate is derived from the provenance floor of the report, not from the LLM's self-assessed confidence. If the weakest claim is `model_inference`, the band is `medium` regardless of what the thesis template says. If any claim is `unavailable`, the band is `flagged`. The LLM does not rate its own confidence (Fermi confidence band pattern).
 
 * `verification_scope_limitations` must be disclosed in the verifier output. The fact score covers factuality (is the claim real?), not completeness (are all relevant facts cited?) or reasoning quality (are the causal conclusions correct?). Advertising a "high fact score" without disclosing what it does not cover violates the advertised-invariants-must-point-to-enforcement rule.
 ```
@@ -815,36 +1295,48 @@ non-obvious, repeatedly encountered, specific enough to act on.
 ## Appendix: Fact Score Computation (lisp_eval Reference)
 
 The fact score is computed by a `lisp_eval` call in each verification
-step. The call takes three sub-metrics (SAR, CVR, HFR) and returns the
-weighted sum, or nil if any sub-metric is nil.
+step. The call takes four sub-metrics (SAR, CVR, HFR, NLR) and returns
+the weighted sum, or nil if any sub-metric is nil or if
+`claims_checked` is zero.
 
 **Scoring call (early anchor):**
 
 ```lisp
-;; Inputs: SAR, CVR, HFR (each [0,1] or nil)
+;; Inputs: sar, cvr, hfr, nlr (each [0,1] or nil), claims_checked (int)
 ;; Output: fact_score (float or nil), threshold_met (bool), data_gaps (list)
-(if (member nil (list sar cvr hfr))
+;; Weights: 0.30*SAR + 0.25*CVR + 0.20*HFR + 0.25*NLR
+(if (or (member nil (list sar cvr hfr nlr))
+        (= claims_checked 0))
     (list (cons 'fact_score 'nil)
           (cons 'threshold_met 'nil)
-          (cons 'data_gaps (list "fact_score_measurement_failed")))
-    (let ((score (+ (* 0.35 sar) (* 0.35 cvr) (* 0.30 hfr))))
+          (cons 'data_gaps (list "fact_score_measurement_failed"))
+          (cons 'claims_checked claims_checked))
+    (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr))))
       (list (cons 'fact_score score)
             (cons 'threshold_met (if (>= score 0.80) t nil))
             (cons 'below_bar (if (and (>= score 0.60) (< score 0.80)) t nil))
-            (cons 'fails_bar (if (< score 0.60) t nil)))))
+            (cons 'fails_bar (if (< score 0.60) t nil))
+            (cons 'claims_checked claims_checked))))
 ```
 
 **Validated sample computation:**
 
 ```
-(+ (* 0.35 0.85) (* 0.35 0.90) (* 0.30 0.95)) = 0.8975
-;; threshold_met = true (0.8975 >= 0.80)
+(+ (* 0.30 0.85) (* 0.25 0.90) (* 0.20 0.95) (* 0.25 0.88)) = 0.89
+;; threshold_met = true (0.89 >= 0.80)
 ```
 
 **Nil-propagation test:**
 
 ```
-(member nil (list 0.85 nil 0.95))
+(member nil (list 0.85 nil 0.95 0.88))
 ;; Returns non-nil → fact_score = nil
 ;; data_gaps = ["fact_score_measurement_failed"]
+```
+
+**Liveness test:**
+
+```
+(= claims_checked 0)
+;; Returns t → fact_score = nil (zero mismatches over zero rows is unknown)
 ```

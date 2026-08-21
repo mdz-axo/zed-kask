@@ -618,19 +618,4 @@ pub fn read_catalog(
         .collect())
 }
 
-/// Build CMP indices for one (family, venue) by reading the catalog file
-/// from disk. Convenience wrapper around `read_catalog` +
-/// `build_cmp_indices_from_lines`.
-pub fn build_cmp_indices(
-    catalogs_dir: &Path,
-    family: BaseEconomicObject,
-    venue: Venue,
-    context: &EconomicContext,
-    config: &CmpConfig,
-    now: &DateTime<Utc>,
-) -> Result<ProvenancedCmpIndexSet, CmpError> {
-    let lines = read_catalog(catalogs_dir, family, venue)?;
-    build_cmp_indices_from_lines(&lines, family, venue, context, config, now)
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────

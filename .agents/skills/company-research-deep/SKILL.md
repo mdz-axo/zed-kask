@@ -88,9 +88,34 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 4. Gate 3 (Contract): trace abstractions — are moat source, durability, and terminal stage genuine content or labels/hedges?
 5. The elimination_report feeds the goal-analysis quality gate as additional evidence — it does not block the thesis directly.
 
+### verify-early-anchor
+
+1. Verify that the CompanyBoard's factual claims and cited quotes are grounded in the MCP tool outputs and transcript consumed by company-8part. This is the early anchor — it catches foundation hallucinations BEFORE they contaminate GORILLA, IMAGINE, and THESIS.
+2. Call `spawn_agent` with a message that invokes the `grounding-verify` skill:
+   - label: "verify-early-anchor"
+   - message: instruct the agent to run the `grounding-verify` skill on the CompanyBoard output against all step-1 MCP tool outputs. Provide the CompanyBoard text as `target_text`, the MCP tool outputs as `source_outputs`, the pipeline tool call log as `pipeline_tool_log`, and the domain-specific leak rules for equity research as `leak_rules`.
+3. The spawned agent is decoupled from the company-8part generator — it has no shared conversation history (self-improvement §9.1). It receives only the stage output and the source outputs.
+4. Consume the `fact_score`, `verified_claims`, `data_gaps`, `confidence_adjustment`, and `confidence_band` from the spawned agent's output.
+5. If `fact_score < 0.60`: block downstream steps, re-enter company-8part with fact-check gaps injected into the convergence loop. If `fact_score = nil`: emit `data_gap: "fact_score_early_measurement_failed"` + confidence penalty -0.20, proceed with caution. If `0.60 ≤ fact_score < 0.80`: proceed, emit `data_gaps` for failed sub-metrics, apply confidence penalty -0.10. If `fact_score ≥ 0.80`: proceed with no penalty.
+6. The `verified_claims` registry from this step is append-only — downstream steps and the late gate can read it but cannot modify it. This prevents the un-stripping trap.
+
+### verify-late-gate
+
+1. Verify that the full pipeline report's factual claims (CompanyBoard through THESIS) are grounded in source data. This is the late gate — it catches hallucinations introduced during downstream synthesis (GORILLA, IMAGINE, THESIS) that were not present in the CompanyBoard.
+2. Call `spawn_agent` with a message that invokes the `grounding-verify` skill:
+   - label: "verify-late-gate"
+   - message: instruct the agent to run the `grounding-verify` skill on the full pipeline report (thesis + all prior stage outputs) against all accumulated MCP tool outputs. Provide the thesis text as `target_text`, all MCP tool outputs from the full pipeline as `source_outputs`, the pipeline tool call log as `pipeline_tool_log`, the `verified_claims` registry from the early anchor as `prior_verified_claims`, and the domain-specific leak rules for equity research as `leak_rules`.
+3. The spawned agent checks thesis claims against the `verified_claims` registry first (fast path — already-verified claims skip re-verification), then runs the full grounding-verify process on new claims introduced during downstream synthesis.
+4. Consume `fact_score_final`, `fact_score_breakdown`, `data_gaps`, `confidence_adjustment`, `confidence_band`, `hallucination_findings`, and `verification_scope_limitations` from the spawned agent's output.
+5. `fact_score_final` and `confidence_adjustment` feed the goal-analysis quality gate as additional evidence alongside the essentialist elimination_report.
+6. If `fact_score_final < 0.60`: flag `needs_work` with fact-check gaps injected into convergence loop. If `fact_score_final = nil`: surface to quality gate as `incomplete` (cannot evaluate thesis quality without factuality signal). If `0.60 ≤ fact_score_final < 0.80`: proceed to quality gate with confidence penalty -0.10. If `fact_score_final ≥ 0.80`: proceed to quality gate with no penalty.
+7. The fact_score does NOT replace the `goal-analysis/judge` semantic evaluation — two independent gates, not one. `fact_score < 0.60` bypasses semantic evaluation (a thesis on hallucinated facts cannot be evaluated for investment quality); `fact_score ≥ 0.60` still requires the semantic quality gate.
+
 ## Convergence
 
 The deep pipeline converges on the THESIS quality gate verdict: investment_grade = 0.0 (fully converged), needs_work = 0.5 (re-enter COMPANY with THESIS gaps injected), incomplete = 1.0 (escalate). max_iterations: 3 bounds the loop.
+
+The fact_score (from verify-late-gate) feeds the quality gate as additional evidence: fact_score < 0.60 triggers needs_work directly (bypasses semantic evaluation — a thesis built on hallucinated facts cannot be evaluated for investment quality). fact_score = nil triggers incomplete (cannot evaluate without factuality signal). fact_score ≥ 0.60 proceeds to semantic evaluation with confidence penalty factored in. The fact_score for pipeline iteration N only counts claims from iteration N — prior iteration failures are reported as historical_findings context, not as current-pipeline failures (cohort scoping).
 
 ## Cross-Skill Composition
 
@@ -98,6 +123,9 @@ The deep pipeline converges on the THESIS quality gate verdict: investment_grade
 - Step 5 (WARDLEY) compresses `wardley-mapper`'s 6-step process via the `company-research/wardley-anchor` adapter.
 - Step 7 reuses `capabilities-reasoner/capability-reason` (via `company-research/gorilla-capability-reason` adapter) — types each GORILLA dimension against a capability registry with floor/ceiling/maturity-gate limits. Dimensions with maturity blocks are nil'd by the `lisp_eval` scoring call.
 - Step 13 reuses `essentialist/essentialist-flow` (via `company-research/thesis-essentialist` adapter) — runs a single pass of the 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis to enforce parsimony. The elimination_report feeds the goal-analysis quality gate as additional evidence.
+- Verification step 1 (verify-early-anchor) invokes `grounding-verify` as a `spawn_agent` call — decoupled from the company-8part generator (self-improvement §9.1). The skill extracts claims, assigns provenance tiers on a strength lattice, mechanically verifies citations, scans narrative for leak rules, and computes a composite fact_score with nil-propagation.
+- Verification step 2 (verify-late-gate) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `goal-analysis/judge` quality gate as additional evidence.
+- The fact_score computation uses `lisp_eval` (deterministic scoring, same pattern as GORILLA's fixed-weight scoring). The provenance lattice and extraction ceiling are adapted from Fermi's `grounding_trust.rs`.
 - Step 14 reuses `goal-analysis/judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in goal-analysis's semantic evaluator, not LLM self-assessment.
 
 ## Registry Templates
@@ -126,6 +154,8 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `kata-calibration-measure.j2` | v0.36.0 cross-skill adapter. Adapts metacognition/meta-experiment to close the flash pipeline's open kata loop. Flash step 20 (kata- improvement-step1-direction) sets the direction but never measures the gap. This step measures the analyst's calibration gap using the market_calibration Brier score (step 19) and resolved_outcomes (step 18), then re-measures the current condition. Emits calibration_gap (0.0 calibrated → 1.0 maximum gap) that LENS (step 23) consumes as a 6th axis alongside the existing five frameworks. |
 | `wardley-anchor.j2` | v0.36.0 cross-skill adapter. Compresses wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into a single LLM call over the rotated Company Board. Emits wardley_map with components, evolution classifications, movements, commoditization candidates, choke_points, and invisible_gorillas. Feeds GORILLA's Invisible Gorilla and Choke Point dimensions (step 5) and ECONOMIC TRAJECTORY's falling-cost anchor (step 9). The full wardley-mapper skill is available for standalone use — this adapter exists to ground the deep pipeline's strategic analysis without adding a 6-step sub-process. |
 | `wardley-anchor.j2` | v0.36.0 cross-skill adapter. Compresses wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into a single LLM call over the rotated Company Board. Emits wardley_map with components, evolution classifications, movements, commoditization candidates, choke_points, and invisible_gorillas. Feeds GORILLA's Invisible Gorilla and Choke Point dimensions (step 5) and ECONOMIC TRAJECTORY's falling-cost anchor (step 9). The full wardley-mapper skill is available for standalone use — this adapter exists to ground the deep pipeline's strategic analysis without adding a 6-step sub-process. |
+| `verify-early-anchor.j2` | Verification step 1. Invokes `grounding-verify` skill via `spawn_agent` to verify CompanyBoard claims against step-1 MCP tool outputs. Extracts claims, assigns provenance tiers on the strength lattice (tool_verified > model_inference > unavailable), mechanically verifies citations via retrieve-cite-verify, scans narrative for leak rules, computes fact_score_early = 0.30*SAR + 0.25*CVR + 0.20*HFR + 0.25*NLR via lisp_eval. Emits verified_claims registry (append-only), fact_score_early, data_gaps, confidence_adjustment, confidence_band. Run as spawn_agent (decoupled from generator). |
+| `verify-late-gate.j2` | Verification step 2. Invokes `grounding-verify` skill via `spawn_agent` to verify full pipeline report against all accumulated source outputs. Checks thesis claims against verified_claims registry from early anchor (fast path), runs full verification on new claims from downstream synthesis. Computes fact_score_final = 0.30*SAR + 0.25*CVR + 0.20*HFR + 0.25*NLR. Emits fact_score_final, fact_score_breakdown, data_gaps, confidence_adjustment, confidence_band, hallucination_findings, verification_scope_limitations. fact_score_final feeds goal-analysis quality gate as additional evidence. Run as spawn_agent (decoupled from generator). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -142,3 +172,11 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 - No `unwrap_or(0)` on regulation signals. Missing THESIS verdict surfaces as 1.0 (worst case), not silently converged.
 - The THESIS quality gate uses `goal-analysis/judge` (semantic evaluation), not self-assessment — to avoid the LLM-improves-against-LLM-scored-target trap.
 - IMAGINE's falsifiable predictions are persisted to the forecast-ledger (when built — Phase 3) for later Brier scoring.
+- Verification steps (verify-early-anchor, verify-late-gate) run as `spawn_agent` calls invoking the `grounding-verify` skill — decoupled from the generator to prevent the self-confirming loop (self-improvement §9.1).
+- fact_score sub-metrics use nil-propagation, not zero-fallback. If any sub-metric is nil, fact_score is nil — never `unwrap_or(0)`. A nil fact_score surfaces as `data_gap: "fact_score_measurement_failed"` with confidence penalty -0.20.
+- fact_score carries a `claims_checked` count. A fact score of 1.0 with zero claims checked is nil — zero mismatches over zero rows is unknown, not clean.
+- The provenance lattice has an extraction ceiling: LLM-synthesized claims are `model_inference` (strength 1), never `tool_verified` (strength 2). Only direct citations verified via mechanical match can be `tool_verified`.
+- The `verified_claims` registry from the early anchor is append-only — the late gate adds entries but does not modify existing ones. This prevents the un-stripping trap.
+- fact_score for pipeline iteration N only counts claims from iteration N — prior iteration failures are historical context, not current failures (cohort scoping).
+- The fact_score feeds the quality gate as additional evidence — it does not replace `goal-analysis/judge`. fact_score < 0.60 triggers `needs_work` directly; fact_score ≥ 0.60 still requires the semantic quality gate. Two independent gates, not one.
+- The confidence adjustment is derived from the provenance floor, not from the LLM's self-assessed confidence. If the weakest claim is `model_inference`, the band is `medium` regardless of what the thesis template says.

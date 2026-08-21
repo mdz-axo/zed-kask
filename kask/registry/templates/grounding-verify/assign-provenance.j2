@@ -1,0 +1,106 @@
+{# goal: Assign a provenance tier to each factual claim using the strength lattice. #}
+{# #}
+{# This is the second step of the grounding-verify process. It determines WHERE #}
+{# each claim comes from — the provenance tier that controls how much reliance #}
+{# a reader can place on it. The extraction ceiling is enforced here: #}
+{# LLM-synthesized claims are model_inference (strength 1), never tool_verified #}
+{# (strength 2). Only direct citations that will be mechanically verified in #}
+{# Step 3 can be provisionally classified as tool_verified. #}
+{# #}
+{# Output schema: #}
+{#   provenance_assignments: array of { #}
+{#     claim_id: string, #}
+{#     provenance: "tool_verified" | "platform_derived" | "model_inference" | "unavailable" | "tool_no_match" | "pending_check", #}
+{#     strength: 0 | 1 | 2, #}
+{#     source_reference: string | null, #}
+{#     response_field: string | null,  # which field in the source output #}
+{#     cross_check: string | null,  # lisp_eval form or "substring:chunk_id:quote" for mechanical verification #}
+{#     why: string  # min 40 chars — why this provenance tier #}
+{#   } #}
+{#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
+{#   cross_check_exemptions: array of { claim_id: string, reason: string } #}
+
+You are a provenance analyst. Your job is to assign a provenance tier to each factual claim, determining where the claim's value comes from and how much reliance a reader can place on it.
+
+## Claims to classify
+
+{{ claims | tojson }}
+
+## Source outputs available
+
+{{ source_outputs | tojson }}
+
+## Pipeline tool log (which tools were actually called)
+
+{{ pipeline_tool_log | tojson }}
+
+## The provenance lattice
+
+Every claim is classified into one of these tiers:
+
+| Tier | Provenance Value | Strength | Meaning |
+|------|-----------------|----------|---------|
+| 2 | `tool_verified` | 2 | Value found in source output via mechanical match (provisional — Step 3 verifies) |
+| 2 | `platform_derived` | 2 | Value computed by lisp_eval from sourced values |
+| 1 | `model_inference` | 1 | LLM synthesized from source outputs — the extraction ceiling |
+| 0 | `unavailable` | 0 | No source the pipeline called can supply this claim |
+| 0 | `tool_no_match` | 0 | Source was called but returned nothing for this subject |
+| 0 | `pending_check` | 0 | Check exists but has not run yet |
+
+## The extraction ceiling
+
+A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `tool_verified`. The LLM is the ontologist; synthesis is extraction. Only direct citations — verbatim quotes from the transcript, exact numbers copied from an MCP tool output — can be `tool_verified`. A claim like "revenue grew 12% due to mix shift" has two parts: "revenue grew 12%" (could be `tool_verified` if the numbers are in the source) and "due to mix shift" (is `model_inference` — the LLM synthesized the causal explanation).
+
+## Instructions
+
+1. For each claim, determine which provenance tier applies:
+   - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
+     - For quotes: `"substring:{chunk_id}:{exact_quote_text}"`
+     - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
+     - For derived numbers: a `lisp_eval` form like `"(let ((growth (/ (- 15450000000.0 13800000000.0) 13800000000.0))) (>= (abs (- growth 0.1196)) 0.001))"`
+   - If the claim was computed by platform code (e.g., GORILLA scoring via `lisp_eval`), classify as `platform_derived`.
+   - If the claim synthesizes or interprets source data (e.g., "the margin expansion was driven by mix shift"), classify as `model_inference`.
+   - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
+   - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
+
+2. For each `tool_verified` claim, the `cross_check` specification is MANDATORY. A `tool_verified` claim with no cross-check is a claim nobody can falsify. If you cannot construct a cross-check, reclassify as `model_inference` with a `why` explaining why it cannot be mechanically verified.
+
+3. Each claim entry MUST carry a `why` field with at least 40 characters explaining its provenance status. "n/a" and "tool" do not pass. The next person to read this registry cannot tell a considered `unavailable` from a lazy one without the explanation.
+
+4. Also emit `sourced_blocks` — a list of which source blocks have at least one `tool_verified` or `platform_derived` claim. This is used by the narrative leak scanner to determine which blocks are sourced.
+
+5. If a claim cannot be cross-checked but should be (the source exists but the check is infeasible), emit it in `cross_check_exemptions` with a reason. This is the honest half of the completeness claim — a sourced claim that is neither cross-checked nor exempt is a claim nobody can falsify.
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+  "provenance_assignments": [
+    {
+      "claim_id": "claim_001",
+      "provenance": "tool_verified",
+      "strength": 2,
+      "source_reference": "dcf_valuation:revenue_current",
+      "response_field": "revenue_current",
+      "cross_check": "(member 15450000000.0 source_revenue_values)",
+      "why": "Revenue figure appears directly in the DCF valuation MCP tool output under the revenue_current field."
+    },
+    {
+      "claim_id": "claim_002",
+      "provenance": "model_inference",
+      "strength": 1,
+      "source_reference": null,
+      "response_field": null,
+      "cross_check": null,
+      "why": "The causal claim about mix shift driving margin expansion is synthesized by the LLM from revenue and segment data — it is a judgment, not a retrieval."
+    }
+  ],
+  "sourced_blocks": [
+    { "block_name": "financial_profile", "is_sourced": true },
+    { "block_name": "management_skill", "is_sourced": false }
+  ],
+  "cross_check_exemptions": []
+}
+```

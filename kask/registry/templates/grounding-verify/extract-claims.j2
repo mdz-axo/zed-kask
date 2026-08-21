@@ -1,0 +1,98 @@
+{# goal: Extract all declarative factual claims from target_text, classify by epistemic mode, and identify source references. #}
+{# #}
+{# This is the first step of the grounding-verify process. It identifies WHAT #}
+{# needs to be verified — the claims that assert facts and therefore need #}
+{# grounding in source data. Claims that are recommendations (OUGHT), scenarios #}
+{# (subjunctive), or forecasts (probabilistic) are excluded — they are not #}
+{# fabrications, they are different kinds of statement. #}
+{# #}
+{# Output schema: #}
+{#   claims: array of { #}
+{#     claim_id: string, #}
+{#     text: string, #}
+{#     char_offset: integer, #}
+{#     subject: string, #}
+{#     predicate: string, #}
+{#     object: string, #}
+{#     epistemic_mode: "IS" | "OUGHT" | "subjunctive" | "probabilistic", #}
+{#     source_reference: string | null  # e.g. "company_transcript:chunk_3" or "dcf_valuation:terminal_value" #}
+{#   } #}
+{#   excluded_claims: array of { #}
+{#     text: string, #}
+{#     epistemic_mode: string, #}
+{#     reason: string  # why excluded from fact score #}
+{#   } #}
+{#   narrative_fields: array of { #}
+{#     field_name: string, #}
+{#     text: string, #}
+{#     char_offset: integer #}
+{#   } #}
+
+You are a claim extraction analyst. Your job is to extract every declarative factual claim from the target text and classify it by epistemic mode.
+
+## Target text
+
+{{ target_text }}
+
+## Source outputs available
+
+The following sources were called to produce this text. Each claim may or may not reference one of them:
+
+{% for source in source_outputs %}
+- **{{ source.tool_name }}**: {{ source.description }} (output key: {{ source.output_key }})
+{% endfor %}
+
+## Instructions
+
+1. Read the target text and identify every declarative factual claim — a statement that asserts something about the world that could be true or false. A factual claim is an IS-mode declarative statement: "the company's revenue was $15.4B" is a factual claim; "the company should invest in AI" is an OUGHT (recommendation); "if the company enters the Chinese market, revenue could double" is subjunctive (scenario); "there is a 70% chance the stock outperforms" is probabilistic (forecast).
+
+2. For each factual claim, extract:
+   - `claim_id`: a unique identifier (e.g., "claim_001")
+   - `text`: the exact text of the claim
+   - `char_offset`: the character offset where the claim starts in the target text
+   - `subject`: the entity the claim is about (e.g., "company_revenue")
+   - `predicate`: what is being asserted (e.g., "was")
+   - `object`: the value asserted (e.g., "$15.4B")
+   - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic
+   - `source_reference`: the named source the claim cites (tool_name + output_key or chunk_id), or null if uncited
+
+3. For claims that are NOT IS-mode (OUGHT, subjunctive, probabilistic), record them in `excluded_claims` with the reason for exclusion. These are not fabrications — they are different kinds of statement that do not require grounding.
+
+4. Identify narrative (prose) fields — sections of the target text that are not structured data but prose written by the same model. These will be scanned for leak rules in a subsequent step. Record each narrative field with its field name, text, and character offset.
+
+5. Produce a JSON object with `claims` (IS-mode only), `excluded_claims`, and `narrative_fields`.
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+  "claims": [
+    {
+      "claim_id": "claim_001",
+      "text": "the company's revenue was $15.4B in fiscal year 2024",
+      "char_offset": 142,
+      "subject": "company_revenue",
+      "predicate": "was",
+      "object": "$15.4B",
+      "epistemic_mode": "IS",
+      "source_reference": "dcf_valuation:revenue_current"
+    }
+  ],
+  "excluded_claims": [
+    {
+      "text": "the company should invest in AI infrastructure",
+      "epistemic_mode": "OUGHT",
+      "reason": "Recommendation, not a factual claim — does not require grounding"
+    }
+  ],
+  "narrative_fields": [
+    {
+      "field_name": "investment_thesis",
+      "text": "The company's durable competitive advantage stems from...",
+      "char_offset": 1200
+    }
+  ]
+}
+```

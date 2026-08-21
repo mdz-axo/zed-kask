@@ -334,54 +334,6 @@ pub fn maturity_window(target_days: u32, config: &CmpConfig) -> (f64, f64) {
     (target - half, target + half)
 }
 
-/// Test a contract's eligibility for an index of the given orientation.
-/// Returns Ok(orientation) when eligible, or records a rejection.
-pub fn check_eligibility(
-    input: &EligibilityInput,
-    index_orientation: Orientation,
-    reference: f64,
-    level: f64,
-    target_days: u32,
-    config: &CmpConfig,
-) -> Result<Orientation, EligibilityRejection> {
-    let reject = |reason: String| EligibilityRejection {
-        market_id: input.record.market_id.clone(),
-        reason,
-    };
-
-    // Reliability floor.
-    if tier_rank(input.record.reliability_tier) < tier_rank(config.min_tier) {
-        return Err(reject(format!(
-            "reliability tier {:?} below minimum {:?}",
-            input.record.reliability_tier, config.min_tier
-        )));
-    }
-
-    // Maturity window.
-    let days = input
-        .days_to_expiration
-        .ok_or_else(|| reject("unparsable expiration — maturity unknown".into()))?;
-    let (lo, hi) = maturity_window(target_days, config);
-    if days < lo || days > hi {
-        return Err(reject(format!(
-            "expiration {days:.1}d outside eligibility window [{lo:.1}, {hi:.1}]"
-        )));
-    }
-
-    // Orientation via materiality.
-    let predicted = input
-        .predicted_level
-        .ok_or_else(|| reject("no extractable predicted level (strike)".into()))?;
-    let orientation = classify_orientation(predicted, reference, level, input.direction_up);
-    if orientation != index_orientation {
-        return Err(reject(format!(
-            "orientation {orientation:?} does not match index {index_orientation:?}"
-        )));
-    }
-
-    Ok(orientation)
-}
-
 fn tier_rank(tier: ReliabilityTier) -> u8 {
     match tier {
         ReliabilityTier::High => 2,
