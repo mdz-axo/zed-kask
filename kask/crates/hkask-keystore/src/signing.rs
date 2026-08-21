@@ -71,18 +71,6 @@ pub fn verify(message: &[u8], signature: &Ed25519Signature, public_key: &Ed25519
     verifying_key.verify_strict(message, &sig).is_ok()
 }
 
-/// Convert an `Ed25519PublicKey` to an `ed25519_dalek::VerifyingKey`.
-///
-/// Returns `None` if the key bytes are invalid (all-zero, etc.).
-pub fn to_verifying_key(public_key: &Ed25519PublicKey) -> Option<VerifyingKey> {
-    VerifyingKey::from_bytes(public_key.as_bytes()).ok()
-}
-
-/// Convert an `Ed25519Signature` to an `ed25519_dalek::Signature`.
-pub fn to_dalek_signature(signature: &Ed25519Signature) -> Signature {
-    Signature::from_bytes(signature.as_bytes())
-}
-
 /// Store a publisher's Ed25519 signing key in the OS keychain.
 ///
 /// The key is stored as a hex string under `kask://signing-keys/{publisher}`.

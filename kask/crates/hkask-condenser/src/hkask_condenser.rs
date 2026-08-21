@@ -31,8 +31,6 @@
 //!   dispatch. Selects an algorithm per compression via the static
 //!   `default_for()` mapping. Derives ontology anchors from tool names
 //!   internally.
-//! - **`inference`** — Prompt formatting and token estimation for
-//!   LLM-assisted thread summarization.
 //!
 //! This crate provides the domain primitives consumed by:
 //! - `kask_bridge` (`BridgeThreadCondenser` — the runtime tool-result
@@ -41,12 +39,6 @@
 
 pub mod algorithms;
 pub mod engine;
-pub mod inference;
 pub mod ontology_graph;
 pub mod saliency;
 pub mod types;
-
-pub use inference::{
-    SUMMARY_SYSTEM_PROMPT, approx_token_count, build_summarization_prompt, build_summary_output,
-    format_conversation_text,
-};

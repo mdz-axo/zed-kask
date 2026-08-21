@@ -41,9 +41,14 @@ fn inference_config() -> hkask_inference::InferenceConfig {
 }
 
 fn database_passphrase() -> Result<String, McpToolError> {
-    hkask_keystore::keychain::resolve_db_passphrase_string()
-        .map(|value| value.to_string())
-        .map_err(|e| McpToolError::permission_denied(e.to_string()))
+    let passphrase = crate::tools::semantic::default_corpus_passphrase();
+    if passphrase.is_empty() {
+        Err(McpToolError::permission_denied(
+            "HKASK_DB_PASSPHRASE not set — persona tools require the corpus DB passphrase",
+        ))
+    } else {
+        Ok(passphrase)
+    }
 }
 
 fn qualitative_label(distance: f64) -> String {

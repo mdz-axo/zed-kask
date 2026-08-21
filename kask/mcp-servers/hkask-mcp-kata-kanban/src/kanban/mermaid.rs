@@ -72,6 +72,14 @@ pub struct ParsedBoard {
 /// character that is not alphanumeric or underscore with `_` and prefixes
 /// `t_` so the result is a valid mermaid identifier (which must start with
 /// a letter).
+///
+/// Not involutive: `slugify(slugify(x))` double-prefixes (`slugify("foo")`
+/// = `"t_foo"`, `slugify("t_foo")` = `"t_t_foo"`). The output must not be
+/// fed back in as input. Render and parse each apply this once, so the
+/// render→parse cycle is sound; a future consumer that re-slugs a rendered
+/// node id would break matching. Making it involutive (e.g. stripping an
+/// existing `t_` prefix) would create real id collisions, so the
+/// non-involutive contract is intentional.
 pub fn slugify_task_id(id: &str) -> String {
     let slug: String = id
         .chars()
@@ -394,5 +402,21 @@ mod tests {
     #[test]
     fn slugify_trims_leading_and_trailing_underscores() {
         assert_eq!(slugify_task_id("_foo_"), "t_foo");
+    }
+
+    #[test]
+    fn slugify_is_not_involutive_output_must_not_be_refed() {
+        // Pinning a known property, not a bug: applying slugify twice
+        // double-prefixes. Render and parse each apply it once, so this is
+        // safe today; a future consumer that re-feeds a rendered node id
+        // would break. This test exists so a "fix" that makes it involutive
+        // (e.g. stripping an existing `t_` prefix) trips here before it
+        // silently introduces id collisions (`"foo"` and `"t_foo"` would
+        // both slug to `"t_foo"`).
+        let once = slugify_task_id("foo");
+        let twice = slugify_task_id(&once);
+        assert_ne!(once, twice, "slugify must not be involutive; see doc note");
+        assert_eq!(once, "t_foo");
+        assert_eq!(twice, "t_t_foo");
     }
 }

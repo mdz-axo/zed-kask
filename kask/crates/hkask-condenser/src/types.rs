@@ -227,18 +227,6 @@ pub struct ThreadSummaryRequest {
     pub model: Option<String>,
 }
 
-/// Output of a thread summarization.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ThreadSummaryOutput {
-    pub summary: String,
-    pub original_message_count: usize,
-    /// Approximate token count of the original conversation (before summarization).
-    /// Uses whitespace-split heuristic — rough estimate for context window planning.
-    pub original_tokens_approx: usize,
-    pub summary_tokens_approx: usize,
-    pub inference_model: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
