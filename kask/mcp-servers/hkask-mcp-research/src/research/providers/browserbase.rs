@@ -3,7 +3,7 @@ use crate::research::types::*;
 use async_trait::async_trait;
 use std::time::Duration;
 
-pub struct BrowserbaseProvider {
+pub(crate) struct BrowserbaseProvider {
     client: reqwest::Client,
     api_key: String,
 }

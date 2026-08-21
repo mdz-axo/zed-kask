@@ -150,7 +150,7 @@ impl Comment {
 /// TaskFilter — criteria for listing/filtering tasks on a board.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskFilter {
+pub(crate) struct TaskFilter {
     /// Filter by status (column).
     pub status: Option<TaskStatus>,
     /// Filter by assignee.

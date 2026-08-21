@@ -36,7 +36,7 @@ use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 ///   centroid_distance_max: 0.35
 /// ```
 #[derive(Debug, Deserialize)]
-pub struct CognitionConfig {
+pub(crate) struct CognitionConfig {
     /// Author identifier — used in the system prompt and centroid entity ref.
     /// When a `jinja2_template` is declared, the author is available as
     /// `{{ author }}` in the template. When no template is present, the
@@ -58,7 +58,7 @@ fn default_author() -> String {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EmbeddingSection {
+pub(crate) struct EmbeddingSection {
     pub model: String,
     pub dim: usize,
     pub centroid_entity_ref: String,
@@ -67,7 +67,7 @@ pub struct EmbeddingSection {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RetrievalSection {
+pub(crate) struct RetrievalSection {
     #[serde(default = "default_k_min")]
     pub k_min: usize,
     #[serde(default = "default_k_max")]
@@ -105,14 +105,14 @@ fn default_distance_threshold() -> f64 {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ValidationSection {
+pub(crate) struct ValidationSection {
     pub centroid_distance_max: f64,
 }
 
 // ── Request / Response types ────────────────────────────────────────────
 
 /// Input for `ComposeService::compose()`.
-pub struct ComposeRequest {
+pub(crate) struct ComposeRequest {
     /// The user's prompt for prose generation.
     pub prompt: String,
     /// Path to the per-agent semantic database.
@@ -128,7 +128,7 @@ pub struct ComposeRequest {
 }
 
 /// Result of a style composition operation.
-pub struct ComposeResult {
+pub(crate) struct ComposeResult {
     /// The generated prose text.
     pub generated_prose: String,
     /// Number of exemplar passages used.
@@ -138,7 +138,7 @@ pub struct ComposeResult {
 }
 
 /// Centroid distance validation result.
-pub struct CentroidValidation {
+pub(crate) struct CentroidValidation {
     /// Cosine distance between generated prose and style centroid.
     pub distance: f64,
     /// Maximum allowed distance threshold.
@@ -150,7 +150,7 @@ pub struct CentroidValidation {
 // ── Service ──────────────────────────────────────────────────────────────
 
 /// Style composition service — exemplar retrieval, prose generation, centroid validation.
-pub struct ComposeService;
+pub(crate) struct ComposeService;
 
 impl ComposeService {
     /// Execute the full style composition pipeline.
@@ -490,4 +490,4 @@ fn generic_system_prompt(
 // ── Utility ─────────────────────────────────────────────────────────────
 // `cosine_distance` moved to `helpers.rs` (unified with `cosine_similarity`).
 // Re-exported here for existing callers that import from `compose`.
-pub use crate::helpers::cosine_distance;
+pub(crate) use crate::helpers::cosine_distance;

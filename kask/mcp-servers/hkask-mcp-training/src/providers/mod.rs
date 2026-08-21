@@ -12,19 +12,19 @@
 //! routed through `hkask-services` shared config init. The host is fixed
 //! to Runpod (cloud-only, single host).
 
-pub mod harness;
-pub mod nebius;
-pub mod runpod;
-pub mod trl_harness;
-pub mod types;
+pub(crate) mod harness;
+pub(crate) mod nebius;
+pub(crate) mod runpod;
+pub(crate) mod trl_harness;
+pub(crate) mod types;
 
 // ── Re-exports for lib.rs compatibility ──────────────────────────────────
 
-pub use harness::{AxolotlHarness, HarnessAdapter, LudwigHarness};
-pub use nebius::NebiusHost;
-pub use runpod::RunpodHost;
-pub use trl_harness::TrlHarness;
-pub use types::{
+pub(crate) use harness::{AxolotlHarness, HarnessAdapter, LudwigHarness};
+pub(crate) use nebius::NebiusHost;
+pub(crate) use runpod::RunpodHost;
+pub(crate) use trl_harness::TrlHarness;
+pub(crate) use types::{
     AdvancedParams, HostProviderError, LoraParams, OptimizationParams, PodStatus,
     QuantizationParams, SequenceParams, TrainingHarnessId, TrainingHost, TrainingHostId,
     TrainingJob, TrainingJobStatus, TrainingParams, TrlTrainer,
@@ -36,7 +36,7 @@ pub use types::{
 ///
 /// Supports two providers: Runpod and Nebius.
 /// The provider is selected from `config.host`.
-pub fn create_host(
+pub(crate) fn create_host(
     config: &TrainingHostConfig,
 ) -> Result<Box<dyn TrainingHost>, HostProviderError> {
     match config.host {
@@ -102,7 +102,7 @@ fn read_ssh_public_key() -> Result<String, HostProviderError> {
 /// configuration from environment variables at
 /// `create_host` time.
 #[derive(Debug, Clone)]
-pub struct TrainingHostConfig {
+pub(crate) struct TrainingHostConfig {
     /// Selected training host.
     pub host: TrainingHostId,
     /// Runpod API key.

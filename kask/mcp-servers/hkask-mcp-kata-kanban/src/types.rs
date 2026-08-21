@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 // ── Board tools ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardCreateRequest {
+pub(crate) struct BoardCreateRequest {
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
     /// Opaque client-generated key making this create replay-safe.
@@ -25,7 +25,7 @@ pub struct BoardCreateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ColumnDefInput {
+pub(crate) struct ColumnDefInput {
     pub name: String,
     pub status: String,
     /// Optional WIP (work-in-progress) limit for this column.
@@ -36,7 +36,7 @@ pub struct ColumnDefInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardCreateResponse {
+pub(crate) struct BoardCreateResponse {
     pub board_id: String,
     pub name: String,
     pub columns: Vec<ColumnInfo>,
@@ -57,7 +57,7 @@ pub struct ColumnInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardListRequest {}
+pub(crate) struct BoardListRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardListResponse {
@@ -82,7 +82,7 @@ pub struct BoardInfo {
 // ── Task tools ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCreateRequest {
+pub(crate) struct TaskCreateRequest {
     pub board_id: String,
     pub title: String,
     pub description: Option<String>,
@@ -98,7 +98,7 @@ pub struct TaskCreateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCreateResponse {
+pub(crate) struct TaskCreateResponse {
     pub task_id: String,
     pub board_id: String,
     pub title: String,
@@ -109,7 +109,7 @@ pub struct TaskCreateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskListRequest {
+pub(crate) struct TaskListRequest {
     pub board_id: String,
     pub status: Option<String>,
 }
@@ -169,7 +169,7 @@ pub struct TaskMoveRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskMoveResponse {
+pub(crate) struct TaskMoveResponse {
     pub task_id: String,
     pub previous_status: String,
     pub new_status: String,
@@ -179,12 +179,12 @@ pub struct TaskMoveResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAssignRequest {
+pub(crate) struct TaskAssignRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAssignResponse {
+pub(crate) struct TaskAssignResponse {
     pub task_id: String,
     pub assignee: String,
     /// Ontology concept: <https://www.w3.org/ns/prov#wasAssociatedWith>
@@ -193,13 +193,13 @@ pub struct TaskAssignResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskVerifyRequest {
+pub(crate) struct TaskVerifyRequest {
     pub task_id: String,
     pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskVerifyResponse {
+pub(crate) struct TaskVerifyResponse {
     pub task_id: String,
     pub passed: bool,
     pub reasoning: String,
@@ -210,14 +210,14 @@ pub struct TaskVerifyResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddRjoulesRequest {
+pub(crate) struct TaskAddRjoulesRequest {
     pub task_id: String,
     /// Amount of rJoules to add to the inference/API budget.
     pub amount: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddRjoulesResponse {
+pub(crate) struct TaskAddRjoulesResponse {
     pub task_id: String,
     pub new_rjoule_remaining: u64,
     /// Ontology concept: <https://www.w3.org/ns/prov#used>
@@ -228,13 +228,13 @@ pub struct TaskAddRjoulesResponse {
 // ── Comments ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCommentRequest {
+pub(crate) struct TaskCommentRequest {
     pub task_id: String,
     pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCommentResponse {
+pub(crate) struct TaskCommentResponse {
     pub comment_id: String,
     pub task_id: String,
     pub author: String,
@@ -246,7 +246,7 @@ pub struct TaskCommentResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCommentsSinceRequest {
+pub(crate) struct TaskCommentsSinceRequest {
     pub task_id: String,
     /// Return only comments at or after this index (0-based).
     #[serde(default)]
@@ -254,7 +254,7 @@ pub struct TaskCommentsSinceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskCommentsSinceResponse {
+pub(crate) struct TaskCommentsSinceResponse {
     pub task_id: String,
     pub comments: Vec<TaskCommentResponse>,
     /// Total comment count on the task (for cursor tracking).
@@ -264,14 +264,14 @@ pub struct TaskCommentsSinceResponse {
 // ── Deliverables ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddDeliverableRequest {
+pub(crate) struct TaskAddDeliverableRequest {
     pub task_id: String,
     /// File path or URL pointing to work output.
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddDeliverableResponse {
+pub(crate) struct TaskAddDeliverableResponse {
     pub task_id: String,
     pub deliverable_count: usize,
     /// Ontology concept: <https://www.w3.org/ns/prov#wasGeneratedBy>
@@ -282,7 +282,7 @@ pub struct TaskAddDeliverableResponse {
 // ── Reopen ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskReopenRequest {
+pub(crate) struct TaskReopenRequest {
     pub task_id: String,
     /// Optional new rJoule budget to grant on reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -290,7 +290,7 @@ pub struct TaskReopenRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskReopenResponse {
+pub(crate) struct TaskReopenResponse {
     pub task_id: String,
     pub new_status: String,
     pub rjoule_remaining: Option<u64>,
@@ -304,7 +304,7 @@ pub struct TaskReopenResponse {
 /// A proposal template for a contract missing its user-facing `expect:` annotation.
 /// Agents use this to compose and submit contract `expect:` annotation proposals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ContractProposeExpect {
+pub(crate) struct ContractProposeExpect {
     pub board_id: String,
     /// Proposals for missing `expect:` annotations (arbitrary JSON array of
     /// `ExpectProposal`-shaped objects). Accepted as `AnyJsonValue` because
@@ -316,24 +316,24 @@ pub struct ContractProposeExpect {
 // ── Kata prompts ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskKataCoachingRequest {
+pub(crate) struct TaskKataCoachingRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskKataImprovementRequest {
+pub(crate) struct TaskKataImprovementRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskKataPracticeRequest {
+pub(crate) struct TaskKataPracticeRequest {
     pub task_id: String,
     /// What specific sub-problem to focus the observation drill on.
     pub sub_problem: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskKataResponse {
+pub(crate) struct TaskKataResponse {
     pub task_id: String,
     pub prompt: String,
     /// Ontology concept: <https://w3id.org/pko#UserQuestionOccurrence>
@@ -344,7 +344,7 @@ pub struct TaskKataResponse {
 // ── Spawn ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskSpawnRequest {
+pub(crate) struct TaskSpawnRequest {
     pub task_id: String,
     /// Opaque client-generated key making this spawn replay-safe.
     ///
@@ -373,7 +373,7 @@ pub struct TaskSpawnRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskSpawnResponse {
+pub(crate) struct TaskSpawnResponse {
     pub task_id: String,
     pub message: String,
     /// Ontology concept: <https://w3id.org/pko#StepExecution>
@@ -384,12 +384,12 @@ pub struct TaskSpawnResponse {
 // ── Delegation result (kanban-as-swarm-coordination) ──────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDelegateResultRequest {
+pub(crate) struct TaskDelegateResultRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDelegateResultResponse {
+pub(crate) struct TaskDelegateResultResponse {
     pub task_id: String,
     /// Whether the task has a recorded delegation result.
     pub has_result: bool,
@@ -410,12 +410,12 @@ pub struct TaskDelegateResultResponse {
 // ── Board delete ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardDeleteRequest {
+pub(crate) struct BoardDeleteRequest {
     pub board_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardDeleteResponse {
+pub(crate) struct BoardDeleteResponse {
     pub board_id: String,
     /// Number of tasks deleted alongside the board.
     pub tasks_deleted: usize,
@@ -427,12 +427,12 @@ pub struct BoardDeleteResponse {
 // ── Task delete ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDeleteRequest {
+pub(crate) struct TaskDeleteRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDeleteResponse {
+pub(crate) struct TaskDeleteResponse {
     pub task_id: String,
     /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -442,12 +442,12 @@ pub struct TaskDeleteResponse {
 // ── Task unassign ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskUnassignRequest {
+pub(crate) struct TaskUnassignRequest {
     pub task_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskUnassignResponse {
+pub(crate) struct TaskUnassignResponse {
     pub task_id: String,
     /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -457,7 +457,7 @@ pub struct TaskUnassignResponse {
 // ── Task update ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskUpdateRequest {
+pub(crate) struct TaskUpdateRequest {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -472,7 +472,7 @@ pub struct TaskUpdateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskUpdateResponse {
+pub(crate) struct TaskUpdateResponse {
     pub task_id: String,
     pub title: String,
     /// Ontology concept: <https://w3id.org/pko#Step>
@@ -485,7 +485,7 @@ pub struct TaskUpdateResponse {
 /// Request for `kanban_board_export` — render a board as mermaid kanban
 /// markdown (structure only: columns, task titles, task IDs).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardExportRequest {
+pub(crate) struct BoardExportRequest {
     pub board_id: String,
 }
 
@@ -493,7 +493,7 @@ pub struct BoardExportRequest {
 /// small summary so callers can confirm the export captured the expected
 /// shape without re-parsing the markdown.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardExportResponse {
+pub(crate) struct BoardExportResponse {
     /// The mermaid kanban markdown. Render with `mermaid` directive `kanban`.
     pub markdown: String,
     pub board_id: String,
@@ -510,7 +510,7 @@ pub struct BoardExportResponse {
 /// Request for `kanban_board_import` — parse mermaid kanban markdown and
 /// create a new board with tasks in the parsed columns.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardImportRequest {
+pub(crate) struct BoardImportRequest {
     /// Mermaid kanban markdown (the output of `kanban_board_export`).
     pub markdown: String,
     /// Optional override for the board name. When `None`, the name parsed
@@ -529,7 +529,7 @@ pub struct BoardImportRequest {
 /// Response for `kanban_board_import` — the new board id and a summary of
 /// what was created.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BoardImportResponse {
+pub(crate) struct BoardImportResponse {
     pub board_id: String,
     pub board_name: String,
     /// Number of columns created on the new board.

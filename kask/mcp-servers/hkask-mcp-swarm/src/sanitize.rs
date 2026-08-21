@@ -243,7 +243,7 @@ pub fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json::Value
 /// carry the agent's text under `content` or `response` (legacy); this reads
 /// either, preferring `content`. Shared by the run-status sanitizer and the
 /// delegate-response extractor so the two-key lookup lives in one place.
-pub(crate) fn unwrap_abw_envelope(msg: &serde_json::Value) -> Option<&serde_json::Value> {
+pub fn unwrap_abw_envelope(msg: &serde_json::Value) -> Option<&serde_json::Value> {
     msg.get("content").or_else(|| msg.get("response"))
 }
 

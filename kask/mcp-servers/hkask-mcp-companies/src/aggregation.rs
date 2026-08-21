@@ -29,7 +29,7 @@ use crate::types::AggregationMethod;
 /// A single holding's contribution to a characteristic: its weight and
 /// the raw value of the metric being aggregated.
 #[derive(Debug, Clone)]
-pub struct WeightedValue {
+pub(crate) struct WeightedValue {
     pub weight: f64,
     pub value: f64,
 }

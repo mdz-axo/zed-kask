@@ -3,7 +3,7 @@ use crate::research::types::*;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-pub struct TavilyProvider {
+pub(crate) struct TavilyProvider {
     client: reqwest::Client,
     api_key: String,
 }

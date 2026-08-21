@@ -266,7 +266,7 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Approximate token-to-word conversion: 1 word ≈ 1.33 tokens.
 /// Returns 0.0 for identical, 1.0 for orthogonal, 2.0 for opposite or degenerate.
 #[must_use]
-pub fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
+pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 2.0;
     }

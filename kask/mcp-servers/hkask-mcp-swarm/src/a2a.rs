@@ -20,7 +20,7 @@ use a2a::{
 /// Fallback description for an agent with an empty description field.
 /// Shared by `to_a2a_card` (per-agent card) and `build_gateway_card`
 /// (the HTTP gateway card) so the two don't drift on the fallback shape.
-pub(crate) fn description_or_fallback(card: &LocalAgentCard) -> String {
+pub fn description_or_fallback(card: &LocalAgentCard) -> String {
     if card.description.is_empty() {
         format!("Local agent: {}", card.agent_id)
     } else {
@@ -31,7 +31,7 @@ pub(crate) fn description_or_fallback(card: &LocalAgentCard) -> String {
 /// Build an A2A `AgentSkill` from a local agent card. Shared by
 /// `to_a2a_card` (which builds skills from `accepts`) and
 /// `build_gateway_card` (which builds one skill per agent).
-pub(crate) fn to_a2a_skill(card: &LocalAgentCard) -> AgentSkill {
+pub fn to_a2a_skill(card: &LocalAgentCard) -> AgentSkill {
     AgentSkill {
         id: card.agent_id.clone(),
         name: card.agent_id.clone(),
@@ -48,7 +48,7 @@ pub(crate) fn to_a2a_skill(card: &LocalAgentCard) -> AgentSkill {
 /// `supported_interfaces` is set to a placeholder (the in-process transport
 /// doesn't use HTTP) — when an HTTP binding is added, this becomes the
 /// agent's real endpoint URL.
-pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
+pub fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
     let skills = card
         .accepts
         .iter()
@@ -99,7 +99,7 @@ pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
 
 /// Create an A2A `Message` from a text string (the `Role::User` perspective —
 /// the sender is the caller, not the agent).
-pub(crate) fn message_from_text(text: &str, context_id: Option<String>) -> Message {
+pub fn message_from_text(text: &str, context_id: Option<String>) -> Message {
     Message {
         message_id: a2a::new_message_id(),
         context_id,
@@ -114,7 +114,7 @@ pub(crate) fn message_from_text(text: &str, context_id: Option<String>) -> Messa
 
 /// Wrap a text response in an A2A `Task` with a completed status and a single
 /// `Artifact` containing the response as a text `Part`.
-pub(crate) fn task_from_response(
+pub fn task_from_response(
     response_text: &str,
     context_id: Option<String>,
     model: &str,

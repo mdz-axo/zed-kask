@@ -34,14 +34,14 @@
 
 // ── LoRA-param validation gates — extracted to `lora_validation/param_gates.rs`
 mod param_gates;
-pub use param_gates::{
+pub(crate) use param_gates::{
     ValidationFinding, ValidationSeverity, has_refusals, validate_dataset_size,
     validate_paged_optimizer, validate_training_params,
 };
 
 // ── Dataset-format validation (G-D0) — extracted to `lora_validation/dataset_format.rs`
 mod dataset_format;
-pub use dataset_format::{DatasetFormatResult, DatasetFormatVerdict, validate_dataset_format};
+pub(crate) use dataset_format::{DatasetFormatResult, DatasetFormatVerdict, validate_dataset_format};
 
 /// G-R1: Runtime alert gate — validates runtime metrics for training instability.
 ///
@@ -56,4 +56,4 @@ pub use dataset_format::{DatasetFormatResult, DatasetFormatVerdict, validate_dat
 /// (intruder dimensions and structured forgetting).
 // ── Runtime-metrics validation (G-R1) — extracted to `lora_validation/runtime_metrics.rs`
 mod runtime_metrics;
-pub use runtime_metrics::validate_runtime_metrics;
+pub(crate) use runtime_metrics::validate_runtime_metrics;

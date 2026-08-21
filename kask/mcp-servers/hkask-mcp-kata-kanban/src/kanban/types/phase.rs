@@ -8,7 +8,7 @@ use super::*;
 /// their deliverables can be composed into a coherent output.
 /// Unlike columns (which track workflow state), phases track project structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KanbanPhase {
+pub(crate) struct KanbanPhase {
     pub id: PhaseId,
     pub name: String,
     pub description: Option<String>,

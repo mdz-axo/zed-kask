@@ -14,7 +14,7 @@ use super::*;
 /// - Maximal: full agent capabilities within the task scope
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpawnSpec {
+pub(crate) struct SpawnSpec {
     /// The task this spawn is for.
     pub task_id: TaskId,
     /// Delegation level: "minimal", "standard", or "maximal".

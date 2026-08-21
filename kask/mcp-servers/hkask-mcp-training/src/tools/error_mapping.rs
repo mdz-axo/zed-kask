@@ -14,7 +14,7 @@ use crate::providers::types::HostProviderError;
 use hkask_mcp_server::server::McpToolError;
 
 /// Classify an `AdapterStoreError` into the MCP wire-level `McpToolError` kind.
-pub fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
+pub(crate) fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
         AdapterStoreError::NotFound(_) => McpToolError::not_found(message),
@@ -31,7 +31,7 @@ pub fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
 /// `permission_denied` — it is a configuration/authorization failure, not
 /// transient unavailability. `Unavailable` (provider down, missing home
 /// directory, unreadable SSH key) stays `unavailable`.
-pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
+pub(crate) fn map_host_provider_error(e: HostProviderError) -> McpToolError {
     let message = e.to_string();
     match e {
         HostProviderError::NotConfigured(_) => McpToolError::permission_denied(message),
@@ -47,7 +47,7 @@ pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
 }
 
 /// Classify a `TrainingArtifactError` into the MCP wire-level `McpToolError` kind.
-pub fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
+pub(crate) fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
     let message = e.to_string();
     match e {
         TrainingArtifactError::InvalidConfiguration(_) => {
@@ -63,7 +63,7 @@ pub fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
 ///
 /// `Io`/`Cache` are infrastructure failures (internal); `UnsupportedFormat` /
 /// `Validation` / `Empty` are user-input problems (invalid_argument).
-pub fn map_dataset_error(e: DatasetError) -> McpToolError {
+pub(crate) fn map_dataset_error(e: DatasetError) -> McpToolError {
     let message = e.to_string();
     match e {
         DatasetError::UnsupportedFormat(_)
@@ -78,7 +78,7 @@ pub fn map_dataset_error(e: DatasetError) -> McpToolError {
 /// (schema error, corruption — persistent, not transient), so it is
 /// `internal`, consistent with the shared `map_infra_error` (only connection
 /// failures are `unavailable`); `Serialization` is `internal`.
-pub fn map_job_store_error(e: JobStoreError) -> McpToolError {
+pub(crate) fn map_job_store_error(e: JobStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
         JobStoreError::Storage(_) | JobStoreError::Serialization(_) => {

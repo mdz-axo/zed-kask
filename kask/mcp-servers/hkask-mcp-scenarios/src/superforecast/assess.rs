@@ -56,7 +56,7 @@ mod assess_tiers {
 ///
 /// Reference: Chermack, T.J. (2011). Scenario Planning in Organizations:
 /// How to Create, Use, and Assess Scenarios. Berrett-Koehler.
-pub fn assess_project(input: &AssessInput) -> ProjectAssessment {
+pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
     let project_id = input.project_id;
     let subject = input.subject;
     let perspective_count = input.perspective_count;
@@ -285,7 +285,7 @@ pub fn assess_project(input: &AssessInput) -> ProjectAssessment {
 /// perspectives are weighted equally.
 ///
 /// Returns an error if fewer than 2 perspectives are provided.
-pub fn synthesize_perspectives(
+pub(crate) fn synthesize_perspectives(
     event_id: &str,
     perspectives: &[Perspective],
 ) -> Result<DragonflySynthesis, ScenarioError> {
@@ -468,7 +468,7 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
 
 /// Triage a forecasting question to determine if it's worth the full pipeline.
 #[must_use = "triage result should be used"]
-pub fn triage_question(
+pub(crate) fn triage_question(
     question: &str,
     has_deadline: bool,
     has_reference_class: bool,

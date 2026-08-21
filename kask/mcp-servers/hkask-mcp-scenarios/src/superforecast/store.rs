@@ -21,7 +21,7 @@ const JOURNAL_COMPACT_THRESHOLD: usize = 100;
 /// snapshot is loaded first, then journal entries are replayed on top (last write wins).
 /// After JOURNAL_COMPACT_THRESHOLD entries, the journal is compacted into a full snapshot.
 #[derive(Debug, Default)]
-pub struct ForecastStore {
+pub(crate) struct ForecastStore {
     pub records: HashMap<String, StoredForecastRecord>,
     pub data_path: Option<PathBuf>,
     journal_path: Option<PathBuf>,

@@ -25,7 +25,7 @@ pub(crate) fn split_pdftotext_pages(raw: &str) -> Vec<String> {
 ///
 /// Carries provenance metadata for verification and cross-validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OcrResult {
+pub(crate) struct OcrResult {
     /// 0-based page index within the source document.
     pub page_index: usize,
     /// Which backend produced this result.
@@ -69,7 +69,7 @@ pub struct CrossValidation {
 /// no error aborts the whole pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::enum_variant_names)]
-pub enum PipelineError {
+pub(crate) enum PipelineError {
     /// Decimation (PDF → images) failed.
     DecimationFailed(String),
     /// All OCR backends exhausted for a page without success.
@@ -110,7 +110,7 @@ impl std::fmt::Display for PipelineError {
 /// Post-pipeline verification checkpoint. `passed` is a computed field —
 /// never settable by consumers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerificationReport {
+pub(crate) struct VerificationReport {
     /// Whether the assembled page count matches the expected page count.
     pub page_count_match: bool,
     /// Indices of pages that produced zero text.
@@ -150,7 +150,7 @@ impl VerificationReport {
 /// No partial state escapes — consumers receive either a full
 /// `PipelineOutcome` or a top-level error before the pipeline starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineOutcome {
+pub(crate) struct PipelineOutcome {
     /// Per-page OCR results in page order.
     pub results: Vec<OcrResult>,
     /// Verification report computed after assembly.

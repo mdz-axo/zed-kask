@@ -9,19 +9,19 @@
 //!                                                                      PipelineOutcome
 //! ```
 
-pub mod calibration;
-pub mod complexity;
-pub mod config;
-pub mod decimation;
-pub mod document;
-pub mod llm_ocr;
-pub mod pipeline;
-pub mod routing;
-pub mod server;
-pub mod tesseract;
-pub mod triage;
-pub mod verification;
+pub(crate) mod calibration;
+pub(crate) mod complexity;
+pub(crate) mod config;
+pub(crate) mod decimation;
+pub(crate) mod document;
+pub(crate) mod llm_ocr;
+pub(crate) mod pipeline;
+pub(crate) mod routing;
+pub(crate) mod server;
+pub(crate) mod tesseract;
+pub(crate) mod triage;
+pub(crate) mod verification;
 
-pub use config::*;
-pub use document::*;
-pub use server::PipelineExecutor;
+pub(crate) use config::*;
+pub(crate) use document::*;
+pub(crate) use server::PipelineExecutor;

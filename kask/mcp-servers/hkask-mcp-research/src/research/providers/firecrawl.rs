@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 #[derive(Clone)]
-pub struct FirecrawlProvider {
+pub(crate) struct FirecrawlProvider {
     client: reqwest::Client,
     api_key: Option<String>,
 }

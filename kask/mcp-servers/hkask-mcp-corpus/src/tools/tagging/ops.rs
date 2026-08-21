@@ -417,7 +417,7 @@ impl CorpusServer {
 // ── Tag chunks request (ontology annotation) ───────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TagChunksRequest {
+pub(crate) struct TagChunksRequest {
     /// Path to chunks JSONL (entity_ref, source, text, word_count per line).
     pub chunks_jsonl: String,
     /// Output path for tagged chunks JSONL with ontology annotations.

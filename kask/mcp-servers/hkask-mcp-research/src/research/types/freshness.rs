@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// This follows the Cockburn principle: the port defines the canonical model,
 /// adapters translate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-pub enum Freshness {
+pub(crate) enum Freshness {
     Day,
     Week,
     Month,
@@ -45,7 +45,7 @@ impl std::fmt::Display for Freshness {
 }
 
 /// Map freshness to Brave's parameter format.
-pub fn freshness_brave(freshness: &Freshness) -> String {
+pub(crate) fn freshness_brave(freshness: &Freshness) -> String {
     match freshness {
         Freshness::Day => "pd".to_string(),
         Freshness::Week => "pw".to_string(),
@@ -55,7 +55,7 @@ pub fn freshness_brave(freshness: &Freshness) -> String {
 }
 
 /// Map freshness to SerpAPI's `tbs` parameter format.
-pub fn freshness_serpapi(freshness: &Freshness) -> String {
+pub(crate) fn freshness_serpapi(freshness: &Freshness) -> String {
     match freshness {
         Freshness::Day => "qdr:d".to_string(),
         Freshness::Week => "qdr:w".to_string(),

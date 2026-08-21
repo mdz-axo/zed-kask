@@ -92,7 +92,7 @@ const RUNPOD_API_V2_BASE: &str = "https://api.runpod.io/v2";
 /// (GPU type, disk, image) explicit and self-documenting. All fields are
 /// resolved keychain-first in `lib.rs` and flowed through
 /// `TrainingHostConfig` → `create_host` → here.
-pub struct RunpodHostInit {
+pub(crate) struct RunpodHostInit {
     pub api_key: String,
     pub template_id: String,
     /// Operator-accepted GPU type ID (e.g. `"NVIDIA H100 80GB HBM3"`).
@@ -116,7 +116,7 @@ pub struct RunpodHostInit {
 /// that reads `HKASK_*` environment variables, downloads the dataset from
 /// `HKASK_DATASET_URL`, runs axolotl training, and uploads the resulting
 /// adapter weights to a storage location.
-pub struct RunpodHost {
+pub(crate) struct RunpodHost {
     api_key: String,
     template_id: String,
     /// Operator-accepted GPU type ID (e.g. `"NVIDIA H100 80GB HBM3"`).
@@ -453,7 +453,7 @@ struct PodDeploySpec<'a> {
 /// TRL, etc. The harness is selected by the `harness` parameter, which is
 /// resolved by the caller from `job.params.harness` (operator-accepted) or
 /// `job.harness` (server default).
-pub fn generate_install_script(
+pub(crate) fn generate_install_script(
     job: &TrainingJob,
     harness: TrainingHarnessId,
 ) -> Result<String, HostProviderError> {

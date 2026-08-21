@@ -43,7 +43,7 @@ use a2a::{
 /// the per-dispatch ceiling (`max_credits_per_dispatch`) clamps this.
 const A2A_HTTP_CREDITS: u32 = 20;
 
-pub(crate) struct A2aHttpServer {
+pub struct A2aHttpServer {
     port: u16,
 }
 

@@ -49,7 +49,7 @@ use crate::{
 /// struct definition (the `mcp_server!` macro) cannot change to wrap them in
 /// `Arc<Mutex>`. The service is short-lived: it is constructed inside a single
 /// `#[tool]` call and dropped when the call returns.
-pub struct ConvertService<'a> {
+pub(crate) struct ConvertService<'a> {
     inference_router: Arc<dyn InferencePort>,
     ocr_model: Option<String>,
     ocr_thresholds: ThresholdConfig,

@@ -16,15 +16,15 @@ mod semantic_scholar;
 mod serapi;
 mod tavily;
 
-pub use arxiv::ArxivProvider;
-pub use brave::BraveProvider;
-pub use browserbase::BrowserbaseProvider;
-pub use exa::ExaProvider;
-pub use firecrawl::FirecrawlProvider;
-pub use raw_fetch::{RawFetchProvider, truncate_str};
-pub use semantic_scholar::SemanticScholarProvider;
-pub use serapi::SerapiProvider;
-pub use tavily::TavilyProvider;
+pub(crate) use arxiv::ArxivProvider;
+pub(crate) use brave::BraveProvider;
+pub(crate) use browserbase::BrowserbaseProvider;
+pub(crate) use exa::ExaProvider;
+pub(crate) use firecrawl::FirecrawlProvider;
+pub(crate) use raw_fetch::{RawFetchProvider, truncate_str};
+pub(crate) use semantic_scholar::SemanticScholarProvider;
+pub(crate) use serapi::SerapiProvider;
+pub(crate) use tavily::TavilyProvider;
 
 /// Build the shared HTTP client used by all research providers.
 ///
@@ -42,7 +42,7 @@ pub(super) fn provider_http_client() -> Result<reqwest::Client, WebError> {
 }
 
 #[derive(Default)]
-pub struct ProviderSearchOutput {
+pub(crate) struct ProviderSearchOutput {
     pub results: Vec<SearchResult>,
     pub answer_box: Option<AnswerBox>,
     pub related_questions: Vec<String>,
@@ -78,7 +78,7 @@ pub async fn validate_provider_url(url: &str) -> Result<(), WebError> {
 /// a self-hosted RSS aggregator at `http://localhost:4000/feed.xml`).
 /// The strict variant (`validate_provider_url`) is used for arbitrary
 /// user-supplied URLs (`web_extract`, `web_browse`, `discover_feeds`).
-pub fn validate_provider_url_permissive(url: &str) -> Result<(), WebError> {
+pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError> {
     hkask_mcp_server::server::validate_tool_url_permissive(url)
         .map_err(|e| WebError::BadArgs(e.message))
 }
@@ -89,7 +89,7 @@ pub fn validate_provider_url_permissive(url: &str) -> Result<(), WebError> {
 /// adapter. This keeps provider-specific details (like `pool.exa` direct
 /// access) out of the tool layer.
 #[async_trait]
-pub trait WebSearchPort: Send + Sync {
+pub(crate) trait WebSearchPort: Send + Sync {
     async fn search(
         &self,
         query: &SearchQuery,
@@ -132,7 +132,7 @@ pub(crate) trait WebBrowseProvider: Send + Sync {
     async fn health(&self) -> Result<(), WebError>;
 }
 
-pub struct ProviderPool {
+pub(crate) struct ProviderPool {
     pub(crate) search_providers: Vec<Box<dyn WebSearchProvider>>,
     pub(crate) extract_providers: Vec<Box<dyn WebExtractProvider>>,
     pub(crate) browse_providers: Vec<Box<dyn WebBrowseProvider>>,

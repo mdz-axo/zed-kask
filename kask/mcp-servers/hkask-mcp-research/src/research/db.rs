@@ -18,7 +18,7 @@ use hkask_types::time::now_rfc3339;
 /// `journal_mode = WAL`. See `hkask_storage::database::init_wal_pragmas` for the
 /// shared helper (not used here because this is a const DDL string, not
 /// a function call, and the PRAGMAs are embedded in the DDL).
-pub const RSS_SCHEMA_DDL: &str = "
+pub(crate) const RSS_SCHEMA_DDL: &str = "
     PRAGMA busy_timeout=5000;
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
@@ -117,7 +117,7 @@ fn feed_text(text: &Option<feed_rs::model::Text>) -> &str {
     text.as_ref().map(|t| t.content.as_str()).unwrap_or("")
 }
 
-pub fn upsert_feed(
+pub(crate) fn upsert_feed(
     conn: &Connection,
     url: &str,
     feed: &feed_rs::model::Feed,
@@ -147,7 +147,7 @@ pub fn upsert_feed(
     }
 }
 
-pub fn insert_entries(
+pub(crate) fn insert_entries(
     conn: &Connection,
     feed_id: i64,
     entries: &[feed_rs::model::Entry],
@@ -200,7 +200,7 @@ pub fn insert_entries(
     Ok(new_count)
 }
 
-pub fn update_feed_cache_headers(
+pub(crate) fn update_feed_cache_headers(
     conn: &Connection,
     feed_id: i64,
     etag: Option<&str>,
@@ -213,7 +213,7 @@ pub fn update_feed_cache_headers(
     Ok(())
 }
 
-pub fn resolve_feed_url(conn: &Connection, stream_id: &str) -> Option<String> {
+pub(crate) fn resolve_feed_url(conn: &Connection, stream_id: &str) -> Option<String> {
     if let Some(rest) = stream_id.strip_prefix("feed/") {
         Some(rest.to_string())
     } else {
@@ -230,7 +230,7 @@ pub fn resolve_feed_url(conn: &Connection, stream_id: &str) -> Option<String> {
 ///
 /// Used by `rss_fetch` to look up the feed URL and conditional-fetch headers in a single
 /// blocking call, replacing the manual `spawn_blocking` that duplicated `spawn_db` logic.
-pub fn resolve_feed_with_headers(
+pub(crate) fn resolve_feed_with_headers(
     conn: &Connection,
     stream_id: &str,
 ) -> Result<(String, Option<String>, Option<String>), anyhow::Error> {
@@ -252,7 +252,7 @@ pub fn resolve_feed_with_headers(
 }
 
 /// Build (base SQL fragment, params) for a stream. `aux_where` is appended (e.g., "s.is_read = 0").
-pub fn build_entry_query(
+pub(crate) fn build_entry_query(
     stream_id: &str,
     aux_where: &str,
 ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
@@ -352,7 +352,7 @@ pub fn query_entries(
     query_and_collect(conn, &sql, param_refs.as_slice(), entry_row_to_json)
 }
 
-pub fn count_entries(
+pub(crate) fn count_entries(
     conn: &Connection,
     stream_id: &str,
     unread_only: bool,
@@ -370,7 +370,7 @@ pub fn count_entries(
 
 // ── Mutation functions ────────────────────────────────────────────────────
 
-pub fn mark_stream_read(conn: &Connection, stream_id: &str) -> Result<usize, anyhow::Error> {
+pub(crate) fn mark_stream_read(conn: &Connection, stream_id: &str) -> Result<usize, anyhow::Error> {
     let (join_where, params) = build_entry_query(stream_id, "(s.is_read = 0 OR s.is_read IS NULL)");
     let find_sql = format!("SELECT e.id {ENTRY_FROM_JOIN} {join_where}");
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -399,7 +399,7 @@ pub fn mark_stream_read(conn: &Connection, stream_id: &str) -> Result<usize, any
     Ok(entry_ids.len())
 }
 
-pub fn edit_tags(
+pub(crate) fn edit_tags(
     conn: &Connection,
     req: &EditTagRequest,
 ) -> Result<serde_json::Value, anyhow::Error> {
@@ -490,7 +490,7 @@ pub fn search_entries(
     )
 }
 
-pub fn list_subscriptions(
+pub(crate) fn list_subscriptions(
     conn: &Connection,
     folder: Option<&str>,
 ) -> Result<Vec<serde_json::Value>, anyhow::Error> {
@@ -538,7 +538,7 @@ fn opml_outline(indent: &str, url: &str, title: &str) -> String {
     )
 }
 
-pub fn export_opml(conn: &Connection) -> Result<String, anyhow::Error> {
+pub(crate) fn export_opml(conn: &Connection) -> Result<String, anyhow::Error> {
     let subs = list_subscriptions(conn, None)?;
 
     let mut folders: std::collections::BTreeMap<String, Vec<&serde_json::Value>> =
@@ -592,7 +592,7 @@ fn xml_escape(s: &str) -> String {
 
 // OPML import
 
-pub fn import_opml(
+pub(crate) fn import_opml(
     conn: &Connection,
     opml_content: &str,
 ) -> Result<serde_json::Value, anyhow::Error> {
@@ -683,7 +683,7 @@ pub fn import_opml(
 /// (created via `upsert_feed` with `url = synthetic://<feed_id>`).
 ///
 /// Returns the feed_id.
-pub fn insert_synthetic_feed(
+pub(crate) fn insert_synthetic_feed(
     conn: &Connection,
     feed_id: i64,
     source_url: &str,
@@ -709,7 +709,7 @@ pub fn insert_synthetic_feed(
 /// Look up a synthetic feed by its `synthetic://` feed URL.
 /// Returns (feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs,
 ///          last_extract_hash, last_error).
-pub fn lookup_synthetic_by_feed_url(
+pub(crate) fn lookup_synthetic_by_feed_url(
     conn: &Connection,
     feed_url: &str,
 ) -> Result<Option<SyntheticFeedRow>, anyhow::Error> {
@@ -724,7 +724,7 @@ pub fn lookup_synthetic_by_feed_url(
 }
 
 /// Look up a synthetic feed by its feed_id (the PK in `feeds`).
-pub fn lookup_synthetic_by_feed_id(
+pub(crate) fn lookup_synthetic_by_feed_id(
     conn: &Connection,
     feed_id: i64,
 ) -> Result<Option<SyntheticFeedRow>, anyhow::Error> {
@@ -753,7 +753,7 @@ pub fn lookup_synthetic_by_feed_id(
 }
 
 /// A row from `synthetic_feeds`.
-pub struct SyntheticFeedRow {
+pub(crate) struct SyntheticFeedRow {
     pub feed_id: i64,
     pub source_url: String,
     pub extractor_kind: String,
@@ -766,7 +766,7 @@ pub struct SyntheticFeedRow {
 }
 
 /// Update the extraction status after a fetch attempt.
-pub fn update_synthetic_status(
+pub(crate) fn update_synthetic_status(
     conn: &Connection,
     feed_id: i64,
     new_count: usize,
@@ -786,7 +786,7 @@ pub fn update_synthetic_status(
 }
 
 /// List all synthetic feeds with their feed metadata.
-pub fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+pub(crate) fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::Value>, anyhow::Error> {
     let mut stmt = conn.prepare(
         "SELECT sf.feed_id, sf.source_url, sf.extractor_kind, sf.extractor_spec,
                 sf.cadence_hint_secs, sf.last_extracted_at, sf.last_extract_hash,
@@ -822,7 +822,7 @@ pub fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::Value>,
 /// Delete a synthetic feed binding. The `feeds` row is deleted by the
 /// ON DELETE CASCADE on `synthetic_feeds.feed_id`, which in turn cascades
 /// to `entries` and `subscriptions`.
-pub fn delete_synthetic_feed(conn: &Connection, feed_id: i64) -> Result<usize, anyhow::Error> {
+pub(crate) fn delete_synthetic_feed(conn: &Connection, feed_id: i64) -> Result<usize, anyhow::Error> {
     let removed = conn.execute(
         "DELETE FROM feeds WHERE id = ?1 AND url LIKE 'synthetic://%'",
         [feed_id],

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Serialized into `TrainedLoRAAdapter.expertise.training_source.training_metrics`
 /// as a `serde_json::Value`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterMetrics {
+pub(crate) struct AdapterMetrics {
     /// Final training loss.
     pub loss: Option<f32>,
     /// Perplexity at end of training.
@@ -26,7 +26,7 @@ pub struct AdapterMetrics {
 // ── Store errors ───────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-pub enum JobStoreError {
+pub(crate) enum JobStoreError {
     #[error("Storage error: {0}")]
     Storage(String),
     #[error("Serialization error: {0}")]
@@ -48,7 +48,7 @@ fn exec_discard(
 
 /// Persisted training job record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredJob {
+pub(crate) struct StoredJob {
     pub id: String,
     pub base_model: String,
     pub dataset_path: String,
@@ -62,7 +62,7 @@ pub struct StoredJob {
 /// Survives server restarts — enables `training_status` to look up
 /// original job parameters (and `training_submit` retrain mode to
 /// pre-register adapter metadata).
-pub struct JobStore {
+pub(crate) struct JobStore {
     pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
 }
 

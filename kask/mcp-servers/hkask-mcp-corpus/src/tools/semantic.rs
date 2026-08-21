@@ -577,7 +577,7 @@ impl CorpusServer {
 // ── Request structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateQaRequest {
+pub(crate) struct GenerateQaRequest {
     /// Single chunk text (mutually exclusive with texts for multi-chunk cross-reference)
     #[serde(default)]
     pub text: Option<String>,
@@ -597,7 +597,7 @@ pub struct GenerateQaRequest {
 /// A single prompt spec parsed from prompts_jsonl for batch QA generation.
 /// Internal to the batch tool — not part of the public request schema.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateQaBatchRequest {
+pub(crate) struct GenerateQaBatchRequest {
     /// Path to prompts JSONL file (one JSON per line with chunk_ref, qa_type, system, user).
     pub prompts_jsonl: String,
     /// Output path for generated QAs JSONL.
@@ -615,7 +615,7 @@ fn default_batch_concurrency() -> usize {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExtractAssertionsRequest {
+pub(crate) struct ExtractAssertionsRequest {
     /// Path to chunks JSONL for batch processing. Reads (entity_ref, text) per line.
     pub chunks_jsonl: String,
     /// Path to tagged chunks JSONL (from corpus_tag_chunks). When provided,

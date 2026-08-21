@@ -33,7 +33,7 @@ fn snippet_truncated(s: &str, max: usize) -> String {
 
 /// A single research claim from search results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResearchClaim {
+pub(crate) struct ResearchClaim {
     /// The claim text (e.g., "App Store revenue grew 12% YoY in Q2")
     pub text: String,
     /// Source URL
@@ -48,14 +48,14 @@ pub struct ResearchClaim {
 
 /// Aggregated research results for a company.
 #[derive(Debug, Clone, Serialize)]
-pub struct ResearchResult {
+pub(crate) struct ResearchResult {
     pub query: String,
     pub claims: Vec<ResearchClaim>,
     pub provider_summary: Vec<ProviderSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ProviderSummary {
+pub(crate) struct ProviderSummary {
     pub provider: String,
     pub claims_found: usize,
     pub status: String, // "ok" or "error: ..."
@@ -394,7 +394,7 @@ fn parse_brave_results(parsed: &Value) -> Result<Vec<ResearchClaim>, anyhow::Err
 /// Claim category from fundamental research.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum ClaimCategory {
+pub(crate) enum ClaimCategory {
     RevenueGuidance,
     EarningsGuidance,
     CompetitiveThreat,
@@ -410,7 +410,7 @@ pub enum ClaimCategory {
 
 /// Structured extraction from a research claim.
 #[derive(Debug, Clone, Serialize)]
-pub struct ExtractedClaim {
+pub(crate) struct ExtractedClaim {
     pub text: String,
     pub source: String,
     pub category: ClaimCategory,
@@ -424,7 +424,7 @@ pub struct ExtractedClaim {
 
 /// A numeric value extracted from claim text.
 #[derive(Debug, Clone, Serialize)]
-pub struct ExtractedNumber {
+pub(crate) struct ExtractedNumber {
     pub value: f64,
     pub unit: String,
     pub context: String,
@@ -432,7 +432,7 @@ pub struct ExtractedNumber {
 
 /// Lightweight classifier using regex-based pattern matching.
 /// Same NLP approach proven in screener.rs — structured extraction, not LLM inference.
-pub struct ResearchClaimClassifier;
+pub(crate) struct ResearchClaimClassifier;
 
 impl ResearchClaimClassifier {
     /// Classify and extract structured data from a research claim.
@@ -647,7 +647,7 @@ impl ResearchClaimClassifier {
 
 /// Enhanced research result with classified claims.
 #[derive(Debug, Clone, Serialize)]
-pub struct EnhancedResearchResult {
+pub(crate) struct EnhancedResearchResult {
     pub query: String,
     pub claims: Vec<ExtractedClaim>,
     pub provider_summary: Vec<ProviderSummary>,

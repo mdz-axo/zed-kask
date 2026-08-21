@@ -1,2 +1,2 @@
 //! Tagging tools module — ontology annotation.
-pub mod ops;
+pub(crate) mod ops;

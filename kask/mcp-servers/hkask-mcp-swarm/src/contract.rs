@@ -39,12 +39,12 @@ use serde_json::json;
 /// panel's `MIN_AGENTS_TO_LAUNCH` launch gate (below it, variety and
 /// diversity are trivially 0/1 and the composition loop converges without
 /// doing composition work).
-pub(crate) const MIN_SWARM_ROSTER: usize = 3;
+pub const MIN_SWARM_ROSTER: usize = 3;
 
 /// Severity of a contract check. Error = blocking per the fermi contract;
 /// Warning = advisory (fermi's publish pipeline reports but does not block).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Severity {
+pub enum Severity {
     Error,
     Warning,
 }
@@ -52,7 +52,7 @@ pub(crate) enum Severity {
 /// One contract check result — pass or fail, with the fermi-derived
 /// operator-facing message. Mirrors fermi's `PublishCheck` shape.
 #[derive(Debug, Clone)]
-pub(crate) struct ContractCheck {
+pub struct ContractCheck {
     /// Stable machine name (fermi's check ids, so UI copy and the fermi
     /// publish-checks endpoint can be correlated).
     pub(crate) name: &'static str,
@@ -66,7 +66,7 @@ pub(crate) struct ContractCheck {
 /// a full report (fermi returns every finding, not the first, so an author
 /// fixes a card in one pass instead of playing whack-a-mole with a gate).
 #[derive(Debug, Default)]
-pub(crate) struct AgentContractInput {
+pub struct AgentContractInput {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) system_prompt: String,
@@ -81,7 +81,7 @@ pub(crate) struct AgentContractInput {
 
 /// The swarm-surface fields the contract judges, from the Compose form.
 #[derive(Debug, Default)]
-pub(crate) struct SwarmContractInput {
+pub struct SwarmContractInput {
     pub(crate) name: String,
     pub(crate) mission: String,
     pub(crate) agents: Vec<String>,
@@ -103,7 +103,7 @@ fn check(
 }
 
 /// Split a comma-separated form field into trimmed, non-empty entries.
-pub(crate) fn split_csv(raw: &str) -> Vec<String> {
+pub fn split_csv(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -112,7 +112,7 @@ pub(crate) fn split_csv(raw: &str) -> Vec<String> {
 
 /// Split a newline-separated form field (sample queries contain commas, so
 /// they are one-per-line, not CSV).
-pub(crate) fn split_lines(raw: &str) -> Vec<String> {
+pub fn split_lines(raw: &str) -> Vec<String> {
     raw.lines()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -122,7 +122,7 @@ pub(crate) fn split_lines(raw: &str) -> Vec<String> {
 /// Judge the agent form against the fermi ABW contract. Returns every check
 /// (pass and fail) in the order an author would naturally fill the fields —
 /// same ordering rationale as fermi's `requirements()` table.
-pub(crate) fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractCheck> {
+pub fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractCheck> {
     let mut out = Vec::new();
 
     // ── name ───────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ pub(crate) fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractC
 }
 
 /// Judge the swarm form against the fermi composition semantics.
-pub(crate) fn swarm_contract_checks(input: &SwarmContractInput) -> Vec<ContractCheck> {
+pub fn swarm_contract_checks(input: &SwarmContractInput) -> Vec<ContractCheck> {
     let mut out = Vec::new();
 
     out.push(check(
@@ -357,7 +357,7 @@ pub(crate) fn swarm_contract_checks(input: &SwarmContractInput) -> Vec<ContractC
 /// carries the Error failures, `warnings` the advisory tier. The LLM's
 /// advisory output is appended to `warnings` by the caller — it can never
 /// flip `valid`.
-pub(crate) fn checks_to_payload(checks: &[ContractCheck]) -> serde_json::Value {
+pub fn checks_to_payload(checks: &[ContractCheck]) -> serde_json::Value {
     let valid = checks
         .iter()
         .all(|c| c.passed || c.severity == Severity::Warning);

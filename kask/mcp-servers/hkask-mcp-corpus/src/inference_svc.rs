@@ -12,7 +12,7 @@ use hkask_services_core::ServiceError;
 /// it (with `model_override` for non-default models). The `inference_config`
 /// is kept only for model listing (which the IPC client returns empty for —
 /// model discovery needs the direct provider API).
-pub struct InferenceContext {
+pub(crate) struct InferenceContext {
     pub shared_port: Option<Arc<dyn InferencePort>>,
     pub default_model: String,
     pub inference_config: hkask_inference::InferenceConfig,
@@ -63,7 +63,7 @@ impl From<hkask_types::ModelEntry> for ModelInfo {
     }
 }
 
-pub struct InferenceService;
+pub(crate) struct InferenceService;
 
 impl InferenceService {
     #[must_use = "result must be used"]

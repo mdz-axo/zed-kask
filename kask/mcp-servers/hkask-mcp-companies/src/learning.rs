@@ -18,7 +18,7 @@ const FLAKY_MIN_OBSERVATIONS: u64 = 5;
 /// Chronic staleness: data older than this many days → chronically stale.
 /// Default threshold; overridable per-instance via `LearningState::with_staleness_days`
 /// and at launch via the `HKASK_CHRONIC_STALENESS_DAYS` environment variable.
-pub const CHRONIC_STALENESS_DAYS: u32 = 90;
+pub(crate) const CHRONIC_STALENESS_DAYS: u32 = 90;
 
 /// Learning state — tracks user feedback per (tool, symbol, provider) to adapt
 /// provider routing. Uses Beta(α+1, β+1) conjugate prior (same statistical
@@ -31,7 +31,7 @@ pub const CHRONIC_STALENESS_DAYS: u32 = 90;
 /// β = failures+1. The posterior success probability is α/(α+β). A provider
 /// is flaky when P(success) < FLAKY_PROBABILITY_THRESHOLD with at least FLAKY_MIN_OBSERVATIONS observations.
 #[derive(Debug, Clone)]
-pub struct LearningState {
+pub(crate) struct LearningState {
     /// (symbol, provider) → (α_successes, β_failures, n_total)
     /// Beta posterior: P(success) = α / (α+β)
     provider_scores: std::collections::HashMap<(String, Provider), (u64, u64, u64)>,

@@ -43,32 +43,32 @@
 
 use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
 
-pub mod aggregation;
+pub(crate) mod aggregation;
 mod analysis;
-pub mod data_quality;
-pub mod economic_profit;
-pub mod fibo;
+pub(crate) mod data_quality;
+pub(crate) mod economic_profit;
+pub(crate) mod fibo;
 mod financial_model;
-pub mod portfolio;
+pub(crate) mod portfolio;
 mod providers;
-pub use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
+pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;
-pub mod learning;
-pub mod research;
+pub(crate) mod learning;
+pub(crate) mod research;
 mod scenarios;
 mod screener;
-pub mod superforecast;
+pub(crate) mod superforecast;
 mod transcript;
 mod valuation_service;
 pub(crate) use forecast::{
     StoredForecast, current_price_from_multiple, projected_terminal_multiple,
 };
-pub mod types;
+pub(crate) mod types;
 
 use portfolio::{PersistedForecast, PortfolioManager};
 
-pub mod tools;
-pub use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
+pub(crate) mod tools;
+pub(crate) use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
 
 // ── Validation ──────────────────────────────────────────────────────
 

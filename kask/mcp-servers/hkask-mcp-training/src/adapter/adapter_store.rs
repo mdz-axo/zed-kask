@@ -32,7 +32,7 @@ use uuid::Uuid;
 /// NOT "register-then-push" — keep the semantics consistent across arms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AdapterSource {
+pub(crate) enum AdapterSource {
     /// Adapter hosted on Hugging Face Hub (public, private, or gated).
     /// All inference providers (OpenRouter, Runpod) can pull from HF Hub.
     HuggingFace {
@@ -109,7 +109,7 @@ impl std::fmt::Display for Checksum {
 /// pre:  adapter weights pass checksum validation
 /// post: adapter is stored with owner WebID, expertise link, and base model family
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainedLoRAAdapter {
+pub(crate) struct TrainedLoRAAdapter {
     /// Unique identifier
     pub id: Uuid,
     /// The expertise this adapter implements
@@ -146,7 +146,7 @@ pub struct TrainedLoRAAdapter {
 
 /// Errors for adapter store operations.
 #[derive(Debug, thiserror::Error)]
-pub enum AdapterStoreError {
+pub(crate) enum AdapterStoreError {
     #[error("Adapter with id {0} not found")]
     NotFound(NotFound),
 

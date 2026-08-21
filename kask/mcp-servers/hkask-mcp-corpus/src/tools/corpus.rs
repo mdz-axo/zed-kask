@@ -328,7 +328,7 @@ impl CorpusServer {
 // ── Corpus pipeline request structs ───────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DedupChunksRequest {
+pub(crate) struct DedupChunksRequest {
     /// Path to tagged chunks JSONL (from salience phase).
     pub tagged_jsonl: String,
     /// Output path for deduplicated tagged chunks JSONL.
@@ -358,7 +358,7 @@ fn default_dedup_threshold() -> f64 {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ConsolidateChunksRequest {
+pub(crate) struct ConsolidateChunksRequest {
     /// Path to tagged chunks JSONL (from dedup or salience phase).
     pub tagged_jsonl: String,
     /// Output path for consolidated tagged chunks JSONL.
@@ -398,7 +398,7 @@ fn default_max_chunks_per_cluster() -> usize {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BuildPromptsRequest {
+pub(crate) struct BuildPromptsRequest {
     /// Path to tagged chunks JSONL (from consolidate phase).
     pub tagged_jsonl: String,
     /// Output path for prompts JSONL (one JSON per line, consumed by generate_qa_batch).
@@ -481,7 +481,7 @@ fn default_dataset() -> String {
 /// (what `training_submit` expects), applies the lora-training skill's G-D1
 /// gate (dataset size check), and returns lora-training config recommendations.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PrepareTrainingDatasetRequest {
+pub(crate) struct PrepareTrainingDatasetRequest {
     /// Path to Alpaca-format JSONL (from corpus_ingest_qa).
     /// Each line: {"instruction": "...", "input": "", "output": "..."}
     pub input_jsonl: String,

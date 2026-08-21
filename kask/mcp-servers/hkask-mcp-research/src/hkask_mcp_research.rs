@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
 
-pub mod research;
+pub(crate) mod research;
 
 // Re-export service crate modules for test compatibility
-pub use crate::research::{cache, db, providers, rss_types, strip_html, types};
+pub(crate) use crate::research::{cache, db, providers, rss_types, strip_html, types};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +58,7 @@ hkask_mcp_server::mcp_server!(
 
 // ── RSS helpers ──
 
-pub fn spawn_db<F, T>(
+pub(crate) fn spawn_db<F, T>(
     pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     f: F,
 ) -> tokio::task::JoinHandle<Result<T, anyhow::Error>>
@@ -1739,7 +1739,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-pub fn credential_requirements() -> Vec<CredentialRequirement> {
+pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
     let opt = CredentialRequirement::optional;
     vec![
         opt("HKASK_BRAVE_API_KEY", "Brave Search API key"),

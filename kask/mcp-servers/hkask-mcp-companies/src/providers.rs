@@ -23,7 +23,7 @@ use serde_json::Value;
 /// The profile is a one-element array after EODHD normalization. Accessors
 /// read the first element; a missing field returns `None` (not a silent zero),
 // so a missing `mktCap` is distinguishable from a zero market cap.
-pub struct CompanyProfile {
+pub(crate) struct CompanyProfile {
     raw: Value,
 }
 
@@ -100,7 +100,7 @@ impl CompanyProfile {
 /// accessors (`gross_profit_margin`, `roic`, `days_of_payables_outstanding` …)
 /// read from each array element; the latest-year accessor reads `first()`
 /// (FMP returns newest-first, and the EODHD normalizer sorts to match).
-pub struct KeyMetrics {
+pub(crate) struct KeyMetrics {
     raw: Value,
 }
 
@@ -194,7 +194,7 @@ impl KeyMetrics {
 /// Typed view over historical prices (FMP `/historical-price-full` or EODHD
 /// `/eod`). The raw payload is the FMP-shaped `{"symbol": ..., "historical":
 /// [...]}` envelope; per-day accessors read from the `historical` array.
-pub struct HistoricalPriceView {
+pub(crate) struct HistoricalPriceView {
     raw: Value,
 }
 
@@ -253,7 +253,7 @@ const EODHD_BASE_URL: &str = "https://eodhd.com/api";
 
 // ── Endpoint descriptor: maps a logical endpoint to provider-specific paths ──
 
-pub struct EndpointMapping {
+pub(crate) struct EndpointMapping {
     pub fmp_path: &'static str,
     pub eodhd_path: &'static str,
     /// If true, EODHD response needs normalization to match FMP format

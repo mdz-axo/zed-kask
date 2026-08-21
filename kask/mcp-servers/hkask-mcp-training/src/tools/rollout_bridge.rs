@@ -26,7 +26,7 @@ use serde::Deserialize;
 
 /// Request for `training_bridge_rollouts`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BridgeRolloutsRequest {
+pub(crate) struct BridgeRolloutsRequest {
     /// Output dataset path (JSONL). Written under the contained write root,
     /// same rule as every other dataset-writing tool.
     pub output_path: String,

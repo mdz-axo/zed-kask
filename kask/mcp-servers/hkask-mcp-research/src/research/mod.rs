@@ -4,14 +4,14 @@
 //! provider pool with RRF fusion, content extraction, headless browsing,
 //! RSS feed management, response caching, and rate limiting.
 
-pub mod cache;
-pub mod db;
-pub mod feed;
-pub mod providers;
-pub mod rss_types;
-pub mod strip_html;
-pub mod synthetic;
-pub mod types;
+pub(crate) mod cache;
+pub(crate) mod db;
+pub(crate) mod feed;
+pub(crate) mod providers;
+pub(crate) mod rss_types;
+pub(crate) mod strip_html;
+pub(crate) mod synthetic;
+pub(crate) mod types;
 
 use std::collections::HashMap;
 
@@ -23,17 +23,17 @@ use providers::{
 
 // ── Re-exports ──
 
-pub use cache::{CacheKey, ResponseCache, cache_key};
-pub use feed::{discover_feeds, fetch_feed};
-pub use providers::{ExaProvider, ProviderPool, WebSearchPort};
-pub use rss_types::{
+pub(crate) use cache::{CacheKey, ResponseCache, cache_key};
+pub(crate) use feed::{discover_feeds, fetch_feed};
+pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
+pub(crate) use rss_types::{
     Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
     FetchResult, FetchSyntheticRequest, GetEntriesRequest, ImportOpmlRequest,
     ListSubscriptionsRequest, MarkReadRequest, SubscribeRequest, SynthesizeRequest,
     UnreadCountRequest, UnsubscribeRequest,
 };
-pub use types::RateLimiter;
-pub use types::{
+pub(crate) use types::RateLimiter;
+pub(crate) use types::{
     AnswerBox, BrowseOutput, BrowseRequest, BrowseResult, COMPOUND_PROVIDER_TIMEOUT_SECS,
     CiteSource, CiteSourcesRequest, CiteStyle, CompoundSearchResult, DEFAULT_CACHE_MAX_ENTRIES,
     DEFAULT_CACHE_TTL_SECS, DEFAULT_REQUEST_TIMEOUT_SECS, EvaluateArtifact,
@@ -52,7 +52,7 @@ pub use types::{
 /// Free providers (SemanticScholar, arXiv, RawFetch) are always included, so
 /// at least one search provider is always present even with no API keys.
 /// API-key providers are included when their credential is present.
-pub fn build_provider_pool(
+pub(crate) fn build_provider_pool(
     credentials: &HashMap<String, String>,
 ) -> Result<ProviderPool, WebError> {
     let brave_api_key = credentials.get("HKASK_BRAVE_API_KEY").cloned();

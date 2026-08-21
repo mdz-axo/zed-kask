@@ -11,8 +11,8 @@
 //! cross-pod semantic search, memory recall, spec drift detection,
 //! and algedonic event history.
 
-pub mod governance;
-pub mod types;
+pub(crate) mod governance;
+pub(crate) mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
@@ -46,7 +46,7 @@ const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 /// adding or reordering a store cannot silently rebind a `..` destructuring
 /// to the wrong store.
 #[derive(Clone)]
-pub struct CuratorStores {
+pub(crate) struct CuratorStores {
     pub escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
     pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
     /// The curator's unified memory. One store holds both the curator's
@@ -104,7 +104,7 @@ impl CuratorStores {
 /// silent: construction failure logs `error!`, each failed heal attempt
 /// warns once per outage round (re-armed on heal), a successful heal logs
 /// `info!`.
-pub struct CuratorDb {
+pub(crate) struct CuratorDb {
     stores: RwLock<CuratorStores>,
     db_path: Option<String>,
     passphrase: Option<String>,

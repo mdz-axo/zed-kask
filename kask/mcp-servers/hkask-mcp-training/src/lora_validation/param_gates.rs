@@ -15,7 +15,7 @@ use crate::providers::types::{
     LoraParams, QuantizationParams, TrainingHarnessId, TrainingParams, TrlTrainer,
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationSeverity {
+pub(crate) enum ValidationSeverity {
     /// Hard refusal — do not submit the job.
     Refuse,
     /// Soft warning — submit but flag in telemetry.
@@ -37,7 +37,7 @@ impl ValidationSeverity {
 
 /// A single validation finding from a math-contract gate.
 #[derive(Debug, Clone)]
-pub struct ValidationFinding {
+pub(crate) struct ValidationFinding {
     /// Gate ID (e.g., "G-M1", "G-Q1").
     pub gate_id: &'static str,
     /// Severity: refuse, warn, or info.
@@ -68,7 +68,7 @@ impl ValidationFinding {
 /// Returns a list of findings. If any finding has `Refuse` severity, the
 /// caller must not submit the job. `Warn` findings should be logged but
 /// do not block submission.
-pub fn validate_training_params(params: &TrainingParams) -> Vec<ValidationFinding> {
+pub(crate) fn validate_training_params(params: &TrainingParams) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
 
     // G-M1: No-op-at-init invariant.
@@ -106,7 +106,7 @@ pub fn validate_training_params(params: &TrainingParams) -> Vec<ValidationFindin
 ///
 /// This gate is called from `training_validate_config`. The `training_submit`
 /// tool does not run G-D1 — run `training_validate_config` first to check dataset size.
-pub fn validate_dataset_size(dataset_path: &std::path::Path) -> Vec<ValidationFinding> {
+pub(crate) fn validate_dataset_size(dataset_path: &std::path::Path) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
 
     let content = match std::fs::read_to_string(dataset_path) {
@@ -155,7 +155,7 @@ pub fn validate_dataset_size(dataset_path: &std::path::Path) -> Vec<ValidationFi
 /// peak memory is likely to exceed available VRAM. We can't measure peak
 /// memory pre-submission, but we can warn when the config suggests high
 /// memory pressure (large model + 4-bit + high batch size).
-pub fn validate_paged_optimizer(
+pub(crate) fn validate_paged_optimizer(
     params: &TrainingParams,
     base_model: &str,
 ) -> Vec<ValidationFinding> {
@@ -505,7 +505,7 @@ fn validate_harness_compatibility(params: &TrainingParams, findings: &mut Vec<Va
 }
 
 /// Returns true if any finding has `Refuse` severity — the job must not be submitted.
-pub fn has_refusals(findings: &[ValidationFinding]) -> bool {
+pub(crate) fn has_refusals(findings: &[ValidationFinding]) -> bool {
     findings
         .iter()
         .any(|f| f.severity == ValidationSeverity::Refuse)

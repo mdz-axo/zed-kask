@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// post: returns harness-native config string (YAML, Python script, etc.)
 ///
 /// MDS: Composition — CAN render_config ON TrainingJob VIA HarnessAdapter
-pub trait HarnessAdapter: Send + Sync {
+pub(crate) trait HarnessAdapter: Send + Sync {
     /// Render the training configuration in the harness's native format.
     fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError>;
 
@@ -42,7 +42,7 @@ pub trait HarnessAdapter: Send + Sync {
 // ── Axolotl harness ────────────────────────────────────────────────────────
 
 /// Renders axolotl YAML configuration from canonical TrainingParams.
-pub struct AxolotlHarness;
+pub(crate) struct AxolotlHarness;
 
 impl HarnessAdapter for AxolotlHarness {
     fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
@@ -285,7 +285,7 @@ impl HarnessAdapter for AxolotlHarness {
 /// - Ludwig LLM fine-tuning: https://ludwig.ai/latest/getting_started/llm_fine_tuning/
 /// - Ludwig config schema: https://ludwig.ai/latest/configuration/
 /// - Ludwig GitHub: https://github.com/ludwig-ai/ludwig
-pub struct LudwigHarness;
+pub(crate) struct LudwigHarness;
 
 impl HarnessAdapter for LudwigHarness {
     fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {

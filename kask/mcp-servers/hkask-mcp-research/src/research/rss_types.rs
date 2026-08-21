@@ -4,29 +4,29 @@ use serde::{Deserialize, Serialize};
 // Request types
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SubscribeRequest {
+pub(crate) struct SubscribeRequest {
     pub url: String,
     pub label: Option<String>,
     pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct UnsubscribeRequest {
+pub(crate) struct UnsubscribeRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListSubscriptionsRequest {
+pub(crate) struct ListSubscriptionsRequest {
     pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FetchRequest {
+pub(crate) struct FetchRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetEntriesRequest {
+pub(crate) struct GetEntriesRequest {
     pub stream_id: String,
     pub unread_only: Option<bool>,
     pub starred_only: Option<bool>,
@@ -35,12 +35,12 @@ pub struct GetEntriesRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarkReadRequest {
+pub(crate) struct MarkReadRequest {
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct UnreadCountRequest {
+pub(crate) struct UnreadCountRequest {
     pub stream_id: String,
 }
 
@@ -51,7 +51,7 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ImportOpmlRequest {
+pub(crate) struct ImportOpmlRequest {
     pub opml_content: String,
 }
 
@@ -61,7 +61,7 @@ pub struct DiscoverRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct EditTagRequest {
+pub(crate) struct EditTagRequest {
     pub entry_ids: Vec<i64>,
     pub add_read: Option<bool>,
     pub add_starred: Option<bool>,
@@ -97,20 +97,20 @@ pub struct SynthesizeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FetchSyntheticRequest {
+pub(crate) struct FetchSyntheticRequest {
     /// Stream ID of the synthetic feed (e.g. "feed/synthetic://123").
     pub stream_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DeleteSyntheticRequest {
+pub(crate) struct DeleteSyntheticRequest {
     /// Stream ID or feed URL of the synthetic feed to delete.
     pub stream_id: String,
 }
 
 // Internal types
 
-pub struct FetchResult {
+pub(crate) struct FetchResult {
     pub feed: feed_rs::model::Feed,
     pub etag: Option<String>,
     pub last_modified: Option<String>,

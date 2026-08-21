@@ -17,7 +17,7 @@ use async_trait::async_trait;
 ///
 /// Created once per server and passed as `Arc<dyn OcrExecutor>` to the pipeline.
 /// This avoids the lifetime issues of passing `&CorpusServer` to parallel tasks.
-pub struct PipelineExecutor {
+pub(crate) struct PipelineExecutor {
     llm_ocr: Arc<LlmOcrExecutor>,
 }
 

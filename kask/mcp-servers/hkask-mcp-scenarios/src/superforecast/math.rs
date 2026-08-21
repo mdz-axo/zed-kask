@@ -142,7 +142,7 @@ fn combine_independent_channels(channel_probabilities: &[f64]) -> f64 {
 /// Topologically sorts based on dependencies, computes marginal probabilities,
 /// and produces an EventTree with resolved nodes.
 #[must_use = "tree should be used or error inspected"]
-pub fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, ScenarioError> {
+pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, ScenarioError> {
     if events.is_empty() {
         return Err(ScenarioError::NoEvents);
     }
@@ -350,7 +350,7 @@ fn build_path(target_id: &str, events: &[ScenarioEvent]) -> Vec<Vec<String>> {
 /// more uncertainty because they're closer to a coin flip.
 /// Higher score = more uncertainty.
 #[must_use = "ranking result should be used"]
-pub fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
+pub(crate) fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
     let mut ranked: Vec<(String, f64)> = tree
         .nodes
         .iter()
@@ -364,7 +364,7 @@ pub fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
 
 /// Score a forecast against known outcomes and produce a ForecastOutcome.
 /// Also computes per-event update suggestions for closing the feedback loop.
-pub fn score_forecast(
+pub(crate) fn score_forecast(
     forecast_id: &str,
     events: &[ScenarioEvent],
     outcomes: &[(String, bool)],
@@ -419,7 +419,7 @@ pub fn score_forecast(
 
 /// Compute per-event Bayesian update suggestions based on forecast error direction.
 /// Positive delta means probability should be raised; negative means lowered.
-pub fn auto_update_suggestions(
+pub(crate) fn auto_update_suggestions(
     events: &[ScenarioEvent],
     outcomes: &[(String, bool)],
 ) -> Vec<serde_json::Value> {
@@ -452,7 +452,7 @@ pub fn auto_update_suggestions(
 /// Structure a completed framing conversation into a FramingDocument.
 /// Takes the subject and a JSON blob of conversation answers, validates them,
 /// and produces a typed FramingDocument suitable for feeding into scenario_brainstorm.
-pub fn structure_framing_document(
+pub(crate) fn structure_framing_document(
     subject: &str,
     answers: &serde_json::Value,
 ) -> Result<FramingDocument, ScenarioError> {

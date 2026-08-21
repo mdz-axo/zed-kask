@@ -18,7 +18,7 @@ use std::sync::Arc;
 /// consent for one hire cannot be replayed for a different agent or a second
 /// spend — the enforcement point for the cost/consent gate.
 #[derive(Debug, Clone)]
-pub(crate) struct ConsentGrant {
+pub struct ConsentGrant {
     /// The action this consent authorizes (e.g. "hire", "delegate").
     pub action: String,
     /// The target (agent name for hire, workspace id for delegate).
@@ -73,7 +73,7 @@ struct SqliteConsentStore {
 /// unlike the in-memory fallback they survive a server restart — the TTL
 /// bounds that durability: an operator authorization older than this is
 /// unspendable.
-pub(crate) const CONSENT_TTL_SECS: i64 = 3600;
+pub const CONSENT_TTL_SECS: i64 = 3600;
 
 /// Check whether a consent grant has expired. Shared by both backends so the
 /// TTL logic doesn't drift between the Memory and Sqlite paths.

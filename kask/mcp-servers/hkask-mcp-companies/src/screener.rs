@@ -29,7 +29,7 @@ fn less_than(param: &'static str) -> Vec<(&'static str, &'static str)> {
 /// Parse a natural language screening prompt into FMP screener API parameters.
 ///
 /// Returns a JSON object with only the fields that were successfully parsed.
-pub fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
+pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     let lower = prompt.to_lowercase();
 

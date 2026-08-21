@@ -25,7 +25,7 @@ use crate::types::{
 /// verification — the key bridge between the superforecasting skill and
 /// the scenarios MCP server.
 #[must_use = "validation result should be inspected"]
-pub fn cross_validate(
+pub(crate) fn cross_validate(
     event_id: &str,
     source_a: &str,
     estimate_a: f64,
@@ -214,7 +214,7 @@ pub fn domain_bias_delta(store: Option<&ForecastStore>, category: &str) -> f64 {
 /// domain, δ=0.0 (no correction — the honest default per Tetlock's
 /// discipline: corrections come from measured calibration, not hardcoded
 /// magic numbers).
-pub fn convert_market_record(
+pub(crate) fn convert_market_record(
     record: &hkask_mcp_prediction_markets::types::MarketRecord,
     match_confidence: Option<&str>,
     store: Option<&ForecastStore>,

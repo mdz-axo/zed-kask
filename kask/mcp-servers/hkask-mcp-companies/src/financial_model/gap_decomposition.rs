@@ -9,7 +9,7 @@ use super::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions, project_m
 
 /// Result of decomposing a forecast-vs-actual return gap.
 #[derive(Debug, Clone, Serialize)]
-pub struct GapDecomposition {
+pub(crate) struct GapDecomposition {
     pub total_return_gap: f64,
     pub revenue_growth_contribution: f64,
     pub gross_margin_contribution: f64,
@@ -25,7 +25,7 @@ pub struct GapDecomposition {
 /// 11-line-item drivers. Each contribution is computed by running the
 /// projection model with only that one assumption changed to the actual,
 /// and measuring the intrinsic value delta.
-pub fn decompose_gap(
+pub(crate) fn decompose_gap(
     projected: &ProjectedModel,
     projected_assumptions: &ProjectionAssumptions,
     actual_hist: &HistoricalSnapshot,

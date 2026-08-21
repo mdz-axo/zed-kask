@@ -31,7 +31,7 @@ use scraper::{ElementRef, Html, Selector};
 /// The extractor kind. Determines how `extractor_spec` is interpreted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExtractorKind {
+pub(crate) enum ExtractorKind {
     Css,
     JsonPath,
     DiffHash,
@@ -70,7 +70,7 @@ impl std::str::FromStr for ExtractorKind {
 /// The declarative spec for a synthetic feed. Stored as JSON in
 /// `synthetic_feeds.extractor_spec`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractorSpec {
+pub(crate) struct ExtractorSpec {
     /// CSS selector or JSONPath for the container of each item.
     /// For `diff_hash`, unused (the whole page is the "item").
     /// For `llm_schema`, unused (the LLM extracts items directly).
@@ -104,7 +104,7 @@ pub struct ExtractorSpec {
 
 /// A single extracted item, before it becomes a `feed_rs::Entry`.
 #[derive(Debug, Clone, Default)]
-pub struct ExtractedItem {
+pub(crate) struct ExtractedItem {
     pub title: String,
     pub link: String,
     pub date: String,
@@ -115,7 +115,7 @@ pub struct ExtractedItem {
 // ── Errors ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-pub enum SyntheticError {
+pub(crate) enum SyntheticError {
     #[error("unsupported extractor kind: {0}")]
     UnsupportedKind(String),
     #[error("invalid extractor spec: {0}")]
@@ -185,7 +185,7 @@ pub fn extract(
 }
 
 /// Compute a blake3 hash of the body for diff detection.
-pub fn content_hash(body: &[u8]) -> String {
+pub(crate) fn content_hash(body: &[u8]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(body);
     hasher.finalize().to_hex().to_string()
@@ -491,7 +491,7 @@ pub async fn extract_llm_schema(
 /// fall back to the corpus server's `corpus_ocr` tool via MCP dispatch.
 ///
 /// Returns the extracted text and whether the text layer was non-empty.
-pub fn extract_pdf_text(body: &[u8]) -> Result<(String, bool), SyntheticError> {
+pub(crate) fn extract_pdf_text(body: &[u8]) -> Result<(String, bool), SyntheticError> {
     let text = pdf_extract::extract_text_from_mem(body)
         .map_err(|e| SyntheticError::ExtractionFailed(format!("pdf-extract: {e}")))?;
     let non_empty = !text.trim().is_empty();
@@ -636,7 +636,7 @@ fn render_template(template: &str, item: &ExtractedItem) -> String {
 
 /// Convert extracted items into `feed_rs::Entry` objects for insertion
 /// via the existing `insert_entries` function.
-pub fn items_to_entries(items: Vec<ExtractedItem>, feed_title: &str) -> Vec<feed_rs::model::Entry> {
+pub(crate) fn items_to_entries(items: Vec<ExtractedItem>, feed_title: &str) -> Vec<feed_rs::model::Entry> {
     items
         .into_iter()
         .map(|item| {
@@ -711,7 +711,7 @@ fn make_text(content: &str) -> feed_rs::model::Text {
 /// Build a synthetic feed_rs::Feed for upsert_feed. The feed's `url` is
 /// `synthetic://<feed_id_placeholder>` — the actual feed_id is assigned by
 /// the DB and the url is updated after insert.
-pub fn build_synthetic_feed(
+pub(crate) fn build_synthetic_feed(
     source_url: &str,
     title: &str,
     description: &str,
@@ -748,7 +748,7 @@ pub fn build_synthetic_feed(
 /// Build a FetchResult-shaped object for the diff_hash path. This is a
 /// single-entry "feed" where the entry_id is the content hash and the
 /// content is the raw body.
-pub fn build_diff_hash_feed(
+pub(crate) fn build_diff_hash_feed(
     body: &[u8],
     source_url: &str,
     title: &str,

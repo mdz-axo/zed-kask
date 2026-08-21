@@ -19,7 +19,7 @@ use crate::financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssum
 /// echo the request. `shares` is `hist.shares_outstanding` passed explicitly
 /// so the caller can override it (it does not today, but the explicit
 /// parameter keeps the function pure over `HistoricalSnapshot`).
-pub fn build_dcf_response(
+pub(crate) fn build_dcf_response(
     symbol: &str,
     forecast_id: &str,
     revision_of: &Option<String>,

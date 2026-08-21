@@ -9,7 +9,7 @@ use crate::ocr::{ComplexityScore, ComplexityTier, DEFAULT_LLM_OCR_MODEL, OcrBack
 ///
 /// Counters only — no side effects, no hidden state.
 #[derive(Debug, Clone, Default)]
-pub struct SamplingState {
+pub(crate) struct SamplingState {
     /// Total Moderate pages seen (accumulates across a pipeline run).
     pub moderate_pages_seen: usize,
     /// Moderate pages that were dual-routed.
@@ -65,7 +65,7 @@ impl SamplingState {
 /// # Force fallback
 /// When `state.force_fallback` is set, the primary backend candidate
 /// is excluded. This is the unified fallback path — not a separate code fork.
-pub fn route_page(
+pub(crate) fn route_page(
     score: ComplexityScore,
     state: &mut SamplingState,
     exclude_backend: Option<&OcrBackend>,

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 /// Classification result for a single passage.
 #[derive(Debug, Clone, Default)]
-pub struct ClassifyResult {
+pub(crate) struct ClassifyResult {
     /// The classified section type.
     pub category: String,
     /// Number of prompt (input) tokens consumed.
@@ -37,7 +37,7 @@ pub struct ClassifyResult {
 /// Semantic h_mem extraction result for a single passage.
 /// Produced by the h_mem-extractor classifier.
 #[derive(Debug, Clone, Default)]
-pub struct PassageExtraction {
+pub(crate) struct PassageExtraction {
     /// One-sentence summary of what the passage is about.
     pub topic: String,
     /// Key concepts mentioned in the passage.
@@ -57,12 +57,12 @@ pub struct PassageExtraction {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ClassifierYaml {
+pub(crate) struct ClassifierYaml {
     pub classifier: ClassifierDef,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ClassifierDef {
+pub(crate) struct ClassifierDef {
     pub name: String,
     /// Provider-prefixed model id (e.g. `OpenRouter/z-ai/glm-5.2`)
     /// passed as `model_override` to `InferencePort::generate_with_model`, which
@@ -127,7 +127,7 @@ fn default_disable_thinking() -> bool {
 }
 
 #[must_use = "result must be used"]
-pub fn load_classifier_config(
+pub(crate) fn load_classifier_config(
     name: &str,
     registry_dir: &Path,
 ) -> Result<ClassifierDef, ServiceError> {
@@ -442,7 +442,7 @@ async fn extract_passage_one(
 }
 
 /// Parse a PassageExtraction from classifier JSON response.
-pub fn parse_passage_extraction(content: &str) -> Result<PassageExtraction, ServiceError> {
+pub(crate) fn parse_passage_extraction(content: &str) -> Result<PassageExtraction, ServiceError> {
     // Brace-balanced extraction (RR-0028): the old first-brace to last-brace
     // slice approach silently merged an injected JSON block in the model's
     // reasoning preamble with its real answer. `extract_json_from_response`

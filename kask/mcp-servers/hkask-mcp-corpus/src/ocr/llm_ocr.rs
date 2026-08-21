@@ -135,7 +135,7 @@ fn now_unix() -> i64 {
 ///
 /// The router is constructed once and shared across all concurrent
 /// OCR tasks via `Arc<dyn InferencePort>`.
-pub struct LlmOcrExecutor {
+pub(crate) struct LlmOcrExecutor {
     /// Shared inference port (constructed once, used by all concurrent tasks).
     router: Arc<dyn InferencePort>,
     /// Maximum output tokens per page.

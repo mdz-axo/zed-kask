@@ -27,7 +27,7 @@ use crate::error::LocalSwarmError;
 
 /// The per-agent memory prefix. A local agent's "knowledge graph" is its
 /// prefix-scoped slice of the operator's semantic memory.
-pub(crate) const AGENT_PREFIX: &str = "agent:";
+pub const AGENT_PREFIX: &str = "agent:";
 
 /// A lazily-opened `MemoryStore` for the local swarm knowledge tools.
 ///
@@ -36,7 +36,7 @@ pub(crate) const AGENT_PREFIX: &str = "agent:";
 /// is the operator's consolidated semantic memory; per-agent scoping is a
 /// prefix (`agent:<agent_id>:`) on the shared store (one store, many
 /// namespaces — the deep-module choice over a per-agent store).
-pub(crate) struct LazyLocalMemory {
+pub struct LazyLocalMemory {
     db_path: String,
     passphrase: String,
     dim: usize,
@@ -93,7 +93,7 @@ impl LazyLocalMemory {
 /// the ABW envelope (matching knowledge fragments) but in kask terms: the
 /// agent's semantic-memory triples that match the query.
 #[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct KnowledgeFragment {
+pub struct KnowledgeFragment {
     pub entity: String,
     pub attribute: String,
     pub value: String,
@@ -409,7 +409,7 @@ pub(crate) async fn ingest_turn(
 /// A prior swarm turn recalled from the shared knowledgebase by semantic
 /// similarity. `text` is the full turn JSON stored by `ingest_turn`.
 #[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct RecalledTurn {
+pub struct RecalledTurn {
     /// The producing agent's id (which agent ran the turn).
     pub agent_id: String,
     /// The full turn JSON (`agent_id`, `task`, `response`, `model`).

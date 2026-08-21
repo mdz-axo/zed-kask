@@ -16,7 +16,7 @@ use crate::providers::TrainingParams;
 // ── Request structs ──────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct QaItem {
+pub(crate) struct QaItem {
     pub question: String,
     pub answer: String,
     #[serde(default)]
@@ -35,7 +35,7 @@ pub struct IngestQaRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainSubmitRequest {
+pub(crate) struct TrainSubmitRequest {
     /// Path to the training dataset file.
     pub dataset_path: String,
     /// Base model to fine-tune (provider-prefixed, e.g., "ollama/qwen3:8b").
@@ -82,19 +82,19 @@ pub struct TrainSubmitRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainStatusRequest {
+pub(crate) struct TrainStatusRequest {
     /// Job ID from a previous `training_submit` call.
     pub job_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainCancelRequest {
+pub(crate) struct TrainCancelRequest {
     /// Job ID to cancel.
     pub job_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AssembleDatasetRequest {
+pub(crate) struct AssembleDatasetRequest {
     /// Training dataset name to filter by (matches QA pairs ingested with this dataset).
     #[serde(default)]
     pub dataset: Option<String>,
@@ -120,7 +120,7 @@ pub struct AssembleDatasetRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainEvaluateRequest {
+pub(crate) struct TrainEvaluateRequest {
     /// Adapter ID or fine-tuned model name to evaluate.
     pub adapter_id: String,
     /// Path to test dataset (ChatML JSONL). Each line must have a "messages" array
@@ -140,7 +140,7 @@ pub struct TrainEvaluateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainIngestDatasetRequest {
+pub(crate) struct TrainIngestDatasetRequest {
     /// Path to the raw dataset file (JSONL, JSON, or TXT).
     pub dataset_path: String,
     /// Optional cache directory override (default: server's configured cache dir).
@@ -149,7 +149,7 @@ pub struct TrainIngestDatasetRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TrainValidateConfigRequest {
+pub(crate) struct TrainValidateConfigRequest {
     /// Training parameters to validate against the lora-training skill's
     /// math-contract gates (G-M1..G-M4, G-Q1, G-Q2, G-Q4, G-Q5).
     pub params: TrainingParams,

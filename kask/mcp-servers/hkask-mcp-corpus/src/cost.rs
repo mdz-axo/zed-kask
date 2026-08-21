@@ -23,10 +23,10 @@ use hkask_storage::database::driver::DatabaseDriver;
 use std::sync::Arc;
 
 /// The asset symbol for rJoule costs in the ledger.
-pub const COST_ASSET: &str = "urj";
+pub(crate) const COST_ASSET: &str = "urj";
 
 /// The namespace for cost accounts (`cost:api/<provider>`).
-pub const COST_NAMESPACE: &str = "cost";
+pub(crate) const COST_NAMESPACE: &str = "cost";
 
 /// Record a cost (in µrJ) against a provider's cost account.
 ///
@@ -41,7 +41,7 @@ pub const COST_NAMESPACE: &str = "cost";
 /// whether to propagate; the common pattern is to log and continue (the
 /// operation's result is already computed; the cost post is observability,
 /// not a gate).
-pub fn record_cost(
+pub(crate) fn record_cost(
     driver: &Arc<dyn DatabaseDriver>,
     provider: &str,
     amount_urj: i64,
@@ -78,7 +78,7 @@ pub fn record_cost(
 /// provider, amount, and error so an operator reading logs can see the
 /// failed post (the `.rules` "advertised invariants need enforcement
 /// points" trap: a silent `unwrap_or(())` would hide the failure).
-pub fn record_cost_best_effort(
+pub(crate) fn record_cost_best_effort(
     driver: &Arc<dyn DatabaseDriver>,
     provider: &str,
     amount_urj: i64,

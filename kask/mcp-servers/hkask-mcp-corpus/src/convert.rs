@@ -7,7 +7,7 @@
 ///
 /// Supported formats (text extraction works): pdf, markdown, html, plain,
 /// docx, pptx, xlsx, csv (csv via xlsx backend)
-pub fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
+pub(crate) fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
@@ -172,7 +172,7 @@ pub fn strip_html(html: &str) -> String {
 /// Handles named entities (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`,
 /// `&nbsp;`, `&#39;`) and numeric entities (`&#NNN;`, `&#xNNN;`).
 /// `&amp;` is decoded last to prevent double-decode of nested entities.
-pub fn decode_html_entities(text: &str) -> String {
+pub(crate) fn decode_html_entities(text: &str) -> String {
     let text = text.replace("&nbsp;", " ");
     let text = text.replace("&lt;", "<");
     let text = text.replace("&gt;", ">");
@@ -209,7 +209,7 @@ pub fn decode_html_entities(text: &str) -> String {
 ///
 /// Handles multi-line comments. Used for markdown files that contain
 /// embedded HTML comments from OCR/Kindle conversion tools.
-pub fn strip_html_comments(text: &str) -> String {
+pub(crate) fn strip_html_comments(text: &str) -> String {
     let re = regex::Regex::new(r"(?s)<!--.*?-->").expect("html comment regex");
     re.replace_all(text, "").into_owned()
 }

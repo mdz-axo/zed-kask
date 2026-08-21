@@ -32,7 +32,7 @@ use thiserror::Error;
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TrainingHarnessId {
+pub(crate) enum TrainingHarnessId {
     /// axolotl — YAML-based training framework, dispatched to Runpod.
     /// Supports SFT only (no preference optimization). Mature, single-file config.
     Axolotl,
@@ -76,7 +76,7 @@ impl TrainingHarnessId {
 ///   RL use case emerges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum TrlTrainer {
+pub(crate) enum TrlTrainer {
     /// TRL `SFTTrainer` + `SFTConfig` — supervised fine-tuning.
     /// The canonical SFT path; parallel to Axolotl's SFT support.
     /// Supports: packing, assistant_only_loss, completion_only_loss, VLMs.
@@ -181,7 +181,7 @@ impl TrlTrainer {
 ///   Runpod → Axolotl
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TrainingHostId {
+pub(crate) enum TrainingHostId {
     /// runpod — Runpod GPU cloud training, pod-based axolotl dispatch
     Runpod,
     /// nebius — Nebius AI Cloud VMs with H100/H200/B200 GPUs
@@ -204,7 +204,7 @@ impl TrainingHostId {
 
 /// The canonical representation of a training job, provider-agnostic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrainingJob {
+pub(crate) struct TrainingJob {
     /// Unique job identifier (UUIDv4).
     pub id: String,
     /// Path to the preprocessed dataset file.
@@ -318,7 +318,7 @@ pub(crate) fn extract_model_size_multiplier(base_model: &str) -> u64 {
 /// adding them would create a phantom config surface that the harness
 /// can't consume.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LoraParams {
+pub(crate) struct LoraParams {
     /// LoRA rank (r value). Typical range: 4–64.
     pub r: u32,
     /// LoRA alpha scaling factor.
@@ -359,7 +359,7 @@ pub struct LoraParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 #[schemars(transform = strip_bare_additional_properties)]
-pub enum LoraInit {
+pub(crate) enum LoraInit {
     /// PEFT default: B=0, A~Gaussian Kaiming-uniform. Adapter is a no-op at step 0.
     #[default]
     Default,
@@ -464,7 +464,7 @@ impl LoraInit {
 /// LoRA bias type (mirrors PEFT `bias`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum LoraBias {
+pub(crate) enum LoraBias {
     /// No bias trained (default). Safe for merge.
     #[default]
     None,
@@ -508,7 +508,7 @@ impl Default for LoraParams {
 
 /// Quantization parameters for QLoRA training.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct QuantizationParams {
+pub(crate) struct QuantizationParams {
     /// Load base model in 4-bit (QLoRA).
     #[serde(default)]
     pub load_in_4bit: bool,
@@ -528,7 +528,7 @@ pub struct QuantizationParams {
 
 /// Optimization and scheduler parameters.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct OptimizationParams {
+pub(crate) struct OptimizationParams {
     /// Optimizer name ("adamw_torch", "adamw_8bit", "adamw_bnb_8bit", "paged_adamw_32bit").
     #[serde(default)]
     pub optimizer: Option<String>,
@@ -584,7 +584,7 @@ impl Default for OptimizationParams {
 
 /// Sequence and packing parameters.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct SequenceParams {
+pub(crate) struct SequenceParams {
     /// Maximum sequence length for training.
     #[serde(default)]
     pub sequence_len: Option<u32>,
@@ -601,7 +601,7 @@ pub struct SequenceParams {
 
 /// Advanced attention and memory parameters.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct AdvancedParams {
+pub(crate) struct AdvancedParams {
     /// Attention implementation ("flash_attention_2", "sdpa", "eager").
     #[serde(default)]
     pub attn_implementation: Option<String>,
@@ -622,7 +622,7 @@ pub struct AdvancedParams {
 /// Canonical training hyperparameters — the union of capabilities supported by
 /// at least two harnesses or required by a specific training mode.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TrainingParams {
+pub(crate) struct TrainingParams {
     /// Number of training epochs.
     pub num_epochs: u32,
     /// Per-device batch size.
@@ -678,7 +678,7 @@ impl Default for TrainingParams {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TrainingJobStatus {
+pub(crate) enum TrainingJobStatus {
     Queued,
     Running,
     Completed,
@@ -689,7 +689,7 @@ pub enum TrainingJobStatus {
 // ── Provider error ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum HostProviderError {
+pub(crate) enum HostProviderError {
     #[error("Provider '{0}' is not available (missing CLI or configuration)")]
     Unavailable(String),
     /// A required provider credential or configuration value is missing (e.g.
@@ -739,7 +739,7 @@ pub enum HostProviderError {
 /// Rich pod status returned by `TrainingHost::status`. Includes everything
 /// an operator needs to monitor, debug, and SSH into a running pod.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PodStatus {
+pub(crate) struct PodStatus {
     /// High-level job status.
     pub status: TrainingJobStatus,
     /// Provider-specific pod ID (e.g. RunPod pod ID).
@@ -763,7 +763,7 @@ pub struct PodStatus {
 }
 
 #[async_trait::async_trait]
-pub trait TrainingHost: Send + Sync {
+pub(crate) trait TrainingHost: Send + Sync {
     /// Submit a training job for execution.
     /// Returns a provider-specific job ID for status tracking.
     async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError>;

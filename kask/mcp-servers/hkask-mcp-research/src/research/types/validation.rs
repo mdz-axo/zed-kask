@@ -1,7 +1,7 @@
 //! Request validation and health error sanitization.
 
 // --- Task 6: Compound provider timeout (shorter than client timeout) ---
-pub const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 10;
+pub(crate) const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 10;
 
 /// Sanitize a provider error to prevent credential leakage.
 ///
@@ -9,7 +9,7 @@ pub const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 10;
 /// any substrings that look like API keys (matching common prefix patterns).
 /// Used in both `health_check_all()` and `search_compound()` to ensure
 /// no credentials leak through Regulation tracing or compound result metadata.
-pub fn sanitize_health_error(error: &str) -> String {
+pub(crate) fn sanitize_health_error(error: &str) -> String {
     /// Lazily compiled API key regex pattern for sanitization.
     /// Avoids re-compiling the regex on every call to `sanitize_health_error`.
     static API_KEY_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {

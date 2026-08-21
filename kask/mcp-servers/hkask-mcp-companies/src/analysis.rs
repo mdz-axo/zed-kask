@@ -8,7 +8,7 @@ use serde_json::Value;
 /// Gross margin stability score (0.0–1.0). Higher = more stable.
 /// Uses coefficient of variation: lower CV → more stable → higher score.
 /// Returns 1.0 for perfect stability, near 0.0 for high volatility.
-pub fn gross_margin_stability(margins: &[f64]) -> f64 {
+pub(crate) fn gross_margin_stability(margins: &[f64]) -> f64 {
     if margins.len() < 2 {
         return 1.0;
     }
@@ -24,12 +24,12 @@ pub fn gross_margin_stability(margins: &[f64]) -> f64 {
 
 /// Working capital moat signal: DPO − DSO in days.
 /// Positive = customers pay faster than you pay suppliers (market power).
-pub fn working_capital_spread(dpo_days: f64, dso_days: f64) -> f64 {
+pub(crate) fn working_capital_spread(dpo_days: f64, dso_days: f64) -> f64 {
     dpo_days - dso_days
 }
 
 /// Classify the working capital signal.
-pub fn wc_signal_label(spread: f64) -> &'static str {
+pub(crate) fn wc_signal_label(spread: f64) -> &'static str {
     if spread > 30.0 {
         "strong_market_power"
     } else if spread > 0.0 {
@@ -44,14 +44,14 @@ pub fn wc_signal_label(spread: f64) -> &'static str {
 /// Overall moat classification from margin stability and working capital signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MoatRating {
+pub(crate) enum MoatRating {
     Wide,
     Narrow,
     None,
     InsufficientData,
 }
 
-pub fn classify_moat(margin_stability: f64, wc_spread: f64, data_periods: usize) -> MoatRating {
+pub(crate) fn classify_moat(margin_stability: f64, wc_spread: f64, data_periods: usize) -> MoatRating {
     if data_periods < 3 {
         return MoatRating::InsufficientData;
     }
@@ -69,7 +69,7 @@ pub fn classify_moat(margin_stability: f64, wc_spread: f64, data_periods: usize)
 
 /// Extract gross margin values from FMP key-metrics JSON array.
 /// Returns Vec of (year, grossProfitMargin) sorted by year ascending.
-pub fn extract_gross_margins(metrics_json: &Value) -> Vec<(String, f64)> {
+pub(crate) fn extract_gross_margins(metrics_json: &Value) -> Vec<(String, f64)> {
     let arr = match metrics_json.as_array() {
         Some(a) => a,
         None => return vec![],
@@ -90,7 +90,7 @@ pub fn extract_gross_margins(metrics_json: &Value) -> Vec<(String, f64)> {
 /// statement pairs. Returns (dpo, dso) or None if data is insufficient.
 ///
 /// FMP key-metrics provides daysOfPayablesOutstanding and daysOfSalesOutstanding.
-pub fn extract_wc_days(metrics_json: &Value) -> Option<(f64, f64)> {
+pub(crate) fn extract_wc_days(metrics_json: &Value) -> Option<(f64, f64)> {
     let arr = metrics_json.as_array()?;
     let latest = arr.first()?;
     let dpo = latest.get("daysOfPayablesOutstanding")?.as_f64()?;
@@ -103,7 +103,7 @@ pub fn extract_wc_days(metrics_json: &Value) -> Option<(f64, f64)> {
 /// CEO capital allocation rating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CeoRating {
+pub(crate) enum CeoRating {
     Excellent,
     Good,
     Neutral,
@@ -117,7 +117,7 @@ pub enum CeoRating {
 /// MAIA framework: Good = decreasing capital with steady/improving returns, OR
 /// increasing capital with improving returns. Bad = increasing capital with
 /// decreasing returns.
-pub fn ceo_capital_allocation_score(returns: &[f64], invested_capital: &[f64]) -> CeoRating {
+pub(crate) fn ceo_capital_allocation_score(returns: &[f64], invested_capital: &[f64]) -> CeoRating {
     if returns.len() < 3 || invested_capital.len() < 3 {
         return CeoRating::InsufficientData;
     }
@@ -153,7 +153,7 @@ pub fn ceo_capital_allocation_score(returns: &[f64], invested_capital: &[f64]) -
 
 /// Extract ROIC values from FMP key-metrics JSON array.
 /// Returns Vec of (year, roic) sorted by year ascending.
-pub fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
+pub(crate) fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
     let arr = match metrics_json.as_array() {
         Some(a) => a,
         None => return vec![],
@@ -172,7 +172,7 @@ pub fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
 
 /// Extract invested capital from balance sheet JSON by computing total assets.
 /// Returns Vec of (year, total_assets) sorted by year ascending.
-pub fn extract_invested_capital(balance_sheets: &Value) -> Vec<(String, f64)> {
+pub(crate) fn extract_invested_capital(balance_sheets: &Value) -> Vec<(String, f64)> {
     let arr = match balance_sheets.as_array() {
         Some(a) => a,
         None => return vec![],

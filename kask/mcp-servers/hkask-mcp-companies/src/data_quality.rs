@@ -26,7 +26,7 @@ use serde::Serialize;
 /// | Cyclicality    | Mean-reverting margins             | §4.1 Dynamism  |
 /// | Staleness      | Temporal sensitivity               | §3.2 Real-Time |
 #[derive(Debug, Clone, Serialize)]
-pub struct SignalQuality {
+pub(crate) struct SignalQuality {
     /// Coefficient of variation (σ / |μ|) across available periods.
     /// 0.0 = perfectly stable; > 0.5 = highly volatile.
     pub coefficient_of_variation: f64,
@@ -216,7 +216,7 @@ impl SignalQuality {
 /// attached to DCF, scenario, and sensitivity outputs so consumers can
 /// gauge how reliable the projections are.
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelInputQuality {
+pub(crate) struct ModelInputQuality {
     /// Revenue growth rate quality.
     pub revenue_growth: SignalQuality,
     /// Gross margin quality.
@@ -358,7 +358,7 @@ impl ModelInputQuality {
 
 /// Annotation on a normalized field indicating how it was derived.
 #[derive(Debug, Clone, Serialize)]
-pub struct NormalizationAnnotation {
+pub(crate) struct NormalizationAnnotation {
     /// The original provider field name.
     pub source_field: String,
     /// Whether this field was approximated during normalization.
@@ -369,7 +369,7 @@ pub struct NormalizationAnnotation {
 
 /// Provider quality metadata attached to API responses.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProviderQuality {
+pub(crate) struct ProviderQuality {
     /// Which provider served this data.
     pub provider: String,
     /// Fields that required normalization/approximation.
@@ -397,7 +397,7 @@ impl ProviderQuality {
 /// the objective market signal that FinGPT's RLSP uses — applied here to
 /// data quality, not sentiment classification.
 #[derive(Debug, Clone)]
-pub struct TemporalSnapshot {
+pub(crate) struct TemporalSnapshot {
     /// When the data was fetched (RFC 3339).
     pub fetched_at: String,
     /// Stock price at fetch time.
@@ -431,7 +431,7 @@ impl TemporalSnapshot {
 /// Emit a Regulation data_quality span so hKask's homeostatic loop can monitor
 /// financial data reliability (closes the variety deficit identified in
 /// cybernetic analysis: 6 disturbance modes, previously only 2 monitored).
-pub fn emit_data_quality_span(symbol: &str, tool: &str, quality: &ModelInputQuality) {
+pub(crate) fn emit_data_quality_span(symbol: &str, tool: &str, quality: &ModelInputQuality) {
     tracing::debug!(
         target: "hkask.mcp.companies.data_quality",
         symbol = %symbol,

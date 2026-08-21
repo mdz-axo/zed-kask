@@ -15,7 +15,7 @@ use crate::ocr::pipeline::{OcrError, OcrExecutor};
 ///
 /// Writes the page image to a temporary PNG, invokes `tesseract`,
 /// and reads the output text. Language defaults to English.
-pub struct TesseractExecutor {
+pub(crate) struct TesseractExecutor {
     /// Tesseract language data (default: "eng").
     language: String,
     /// Page segmentation mode (default: auto-detect = unset).

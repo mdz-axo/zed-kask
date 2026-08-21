@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// Competitive advantage duration, controlling how fast economic profits fade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum FadeHorizon {
+pub(crate) enum FadeHorizon {
     /// 20-year fade — durable competitive advantage.
     Wide,
     /// 10-year fade — defensible but erodable advantage.
@@ -88,7 +88,7 @@ impl FadeHorizon {
 
 /// One period of projected economic profit.
 #[derive(Debug, Clone, Serialize)]
-pub struct EpPeriod {
+pub(crate) struct EpPeriod {
     /// Period number (1-based).
     pub period: usize,
     /// Invested capital at start of period.
@@ -107,7 +107,7 @@ pub struct EpPeriod {
 
 /// Result of economic profit valuation.
 #[derive(Debug, Clone, Serialize)]
-pub struct EpValuation {
+pub(crate) struct EpValuation {
     /// Book value of equity (latest fiscal year).
     pub book_value: f64,
     /// Discount rate (WACC).
@@ -159,7 +159,7 @@ pub struct EpValuation {
 
 /// Interpretation of the economic profit valuation.
 #[derive(Debug, Clone, Serialize)]
-pub struct EpSignal {
+pub(crate) struct EpSignal {
     /// "undervalued", "fairly_valued", "overvalued"
     pub valuation: &'static str,
     /// "value_creator", "value_neutral", "value_destroyer"
@@ -187,7 +187,7 @@ pub struct EpSignal {
 /// - `stage1_years`: years to hold EP constant before fade begins.
 ///
 ///   AFG four value drivers (Obrycki & Resendes, 2000): Profitability = (ROIC - WACC) × Invested Capital, Competition = decay rate → 0, Growth = invested capital growth, Cost of capital = WACC.
-pub fn value_economic_profit(
+pub(crate) fn value_economic_profit(
     latest_book_value: f64,
     latest_roic: f64,
     latest_invested_capital: f64,
@@ -447,7 +447,7 @@ fn classify_signal(ivm: f64, spread: f64, pct_ep: f64) -> EpSignal {
 ///   NOPAT = EBIT × (1 - tax_rate)
 ///   Invested Capital = Total Assets - Non-Interest-Bearing Current Liabilities
 ///   (simplified: total assets, as we don't have detailed liability breakdown)
-pub fn compute_roic(ebit: f64, tax_rate: f64, invested_capital: f64) -> Option<f64> {
+pub(crate) fn compute_roic(ebit: f64, tax_rate: f64, invested_capital: f64) -> Option<f64> {
     if invested_capital <= 0.0 {
         return None;
     }
@@ -457,7 +457,7 @@ pub fn compute_roic(ebit: f64, tax_rate: f64, invested_capital: f64) -> Option<f
 
 /// Extract EBIT from income statement data.
 /// Prefer explicit EBIT field, fall back to: grossProfit - depreciationAndAmortization.
-pub fn extract_ebit(income_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_ebit(income_entry: &serde_json::Value) -> Option<f64> {
     // Prefer direct EBIT field
     if let Some(ebit) = income_entry
         .get("ebit")
@@ -481,12 +481,12 @@ pub fn extract_ebit(income_entry: &serde_json::Value) -> Option<f64> {
 /// Extract invested capital from balance sheet data.
 /// Invested Capital = Total Assets - Current Liabilities + Short-term Debt
 /// Simplified: Total Assets (proxy when detailed breakdown unavailable).
-pub fn extract_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
     balance_entry.get("totalAssets").and_then(|v| v.as_f64())
 }
 
 /// Extract book value of equity from balance sheet.
-pub fn extract_book_value(balance_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_book_value(balance_entry: &serde_json::Value) -> Option<f64> {
     balance_entry
         .get("totalStockholdersEquity")
         .or_else(|| balance_entry.get("totalEquity"))
@@ -509,7 +509,7 @@ pub fn extract_book_value(balance_entry: &serde_json::Value) -> Option<f64> {
 // does not capitalise.
 
 /// Extract raw treasury stock from balance sheet (typically negative in FMP/EODHD).
-pub fn extract_treasury_stock(balance_entry: &serde_json::Value) -> f64 {
+pub(crate) fn extract_treasury_stock(balance_entry: &serde_json::Value) -> f64 {
     balance_entry
         .get("treasuryStock")
         .and_then(|v| v.as_f64())
@@ -518,14 +518,14 @@ pub fn extract_treasury_stock(balance_entry: &serde_json::Value) -> f64 {
 }
 
 /// Adjusted Book Value: raw BV + 2 × |treasury stock|.
-pub fn adj_book_value(balance_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn adj_book_value(balance_entry: &serde_json::Value) -> Option<f64> {
     let raw_bv = extract_book_value(balance_entry)?;
     let ts = extract_treasury_stock(balance_entry);
     Some(raw_bv + 2.0 * ts)
 }
 
 /// Adjusted Invested Capital: raw IC + 2 × |treasury stock|.
-pub fn adj_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn adj_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
     let raw_ic = extract_invested_capital(balance_entry)?;
     let ts = extract_treasury_stock(balance_entry);
     Some(raw_ic + 2.0 * ts)
@@ -534,12 +534,12 @@ pub fn adj_invested_capital(balance_entry: &serde_json::Value) -> Option<f64> {
 // ── ROIC from key_metrics (pre-computed) ──────────────────────────────────────
 
 /// Extract ROIC from key_metrics data (pre-computed by FMP/EODHD).
-pub fn extract_roic_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_roic_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
     metrics_entry.get("roic").and_then(|v| v.as_f64())
 }
 
 /// Extract invested capital from key_metrics data.
-pub fn extract_invested_capital_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_invested_capital_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
     metrics_entry
         .get("investedCapital")
         .or_else(|| metrics_entry.get("totalAssets"))

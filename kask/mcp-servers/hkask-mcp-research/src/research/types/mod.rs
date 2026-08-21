@@ -14,33 +14,33 @@ use serde::{Deserialize, Serialize};
 // ── Constants ──
 
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const BRAVE_API_BASE: &str = "https://api.search.brave.com/res/v1";
-pub const FIRECRAWL_API_BASE: &str = "https://api.firecrawl.dev/v2";
-pub const TAVILY_API_BASE: &str = "https://api.tavily.com";
+pub(crate) const BRAVE_API_BASE: &str = "https://api.search.brave.com/res/v1";
+pub(crate) const FIRECRAWL_API_BASE: &str = "https://api.firecrawl.dev/v2";
+pub(crate) const TAVILY_API_BASE: &str = "https://api.tavily.com";
 pub const SERPAPI_BASE: &str = "https://serpapi.com/search";
-pub const EXA_API_BASE: &str = "https://api.exa.ai";
-pub const BROWSERBASE_API_BASE: &str = "https://api.browserbase.com/v1";
+pub(crate) const EXA_API_BASE: &str = "https://api.exa.ai";
+pub(crate) const BROWSERBASE_API_BASE: &str = "https://api.browserbase.com/v1";
 pub const DEFAULT_CACHE_TTL_SECS: u64 = 300;
-pub const MAX_CACHE_TTL_SECS: u64 = 7200;
-pub const DEFAULT_CACHE_MAX_ENTRIES: usize = 50;
-pub const MAX_CACHE_MAX_ENTRIES: usize = 200;
-pub const MAX_CACHE_VALUE_BYTES: usize = 1_048_576;
-pub const RRF_K: u64 = 60;
-pub const RATE_LIMIT_WINDOW_SECS: u64 = 60;
-pub const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
-pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
-pub const MAX_QUERY_LENGTH: usize = 400;
-pub const MAX_URL_LENGTH: usize = 2048;
-pub const MAX_INSTRUCTION_LENGTH: usize = 2000;
-pub const MAX_JSON_PROMPT_LENGTH: usize = 4000;
-pub const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
+pub(crate) const MAX_CACHE_TTL_SECS: u64 = 7200;
+pub(crate) const DEFAULT_CACHE_MAX_ENTRIES: usize = 50;
+pub(crate) const MAX_CACHE_MAX_ENTRIES: usize = 200;
+pub(crate) const MAX_CACHE_VALUE_BYTES: usize = 1_048_576;
+pub(crate) const RRF_K: u64 = 60;
+pub(crate) const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+pub(crate) const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
+pub(crate) const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
+pub(crate) const MAX_QUERY_LENGTH: usize = 400;
+pub(crate) const MAX_URL_LENGTH: usize = 2048;
+pub(crate) const MAX_INSTRUCTION_LENGTH: usize = 2000;
+pub(crate) const MAX_JSON_PROMPT_LENGTH: usize = 4000;
+pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 
 // ── Re-exports ──
 
-pub use freshness::{Freshness, freshness_brave, freshness_serpapi};
-pub use ranking::{apply_rerank, parse_age_to_days, rrf_score};
-pub use rate_limiter::RateLimiter;
-pub use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
+pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
+pub(crate) use ranking::{apply_rerank, parse_age_to_days, rrf_score};
+pub(crate) use rate_limiter::RateLimiter;
+pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 
 // ── Request types ──
 
@@ -55,13 +55,13 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FindSimilarRequest {
+pub(crate) struct FindSimilarRequest {
     pub url: String,
     pub num_results: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExtractRequest {
+pub(crate) struct ExtractRequest {
     pub url: String,
     pub format: Option<String>,
     pub json_prompt: Option<String>,
@@ -77,14 +77,14 @@ pub struct ExtractRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowseRequest {
+pub(crate) struct BrowseRequest {
     pub url: String,
     pub instruction: Option<String>,
     pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct EvaluateEvidenceRequest {
+pub(crate) struct EvaluateEvidenceRequest {
     /// The research question to evaluate evidence against.
     pub question: String,
     /// Artifacts to evaluate (URLs + optional content/metadata from web_search/web_extract).
@@ -92,7 +92,7 @@ pub struct EvaluateEvidenceRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct EvaluateArtifact {
+pub(crate) struct EvaluateArtifact {
     pub url: String,
     /// Title of the source (from SearchResultOutput.title).
     pub title: Option<String>,
@@ -105,7 +105,7 @@ pub struct EvaluateArtifact {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CiteSourcesRequest {
+pub(crate) struct CiteSourcesRequest {
     /// Sources to cite (URLs + metadata from web_search/web_extract results).
     pub sources: Vec<CiteSource>,
     /// Citation style.
@@ -113,7 +113,7 @@ pub struct CiteSourcesRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CiteSource {
+pub(crate) struct CiteSource {
     pub url: String,
     pub title: Option<String>,
     pub published: Option<String>,
@@ -123,7 +123,7 @@ pub struct CiteSource {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CiteStyle {
+pub(crate) enum CiteStyle {
     Apa,
     Bibtex,
     Chicago,
@@ -144,7 +144,7 @@ pub struct SearchResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractedContent {
+pub(crate) struct ExtractedContent {
     pub url: String,
     pub content: String,
     pub format: String,
@@ -152,7 +152,7 @@ pub struct ExtractedContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrowseResult {
+pub(crate) struct BrowseResult {
     pub url: String,
     pub content: String,
     pub instruction: Option<String>,
@@ -169,7 +169,7 @@ pub struct SearchQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractOptions {
+pub(crate) struct ExtractOptions {
     pub format: String,
     pub json_prompt: Option<String>,
     pub json_schema: Option<serde_json::Value>,
@@ -223,7 +223,7 @@ impl From<WebError> for McpToolError {
 // ── Capability / provider types ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SearchCapability {
+pub(crate) enum SearchCapability {
     Keyword,
     News,
     Freshness,
@@ -232,7 +232,7 @@ pub enum SearchCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RankedResult {
+pub(crate) struct RankedResult {
     pub title: String,
     pub url: String,
     pub description: Option<String>,
@@ -249,26 +249,26 @@ pub struct RankedResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnswerBox {
+pub(crate) struct AnswerBox {
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfo {
+pub(crate) struct ProviderInfo {
     pub kind: String,
     pub capabilities: Vec<SearchCapability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderFailureRecord {
+pub(crate) struct ProviderFailureRecord {
     pub kind: String,
     pub error: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct CompoundSearchResult {
+pub(crate) struct CompoundSearchResult {
     pub query: String,
     pub strategy: String,
     pub results: Vec<RankedResult>,
@@ -285,7 +285,7 @@ pub struct CompoundSearchResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SearchStrategy {
+pub(crate) enum SearchStrategy {
     Quick,
     Web,
     News,
@@ -303,7 +303,7 @@ impl SearchStrategy {
     }
 }
 
-pub enum ProviderFilter {
+pub(crate) enum ProviderFilter {
     All,
     Capabilities(Vec<SearchCapability>),
 }
@@ -336,7 +336,7 @@ impl std::str::FromStr for SearchStrategy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RerankSignal {
+pub(crate) enum RerankSignal {
     Recency,
     Semantic,
     ContentQuality,
@@ -345,7 +345,7 @@ pub enum RerankSignal {
 // ── Output types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResultOutput {
+pub(crate) struct SearchResultOutput {
     pub title: String,
     pub url: String,
     pub description: Option<String>,
@@ -372,7 +372,7 @@ impl From<&RankedResult> for SearchResultOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchOutput {
+pub(crate) struct SearchOutput {
     pub query: String,
     pub strategy: String,
     pub results: Vec<SearchResultOutput>,
@@ -385,7 +385,7 @@ pub struct SearchOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchMetadata {
+pub(crate) struct SearchMetadata {
     pub strategy: String,
     pub providers_queried: Vec<ProviderInfo>,
     pub providers_succeeded: Vec<String>,
@@ -410,7 +410,7 @@ impl From<&CompoundSearchResult> for SearchMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindSimilarResultOutput {
+pub(crate) struct FindSimilarResultOutput {
     pub title: String,
     pub url: String,
     pub description: Option<String>,
@@ -421,14 +421,14 @@ pub struct FindSimilarResultOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindSimilarOutput {
+pub(crate) struct FindSimilarOutput {
     pub source_url: String,
     pub results: Vec<FindSimilarResultOutput>,
     pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractOutput {
+pub(crate) struct ExtractOutput {
     pub url: String,
     pub format: String,
     pub content: String,
@@ -437,7 +437,7 @@ pub struct ExtractOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrowseOutput {
+pub(crate) struct BrowseOutput {
     pub url: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -448,7 +448,7 @@ pub struct BrowseOutput {
 // ── Health / ping types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderHealthEntry {
+pub(crate) struct ProviderHealthEntry {
     pub kind: String,
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -456,7 +456,7 @@ pub struct ProviderHealthEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PingOutput {
+pub(crate) struct PingOutput {
     pub status: String,
     pub version: String,
     pub providers: Vec<ProviderHealthEntry>,
