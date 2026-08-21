@@ -32,7 +32,6 @@ pub(crate) fn compute_budget(lines: usize, profile: Profile) -> (usize, bool) {
 
 pub trait CondenserAlgorithm: Send + Sync {
     fn name(&self) -> &str;
-    fn description(&self) -> &str;
     fn default_for(&self) -> &[ContextCategory];
     /// Compress the input and return (compressed_content, health_signals).
     /// `ontology_anchor` provides domain context for saliency weighting (P8.1).
@@ -51,9 +50,6 @@ pub struct RtkStyleAlgorithm;
 impl CondenserAlgorithm for RtkStyleAlgorithm {
     fn name(&self) -> &str {
         "rtk_style"
-    }
-    fn description(&self) -> &str {
-        "Command-specific rules: filter, group, truncate, dedup"
     }
     fn default_for(&self) -> &[ContextCategory] {
         &[
@@ -161,9 +157,6 @@ impl CondenserAlgorithm for WordRankAlgorithm {
     fn name(&self) -> &str {
         "word_rank"
     }
-    fn description(&self) -> &str {
-        "TF-IDF bag-of-words compression with structural bonus and ontology anchoring"
-    }
     fn default_for(&self) -> &[ContextCategory] {
         &[
             ContextCategory::ConversationHistory,
@@ -228,7 +221,7 @@ impl CondenserAlgorithm for WordRankAlgorithm {
 /// Extracted from the condenser's ontology bonus logic for reuse by the
 /// communication gate and other callers that need domain relevance without the
 /// full compression pipeline.
-pub fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
+pub(crate) fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
     let direct = match anchor {
         Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Fibo,
@@ -374,9 +367,6 @@ impl FlashrankAlgorithm {
 impl CondenserAlgorithm for FlashrankAlgorithm {
     fn name(&self) -> &str {
         "flashrank"
-    }
-    fn description(&self) -> &str {
-        "Greedy marginal-utility selection under token budget"
     }
     fn default_for(&self) -> &[ContextCategory] {
         &[
@@ -549,20 +539,10 @@ pub fn classify_tool(tool_name: &str) -> ContextCategory {
     ContextCategory::Unknown
 }
 
-/// Derive the ontology anchor from the tool name alone.
-///
-/// The condenser compresses tool outputs and has only the tool name to go
-/// on. The tool name carries the calling server's functional area, which
-/// is the domain hint: `select_ontology_anchor` maps it to the axis
-/// anchoring. The domain-selection logic lives in the shared
-/// `hkask-bridge-ontology` crate; this is a thin pass-through.
-pub fn derive_ontology_anchor(tool_name: &str) -> OntologyAnchor {
-    select_ontology_anchor(tool_name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_bridge_ontology::dc_bibo;
 
     #[test]
     fn compute_budget_passthrough_when_within_profile() {
@@ -637,123 +617,6 @@ mod tests {
         assert_eq!(classify_tool("cargo_test"), ContextCategory::ShellCommand);
         assert_eq!(classify_tool("npm-build"), ContextCategory::ShellCommand);
         assert_eq!(classify_tool("npm_build"), ContextCategory::ShellCommand);
-    }
-
-    // ── Ontology derivation tests (P5.4/P8.1) ─────────────────────────────
-
-    #[test]
-    fn derive_ontology_fibo_for_financial_tools() {
-        assert_eq!(
-            derive_ontology_anchor("company_profile"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-        assert_eq!(
-            derive_ontology_anchor("stock_screener"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-        assert_eq!(
-            derive_ontology_anchor("dcf_valuation"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_sumo_for_memory_tools() {
-        // Memory/cognitive domains no longer have a CogAT supplement; they route
-        // to SUMO (the universal fallback) which provides the upper-ontology
-        // categories (Process, Proposition) for cognitive concepts.
-        assert_eq!(
-            derive_ontology_anchor("memory_recall"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Sumo,
-                concept: sumo::ENTITY.to_string()
-            }
-        );
-        assert_eq!(
-            derive_ontology_anchor("episodic_store"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Sumo,
-                concept: sumo::ENTITY.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_pko_for_kanban_tools() {
-        assert_eq!(
-            derive_ontology_anchor("kanban_task_create"),
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: pko::PROCEDURE.to_string()
-            }
-        );
-        assert_eq!(
-            derive_ontology_anchor("test_task"),
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: pko::PROCEDURE.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_golem_for_corpus_persona_tools() {
-        assert_eq!(
-            derive_ontology_anchor("corpus_build_persona"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Golem,
-                concept: dc_bibo::TEXT.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_mlschema_for_training_tools() {
-        assert_eq!(
-            derive_ontology_anchor("training_submit"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::MlSchema,
-                concept: dc_bibo::DATASET.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_sumo_for_unknown_tools() {
-        // Unknown tools route to SUMO (the universal fallback), not Core.
-        assert_eq!(
-            derive_ontology_anchor("unknown_tool"),
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Sumo,
-                concept: sumo::ENTITY.to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn derive_ontology_core_for_empty_tool_name() {
-        // An empty tool name has no signal — the 5W1H core is the right anchor.
-        assert_eq!(derive_ontology_anchor(""), OntologyAnchor::Core);
-    }
-
-    #[test]
-    fn derive_ontology_dc_bibo_for_file_tools() {
-        assert_eq!(
-            derive_ontology_anchor("file_read"),
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::DcBibo,
-                concept: dc_bibo::TEXT.to_string()
-            }
-        );
     }
 
     #[test]
@@ -1018,12 +881,12 @@ mod tests {
         assert!(result.lines().count() <= 30);
     }
 
-    /// Test that `derive_ontology_anchor` + compress produces correct anchors end-to-end.
+    /// Test that `select_ontology_anchor` + compress produces correct anchors end-to-end.
     #[test]
     fn derive_and_compress_with_correct_anchor() {
         // Simulate the engine's workflow: tool_name → derive anchor → compress
         let tool_name = "company_profile";
-        let anchor = derive_ontology_anchor(tool_name);
+        let anchor = select_ontology_anchor(tool_name);
         assert_eq!(
             anchor,
             OntologyAnchor::DomainSupplement {

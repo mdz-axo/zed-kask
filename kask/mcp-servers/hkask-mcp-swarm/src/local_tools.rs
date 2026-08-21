@@ -203,7 +203,7 @@ impl SwarmServer {
                     pass: all_passed,
                     score: None,
                     detail: Some(detail_parts.join("; ")),
-                    provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                    provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
                 });
             }
             // Stamp the bind check result onto the delegation result.
@@ -1463,14 +1463,14 @@ impl SwarmServer {
 
     /// Deterministic task-success evaluator. The Curator (or a human) calls
     /// this after `swarm_delegate_local` to stamp a `TaskSuccessVerdict` with
-    /// `provenance: Deterministic` onto the delegation result. This is the
+    /// `provenance: DeterministicEvaluator` onto the delegation result. This is the
     /// enforcement point for the C5/C6 fault-attribution loop: ORIENT's
     /// highest-fidelity fault signal (rule 1: per-delegation task failure)
     /// requires a deterministic `task_success` verdict — an LLM-judged verdict
     /// is downgraded by ORIENT (Gap S3). No ABW calls, no ledger spend —
     /// evaluation is free.
     #[tool(
-        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: Deterministic. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
+        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,
@@ -1498,7 +1498,7 @@ impl SwarmServer {
                     pass,
                     score: None,
                     detail: Some(detail),
-                    provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                    provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
                 };
                 Ok(serde_json::to_value(&verdict).unwrap_or_else(
                     |_| serde_json::json!({ "error": "failed to serialize verdict" }),
@@ -1586,7 +1586,7 @@ impl SwarmServer {
                                         pass
                                     )),
                                     provenance:
-                                        crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                                        crate::local_runtime::VerdictSource::DeterministicEvaluator,
                                 });
                             }
                             // Record stigmergy (same as swarm_delegate_local).
@@ -1777,7 +1777,8 @@ impl SwarmServer {
                                 {
                                     let verdict = serde_json::json!({
                                         "pass": passed,
-                                        "source": "deterministic_evaluator",
+                                        "source": hkask_event_store::VerdictSource::DeterministicEvaluator.as_str(),
+                                        "rollout_kind": hkask_event_store::RolloutKind::Delegation.as_str(),
                                         "evaluator": task.evaluator.evaluator,
                                         "spec_len": task.evaluator.spec.len(),
                                         "harness_run_id": harness_run_id,
@@ -1837,6 +1838,7 @@ impl SwarmServer {
                         "overall_pass_rate": overall_pass_rate,
                         "total_rollouts": total_rollouts,
                         "total_passes": total_passes,
+                        "rollout_kind": hkask_event_store::RolloutKind::HarnessRun.as_str(),
                     });
                     if let Err(error) = store.append(&req.agent_name, "harness_summary", &summary) {
                         events_dropped += 1;

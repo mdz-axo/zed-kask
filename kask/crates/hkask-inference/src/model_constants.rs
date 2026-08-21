@@ -45,9 +45,6 @@ pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Default vision model for image analysis.
-pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
-
 /// Default agent model for local swarm agents (the model the agent runs on).
 /// Used by `SwarmConfig::default()` and `KaskSwarmSettings::default()`.
 pub const DEFAULT_AGENT_MODEL: &str = "claude-haiku-4-5-20251001";

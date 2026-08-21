@@ -12,12 +12,12 @@
 //!   - `rtk_style` — head/tail preservation with ontology-aware split ratios
 //!   - `word_rank` — TF-IDF bag-of-words compression with structural bonus and ontology anchoring
 //!   - `flashrank` — greedy marginal-utility selection under token budget
-//!     The `derive_ontology_anchor` function maps tool names to the 3-tier ontology
-//!     hierarchy without wire-protocol overhead — every MCP server links against the
-//!     same bridge crates.
-//!     `domain_saliency` is a public free function for scoring text relevance against
-//!     an ontology anchor using graph proximity — reusable by communication gates
-//!     and other callers independent of the compression pipeline.
+//!     The `select_ontology_anchor` function (re-exported from `hkask-bridge-ontology`
+//!     via `types`) maps tool names to the 3-tier ontology hierarchy without
+//!     wire-protocol overhead — every MCP server links against the same bridge
+//!     crates.
+//!     `domain_saliency` scores text relevance against an ontology anchor using
+//!     graph proximity — used by `WordRankAlgorithm` internally.
 //! - **`ontology_graph`** — A lightweight cross-domain concept relationship
 //!   index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO). Built once
 //!   at startup via `OnceLock`, zero dependencies, no reasoners. Used as a
@@ -37,8 +37,8 @@
 //!   compression path wired into the agent turn loop)
 //! - `kask_bridge::BridgeThreadCondenser` (in-process thread condensation)
 
-pub mod algorithms;
+pub(crate) mod algorithms;
 pub mod engine;
-pub mod ontology_graph;
-pub mod saliency;
+pub(crate) mod ontology_graph;
+pub(crate) mod saliency;
 pub mod types;

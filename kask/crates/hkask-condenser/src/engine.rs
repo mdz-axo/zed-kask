@@ -12,7 +12,7 @@
 //! actual feedback channel is the daemon's `store_experience` call in the
 //! MCP server layer. See the condenser README for details.
 
-use crate::algorithms::{AlgorithmRegistry, classify_tool, derive_ontology_anchor};
+use crate::algorithms::{AlgorithmRegistry, classify_tool};
 use crate::types::*;
 use std::time::Instant;
 
@@ -26,7 +26,7 @@ use std::time::Instant;
 /// that surfaced it. The runtime bridge path (`BridgeThreadCondenser`)
 /// never used it.
 pub struct CondenserEngine {
-    pub registry: AlgorithmRegistry,
+    pub(crate) registry: AlgorithmRegistry,
     profile: Profile,
 }
 
@@ -56,7 +56,7 @@ impl CondenserEngine {
 
         // Derive ontology anchor from tool name — every MCP server links
         // against the same bridge crates; no wire-protocol fields needed.
-        let ontology_anchor = derive_ontology_anchor(tool_name);
+        let ontology_anchor = select_ontology_anchor(tool_name);
         let tier_label = ontology_anchor.tier_label();
 
         let start = Instant::now();

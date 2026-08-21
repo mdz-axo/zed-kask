@@ -131,7 +131,7 @@ mod tests {
                     "latency_ms": 4200,
                     "tool_calls": [{"name":"web_search","ok":true}],
                     "executed_skills": [],
-                    "task_success": {"pass": true, "score": 1.0, "provenance": "deterministic"}
+                    "task_success": {"pass": true, "score": 1.0, "provenance": "deterministic_evaluator"}
                 },
                 {
                     "agent_id": "writer",
@@ -144,7 +144,7 @@ mod tests {
                     "latency_ms": 2100,
                     "tool_calls": [],
                     "executed_skills": [{"id":"eqm","ok":true}],
-                    "task_success": {"pass": false, "score": 0.4, "detail": "missing citation", "provenance": "deterministic"}
+                    "task_success": {"pass": false, "score": 0.4, "detail": "missing citation", "provenance": "deterministic_evaluator"}
                 }
             ]
         }"#;
@@ -156,7 +156,7 @@ mod tests {
         let verdict = body.results[0].task_success.as_ref().expect("verdict");
         assert!(verdict.pass);
         assert_eq!(verdict.score, Some(1.0));
-        assert_eq!(verdict.provenance, "deterministic");
+        assert_eq!(verdict.provenance, "deterministic_evaluator");
         assert_eq!(body.results[1].cost_uncapped, 25);
     }
 

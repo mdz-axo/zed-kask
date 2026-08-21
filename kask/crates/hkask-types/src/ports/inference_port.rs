@@ -20,9 +20,8 @@ pub type EmbedFuture<'a> =
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
 /// A model available from an inference provider.
 ///
-/// Simplified version of `hkask_inference::RouterModelEntry` that lives in
-/// `hkask-types` so the `InferencePort` trait can return it without depending
-/// on `hkask-inference`.
+/// Returned by `InferencePort::list_models`; lives in `hkask-types` so the
+/// `InferencePort` trait can return it without depending on `hkask-inference`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     /// Full model name with provider prefix (e.g., "OpenRouter/z-ai/glm-5.2")

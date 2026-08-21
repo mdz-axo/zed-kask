@@ -3,7 +3,7 @@ name = "hkask-condenser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Context condensation domain logic — compression algorithms, classification, profile management, and inference formatting"
+description = "Context condensation domain logic — compression algorithms, classification, profile management"
 
 
 [lib]
@@ -11,7 +11,6 @@ path = "src/hkask_condenser.rs"
 
 [dependencies]
 hkask-bridge-ontology.workspace = true
-hkask-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

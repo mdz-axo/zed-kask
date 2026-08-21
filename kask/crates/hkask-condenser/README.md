@@ -12,8 +12,7 @@ no HTTP, no async.
 | `ontology_graph` | Cross-domain concept relationship index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO) |
 | `types` | `OntologyAnchor`, `Profile`, `ContextCategory`, `CompressedOutput`, health signals |
 | `engine` | `CondenserEngine` — compression dispatch and profile management |
-| `inference` | Prompt formatting and token estimation for LLM thread summarization |
-| `saliency` | Persona word-overlap scoring, memory query-word extraction, memory result scoring |
+| `saliency` | Word-frequency computation shared with `WordRankAlgorithm` |
 
 ## Compression Profiles
 
@@ -84,10 +83,8 @@ The `reg.condenser` tracing spans are **diagnostic logging** for human inspectio
 
 The `hkask-mcp-condenser` MCP server was removed during the skill-system migration cleanup (2026-08). The condenser is now a pure domain library consumed only by `kask_bridge`.
 
-## Saliency Architecture
+## Saliency
 
-The saliency module is pure domain logic in the domain crate:
-
-- **Domain crate** (`saliency.rs`): `score_against_persona`, `extract_query_words`, `score_memory_results` — pure functions, fully testable without memory stores.
-
-The `word_frequencies` function is the canonical word-frequency computation shared with `WordRankAlgorithm` — the algorithm delegates to `saliency` instead of maintaining a copy.
+The `saliency` module (`pub(crate)`) provides `word_frequencies` — the canonical
+word-frequency computation that `WordRankAlgorithm` delegates to instead of
+maintaining a copy.

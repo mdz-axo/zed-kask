@@ -1241,7 +1241,7 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
         curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
         embedding_port,
         embedding_model: "test-model".to_string(),
-        webid: WebID::new(),
+        user_webid: WebID::new(),
         curator_webid: WebID::from_persona(b"curator"),
         consolidation: None,
         curator_consolidation: Arc::new(RwLock::new(None)),
