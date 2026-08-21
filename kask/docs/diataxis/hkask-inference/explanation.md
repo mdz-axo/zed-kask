@@ -125,18 +125,23 @@ the type when it falls back to in-memory delegation; the other two stubs are
 private because every call site goes through the `Arc<dyn …Port>` trait
 object.
 
-## Why `resolve_ports` shares one connection
+## Why `resolve_ports` shares one connection (crate-internal)
 
-`resolve_ports` (`hkask_inference.rs:290`) connects to the bridge **once**
-and clones the single `InferenceIpcClient` into the three trait objects of
-`InferencePorts` (`hkask_inference.rs:277`). The `InferenceIpcClient` is
+`resolve_ports` (`hkask_inference.rs:290`) connects to the bridge **once** and
+clones the single `InferenceIpcClient` into the three trait objects of
+`InferencePorts` (`hkask_inference.rs:277`, `pub(crate)`). It is a
+crate-internal convenience: external MCP server crates use the per-port
+resolvers (`resolve_inference_port`, `resolve_tool_dispatch_port`,
+`resolve_worktree_spawn_port`) because `InferencePorts` is `pub(crate)` and not
+nameable outside the crate. The `InferenceIpcClient` is
 `#[derive(Clone)]` (`inference_ipc_client.rs:173`); the clone shares the
 `Arc<Mutex<Option<UnixStream>>>` socket and the `Arc<AtomicU64>` id counter,
 so the three objects multiplex on one connection, serialized by the stream
 mutex. This avoids the three separate socket connections that calling
 `resolve_inference_port` + `resolve_tool_dispatch_port` +
 `resolve_worktree_spawn_port` independently would open. Servers that need
-only one port can still call the per-port resolver directly.
+only one port can still call the per-port resolver directly — which is what
+the real MCP servers do.
 
 ## Why prefix-based provider selection
 

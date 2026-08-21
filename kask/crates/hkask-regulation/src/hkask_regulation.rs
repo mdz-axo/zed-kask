@@ -27,18 +27,15 @@ pub(crate) mod tool_stats;
 pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::{CyberneticsLoop, RolloutEventSource};
-};
 pub use energy::{CallCap, CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{
     AlertEvent, AlertSink, EscalationAlert, HealthSnapshot, MetacognitionLoop,
 };
 
 pub use hkask_types::regulation::QueueDepth;
-pub use loops::RegulatoryAction;
 pub use loops::CurationInput;
+pub use loops::RegulatoryAction;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
-};
-};
 pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};
 pub use tool_stats::ToolStats;

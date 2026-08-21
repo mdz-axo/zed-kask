@@ -57,10 +57,13 @@ bridge client. If the env var is unset, or the socket connection fails, it
 returns an `UnavailableInference` stub. Each branch logs at `info` or `warn`
 level so the operator can verify the routing from server startup logs.
 
-Servers that need more than one port should call `resolve_ports()`
-(`hkask_inference.rs:290`) instead — it connects once and clones the single
-client into `InferencePorts { inference, tool_dispatch, worktree_spawn }`
-(`hkask_inference.rs:277`).
+Servers that need more than one port can call the additional per-port
+resolvers (`resolve_tool_dispatch_port`, `resolve_worktree_spawn_port`)
+alongside it; the crate-internal `resolve_ports()` (`hkask_inference.rs:290`)
+connects once and clones the single client into `InferencePorts`
+(`hkask_inference.rs:277`, `pub(crate)`) for kask-internal consumers —
+external MCP server crates use the per-port resolvers (the `InferencePorts`
+type is `pub(crate)`, not nameable outside the crate).
 
 ## Step 2: Call an InferencePort method
 

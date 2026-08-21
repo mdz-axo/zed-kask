@@ -9,7 +9,6 @@ pub mod store_macros;
 pub mod connection;
 pub mod security;
 
-pub(crate) use connection::{DEFAULT_EMBEDDING_DIM, check_passphrase};
 pub use connection::{Database, DatabaseError, embedding_dim, open_database, open_or_repair};
 pub use security::sanitize_path;
 pub use store_macros::DatabaseDriverTrait;
