@@ -10,12 +10,6 @@
 
 Kask is a **local, single-user** agentic AI toolkit — not a cloud platform, not an agent framework. There is no autonomous agent loop by default; the human is in the loop, and skills escalate _to the user_. Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the named seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
 
-> **Linux x86_64 prebuilt binaries available.** Install `zed-kask` plus all `hkask-mcp-*` MCP server binaries:
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
-> ```
-
 ---
 
 ## What You Get
@@ -57,12 +51,12 @@ Two native panels extend the steering surface. The **swarm panel** composes and 
 
 ## Installation
 
-### Prebuilt binary (Linux x86_64)
+### Source build (Linux, requires Rust toolchain)
 
-Downloads the latest release archive — `zed-kask` plus all `hkask-mcp-*` binaries — verifies it against the published `SHA256SUMS`, and installs to `~/.local/bin`:
+There are no prebuilt binaries yet — Zed-Kask is built from source. The installer clones the repo at a pinned tag, installs system dependencies via `script/linux`, builds `zed-kask` and all `hkask-mcp-*` MCP server binaries with `cargo`, and installs them to `~/.local/bin`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 ```
 
 Verify the install:
@@ -80,25 +74,20 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Environment variables the installer honors:
 
-| Variable               | Default            | Purpose                                               |
-| ---------------------- | ------------------ | ----------------------------------------------------- |
-| `HKASK_VERSION`        | latest release     | Pin a release tag (e.g. `v0.233.10`)                 |
-| `INSTALL_DIR`          | `$HOME/.local`     | Install prefix; binaries land in `$INSTALL_DIR/bin`   |
-| `HKASK_SYSTEM_INSTALL` | unset              | Set to `true` to symlink into `/usr/local/bin`        |
-| `HKASK_REPO`           | `mdz-axo/zed-kask` | Override the GitHub owner/repo                        |
-| `HKASK_REMOVE_CONFIG`  | unset              | Set to `true` to remove config and data on uninstall  |
+| Variable                 | Default                          | Purpose                                                         |
+| ------------------------ | -------------------------------- | --------------------------------------------------------------- |
+| `HKASK_VERSION`          | derived from workspace `Cargo.toml` (or `0.36.0`) | Pin a release tag (e.g. `0.233.10`)                  |
+| `HKASK_BUILD_TYPE`       | `release`                        | `release` or `debug`                                            |
+| `HKASK_SOURCE_DIR`       | unset                            | Use an existing checkout instead of cloning                     |
+| `HKASK_REPO_URL`         | `https://github.com/mdz-axo/zed-kask.git` | Override the clone URL                                |
+| `HKASK_ALLOW_FALLBACK`   | `false`                          | Set to `true` to fall back to `main` if the tag is missing      |
+| `INSTALL_DIR`            | `$HOME/.local`                   | Install prefix; binaries land in `$INSTALL_DIR/bin`             |
+| `HKASK_SYSTEM_INSTALL`   | `false`                          | Set to `true` to symlink into `/usr/local/bin`                  |
+| `HKASK_REMOVE_CONFIG`    | `false`                          | Set to `true` to remove config and data on uninstall            |
+
+Flags: `--debug` (debug build), `--skip-deps` (skip `script/linux`), `--system` (system-wide install), `--uninstall`.
 
 An updater is installed alongside the binaries; run `update-zed-kask` (or `kask/scripts/build/update-zed-kask.sh`) to move to a newer release.
-
-### Source build (Linux, requires Rust toolchain)
-
-If you prefer to build from source, or as a fallback when the prebuilt binary download fails, the source-build installer clones the repo at the pinned tag, installs system dependencies via `script/linux`, and builds with `cargo`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
-```
-
-The binary installer (`install-binary.sh`) automatically falls back to this path if the prebuilt archive download fails, fetching the installer scripts from the release assets (tag-pinned, checksum-verified).
 
 ---
 
@@ -128,13 +117,7 @@ For Kask-specific contribution (skills, MCP servers, the architecture), start at
 
 ## Releases
 
-Releases are cut by pushing a `v*` tag (e.g. `v0.233.10`). The release workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes.
-
-Release assets:
-
-- `zed-kask-x86_64-unknown-linux-gnu.tar.gz` — `zed-kask` + all `hkask-mcp-*` binaries
-- `install.sh`, `install-common.sh`, `mcp-servers.txt` — source-build fallback scripts (tag-pinned, checksum-verified)
-- `SHA256SUMS` — checksums for all of the above
+Releases are cut by pushing a `v*` tag (e.g. `v0.233.10`). The release workflow publishes the source-build installer scripts (tag-pinned, checksum-verified) and a `SHA256SUMS` file, and opens a GitHub Release with auto-generated notes. There are no prebuilt binary archives yet — install via the source-build installer above.
 
 See the [releases page](https://github.com/mdz-axo/zed-kask/releases) for all published versions.
 
