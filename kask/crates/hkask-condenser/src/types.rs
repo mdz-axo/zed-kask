@@ -168,9 +168,11 @@ pub struct CompressedOutput {
 }
 
 /// Signal emitted when a condenser algorithm exhibits unexpected behavior.
-/// These are Regulation `reg.condenser.*` ν-event candidates — they indicate that
-/// the algorithmic performance deviated from expected bounds, not that the
-/// compression failed (content is still returned).
+/// They indicate that the algorithmic performance deviated from expected
+/// bounds, not that the compression failed (content is still returned).
+/// Condenser telemetry is diagnostic and rides `hkask.condenser`; promoting a
+/// signal to a ν-event means registering a `reg.*` namespace and wiring a
+/// consumer, neither of which exists today.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CondenserHealthSignal {
     /// Algorithm that produced the signal.

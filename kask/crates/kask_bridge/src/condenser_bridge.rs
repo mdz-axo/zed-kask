@@ -51,7 +51,7 @@ impl ThreadCondenser for BridgeThreadCondenser {
             Ok(e) => e,
             Err(e) => {
                 tracing::warn!(
-                    target: "reg.condenser",
+                    target: "hkask.condenser",
                     error = %e,
                     "CondenserEngine lock poisoned — returning uncompressed output"
                 );
@@ -62,7 +62,7 @@ impl ThreadCondenser for BridgeThreadCondenser {
         let result = engine.compress(tool_name, output, None);
 
         tracing::debug!(
-            target: "reg.condenser",
+            target: "hkask.condenser",
             tool = %tool_name,
             original_bytes = result.original_bytes,
             compressed_bytes = result.compressed_bytes,

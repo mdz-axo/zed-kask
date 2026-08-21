@@ -1187,11 +1187,11 @@ impl super::CyberneticsLoop {
 #[cfg(test)]
 mod tests {
     use crate::CyberneticsLoop;
-    use crate::RolloutEventSource;
     use crate::loops::{
         ActionType, LoopId, RegulationData, RegulatoryAction, RegulatoryActionParams,
     };
     use crate::runtime::RegulationLedger;
+    use crate::{RolloutEventError, RolloutEventSource};
     use std::sync::{Arc, Mutex};
     use tokio::sync::RwLock;
 
@@ -1215,6 +1215,9 @@ mod tests {
     /// no-data and error branches must NOT record a verdict and must NOT fall
     /// through to the struct-walk fallback (B1).
     struct MockRolloutEventSource {
+        /// `Err` holds only the failure detail; the typed
+        /// [`RolloutEventError`] is built at the trait boundary so the mock
+        /// does not force `Clone` onto the port's error type.
         before_after: Mutex<Result<Option<(f64, f64)>, String>>,
         verdicts: Mutex<Vec<RecordedVerdict>>,
     }
@@ -1249,8 +1252,12 @@ mod tests {
             _rollout_id: &str,
             _metric: &str,
             _before_position: i64,
-        ) -> Result<Option<(f64, f64)>, String> {
-            self.before_after.lock().expect("before_after lock").clone()
+        ) -> Result<Option<(f64, f64)>, RolloutEventError> {
+            self.before_after
+                .lock()
+                .expect("before_after lock")
+                .clone()
+                .map_err(|detail| RolloutEventError::Query { detail })
         }
         fn append_impact_verdict(
             &self,
@@ -1260,7 +1267,7 @@ mod tests {
             after: f64,
             improved: bool,
             decision: &str,
-        ) -> Result<(), String> {
+        ) -> Result<(), RolloutEventError> {
             self.verdicts
                 .lock()
                 .expect("verdicts lock")

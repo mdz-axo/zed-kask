@@ -32,6 +32,26 @@ mod directive;
 
 use crate::dampener::{Dampener, StagnationDetector};
 
+/// Why a [`RolloutEventSource`] call could not be served.
+///
+/// The regulation crate owns the port but not the storage engine, so the
+/// adapter's concrete error type is not nameable here. Each variant carries
+/// the adapter's rendered detail; the variant itself is the part the loop
+/// reasons about (a failed read blinds `verify_impact`; a failed write-back
+/// only loses the persisted verdict).
+#[derive(Debug, thiserror::Error)]
+pub enum RolloutEventError {
+    /// The backing store could not be queried for the rollout's events. The
+    /// loop cannot tell "no baseline" from "store down", so it must warn
+    /// rather than treat the absence as a measurement.
+    #[error("event store query failed: {detail}")]
+    Query { detail: String },
+    /// The impact verdict could not be appended. The loop's in-memory
+    /// `ImpactReport` is unaffected; only the durable record is lost.
+    #[error("impact verdict write-back failed: {detail}")]
+    WriteBack { detail: String },
+}
+
 /// A read-and-write view of rollout events for impact verification and
 /// impact- verdict write-back (event-substrate phase 6). The regulation
 /// crate defines the port; the swarm side implements it over
@@ -56,7 +76,7 @@ pub trait RolloutEventSource: Send + Sync {
         rollout_id: &str,
         metric: &str,
         before_position: i64,
-    ) -> Result<Option<(f64, f64)>, String>;
+    ) -> Result<Option<(f64, f64)>, RolloutEventError>;
 
     /// Write the regulation loop's impact verdict back to the event store
     /// as a `verdict` event with `source: regulation_impact`. Closes the
@@ -82,7 +102,7 @@ pub trait RolloutEventSource: Send + Sync {
         after: f64,
         improved: bool,
         decision: &str,
-    ) -> Result<(), String>;
+    ) -> Result<(), RolloutEventError>;
 }
 use crate::energy::{CallCapError, CallCapManager, CallMeterOutcome};
 

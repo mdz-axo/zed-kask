@@ -91,9 +91,9 @@ The cycle steps, in order:
    (`kask/crates/hkask-condenser/src/algorithms.rs:40`) returns
    `(content, health_signals)`.
 6. **Emit** — the engine assembles a `CompressedOutput`
-   (`kask/crates/hkask-condenser/src/engine.rs:85`) and emits two
-   diagnostic `reg.condenser` spans
-   (`kask/crates/hkask-condenser/src/engine.rs:67` and `:83`).
+   (`kask/crates/hkask-condenser/src/engine.rs:86`) and emits two
+   diagnostic `hkask.condenser` spans
+   (`kask/crates/hkask-condenser/src/engine.rs:68` and `:84`).
 
 ## Why ontology anchoring
 

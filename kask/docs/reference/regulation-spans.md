@@ -230,7 +230,7 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 | **Backup** | `reg.backup`, `reg.backup.variety` | Backup operations |
 | **Chat/Condense** | `reg.chat`, `reg.chat.condense` | Chat and condensation events |
 | **Communication** | `reg.communication.agent`, `.agent.deregistered`, `.agent.invited`, `.agent.registered`, `.listener`, `.listener.started`, `.listener.stopped`, `.message`, `.message.ignored`, `.message.observed`, `.thread`, `.thread.created`, `.thread.monitored` | Multi-agent communication (legacy; servers deleted) |
-| **Condenser** | `reg.condenser` | Condenser operations |
+
 | **Consent** | `reg.consent` | Consent decisions |
 | **Consolidation** | `reg.consolidation` | Memory consolidation |
 | **Curation/Curator** | `reg.curation`, `reg.curation.escalation`, `reg.curation.escalation.critical`, `reg.curation.matrix`, `reg.curator`, `reg.curator.consolidation`, `reg.curator.efficiency.exceeded`, `reg.curator.metacognition` | Curation loop operations, escalation signals, curator efficiency and metacognition events |

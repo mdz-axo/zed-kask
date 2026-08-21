@@ -5,12 +5,13 @@
 //! once at startup and is immutable; `CondenserEngine` holds only the
 //! active profile as mutable state.
 //!
-//! ## Regulation Spans
+//! ## Telemetry
 //!
-//! The `tracing::debug!` calls with `target: "reg.condenser"` are diagnostic
-//! logging for human inspection, NOT cybernetic feedback signals. The
-//! actual feedback channel is the daemon's `store_experience` call in the
-//! MCP server layer. See the condenser README for details.
+//! The `tracing::debug!` calls with `target: "hkask.condenser"` are diagnostic
+//! logging for human inspection, NOT cybernetic feedback signals — which is
+//! why they sit under `hkask.*` rather than the reserved `reg.*` prefix
+//! (PRINCIPLES §9.1). The actual feedback channel is the daemon's
+//! `store_experience` call in the MCP server layer. See the condenser README.
 
 use crate::algorithms::{AlgorithmRegistry, classify_tool};
 use crate::types::*;
@@ -61,10 +62,10 @@ impl CondenserEngine {
 
         let start = Instant::now();
 
-        // Diagnostic Regulation span — see module docs: these are diagnostic-only,
+        // Diagnostic telemetry — see module docs: these are diagnostic-only,
         // not cybernetic feedback signals. Emitted at `debug` to avoid log spam
         // (one pair of spans per tool-result compression).
-        tracing::debug!(target: "reg.condenser", operation = "compress", algorithm = %algorithm_name, category = %cat.label(), tool_name = %tool_name, ontology_tier = %tier_label, "REG");
+        tracing::debug!(target: "hkask.condenser", operation = "compress", algorithm = %algorithm_name, category = %cat.label(), tool_name = %tool_name, ontology_tier = %tier_label, "REG");
 
         let (compressed_content, health_signals) =
             algo.compress(output, self.profile, cat, Some(&ontology_anchor));
@@ -79,8 +80,8 @@ impl CondenserEngine {
             (1.0 - (compressed_bytes as f64 / original_bytes as f64)) * 100.0
         };
 
-        // Diagnostic Regulation span
-        tracing::debug!(target: "reg.condenser", operation = "compression_ratio", algorithm = %algorithm_name, category = %cat.label(), reduction_pct = %format!("{:.1}", reduction_pct), original_bytes = original_bytes, compressed_bytes = compressed_bytes, latency_ms = start.elapsed().as_millis(), "REG");
+        // Diagnostic telemetry
+        tracing::debug!(target: "hkask.condenser", operation = "compression_ratio", algorithm = %algorithm_name, category = %cat.label(), reduction_pct = %format!("{:.1}", reduction_pct), original_bytes = original_bytes, compressed_bytes = compressed_bytes, latency_ms = start.elapsed().as_millis(), "REG");
 
         CompressedOutput {
             content: compressed_content,

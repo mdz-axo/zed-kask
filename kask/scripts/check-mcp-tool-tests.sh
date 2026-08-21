@@ -24,11 +24,17 @@
 #   0 — all servers either have tool-behavior tests or are allowlisted
 #   1 — a server lacks tool-behavior tests AND is not allowlisted (regression)
 #
-# Usage: bash scripts/check-mcp-tool-tests.sh
+# Usage: bash kask/scripts/check-mcp-tool-tests.sh (from any directory)
 #        HKASK_MCP_TOOL_TEST_STRICT=1  # treat allowlisted gaps as warnings only
 #                                     # (still exit 0) — use during ramp-up
 
 set -euo pipefail
+
+# The default SCAN_DIRS glob is relative to the kask root. Without this cd the
+# glob matched nothing when the gate was invoked from the repo root, the loop
+# body never ran, and the gate exited 0 while checking nothing — a vacuous pass.
+# The self-test already documented this cd as the gate's contract.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 # Servers known to lack tool-behavior contract tests today. Shrink over time.
 # Remove a name the moment its tests/ contains a `Parameters(` call.

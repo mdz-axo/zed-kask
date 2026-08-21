@@ -68,14 +68,14 @@ The ontology graph encodes concept relationships (e.g., `fibo:Corporation` →
 `HasProperty` → `fibo:MarketCapitalization`) and serves as a saliency
 multiplier — lines containing graph-adjacent concepts get bonus scores.
 
-## Regulation Spans
+## Telemetry
 
-The `reg.condenser` tracing spans are **diagnostic logging** for human inspection — NOT cybernetic feedback signals. They are not consumed by any regulation policy or feedback loop. The actual feedback channel is the daemon's `store_experience` call in the MCP server layer.
+The `hkask.condenser` tracing spans are **diagnostic logging** for human inspection — NOT cybernetic feedback signals. They are not consumed by any regulation policy or feedback loop, which is why they sit under `hkask.*` and not the reserved `reg.*` prefix (PRINCIPLES §9.1). The actual feedback channel is the daemon's `store_experience` call in the MCP server layer.
 
 | Span | Fields | When |
 |------|--------|------|
-| `reg.condenser` compress | `algorithm`, `category`, `tool_name`, `ontology_tier` | Every compression |
-| `reg.condenser` compression_ratio | `reduction_pct`, `original_bytes`, `compressed_bytes`, `latency_ms` | Every compression |
+| `hkask.condenser` compress | `algorithm`, `category`, `tool_name`, `ontology_tier` | Every compression |
+| `hkask.condenser` compression_ratio | `reduction_pct`, `original_bytes`, `compressed_bytes`, `latency_ms` | Every compression |
 
 ## Consumers
 

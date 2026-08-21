@@ -192,7 +192,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
 | Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |
-| Condenser | `reg.condenser` | 3 | ✅ compression ratio + health | `Condenser` |
+
 | Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/publish/validate | `Skill` |
 | MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + in-process wiring | *(stringly-typed)* |
 | Kata coaching | `reg.kata` | 20 | ✅ PDCA cycles, automaticity | `Kata` |

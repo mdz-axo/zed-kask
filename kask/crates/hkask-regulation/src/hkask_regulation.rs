@@ -23,7 +23,7 @@ pub(crate) mod tool_stats;
 
 pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
-pub use cybernetics_loop::{CyberneticsLoop, RolloutEventSource};
+pub use cybernetics_loop::{CyberneticsLoop, RolloutEventError, RolloutEventSource};
 pub use energy::{CallCap, CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{
     AlertEvent, AlertSink, EscalationAlert, HealthSnapshot, MetacognitionLoop,

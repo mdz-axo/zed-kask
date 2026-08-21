@@ -264,18 +264,19 @@ The anchor exposes `confidence_modifier`
 `axis` (`kask/crates/hkask-bridge-ontology/src/axis.rs:190`), and
 `tier_label` (`kask/crates/hkask-bridge-ontology/src/axis.rs:199`).
 
-## Regulation spans
+## Telemetry spans
 
-The `reg.condenser` tracing spans emitted at
-`kask/crates/hkask-condenser/src/engine.rs:67` and
-`kask/crates/hkask-condenser/src/engine.rs:83` are diagnostic logging
+The `hkask.condenser` tracing spans emitted at
+`kask/crates/hkask-condenser/src/engine.rs:68` and
+`kask/crates/hkask-condenser/src/engine.rs:84` are diagnostic logging
 for human inspection, NOT cybernetic feedback signals. They are not
-consumed by any regulation policy or feedback loop.
+consumed by any regulation policy or feedback loop, so they ride the
+`hkask.*` telemetry prefix rather than the reserved `reg.*` prefix.
 
 | Span | Fields | When |
 |------|--------|------|
-| `reg.condenser` compress | `algorithm`, `category`, `tool_name`, `ontology_tier` | Every compression |
-| `reg.condenser` compression_ratio | `reduction_pct`, `original_bytes`, `compressed_bytes`, `latency_ms` | Every compression |
+| `hkask.condenser` compress | `algorithm`, `category`, `tool_name`, `ontology_tier` | Every compression |
+| `hkask.condenser` compression_ratio | `reduction_pct`, `original_bytes`, `compressed_bytes`, `latency_ms` | Every compression |
 
 ## Consumers
 

@@ -22,7 +22,7 @@
 //! for each regression — the first live traffic through the seam.
 
 use hkask_event_store::{EventFilter, EventStore};
-use hkask_regulation::RolloutEventSource;
+use hkask_regulation::{RolloutEventError, RolloutEventSource};
 use hkask_storage::database::driver::DatabaseDriver;
 use std::sync::Arc;
 
@@ -99,14 +99,16 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         rollout_id: &str,
         metric: &str,
         before_position: i64,
-    ) -> Result<Option<(f64, f64)>, String> {
+    ) -> Result<Option<(f64, f64)>, RolloutEventError> {
         let events = self
             .store
             .query(&hkask_event_store::EventFilter {
                 rollout: Some(rollout_id.to_string()),
                 ..hkask_event_store::EventFilter::default()
             })
-            .map_err(|e| format!("event store query failed: {e}"))?;
+            .map_err(|e| RolloutEventError::Query {
+                detail: e.to_string(),
+            })?;
         if events.is_empty() {
             // No events for this rollout — absence, not zero.
             return Ok(None);
@@ -149,7 +151,7 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         after: f64,
         improved: bool,
         decision: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), RolloutEventError> {
         // Write the regulation loop's impact verdict back to the store as
         // a verdict event with source = regulation_impact. This closes the
         // feedback loop: downstream consumers (training bridge, regression
@@ -172,7 +174,9 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         });
         self.store
             .append(rollout_id, "verdict", &payload)
-            .map_err(|e| format!("impact verdict write-back failed: {e}"))?;
+            .map_err(|e| RolloutEventError::WriteBack {
+                detail: e.to_string(),
+            })?;
         Ok(())
     }
 }

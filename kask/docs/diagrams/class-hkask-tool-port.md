@@ -107,8 +107,9 @@ the inference IPC dispatch, each swarm card's `mcp_tools` allowlist, and the
 per-server MCP env/credential allowlists.
 
 Information flow is not gated anywhere. Defense **Layer 5 is absent by decision**,
-in the same register as Layer 3 (instruction hierarchy, RR-0010) — see
-`kask/security/regressions/RR-0053.yaml`.
+in the same register as Layer 3 (instruction hierarchy) — the FIDES taint lattice
+was deleted because both inputs to its `Source`→`Sink` block were constants, so
+the gate could never deny.
 
 ## Related
 
