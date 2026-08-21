@@ -461,10 +461,11 @@ The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-secur
 
 Out-of-scope layers: **Layer 5 (information flow control) is absent by decision**
 platform-wide — the FIDES taint machinery was deleted 2026-08-12 because both
-inputs to its `Source`→`Sink` block were constants, so it could not deny
-(`security/regressions/RR-0053.yaml`, now an absence check stating the bar a real
-IFC gate must clear). This is a recorded architectural choice, in the same register
-as Layer 3 (RR-0010) — not a deferral this server can close. Layer 8 (deception
+inputs to its `Source`→`Sink` block were constants, so it could not deny. A
+replacement IFC gate must first give tools real labels and propagate taint on
+context write; until then the layer stays absent rather than advertised. This is
+a recorded architectural choice, in the same register as Layer 3 — not a deferral
+this server can close. Layer 8 (deception
 detection) remains deferred by design with documented re-entry conditions — see the
 plan's §14.
 

@@ -2,9 +2,8 @@
 # Stability gate for the evolving test harness.
 #
 # Computes ECR/EIR/Acc from mutation testing (non-degenerate oracle) +
-# regression-prevention guard (RR-*.yaml) + classifier (EIR secondary).
-# Emits a verdict: proceed, halt_escalate, stalled_escalate,
-# regression_violated, or converged.
+# classifier (EIR secondary). Emits a verdict: proceed, halt_escalate,
+# stalled_escalate, or converged.
 #
 # Usage: stability-gate.sh <run-id-N> [run-id-N-1] [run-id-N-2] [run-id-N-3]
 #
@@ -17,7 +16,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TRACE_DIR="${HKASK_TRACE_DIR:-traces}"
-REGRESSIONS_DIR="security/regressions"
 VERBOSE=0
 MUTATION_SCORE_FLOOR="${HKASK_MUTATION_SCORE_FLOOR:-0.50}"
 
@@ -75,27 +73,6 @@ metric_present() {
         return 1
     fi
 }
-
-# ── Regression-prevention guard (RR-*.yaml) ────────────────────────────────
-
-regression_violated=0
-if [[ -f "scripts/lib-regressions.sh" ]] && [[ -d "$REGRESSIONS_DIR" ]]; then
-    # shellcheck source=scripts/lib-regressions.sh
-    source scripts/lib-regressions.sh
-    if ! check_regressions "" "" "reg-span" >/dev/null 2>&1; then
-        regression_violated=1
-    fi
-fi
-
-if [[ "$regression_violated" -eq 1 ]]; then
-    echo "VERDICT: regression_violated"
-    echo "reason: an enforced RR-*.yaml entry flipped pass to fail"
-    echo "ECR: N/A"
-    echo "EIR: N/A"
-    echo "Acc: N/A"
-    echo "mutation_score: N/A"
-    exit 0
-fi
 
 # ── Mutation score (non-degenerate oracle) ─────────────────────────────────
 

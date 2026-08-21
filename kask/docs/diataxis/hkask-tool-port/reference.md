@@ -213,10 +213,9 @@ hardcoded `Pure` at the only `ToolInfo` construction site, so the `Sink` arm
 never matched. An inert gate is worse than no gate — it invites reliance on a
 protection that does not exist.
 
-Governing entry: `kask/security/regressions/RR-0053.yaml`, rewritten as an
-absence check that forbids re-adding the machinery in inert form and states the
-bar a real IFC gate must clear. Full rationale:
-`kask/security/regressions/RR-0053.yaml`.
+The machinery must not be re-added in inert form. The bar a real IFC gate must
+clear: tools carrying real labels, taint propagated on context write, and a test
+showing a `Source → Sink` flow being refused.
 
 ## CapabilityTier (sibling crate)
 
@@ -258,7 +257,10 @@ status: VERIFIED
 - [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P4 (Clear Boundaries).
-- `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.
+
+> `RR-NNNN` ids in this document refer to the retired `kali-audit` security
+> regression library (removed 2026-08-20). They are historical rationale
+> markers only; there is no longer a file to open.
 
 ---
 

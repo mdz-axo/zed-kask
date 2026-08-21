@@ -13,13 +13,18 @@
 #   0 — all enforced grep regressions pass
 #   1 — an enforced grep regression's pattern was found
 #
-# Usage: bash scripts/check-lora-training-regressions.sh
+# Usage: bash kask/scripts/check-lora-training-regressions.sh (from any directory)
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+
+# Resolve the script directory BEFORE the cd — `$0` is relative to the caller's
+# working directory, so dereferencing it afterwards resolved to kask/kask/scripts
+# and the gate died on a missing source file instead of running.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 # shellcheck source=scripts/lib-regressions.sh
-source "$(dirname "$0")/lib-regressions.sh"
+source "$SCRIPT_DIR/lib-regressions.sh"
 
 # Filter to surface: training, grep against training config file types,
 # deferred kind is "runtime-assert".

@@ -95,9 +95,9 @@ omission that had nothing to do with authority.
 Defense **Layer 5 (information flow control) is absent by decision** — the
 same disposition Layer 3 (instruction hierarchy) has. That is the honest state
 and the safer one: an inert gate invites reliance on a protection that does
-not exist. RR-0053 is an absence check, and it states what a real IFC gate
-would have to prove. Rationale in full:
-`kask/security/regressions/RR-0053.yaml` (guard layer + taint gate removal).
+not exist. A real IFC gate would have to prove it can actually deny: tools
+carrying real labels, taint propagated on context write, and a test showing a
+`Source → Sink` flow being refused.
 
 ## If a real trust boundary appears
 
@@ -134,16 +134,17 @@ edge to an untrusted verifier), verification must be reintroduced with a
 **trusted root key set**, and the change must ship with a test proving that a
 mismatched request produced on a path production can actually reach is
 refused. Do not re-add a per-call authorization argument to `ToolPort::invoke`
-without that proof — see `kask/security/regressions/RR-0056.yaml`.
+without that proof.
 
 ## See also
 
 - [hkask-tool-port Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
 - [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
-- `kask/security/regressions/RR-0053.yaml`: full rationale for the guard-layer
-  and taint-gate deletions.
-- `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.
+
+> `RR-NNNN` ids in this document refer to the retired `kali-audit` security
+> regression library (removed 2026-08-20). They are historical rationale
+> markers only; there is no longer a file to open.
 
 ---
 

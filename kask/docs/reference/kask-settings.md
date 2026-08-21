@@ -137,7 +137,7 @@ log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 
 ## Guard
 
-There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded. See `kask/security/regressions/RR-0053.yaml`.[^owasp-llm-guard-settings]
+There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded.[^owasp-llm-guard-settings]
 
 ## Memory (`KaskMemorySettings`)
 

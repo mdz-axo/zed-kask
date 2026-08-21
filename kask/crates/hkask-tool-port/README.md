@@ -48,4 +48,7 @@ enforced; per-call capability **gating** is deliberately not.
 
 - [`PRINCIPLES.md`](../../docs/architecture/core/PRINCIPLES.md) §P4 — Clear Boundaries
 - [`AGENTS.md`](../../AGENTS.md) — Agent Operating Guide
-- `kask/security/regressions/RR-0056.yaml`, `RR-0057.yaml`
+
+> `RR-NNNN` ids in this document refer to the retired `kali-audit` security
+> regression library (removed 2026-08-20). They are historical rationale
+> markers only; there is no longer a file to open.

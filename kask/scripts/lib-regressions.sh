@@ -16,9 +16,9 @@
 
 # check_regressions <surface> <include_patterns> <deferred_kind_name>
 #
-# - surface: "" (all) or "training" / "supply-chain" / "runtime" / etc.
+# - surface: "" (all) or a surface name such as "training"
 # - include_patterns: grep --include flags as a single string
-# - deferred_kind_name: name for deferred regressions (e.g., "runtime-assert" / "reg-span")
+# - deferred_kind_name: name for deferred regressions (e.g., "runtime-assert")
 #
 # Supported detection kinds:
 #   grep        — pattern must NOT appear in the codebase (enforced)
@@ -29,9 +29,7 @@ check_regressions() {
   local include_patterns="$2"
   local deferred_kind="$3"
 
-  # Overridable via environment so the self-test can point at a temp copy
-  # without touching the real security/regressions/ directory (pass-3 selftest).
-  local REGRESSIONS_DIR="${KASK_REGRESSIONS_DIR:-security/regressions}"
+  local REGRESSIONS_DIR="security/regressions"
 
   if [ ! -d "$REGRESSIONS_DIR" ]; then
     echo "OK: no regressions directory — nothing to check."
@@ -167,7 +165,7 @@ check_regressions() {
           --exclude-dir=regressions \
           2>/dev/null || true)
       else
-        # Fall back to per-regression include field (kali-style).
+        # Fall back to the per-regression include field.
         local rr_include
         rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\\(.*\\)'$/\\1/")
         # Orphaned-gate detection: a stale include path (renamed crate,

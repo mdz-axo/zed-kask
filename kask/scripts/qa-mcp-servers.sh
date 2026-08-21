@@ -33,7 +33,6 @@ set -euo pipefail
 KASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MATRIX="$KASK_ROOT/docs/qa/coverage-matrix.md"
 ORACLE_DIR="$KASK_ROOT/docs/qa/oracle"
-REGRESSIONS_DIR="$KASK_ROOT/security/regressions"
 
 PER_TOOL_TIMEOUT=30
 SERVER_TIMEOUT=600
@@ -131,7 +130,6 @@ run_server() {
     env HKASK_QA_MAX_ITERATIONS="$MAX_ITERATIONS"
     env HKASK_QA_MATRIX="$MATRIX"
     env HKASK_QA_ORACLE_DIR="$ORACLE_DIR"
-    env HKASK_QA_REGRESSIONS_DIR="$REGRESSIONS_DIR"
   )
 
   # Run tests with --nocapture and parse output. cargo test emits lines like:

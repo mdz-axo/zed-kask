@@ -113,7 +113,6 @@ For the current skill catalog, see `.agents/skills/` (project-local) and `~/.loc
 | No unused crate dependencies | `nightly -D unused_crate_dependencies` | Nightly job |
 | MCP servers: tool-behavior contract tests | `Parameters(` seam | `scripts/check-mcp-tool-tests.sh` |
 | Regulation namespace invariant (`reg.*` → `CANONICAL_NAMESPACES`) | Canonical span check | `scripts/check-reg-canonical.sh` |
-| Security regression library enforced | Every `status: enforced` checked | `scripts/check-kali-regressions.sh` |
 | Training-config regression library enforced | Every `surface: training` `status: enforced` checked | `scripts/check-lora-training-regressions.sh` |
 
 Only #1 partially CI-gated; #2–#4 enforced by review.
