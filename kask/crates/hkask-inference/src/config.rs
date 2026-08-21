@@ -284,8 +284,4 @@ impl ProviderConfig {
             api_key: resolve_api_key(&format!("{env_prefix}_API_KEY")),
         }
     }
-
-    pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty()
-    }
 }

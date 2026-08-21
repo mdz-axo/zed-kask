@@ -80,16 +80,16 @@ source. Symbols removed in the refactor (notably `chat_protocol`,
 | Symbol | Location |
 |--------|----------|
 | public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:36-37` |
-| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:43` |
-| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:54` |
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:93` |
-| `UnavailableInference` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:111` |
-| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:188` |
-| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:200` |
-| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:228` |
-| `UnavailableWorktreeSpawn` (`pub`) | `kask/crates/hkask-inference/src/hkask_inference.rs:239` |
-| `InferencePorts` struct | `kask/crates/hkask-inference/src/hkask_inference.rs:276` |
-| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:289` |
+| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:44` |
+| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:55` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
+| `UnavailableInference` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:112` |
+| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:189` |
+| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:201` |
+| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:229` |
+| `UnavailableWorktreeSpawn` (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:240` |
+| `InferencePorts` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:277` |
+| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:290` |
 
 ### `model_constants.rs`
 
@@ -168,9 +168,11 @@ classDiagram
 
 The three unavailable stubs (`UnavailableInference`, `UnavailableToolDispatch`,
 `UnavailableWorktreeSpawn`) are the fallbacks `resolve_ports` / the per-port
-resolvers return when the bridge is down. `UnavailableWorktreeSpawn` is `pub`
-(so `LazyLocalSwarmRuntime` can name the type); the other two are private
-because every call site goes through the `Arc<dyn …Port>` trait object.
+resolvers return when the bridge is down. `UnavailableWorktreeSpawn` is `pub(crate)`
+(so `LazyLocalSwarmRuntime` — also `pub(crate)` — can name the type); the other two
+stubs and `InferencePorts` are private/`pub(crate)` because every external call
+site goes through the `Arc<dyn …Port>` trait object returned by the per-port
+resolvers.
 
 ## `ProviderId`
 
@@ -255,33 +257,33 @@ cases (OCR, classification, summarization, etc.).
 
 The lib root (`hkask_inference.rs`) provides three per-port resolvers plus the
 shared-connection `resolve_ports`. Each resolver calls
-`connect_bridge(label)` (`hkask_inference.rs:54`) — the single match+log site —
+`connect_bridge(label)` (`hkask_inference.rs:55`) — the single match+log site —
 and, on `None`, returns a socket-named stub.
 
 | Resolver | Location | Fallback |
 |----------|----------|----------|
-| `resolve_inference_port` | `hkask_inference.rs:93` | `UnavailableInference` (private) |
-| `resolve_tool_dispatch_port` | `hkask_inference.rs:188` | `UnavailableToolDispatch` (private) |
-| `resolve_worktree_spawn_port` | `hkask_inference.rs:228` | `UnavailableWorktreeSpawn` (pub) |
-| `resolve_ports` | `hkask_inference.rs:289` | all three stubs |
+| `resolve_inference_port` | `hkask_inference.rs:94` | `UnavailableInference` (private) |
+| `resolve_tool_dispatch_port` | `hkask_inference.rs:189` | `UnavailableToolDispatch` (private) |
+| `resolve_worktree_spawn_port` | `hkask_inference.rs:229` | `UnavailableWorktreeSpawn` (`pub(crate)`) |
+| `resolve_ports` | `hkask_inference.rs:290` | all three stubs |
 
-`resolve_ports` (`hkask_inference.rs:289`) connects **once** and clones the
+`resolve_ports` (`hkask_inference.rs:290`) connects **once** and clones the
 single `InferenceIpcClient` into all three trait objects
 (`InferencePorts { inference, tool_dispatch, worktree_spawn }`,
-`hkask_inference.rs:276`). The shared `Arc`-backed socket and id counter mean
+`hkask_inference.rs:277`). The shared `Arc`-backed socket and id counter mean
 the three objects multiplex on one connection, serialized by the stream
 mutex. This avoids the three separate socket connections that calling the
 per-port resolvers independently would open. Prefer `resolve_ports` when an
 MCP server needs more than one port.
 
-The `UnavailableInference` stub (`hkask_inference.rs:111`) overrides
+The `UnavailableInference` stub (`hkask_inference.rs:112`) overrides
 `generate`, `generate_vision`, `embed`, **and** `list_models` with
 socket-named errors so a missing bridge is never read as `Ok(Vec::new())` —
 the `.rules` broken-feedback-loop trap (the trait's default `list_models`
 returns an empty `Vec`, which a DB outage / missing socket would otherwise
 look like). `UnavailableToolDispatch` (`:200`) and `UnavailableWorktreeSpawn`
 (`:239`) return a `Connection` error naming the missing socket
-(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:43`). Tool dispatch and
+(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:44`). Tool dispatch and
 worktree spawn only exist on the zed side — there is no standalone fallback.
 
 ## Model constants

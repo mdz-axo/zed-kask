@@ -32,7 +32,6 @@ pub mod model_constants;
 pub mod openai_compat;
 
 // Re-exports — public API
-pub(crate) use config::ProviderConfig;
 pub use config::{InferenceConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 
@@ -258,49 +257,5 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
                 "worktree spawn unavailable: {IPC_BRIDGE_UNAVAILABLE}"
             )))
         })
-    }
-}
-
-/// The three MCP-server-side ports resolved from one IPC-bridge connection.
-///
-/// [`resolve_ports`] connects to the zed IPC bridge **once** and derives all
-/// three trait objects from a single [`InferenceIpcClient`] (cloned — the
-/// `Arc`-backed socket and id counter are shared, so the three objects
-/// multiplex on one connection, serialized by the stream mutex). This avoids
-/// the three separate socket connections that calling
-/// [`resolve_inference_port`] + [`resolve_tool_dispatch_port`] +
-/// [`resolve_worktree_spawn_port`] independently would open. When the bridge is
-/// unavailable, all three fall back to their respective unavailable stubs.
-///
-/// Prefer this over the per-port resolvers when an MCP server needs more than
-/// one port.
-pub(crate) struct InferencePorts {
-    pub inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    pub tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
-    pub worktree_spawn: std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>,
-}
-
-/// Resolve all three MCP-server ports from one IPC-bridge connection.
-///
-/// Connects once (`HKASK_INFERENCE_SOCKET`) and, on success, clones the single
-/// [`InferenceIpcClient`] into the three trait objects (shared socket + id
-/// counter — see [`InferencePorts`]). On failure, returns the three unavailable
-/// stubs (each method names the missing socket).
-#[must_use]
-pub async fn resolve_ports() -> InferencePorts {
-    match connect_bridge("MCP inference/tool-dispatch/worktree-spawn").await {
-        Some(client) => InferencePorts {
-            inference: std::sync::Arc::new(client.clone())
-                as std::sync::Arc<dyn hkask_types::InferencePort>,
-            tool_dispatch: std::sync::Arc::new(client.clone())
-                as std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
-            worktree_spawn: std::sync::Arc::new(client)
-                as std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>,
-        },
-        None => InferencePorts {
-            inference: std::sync::Arc::new(UnavailableInference),
-            tool_dispatch: std::sync::Arc::new(UnavailableToolDispatch),
-            worktree_spawn: std::sync::Arc::new(UnavailableWorktreeSpawn),
-        },
     }
 }

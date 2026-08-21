@@ -397,7 +397,7 @@ impl EscalationBatch {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct EscalationStats {
+pub struct EscalationStats {
     pub total: i64,
     pub pending: i64,
     pub resolved: i64,

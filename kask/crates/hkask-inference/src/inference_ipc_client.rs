@@ -175,7 +175,7 @@ pub struct InferenceIpcClient {
     /// in flight at a time (the protocol is request-response, not multiplexed).
     stream: Arc<Mutex<Option<UnixStream>>>,
     /// Next request ID. Shared across clones so one connection can serve multiple
-    /// trait objects (see `hkask_inference::resolve_ports`).
+    /// trait objects (see `resolve_inference_port` and siblings).
     next_id: Arc<AtomicU64>,
 }
 

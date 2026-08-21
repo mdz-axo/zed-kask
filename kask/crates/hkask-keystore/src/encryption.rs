@@ -1,20 +1,9 @@
 //! AES-256-GCM encryption with Argon2 key derivation
 
-use aes_gcm::{
-    Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit},
-};
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand::RngCore;
 use std::time::Instant;
 use thiserror::Error;
 use zeroize::Zeroizing;
-
-/// Salt size for Argon2 (16 bytes = 128 bits)
-pub(crate) const SALT_SIZE: usize = 16;
-
-/// Nonce size for AES-GCM (12 bytes = 96 bits)
-pub(crate) const NONCE_SIZE: usize = 12;
 
 /// Argon2id memory cost: 64 MiB (OWASP recommendation for high-security)
 /// This is the amount of memory used in KiB.
@@ -39,69 +28,6 @@ pub enum EncryptionError {
     Decryption(String),
     #[error("Invalid passphrase")]
     InvalidPassphrase,
-}
-
-/// Encryption service using AES-256-GCM
-pub(crate) struct EncryptionService {
-    cipher: Aes256Gcm,
-}
-
-impl EncryptionService {
-    /// Create a new encryption service from a passphrase
-    pub fn new(passphrase: &str, salt: &[u8]) -> Result<Self, EncryptionError> {
-        if passphrase.is_empty() {
-            return Err(EncryptionError::InvalidPassphrase);
-        }
-
-        let key = derive_key(passphrase, salt)?;
-        let cipher = Aes256Gcm::new_from_slice(&*key)
-            .map_err(|e| EncryptionError::Encryption(e.to_string()))?;
-
-        Ok(Self { cipher })
-    }
-
-    /// Generate a random salt
-    pub fn generate_salt() -> [u8; SALT_SIZE] {
-        let mut salt = [0u8; SALT_SIZE];
-        rand::rng().fill_bytes(&mut salt);
-        salt
-    }
-
-    /// Encrypt plaintext data
-    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
-        let mut nonce_bytes = [0u8; NONCE_SIZE];
-        rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = self
-            .cipher
-            .encrypt(nonce, plaintext)
-            .map_err(|e| EncryptionError::Encryption(e.to_string()))?;
-
-        // Prepend nonce to ciphertext
-        let mut result = nonce_bytes.to_vec();
-        result.extend_from_slice(&ciphertext);
-
-        Ok(result)
-    }
-
-    /// Decrypt ciphertext data
-    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
-        if ciphertext.len() < NONCE_SIZE {
-            return Err(EncryptionError::Decryption(
-                "Ciphertext too short".to_string(),
-            ));
-        }
-
-        let nonce_bytes = &ciphertext[..NONCE_SIZE];
-        let data = &ciphertext[NONCE_SIZE..];
-
-        let nonce = Nonce::from_slice(nonce_bytes);
-
-        self.cipher
-            .decrypt(nonce, data)
-            .map_err(|e| EncryptionError::Decryption(e.to_string()))
-    }
 }
 
 /// Derive a 32-byte key from a passphrase using Argon2id with secure parameters

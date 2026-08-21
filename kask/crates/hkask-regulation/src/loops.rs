@@ -43,12 +43,9 @@ pub mod signals;
 pub use actions::{ActionType, RegulatoryAction};
 pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
 pub use channels::CurationInput;
-pub(crate) use channels::{
-    CommunicationEvent, GoalLifecycle, GoalTransitionEvent, ToolConsumptionEvent,
-};;
+};
 pub use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
-pub(crate) use episodic::ExperienceClassification;
 pub use signals::Signal;
 pub(crate) use signals::{Deviation, DeviationDirection, SignalMetric};
 
