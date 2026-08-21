@@ -105,21 +105,6 @@ impl SqliteDriver {
         Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")))
     }
 
-    /// Create a pool for a file-backed SQLite database (WAL mode, FKs on).
-    /// For stores that want durable, unencrypted storage without the
-    /// SQLCipher/passphrase layer (e.g. the media gallery — non-secret
-    /// metadata + lineage). WAL gives concurrent-reader, single-writer
-    /// semantics without read-locking writers.
-    pub fn file_pool(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
-        // Reuse the shared `WAL_PRAGMA_BATCH` (busy_timeout before journal_mode
-        // = WAL). A bespoke string that omitted `busy_timeout` left this pool
-        // failing instantly on write contention with `r2d2: database is locked`;
-        // every other kask pool already routes through this constant.
-        let manager = SqliteConnectionManager::file(path)
-            .with_init(|conn| conn.execute_batch(WAL_PRAGMA_BATCH));
-        Pool::builder().build(manager)
-    }
-
     /// Prefix the pool label (if any) to a connection-acquisition error.
     fn map_conn_err(&self, e: impl std::fmt::Display) -> DbError {
         DbError::Connection(self.enrich(&e))

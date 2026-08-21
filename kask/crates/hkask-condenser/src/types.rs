@@ -34,16 +34,6 @@ pub use hkask_bridge_ontology::sumo;
 // Request Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PersistRequest {
-    /// Tool name that produced the content.
-    pub tool_name: String,
-    /// Content to persist (compressed output or thread summary).
-    pub compressed_output: String,
-    /// Optional confidence for the stored h_mem (0.0–1.0, default 1.0).
-    pub confidence: Option<f64>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Profile {

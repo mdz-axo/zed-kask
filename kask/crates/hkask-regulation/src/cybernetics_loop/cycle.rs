@@ -1,463 +1,216 @@
-//! Cybernetics Loop — Homeostatic self-regulation (Loop 6)
+//! The regulation cycle — sense → compare → compute → act → verify.
 //!
-//! The Cybernetics Loop is a closed-loop controller, not a passive observer.
-//! Its functional contract:
-//!
-//! 1. **Sense** — receive `reg.*` spans from all loops (tool invocations,
-//!    prompt outcomes, agent pod lifecycle, connector I/O).
-//! 2. **Compare** — evaluate each signal against homeostatic set-points:
-//!    call-cap remaining, variety counter balance, error rate threshold,
-//!    connector latency envelope.
-//! 3. **Compute** — when a signal deviates beyond its set-point, produce an
-//!    efferent signal: throttle, escalate, calibrate, or circuit-break.
-//! 4. **Act** — dispatch the efferent signal to the target loop's `regulate`
-//!    entry point.
-//!
-//! The loop is self-stabilizing: if the Cybernetics Loop itself becomes unstable
-//! (e.g., alert cascade), the Curation Loop detects it via metacognitive monitoring
-//! and intervenes. This is the two-level meta-loop stability guarantee.
-//!
-//! # Essential Subloops
-//!
-//! - 6.1 Access Guard (GUARD) — OCAP verification + sovereignty enforcement
-//! - 6.3 Variety Sensing (SENSE) — measure variety across domains
-//! - 6.4 Algedonic Regulation (ADAPT) — deficit → threshold → escalate
-//! - 6.6 Revocation (WITHDRAW) — persistent deny-future
-//!
-//! Energy homeostasis is NOT a subloop — it is expressed as set-points
-//! in `SetPoints` + regulation actions via `InferenceRegulation`.
+//! Extracted from the cybernetics_loop god-module. The facade's `tick`
+//! orchestrates these phases; each phase is `pub(super)` so the facade can
+//! call it. Action construction (`build_regulation_action`), alert routing
+//! (`route_action_as_alert`), and the cycle-internal helpers
+//! (`try_substitute`, `persist_alert_to_queue`) are private to this module.
 
-mod cycle;
-mod directive;
-
-use crate::dampener::{Dampener, StagnationDetector};
-
-/// A read-only view of rollout events for impact verification (event-
-/// substrate phase 6). The regulation crate defines the port; the swarm
-/// side implements it over `hkask-event-store`. This keeps the regulation
-/// crate dependency-light (no storage dep) while letting `verify_impact`
-/// answer "for rollout R, what was the metric before action A and after
-/// it?" as a query instead of a special-case struct walk.
-pub trait RolloutEventSource: Send + Sync {
-    /// The value of `metric` for `rollout_id` at the event position
-    /// `before_position` (the last event before the action) and at the
-    /// rollout's end. `None` when the rollout has no event for that metric
-    /// — absence, not zero (a fabricated 0 would read as a real measurement).
-    fn metric_before_and_after(
-        &self,
-        rollout_id: &str,
-        metric: &str,
-        before_position: i64,
-    ) -> Result<Option<(f64, f64)>, String>;
-}
-use crate::energy::{CallCapError, CallCapManager, CallMeterOutcome};
-
-use crate::runtime::{RegulationCycleEntry, RegulationLedger};
-use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
-use crate::set_points::SetPoints;
-use crate::strategy_evaluator::StrategyEvaluator;
-use crate::system_simulator::MovingAverageExtrapolator;
-use crate::tool_stats::ToolStats;
-
-use crate::types::loops::RegulationData;
-use crate::types::loops::{
-    ActionDecision, ActionType, CurationInput, LoopId, LoopMetrics, RegulatoryAction,
-    RegulatoryActionParams, TriggerOrigin,
+use crate::algedonic::{AlertSeverity, RuntimeAlert};
+use crate::regulation_policy::{
+    self, RegulationPolicy, RegulationReason, classify_decision, default_substitution_ladder,
+    extract_deficit_threshold,
 };
-
-use hkask_types::CuratorDirective;
+use crate::set_points::InferenceThrottleMode;
+use crate::types::loops::{
+    ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, RegulatoryAction,
+    RegulatoryActionParams, Signal, SignalMetric,
+};
+use crate::types::loops::{BudgetOption, RegulationData};
 use hkask_types::WebID;
-use hkask_types::event::RegulationSink;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
-use tokio::sync::{RwLock, mpsc};
+use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
 
-/// Runtime-calibratable regulation thresholds — mutable layer over `SetPoints` defaults.
-struct CalibratedThresholds {
-    stagnation_thresholds: HashMap<String, u32>,
-    block_worsening_ratio: f64,
-    substitution_after: u32,
-}
-
-/// The Cybernetics Loop — homeostatic self-regulation.
-///
-/// Implements the sense→compare→compute→act regulation cycle.
-/// The Cybernetic Loop regulates all three domain loops (Inference,
-/// Episodic, Semantic) and may signal the Curation Loop via algedonic
-/// alerts. It may NOT regulate the Curation Loop.
-pub struct CyberneticsLoop {
-    ledger: Arc<RwLock<RegulationLedger>>,
-    call_cap_manager: Arc<RwLock<CallCapManager>>,
-    set_points: SetPoints,
-    /// Cascade detection — prevents unbounded sense→act cycles
-    max_iterations: u32,
-    dampener: Arc<Dampener>,
-    /// When present, algedonic alerts are persisted to RegulationArchive for restart durability.
-    event_sink: Option<Arc<dyn RegulationSink>>,
-    /// When present, algedonic alerts are persisted to the reviewable escalation
-    /// queue (the `EscalationQueue` on the curator's curator.db). This is the
-    /// primary durable path for alert review — every escalated alert is written
-    /// here unconditionally, so the Curator/user can review pending alerts via
-    /// the `curator_escalations` MCP tool and resolve/dismiss them. The
-    /// `event_sink` (`RegulationArchive`) remains as a secondary fallback for
-    /// restart durability when this queue is unavailable.
-    alert_escalation_sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
-    /// Direct alerts channel: Cybernetics → Curation (CurationInput).
-    alerts_tx: Option<mpsc::UnboundedSender<CurationInput>>,
-    alert_email_sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
-    /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
-    /// Direct curator directive channel: Curation → Cybernetics.
-    curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
-    /// Externally-submitted rollout impact checks, drained by the next
-    /// `tick`'s `verify_impact`. Producers (the rollout harness, the
-    /// Curator) submit a `RolloutImpactCheck` when they want the loop to
-    /// verify a rollout's metric movement across an action — this is the
-    /// producer side of the event-substrate phase 6 seam.
-    submitted_rollout_checks: tokio::sync::Mutex<Vec<RegulatoryAction>>,
-    /// Loop-quality telemetry from the most recent tick cycle.
-    loop_quality: RwLock<LoopMetrics>,
-    /// Path for persisting call caps across restarts.
-    budget_persistence_path: Option<std::path::PathBuf>,
-    /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
-    /// Fermi-inspired early-stopping pattern for cybernetic regulation.
-    stagnation_detector: Arc<StagnationDetector>,
-    /// Pluggable metric sensors (Fermi Extractor pattern).
-    sensor_registry: Arc<SensorBus>,
-    /// Statistical learner for per-tool cost distributions and reliability.
-    tool_stats: Option<Arc<ToolStats>>,
-    /// Multi-model strategy evaluator (Fermi improvement-loop pattern).
-    strategy_evaluator: Mutex<StrategyEvaluator>,
-    /// Predictive simulator for anticipatory regulation (Fermi dynamics pattern).
-    simulator: MovingAverageExtrapolator,
-    /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
-    calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
-    /// Optional rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for before/after metric values on rollouts
-    /// the action targeted — the store becomes the impact data plane and the
-    /// struct-walk below becomes the fallback instead of the only path.
-    rollout_events: Option<Arc<dyn RolloutEventSource>>,
-}
-
-impl CyberneticsLoop {
-    /// Create a new CyberneticsLoop with default set-points.
+impl super::CyberneticsLoop {
+    /// Attempt to substitute an action type when the proposed one has been
+    /// repeatedly ineffective (Fermi improvement-loop pattern).
     ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    pub fn new(ledger: Arc<RwLock<RegulationLedger>>) -> Self {
-        Self::build(ledger, SetPoints::default())
-    }
+    /// Checks the stagnation detector for the (metric, proposed) pair.
+    /// If it has been ineffective for ≥ `substitution_after` cycles,
+    /// walks the substitution ladder to find an untried alternative.
+    /// Returns the proposed action if no alternatives remain.
+    async fn try_substitute(&self, metric: SignalMetric, proposed: ActionType) -> ActionType {
+        let proposed_str = proposed.as_str();
+        let metric_str = metric.as_str();
 
-    /// Create a new CyberneticsLoop with custom set-points.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self with custom SetPoints applied at construction
-    pub fn with_set_points(ledger: Arc<RwLock<RegulationLedger>>, set_points: SetPoints) -> Self {
-        Self::build(ledger, set_points)
-    }
+        // Check if the proposed action has been tried enough to warrant substitution.
+        let count = self
+            .stagnation_detector
+            .ineffective_count(metric_str, proposed_str);
 
-    fn build(ledger: Arc<RwLock<RegulationLedger>>, set_points: SetPoints) -> Self {
-        let dampener = Arc::new(Dampener::with_windows(
-            std::time::Duration::from_secs(set_points.dampen_window_secs),
-            std::time::Duration::from_secs(set_points.metacognitive_window_secs),
-            std::time::Duration::from_secs(set_points.override_cooldown_secs),
-        ));
-        let max_iterations = set_points.max_iterations;
-        let stagnation_detector = Arc::new(
-            StagnationDetector::new(crate::set_points::DEFAULT_STAGNATION_THRESHOLD)
-                .with_per_metric_thresholds(set_points.stagnation_thresholds.clone()),
-        );
-        let call_cap_manager = Arc::new(RwLock::new(CallCapManager::new()));
-        let calibrated_thresholds = Arc::new(RwLock::new(CalibratedThresholds {
-            stagnation_thresholds: set_points.stagnation_thresholds.clone(),
-            block_worsening_ratio: set_points.block_worsening_ratio,
-            substitution_after: set_points.substitution_after,
-        }));
-        let sensor_registry = {
-            let registry = SensorBus::new();
-            registry.register(Arc::new(EnergyBudgetSensor::new(
-                Arc::clone(&call_cap_manager),
-                set_points.energy_min_remaining,
-            )));
-            registry.register(Arc::new(VarietySensor::new(
-                Arc::clone(&ledger),
-                set_points.variety_max_deficit,
-            )));
-            let trace_dir = std::path::PathBuf::from(
-                std::env::var("HKASK_TRACE_DIR").unwrap_or_else(|_| "kask/traces".to_string()),
-            );
-            registry.register(Arc::new(crate::sensor_provider::TestCoverageSensor::new(
-                trace_dir.clone(),
-                set_points.coverage_floor,
-            )));
-            registry.register(Arc::new(crate::sensor_provider::MutationScoreSensor::new(
-                trace_dir,
-                set_points.mutation_score_floor,
-            )));
-            Arc::new(registry)
+        if count < self.calibrated_thresholds.read().await.substitution_after {
+            return proposed; // Not enough failures yet.
+        }
+
+        // Build the substitution ladder: custom overrides > defaults.
+        let custom_ladder = self.set_points.action_substitutions.get(metric_str);
+        let ladder: Vec<ActionType> = if let Some(names) = custom_ladder {
+            names.iter().filter_map(|n| ActionType::parse(n)).collect()
+        } else {
+            default_substitution_ladder(metric).to_vec()
         };
 
-        Self {
-            ledger,
-            call_cap_manager,
-            set_points,
-            max_iterations,
-            dampener,
-            event_sink: None,
-            alert_escalation_sink: None,
-            alerts_tx: None,
-            alert_email_sink: None,
-            curator_directive_rx: None,
-            submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
-            loop_quality: RwLock::new(LoopMetrics::default()),
-            budget_persistence_path: None,
-            stagnation_detector,
-            sensor_registry,
-
-            tool_stats: None,
-            strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
-            simulator: MovingAverageExtrapolator::new(10),
-            calibrated_thresholds,
-            rollout_events: None,
+        if ladder.is_empty() {
+            return proposed; // No alternatives defined.
         }
-    }
 
-    /// Algedonic alerts and directive acknowledgments persisted to RegulationArchive.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_event_sink(mut self, sink: Arc<dyn RegulationSink>) -> Self {
-        self.event_sink = Some(sink);
-        self
-    }
+        // Find the first action in the ladder that hasn't been tried recently.
+        for &alt in &ladder {
+            if alt == proposed {
+                continue; // Skip the action we're already considering.
+            }
+            let alt_str = alt.as_str();
+            let alt_count = self
+                .stagnation_detector
+                .ineffective_count(metric_str, alt_str);
+            if alt_count == 0 {
+                tracing::info!(
+                    target: "reg.cybernetics.substitution",
+                    metric = metric_str,
+                    from = %proposed_str,
+                    to = %alt_str,
+                    failed_attempts = count,
+                    "Action substitution: replacing ineffective action with alternative"
+                );
+                self.emit_regulation_span(
+                    SpanKind::ActionSubstituted,
+                    serde_json::json!({
+                        "metric": metric_str,
+                        "from": proposed_str,
+                        "to": alt_str,
+                        "failed_attempts": count,
+                    }),
+                )
+                .await;
+                return alt;
+            }
+        }
 
-    /// Wire the rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for before/after metric values before
-    /// falling back to the in-memory re-sense path.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_rollout_event_source(mut self, source: Arc<dyn RolloutEventSource>) -> Self {
-        self.rollout_events = Some(source);
-        self
-    }
-
-    /// Set or clear the alert escalation sink after construction.
-    ///
-    /// Used by the composition root to lazily wire the escalation queue after
-    /// the curator DB passphrase resolves (post-login deferred task), mirroring
-    /// `set_event_sink`. Pass `None` to disable escalation-queue persistence.
-    pub fn set_alert_escalation_sink(
-        &mut self,
-        sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
-    ) {
-        self.alert_escalation_sink = sink;
-    }
-
-    /// Wire the direct alerts channel for Cybernetics → Curation CurationInput delivery.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_alerts_channel(mut self, tx: mpsc::UnboundedSender<CurationInput>) -> Self {
-        self.alerts_tx = Some(tx);
-        self
-    }
-
-    /// Wire the last-resort alert email sink — sends algedonic alerts via email
-    /// when the live channel and persistence are both unavailable.
-    ///
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_alert_email_sink(
-        mut self,
-        sink: Arc<dyn crate::algedonic::AlertEmailSink>,
-    ) -> Self {
-        self.alert_email_sink = Some(sink);
-        self
-    }
-
-    /// Set or clear the alert email sink after construction.
-    ///
-    /// Used by the composition root to lazily wire the email sink after
-    /// settings load (the env vars `HKASK_SMTP_USERNAME` etc. are populated
-    /// from `KaskSettings::mcp_env()` in the deferred task, not at startup).
-    /// Pass `None` to disable email alerts (the zero-config default).
-    pub fn set_alert_email_sink(
-        &mut self,
-        sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
-    ) {
-        self.alert_email_sink = sink;
-    }
-
-    /// Replace the regulation event sink after construction.
-    ///
-    /// Used by the composition root to upgrade from `NoopEventSink` to a
-    /// durable `RegulationArchive` once the curator DB passphrase resolves
-    /// (post-login deferred task).
-    pub fn set_event_sink(&mut self, sink: Arc<dyn RegulationSink>) {
-        self.event_sink = Some(sink);
-    }
-
-    /// Wire the direct curator directive channel: Curation → Cybernetics.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_curator_directive_channel(
-        mut self,
-        rx: mpsc::UnboundedReceiver<CuratorDirective>,
-    ) -> Self {
-        self.curator_directive_rx = Some(Arc::new(RwLock::new(rx)));
-        self
-    }
-
-    /// Set tool stats on an already-constructed loop (post-build wiring).
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    pub fn set_tool_stats(&mut self, stats: Arc<ToolStats>) {
-        self.sensor_registry
-            .register(Arc::new(ToolReliabilitySensor::new(
-                Arc::clone(&stats),
-                crate::tool_stats::DEFAULT_RELIABILITY_THRESHOLD,
-            )));
-        self.tool_stats = Some(stats);
-    }
-
-    /// Submit a rollout impact check for the next `verify_impact` pass.
-    ///
-    /// This is the producer side of the event-substrate phase 6 seam: a
-    /// caller that observed a metric-relevant event on a rollout (e.g. the
-    /// harness observing a pass-rate regression after a card change) asks
-    /// the loop to verify the before/after movement from the rollout event
-    /// store. The check is queued and answered on the next tick — the
-    /// submitter never blocks on the answer.
-    ///
-    /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
-    /// post: the check is queued for the next tick's verify_impact
-    pub async fn submit_rollout_impact_check(
-        &self,
-        rollout_id: String,
-        before_position: i64,
-        metric: String,
-    ) {
-        let action = RegulatoryAction::new(
-            LoopId::Curation,
-            ActionType::Notify,
-            RegulatoryActionParams::with_data(
-                "rollout_impact_check",
-                RegulationData::RolloutImpactCheck {
-                    rollout_id,
-                    before_position,
-                    metric,
-                },
-            ),
+        // All alternatives have been tried and failed — let the plateau
+        // escalation handle it.
+        tracing::warn!(
+            target: "reg.cybernetics.substitution",
+            metric = metric_str,
+            action = %proposed_str,
+            "All substitution alternatives exhausted for metric"
         );
-        let mut queue = self.submitted_rollout_checks.lock().await;
-        // Bound the queue: a producer runaway must not grow it unboundedly.
-        // Dropping the OLDEST check is correct — the newest observations are
-        // the most relevant, and the drop is visible (the queue is drained
-        // and reported per tick).
-        const MAX_SUBMITTED_CHECKS: usize = 64;
-        if queue.len() >= MAX_SUBMITTED_CHECKS {
-            queue.remove(0);
-        }
-        queue.push(action);
+        proposed
     }
 
-    /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
+    /// Emit a regulation span to the RegulationArchive for Regulation observability.
     ///
-    /// Delegates to `RegulationLedger::record_outcome`. Called by `McpRuntime`
-    /// after every governed tool invocation completes.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub async fn record_outcome(&self, domain: &str, success: bool, error_kind: Option<&str>) {
-        self.ledger
-            .read()
-            .await
-            .record_outcome(domain, success, error_kind)
-            .await;
-    }
-
-    /// Register a per-agent call cap (the hard ceiling on governed tool calls per
-    /// regulation tick). The composition root must seed a cap for every agent
-    /// that makes governed tool calls — agents without one are denied (fail-closed).
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn register_call_cap(&self, agent: WebID, ceiling: u32) {
-        self.call_cap_manager
-            .read()
-            .await
-            .register_call_cap(agent, ceiling)
-            .await;
-    }
-
-    /// Check whether an agent still has calls available this tick.
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn can_proceed(&self, agent: &WebID) -> bool {
-        self.call_cap_manager.read().await.can_proceed(agent).await
-    }
-
-    /// Consume one call. Returns `Err` if the agent has no cap or it is exhausted.
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
-        self.call_cap_manager.read().await.charge(agent).await
-    }
-
-    /// Meter one governed tool call, auto-registering an unknown agent at the
-    /// default runaway ceiling. The tool-dispatch path uses this rather than
-    /// [`Self::charge_call`] — see [`CallCapManager::charge_metered`].
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn charge_call_metered(&self, agent: &WebID) -> CallMeterOutcome {
-        self.call_cap_manager
-            .read()
-            .await
-            .charge_metered(agent)
-            .await
-    }
-
-    /// Reset every registered cap to its ceiling (one regulation tick).
-    ///
-    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
-    pub async fn reset_all_caps(&self) {
-        self.call_cap_manager.read().await.reset_all().await;
-    }
-
-    /// Called during sense() so directives are applied before computing actions.
-    ///
-    /// expect: "The system enforces homeostatic self-regulation through the five-phase cybernetic cycle"
-    /// pre: called before each regulation tick to drain pending directives
-    pub async fn process_inbox(&self) {
-        // Drain direct curator directive channel.
-        if let Some(ref rx) = self.curator_directive_rx {
-            let mut cd_rx = rx.write().await;
-            let mut cd_processed = 0;
-            while let Ok(directive) = cd_rx.try_recv() {
-                cd_processed += 1;
-                self.handle_curation_directive(directive).await;
+    /// This is the Conant-Ashby closure: the Regulation (observer-of-observers)
+    /// must have a model of the regulation system itself. These spans
+    /// give the Curator visibility into regulatory effectiveness — which
+    /// actions are working, which are being substituted, and which are
+    /// being blocked.
+    pub(super) async fn emit_regulation_span(
+        &self,
+        kind: SpanKind,
+        observation: serde_json::Value,
+    ) {
+        if let Some(ref sink) = self.event_sink {
+            let event = RegulationRecord::new(
+                WebID::from_persona(b"regulation"),
+                Span::from_kind(kind),
+                CyclePhase::Act,
+                observation,
+                0,
+            );
+            if let Err(e) = sink.persist(&event) {
+                tracing::error!(target: "reg.outcome", error = %e, "Failed to persist regulation span");
             }
-            if cd_processed > 0 {
-                tracing::info!(target: "reg.cybernetics", processed = cd_processed, "Processed direct curator directives");
-            }
+        } else {
+            tracing::warn!(target: "reg.outcome", span_kind = ?kind, "Regulation span dropped — no event_sink configured. Wire with_event_sink() for durable regulation observability.");
         }
-        // Curation overrides persist until explicitly cleared via
-        // `CuratorDirective::ClearOverride` — there is no TTL auto-expiry.
     }
-}
 
-impl CyberneticsLoop {
+    /// Persist an algedonic alert to the reviewable escalation queue.
+    ///
+    /// This is the primary durable path for alert review: every escalated
+    /// alert is written here when the sink is wired (not just as a fallback),
+    /// so the Curator/user can review pending alerts via `curator_escalations`
+    /// and resolve/dismiss them with an audit trail. Best-effort — a failing
+    /// or missing sink never breaks the regulation loop. Non-escalated alerts
+    /// (Info severity, or `escalated: false`) are skipped to avoid polluting
+    /// the review queue with non-actionable noise.
+    ///
+    /// The `RuntimeAlert` fields are mapped to `EscalationEntry` columns:
+    /// `output` = `alert.message`, `error_context` = serialized alert JSON
+    /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
+    /// 0.5 for Warning.
+    ///
+    /// `efferent_action` carries the original `ActionType` for actions that
+    /// were converted to Escalate alerts (non-native Escalate). `None` for
+    /// native Escalate actions. The field is included in the `error_context`
+    /// JSON so the Curator's `curator_escalations` tool sees the recommended
+    /// action as structured data, not just free-text in the message.
+    fn persist_alert_to_queue(&self, alert: &RuntimeAlert, efferent_action: Option<&str>) {
+        let Some(ref sink) = self.alert_escalation_sink else {
+            return;
+        };
+        // Skip non-escalated alerts — only escalated alerts (Critical, or
+        // Warning with `escalated: true`) belong in the reviewable backlog.
+        // Info alerts and non-escalated Warnings are diagnostic, not
+        // actionable, and would pollute the queue.
+        if !alert.escalated {
+            return;
+        }
+        let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
+        let error_context = serde_json::json!({
+            "domain": alert.domain,
+            "deficit": alert.deficit,
+            "threshold": alert.threshold,
+            "severity": alert.severity,
+            "escalated": alert.escalated,
+            "efferent_action": efferent_action,
+            "timestamp": alert.timestamp.to_rfc3339(),
+        })
+        .to_string();
+        sink.persist_alert(&alert.message, confidence, &error_context);
+    }
+
+    /// Check regulation coherence — flag contradictory or suspicious action pairs.
+    ///
+    /// Runs after verify_impact. Scans the action set from this tick and logs
+    /// warnings for patterns that suggest inconsistent regulation (e.g.,
+    /// Throttle + CircuitBreak on same loop, AdjustEnergyBudget + OverrideEnergyBudget).
+    pub(super) fn check_coherence(&self, actions: &[RegulatoryAction]) {
+        use ActionType::*;
+        let has = |t: ActionType| actions.iter().any(|a| a.action_type == t);
+        let has_target = |t: ActionType, target: LoopId| {
+            actions
+                .iter()
+                .any(|a| a.action_type == t && a.target == target)
+        };
+
+        // Throttle + CircuitBreak on same target — contradictory (slow down vs stop).
+        if (has(Throttle) && has(CircuitBreak))
+            || (has(AdjustEnergyBudget) && has(OverrideEnergyBudget))
+        {
+            tracing::warn!(
+                target: "reg.outcome.coherence",
+                action_count = actions.len(),
+                "Potentially contradictory actions in same tick"
+            );
+        }
+
+        // Both Throttle and CircuitBreak on Inference loop.
+        if has_target(Throttle, LoopId::Inference) && has_target(CircuitBreak, LoopId::Inference) {
+            tracing::warn!(
+                target: "reg.outcome.coherence",
+                "Throttle + CircuitBreak both targeting Inference loop — consider consolidating"
+            );
+        }
+    }
+
     /// Compare: detect deviations from set-points.
-    async fn compare(&self, signals: &[Signal]) -> Vec<Deviation> {
+    pub(super) async fn compare(&self, signals: &[Signal]) -> Vec<Deviation> {
         signals.iter().filter_map(Deviation::from_signal).collect()
     }
 
     /// Produces signals for: per-agent energy ratio, variety deficit, queue depth,
     /// wallet balance ratio, wallet treasury ratio.
-    async fn sense(&self) -> Vec<Signal> {
+    pub(super) async fn sense(&self) -> Vec<Signal> {
         // Process pending directives before sensing state
         self.process_inbox().await;
 
@@ -493,7 +246,7 @@ impl CyberneticsLoop {
         signals
     }
 
-    async fn compute(&self, deviations: &[Deviation]) -> Vec<RegulatoryAction> {
+    pub(super) async fn compute(&self, deviations: &[Deviation]) -> Vec<RegulatoryAction> {
         let mut actions = Vec::new();
 
         // Predictive regulation: check if any metric is approaching its set-point.
@@ -536,7 +289,7 @@ impl CyberneticsLoop {
         actions
     }
 
-    async fn act(&self, actions: &[RegulatoryAction]) {
+    pub(super) async fn act(&self, actions: &[RegulatoryAction]) {
         self.reset_all_caps().await;
 
         // E04: Detect and escalate call-cap exhaustion via the algedonic pathway.
@@ -825,7 +578,10 @@ impl CyberneticsLoop {
     /// Accept / Stage / Block using per-metric worsening thresholds.
     /// Blocked actions are prevented from re-use until Curation intervenes.
     /// Actions that repeatedly fail to improve trigger stagnation detection.
-    async fn verify_impact(&self, previous_actions: &[RegulatoryAction]) -> Vec<ImpactReport> {
+    pub(super) async fn verify_impact(
+        &self,
+        previous_actions: &[RegulatoryAction],
+    ) -> Vec<ImpactReport> {
         let mut reports = Vec::new();
 
         // Re-sense current state for comparison.
@@ -1051,168 +807,6 @@ impl CyberneticsLoop {
         reports
     }
 
-    /// Full regulation cycle with loop-quality telemetry.
-    ///
-    /// Measures elapsed time and computes `LoopMetrics` metrics (delay_ms,
-    /// gain, fidelity_score, effectiveness_score) after each cycle. Calls
-    /// `verify_impact` to close the feedback loop.
-    pub async fn tick(&self) {
-        let start = std::time::Instant::now();
-
-        let signals = self.sense().await;
-        // Emit a runtime-posture signal span so the runtime-posture-monitor
-        // skill (and any downstream observer) has a production telemetry
-        // substrate even when the skill cascade is not explicitly invoked.
-        // The namespace `reg.runtime.select` is registered in
-        // CANONICAL_NAMESPACES; without this emitter it would be skill-only.
-        tracing::info!(
-            target: "reg.runtime.select",
-            signal_count = signals.len(),
-            "REG"
-        );
-        let deviations = self.compare(&signals).await;
-        let mut actions = self.compute(&deviations).await;
-        // Drain externally-submitted rollout impact checks into this tick's
-        // verification pass — the producer side of the phase 6 seam.
-        let submitted: Vec<RegulatoryAction> =
-            std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
-        if !submitted.is_empty() {
-            tracing::debug!(
-                target: "reg.cybernetics",
-                count = submitted.len(),
-                "drained submitted rollout impact checks into verify_impact"
-            );
-            actions.extend(submitted);
-        }
-        self.act(&actions).await;
-
-        // Fermi impact-gate: verify whether actions improved their targets.
-        let impact_reports = self.verify_impact(&actions).await;
-
-        // Check regulation coherence.
-        self.check_coherence(&actions);
-
-        // Feed per-metric outcomes into strategy evaluator.
-        // Collect promoted metrics in a locked scope; emit spans outside
-        // to avoid holding MutexGuard across .await (not Send).
-        let promoted_metrics = {
-            let mut evaluator = self
-                .strategy_evaluator
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut seen = std::collections::HashSet::new();
-            let mut promoted = Vec::new();
-            for report in &impact_reports {
-                if seen.insert(report.metric) {
-                    let metric_reports: Vec<_> = impact_reports
-                        .iter()
-                        .filter(|r| r.metric == report.metric)
-                        .collect();
-                    let accepted = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Accept)
-                        .count() as u64;
-                    let staged = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Stage)
-                        .count() as u64;
-                    let blocked = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Block)
-                        .count() as u64;
-                    evaluator.record_cycle(report.metric, accepted, staged, blocked);
-                    // Check for strategy promotion; emit Regulation span if promoted.
-                    if evaluator.active_policy(report.metric) {
-                        promoted.push(report.metric);
-                    }
-                }
-            }
-            promoted
-        };
-        for metric in promoted_metrics {
-            self.emit_regulation_span(
-                SpanKind::ActionSubstituted,
-                serde_json::json!({
-                    "event": "strategy_promoted",
-                    "metric": metric.as_str(),
-                }),
-            )
-            .await;
-        }
-
-        // Feed regulation health into Regulation for metacognition observability.
-        {
-            let accepted = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Accept)
-                .count() as u64;
-            let staged = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Stage)
-                .count() as u64;
-            let blocked = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Block)
-                .count() as u64;
-            let ledger = self.ledger.read().await;
-            let cumulative = ledger.regulation_health().await.effectiveness();
-            ledger
-                .record_regulation_cycle(RegulationCycleEntry {
-                    timestamp: chrono::Utc::now(),
-                    signals: signals.len() as u64,
-                    deviations: deviations.len() as u64,
-                    actions: actions.len() as u64,
-                    verified: impact_reports.len() as u64,
-                    accepted,
-                    staged,
-                    blocked,
-                    cumulative_effectiveness: cumulative,
-                })
-                .await;
-        }
-
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-
-        let quality = LoopMetrics::from_cycle(
-            elapsed_ms,
-            &deviations,
-            &actions,
-            &impact_reports,
-            TriggerOrigin::Scheduled,
-        );
-        *self.loop_quality.write().await = quality;
-
-        tracing::debug!(
-            target: "reg.cybernetics",
-            delay_ms = quality.delay_ms,
-            gain = quality.gain,
-            fidelity = quality.fidelity_score,
-            effectiveness = quality.effectiveness_score,
-            deviations = deviations.len(),
-            actions = actions.len(),
-            impact_reports = impact_reports.len(),
-            "Loop-quality telemetry recorded"
-        );
-
-        self.emit_regulation_span(
-            SpanKind::LoopMetricsTelemetry,
-            serde_json::json!({
-                "delay_ms": quality.delay_ms,
-                "gain": quality.gain,
-                "fidelity_score": quality.fidelity_score,
-                "effectiveness_score": quality.effectiveness_score,
-                "fidelity_confidence": quality.fidelity_confidence,
-                "trigger": format!("{:?}", quality.trigger),
-                "deviations": deviations.len(),
-                "actions": actions.len(),
-                "impact_reports": impact_reports.len(),
-            }),
-        )
-        .await;
-    }
-}
-
-impl CyberneticsLoop {
     /// Build a `RegulatoryAction` from a `ProposedAction` returned by the regulation policy.
     ///
     /// Applies mode-specific filtering (e.g., `InferenceThrottleMode`) and
@@ -1514,21 +1108,5 @@ impl CyberneticsLoop {
                 None
             }
         }
-    }
-}
-
-impl CyberneticsLoop {
-    /// Return a snapshot of the most recent loop-quality telemetry.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub async fn loop_quality(&self) -> LoopMetrics {
-        *self.loop_quality.read().await
-    }
-
-    /// Return a reference to the current set-points (read-only).
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub fn set_points(&self) -> &SetPoints {
-        &self.set_points
     }
 }

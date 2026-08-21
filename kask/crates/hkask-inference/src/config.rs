@@ -193,20 +193,6 @@ impl InferenceConfig {
                 .unwrap_or_else(|| crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string()),
         }
     }
-
-    /// Build a reqwest HTTP client with the configured timeout and pool settings.
-    ///
-    /// expect: "The system resolves inference configuration from the environment"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — bounded HTTP client for regulated requests
-    /// post: returns reqwest::Client with timeout and pool settings from config
-    #[must_use = "result must be used"]
-    pub fn build_client(&self) -> anyhow::Result<reqwest::Client> {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .pool_max_idle_per_host(self.pool_max_idle)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))
-    }
 }
 
 // ── Private resolution helpers ──────────────────────────────────────────────

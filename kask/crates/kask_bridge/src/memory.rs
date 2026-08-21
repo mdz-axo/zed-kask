@@ -87,11 +87,18 @@ pub struct RealMemoryPort {
     /// (`consolidation_cadence_secs == 0`).
     consolidation: Option<Arc<MemoryConsolidator>>,
     /// Consolidation service for the curator's stores — promotes the
-    /// curator's episodic h_mems (curator-perspective first-person turns) to
-    /// the curator's semantic memory, mirroring the user's consolidation loop.
+    /// curator's episodic h_mems (curator-perspective first-person turns) to the
+    /// curator's semantic memory, mirroring the user's consolidation loop.
     /// Rebuilt when the curator stores heal after an open failure; `None`
     /// when consolidation is disabled OR the curator stores are unavailable.
-    curator_consolidation: RwLock<Option<Arc<MemoryConsolidator>>>,
+    ///
+    /// Behind an `Arc` so the production consolidation timer can hold a clone
+    /// and re-read the current value on each tick — picks up the rebuild that
+    /// `write_turn` performs after a curator-store heal. Previously the timer
+    /// captured the value once at startup, so a curator store that was down at
+    /// startup and later healed never got curator consolidation for the whole
+    /// process lifetime.
+    curator_consolidation: Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
     /// Consolidation cadence in seconds. `0` disables the trigger for both
     /// the user and curator consolidation services.
     consolidation_cadence_secs: u64,
@@ -230,10 +237,10 @@ impl RealMemoryPort {
             None
         };
 
-        let curator_consolidation = RwLock::new(build_curator_consolidation(
+        let curator_consolidation = Arc::new(RwLock::new(build_curator_consolidation(
             consolidation_cadence_secs,
             &curator_store.get(),
-        ));
+        )));
 
         Ok(Self {
             store,
@@ -248,25 +255,20 @@ impl RealMemoryPort {
             confidence_floor,
             last_consolidation: Mutex::new(None),
             tokio_handle,
-            ingest_semaphore: tokio::sync::Semaphore::new(
-                std::env::var("HKASK_MEMORY_INGEST_CONCURRENCY")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .filter(|v: &usize| *v > 0)
-                    .unwrap_or(1),
-            ),
+            ingest_semaphore: tokio::sync::Semaphore::new(resolve_ingest_concurrency()),
         })
     }
 
     /// Check whether the consolidation cadence has elapsed and, if so, fire
     /// a consolidation pass (episodic → semantic promotion + semantic cleanup).
     ///
-    /// This is the single source of truth for the consolidation check-and-fire
-    /// logic. The background timer (`start_consolidation_timer`) inlines its
-    /// own version of this logic because it needs to capture `Send + 'static`
-    /// state (the timestamp is shared via `Arc<Mutex<...>>` rather than
-    /// `&self.last_consolidation`). Both paths use the same cadence check and
-    /// the same `MemoryConsolidator::consolidate` call.
+    /// This is the test entry point. The cadence-elapsed check lives here (it
+    /// reads `self.last_consolidation` under the mutex and fires when
+    /// never-consolidated — `unwrap_or(true)`); the actual consolidate-and-log
+    /// logic is shared with `start_consolidation_timer` via
+    /// [`fire_consolidation_pass`]. The timer skips its first tick instead, so
+    /// the only difference between the two paths is the first-fire decision,
+    /// now made explicit at each call site rather than hidden in two copies.
     ///
     /// Kept as a method so tests can fire consolidation directly without
     /// starting a timer.
@@ -306,41 +308,19 @@ impl RealMemoryPort {
             return;
         }
 
-        let request = hkask_types::ConsolidationRequest {
-            confidence_floor: Some(self.confidence_floor),
-            ..Default::default()
-        };
-        match consolidation.consolidate(&self.user_webid, request.clone()) {
-            Ok(outcome) => {
-                tracing::info!(
-                    target: "reg.memory",
-                    consolidated = outcome.consolidated_count,
-                    "maybe_consolidate pass complete"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(target: "reg.memory", error = %e, "maybe_consolidate failed");
-            }
-        }
-        if let Some(curator_consolidation) = self
+        let curator_consolidation = self
             .curator_consolidation
             .read()
             .ok()
-            .and_then(|g| g.clone())
-        {
-            match curator_consolidation.consolidate(&self.curator_webid, request) {
-                Ok(outcome) => {
-                    tracing::info!(
-                        target: "reg.memory",
-                        consolidated = outcome.consolidated_count,
-                        "maybe_consolidate curator pass complete"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(target: "reg.memory", error = %e, "maybe_consolidate curator pass failed");
-                }
-            }
-        }
+            .and_then(|g| g.clone());
+        fire_consolidation_pass(
+            consolidation,
+            curator_consolidation.as_deref(),
+            self.user_webid,
+            self.curator_webid,
+            self.confidence_floor,
+            "maybe_consolidate",
+        );
     }
 
     /// Start a background timer that fires consolidation on the configured
@@ -420,59 +400,23 @@ impl RealMemoryPort {
                 if !should_fire {
                     continue;
                 }
-                let request = hkask_types::ConsolidationRequest {
-                    confidence_floor: Some(confidence_floor),
-                    ..Default::default()
-                };
                 tracing::info!(
                     target: "reg.memory",
                     cadence_secs = cadence,
                     confidence_floor,
                     "Consolidation timer fired"
                 );
-                match consolidation.consolidate(&user_webid, request.clone()) {
-                    Ok(outcome) => {
-                        tracing::info!(
-                            target: "reg.memory",
-                            consolidated = outcome.consolidated_count,
-                            deleted = outcome.deleted_count,
-                            failed = outcome.failed_count,
-                            "User consolidation timer pass complete"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            error = %e,
-                            "User consolidation timer pass failed"
-                        );
-                    }
-                }
-                // Fire the curator consolidation pass on the same cadence —
-                // promotes the curator's episodic turns to the curator's
-                // semantic memory, mirroring the user pass. Skipped when the
-                // curator consolidation service is unavailable (curator
-                // stores down); `ingest_turn` rebuilds it after a heal.
-                if let Some(curator_consolidation) = &curator_consolidation {
-                    match curator_consolidation.consolidate(&curator_webid, request) {
-                        Ok(outcome) => {
-                            tracing::info!(
-                                target: "reg.memory",
-                                consolidated = outcome.consolidated_count,
-                                deleted = outcome.deleted_count,
-                                failed = outcome.failed_count,
-                                "Curator consolidation timer pass complete"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "reg.memory",
-                                error = %e,
-                                "Curator consolidation timer pass failed"
-                            );
-                        }
-                    }
-                }
+                // Shared consolidate-and-log path. The cadence check above is
+                // timer-specific (skips the first tick via `unwrap_or(false)`);
+                // the actual pass is identical to `maybe_consolidate`'s.
+                fire_consolidation_pass(
+                    &consolidation,
+                    curator_consolidation.as_deref(),
+                    user_webid,
+                    curator_webid,
+                    confidence_floor,
+                    "consolidation_timer",
+                );
             }
         });
         Some(handle)
@@ -557,6 +501,50 @@ fn resolve_memory_life_days() -> f64 {
     }
 }
 
+/// Default ingestion concurrency — 1 (fully serial) is correct for SQLite,
+/// which serializes writers anyway.
+const DEFAULT_INGEST_CONCURRENCY: usize = 1;
+
+/// Parse a raw env-var value into an ingestion concurrency (`usize`), falling
+/// back to [`DEFAULT_INGEST_CONCURRENCY`] on malformed/zero values. Same
+/// startup-failure-signal trap as `parse_storage_budget` — a malformed value
+/// must warn naming the value, not silently fall back (the `.rules`
+/// "Numeric env vars that fail to parse" trap). Previously this was inlined in
+/// `RealMemoryPort::new` with a silent `.unwrap_or(1)`.
+fn parse_ingest_concurrency(raw: &str) -> usize {
+    match raw.trim().parse::<usize>() {
+        Ok(n) if n > 0 => n,
+        Ok(_zero) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                "HKASK_MEMORY_INGEST_CONCURRENCY must be > 0 — falling back to {default}",
+                default = DEFAULT_INGEST_CONCURRENCY
+            );
+            DEFAULT_INGEST_CONCURRENCY
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                error = %e,
+                "HKASK_MEMORY_INGEST_CONCURRENCY malformed — falling back to {default}",
+                default = DEFAULT_INGEST_CONCURRENCY
+            );
+            DEFAULT_INGEST_CONCURRENCY
+        }
+    }
+}
+
+/// Resolve `HKASK_MEMORY_INGEST_CONCURRENCY` from the environment, falling back
+/// to the default when unset.
+fn resolve_ingest_concurrency() -> usize {
+    match std::env::var("HKASK_MEMORY_INGEST_CONCURRENCY") {
+        Ok(raw) => parse_ingest_concurrency(&raw),
+        Err(_) => DEFAULT_INGEST_CONCURRENCY,
+    }
+}
+
 /// Open a `RegulationArchive` on an arbitrary SQLCipher DB. Used by both the
 /// user store (`RealMemoryPort::new`, on the user's `curator.db`) and the curator
 /// store (`open_curator_store`, on the curator's `curator.db`) to wire
@@ -599,6 +587,75 @@ fn open_regulation_archive(
         Err(e) => {
             tracing::warn!(target: "reg.storage", error = %e, role, "Failed to init RegulationArchive schema");
             None
+        }
+    }
+}
+
+/// Fire one consolidation pass: user episodic→semantic promotion, then the
+/// curator's mirror pass.
+///
+/// Shared by `maybe_consolidate` (test entry, fires when never-consolidated)
+/// and `start_consolidation_timer` (production, skips the first tick) so the
+/// consolidate-and-log logic lives in one place. The cadence-elapsed *check*
+/// stays in each caller because the timestamp mutex differs
+/// (`&self.last_consolidation` vs a captured `Arc<Mutex<...>>`) and the
+/// first-fire decision differs — that divergence is now the only difference
+/// between the two paths, made explicit at the call site rather than hidden in
+/// a `unwrap_or(true)` vs `unwrap_or(false)` flip across two copies.
+///
+/// `log_label` distinguishes the two paths in tracing.
+fn fire_consolidation_pass(
+    consolidation: &hkask_memory::MemoryConsolidator,
+    curator_consolidation: Option<&hkask_memory::MemoryConsolidator>,
+    user_webid: WebID,
+    curator_webid: WebID,
+    confidence_floor: f64,
+    log_label: &str,
+) {
+    let request = hkask_types::ConsolidationRequest {
+        confidence_floor: Some(confidence_floor),
+        ..Default::default()
+    };
+    match consolidation.consolidate(&user_webid, request.clone()) {
+        Ok(outcome) => {
+            tracing::info!(
+                target: "reg.memory",
+                label = log_label,
+                consolidated = outcome.consolidated_count,
+                deleted = outcome.deleted_count,
+                failed = outcome.failed_count,
+                "User consolidation pass complete"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                label = log_label,
+                error = %e,
+                "User consolidation pass failed"
+            );
+        }
+    }
+    if let Some(curator_consolidation) = curator_consolidation {
+        match curator_consolidation.consolidate(&curator_webid, request) {
+            Ok(outcome) => {
+                tracing::info!(
+                    target: "reg.memory",
+                    label = log_label,
+                    consolidated = outcome.consolidated_count,
+                    deleted = outcome.deleted_count,
+                    failed = outcome.failed_count,
+                    "Curator consolidation pass complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    label = log_label,
+                    error = %e,
+                    "Curator consolidation pass failed"
+                );
+            }
         }
     }
 }

@@ -3773,11 +3773,10 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let output = task.await.unwrap();
     cx.run_until_parked();
-    // zed-kask: `SkillTool::new` wires no skill cascade, so `run` returns
-    // the no-op envelope (body injection is disabled in zed-kask — the
-    // SKILL.md body is never injected; skills execute via YAML manifests in
-    // the kask registry). The envelope structure — wrapper tag, source,
-    // worktree, directory — must still be present; the body must NOT be.
+    // zed-kask: skills execute via body injection — the `skill` tool reads
+    // the `SKILL.md` body from disk and injects it via `render_skill_envelope`.
+    // The envelope structure — wrapper tag, source, worktree, directory — and
+    // the body content must all be present.
     let expected = format!(
         concat!(
             "<skill_content name=\"test-skill\">\n",
@@ -3786,7 +3785,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             "<directory>{}</directory>\n",
             "Relative paths in this skill resolve against <directory>.\n",
             "\n",
-            "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)\n",
+            "test body\n",
             "</skill_content>\n",
         ),
         path!("/project/.agents/skills/test-skill"),
@@ -3828,7 +3827,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
 
     let output = task.await.unwrap();
-    // Same no-op envelope as above — body injection is disabled in zed-kask.
+    // Same envelope as above — the SKILL.md body is injected.
     let expected2 = format!(
         concat!(
             "<skill_content name=\"test-2\">\n",
@@ -3837,7 +3836,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             "<directory>{}</directory>\n",
             "Relative paths in this skill resolve against <directory>.\n",
             "\n",
-            "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)\n",
+            "test body\n",
             "</skill_content>\n",
         ),
         path!("/project/.agents/skills/test-2"),

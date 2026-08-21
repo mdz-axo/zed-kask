@@ -9184,14 +9184,12 @@ dependencies = [
 name = "hkask-inference"
 version = "0.36.0"
 dependencies = [
- "anyhow",
  "futures-util",
  "hkask-types",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
- "zed-reqwest",
 ]
 
 [[package]]

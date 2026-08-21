@@ -25,6 +25,19 @@
 //! and returns a single `InferenceResult`. This matches the existing
 //! `LanguageModelInferencePort` pattern and is sufficient for MCP server use
 //! cases (OCR, classification, summarization, etc.).
+//!
+//! ## Transport vs. outcome errors
+//!
+//! Every IPC method shares one transport skeleton — serialize the request,
+//! acquire the stream lock, write + flush, read the response line, deserialize,
+//! verify the correlation id — owned by [`InferenceIpcClient::ipc_roundtrip`].
+//! Transport failures (a dead socket, a malformed line, an id mismatch) are
+//! [`IpcTransportError`]s, mapped to each method's error type by a `From` impl.
+//! What the method then does with the validated [`InferenceResponse`] — which
+//! [`InferenceOutcome`] variant it expected — is irreducibly per-method, so
+//! the outcome match stays at the call site. The matches are exhaustive (every
+//! variant named) so that adding a new `InferenceOutcome` variant is a
+//! compile error in every caller, not a silent fall-through.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -40,6 +53,7 @@ use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
     InferenceResult, ToolDispatchPort,
 };
+use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
@@ -91,6 +105,66 @@ async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, s
     Ok(Some(line))
 }
 
+/// A transport-layer failure in the IPC roundtrip — distinct from an
+/// [`InferenceOutcome::Error`] returned by the bridge. [`ipc_roundtrip`]
+/// returns this; each method maps it to its own error type via a `From` impl,
+/// so the transport skeleton stays error-type-agnostic.
+///
+/// [`ipc_roundtrip`]: InferenceIpcClient::ipc_roundtrip
+#[derive(Debug)]
+enum IpcTransportError {
+    /// Serialize or deserialize failure — maps to the `Json` variant of the
+    /// method's error type.
+    Json(String),
+    /// Connection-level failure (write/flush/read/closed/id-mismatch) — maps to
+    /// the `Connection` variant of the method's error type.
+    Connection(String),
+}
+
+impl From<IpcTransportError> for InferenceError {
+    fn from(e: IpcTransportError) -> Self {
+        match e {
+            IpcTransportError::Json(m) => InferenceError::Json(m),
+            IpcTransportError::Connection(m) => InferenceError::Connection(m),
+        }
+    }
+}
+
+impl From<IpcTransportError> for EmbeddingGenerationError {
+    fn from(e: IpcTransportError) -> Self {
+        match e {
+            IpcTransportError::Json(m) => EmbeddingGenerationError::Json(m),
+            IpcTransportError::Connection(m) => EmbeddingGenerationError::Connection(m),
+        }
+    }
+}
+
+/// Format the diagnostic message for an [`InferenceOutcome`] variant that the
+/// request did not expect. Centralizes the "unexpected outcome" wording so the
+/// per-method outcome matches stay exhaustive (every variant named) without
+/// duplicating the message string across five call sites. Takes `method` by
+/// reference so the caller can keep its owned value for the match arms.
+fn unexpected_outcome_msg(method: &InferenceMethod, variant: &'static str) -> String {
+    format!("received {variant} outcome for a {method:?} request")
+}
+
+/// Strip the provider prefix (the first `/`-segment) from a model id.
+///
+/// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`; `"ollama/nomic-embed-text"`
+/// → `"nomic-embed-text"`; `"no-slash"` → `"no-slash"`. Used by `list_models`
+/// to produce the `ModelEntry.model` ("raw model name without prefix") from
+/// the bridge's `ModelListEntry.name` ("full name with provider prefix").
+///
+/// Strips only the first segment: a model id may itself contain a slash
+/// (OpenRouter's `vendor/model` convention), so `split_once` is correct where
+/// the prior `split('/').nth(1)` truncated `OpenRouter/z-ai/glm-5.2` to `z-ai`.
+fn strip_provider_prefix(name: &str) -> &str {
+    match name.split_once('/') {
+        Some((_, rest)) => rest,
+        None => name,
+    }
+}
+
 /// An `InferencePort` that delegates to a Unix socket connection back to zed.
 ///
 /// Construct with `InferenceIpcClient::connect()` or
@@ -126,87 +200,125 @@ impl InferenceIpcClient {
         Some(Self::connect(Path::new(&path)).await)
     }
 
-    /// Send a request and receive the response.
-    async fn call(
+    /// Send a request and receive the validated response.
+    ///
+    /// Owns the transport skeleton shared by every IPC method: serialize the
+    /// request, acquire the stream lock, write + flush, read the response line,
+    /// deserialize, and verify the correlation id. On every error branch the
+    /// cached stream is nulled so the next call reconnects instead of retrying
+    /// on a dead or half-consumed connection.
+    ///
+    /// Takes `method` by reference (cloning once for the wire request) so the
+    /// caller keeps its owned value for the per-method outcome match. The
+    /// outcome classification is irreducibly per-method — each expects a
+    /// different `InferenceOutcome` variant and success type — so it lives at
+    /// the call site.
+    async fn ipc_roundtrip(
         &self,
-        method: InferenceMethod,
+        method: &InferenceMethod,
         params: InferenceParams,
-    ) -> Result<InferenceResult, InferenceError> {
+    ) -> Result<InferenceResponse, IpcTransportError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest { id, method, params };
+        let request = InferenceRequest {
+            id,
+            method: method.clone(),
+            params,
+        };
         let request_json = serde_json::to_string(&request)
-            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+            .map_err(|e| IpcTransportError::Json(format!("IPC serialize failed: {e}")))?;
 
         let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+        let stream = match guard.as_mut() {
+            Some(stream) => stream,
+            None => return Err(IpcTransportError::Connection("IPC socket closed".into())),
+        };
 
-        // Send the request as a single line.
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+        // Send the request as a single line. Null the cached stream on every
+        // error branch so the next call reconnects instead of retrying on a
+        // dead/half-consumed stream.
+        if let Err(e) = stream.write_all(request_json.as_bytes()).await {
+            *guard = None;
+            return Err(IpcTransportError::Connection(format!(
+                "IPC write failed: {e}"
+            )));
+        }
+        if let Err(e) = stream.write_all(b"\n").await {
+            *guard = None;
+            return Err(IpcTransportError::Connection(format!(
+                "IPC write failed: {e}"
+            )));
+        }
+        if let Err(e) = stream.flush().await {
+            *guard = None;
+            return Err(IpcTransportError::Connection(format!(
+                "IPC flush failed: {e}"
+            )));
+        }
 
-        // Read the response line. Null the cached stream on every error branch
-        // (read failure, clean EOF, parse failure, ID mismatch) so the next call
-        // reconnects instead of retrying on a dead/half-consumed stream.
         let line = match read_response_line(stream).await {
             Ok(line) => line,
             Err(e) => {
                 *guard = None;
-                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+                return Err(IpcTransportError::Connection(format!(
+                    "IPC read failed: {e}"
+                )));
             }
         };
-
-        let Some(line) = line else {
-            *guard = None;
-            return Err(InferenceError::Connection(
-                "IPC socket closed by server".into(),
-            ));
+        let line = match line {
+            Some(line) => line,
+            None => {
+                *guard = None;
+                return Err(IpcTransportError::Connection(
+                    "IPC socket closed by server".into(),
+                ));
+            }
         };
 
         let response: InferenceResponse = match serde_json::from_str(&line) {
             Ok(response) => response,
             Err(e) => {
                 *guard = None;
-                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+                return Err(IpcTransportError::Json(format!(
+                    "IPC deserialize failed: {e}"
+                )));
             }
         };
 
         if response.id != id {
             *guard = None;
-            return Err(InferenceError::Connection(format!(
+            return Err(IpcTransportError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
             )));
         }
 
+        Ok(response)
+    }
+
+    /// Send a generate request and return the result.
+    async fn call(
+        &self,
+        method: InferenceMethod,
+        params: InferenceParams,
+    ) -> Result<InferenceResult, InferenceError> {
+        let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::Result { result } => Ok(result),
             InferenceOutcome::Error { error } => Err(error.into()),
             InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                "received Embeddings outcome for a non-embed request".into(),
+                unexpected_outcome_msg(&method, "Embeddings"),
             )),
             InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
-                "received ModelList outcome for a non-list-models request".into(),
+                unexpected_outcome_msg(&method, "ModelList"),
             )),
             InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
-                "received Media outcome for a non-media request".into(),
+                unexpected_outcome_msg(&method, "Media"),
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                "received ToolResult outcome for a non-tool-invoke request".into(),
+                unexpected_outcome_msg(&method, "ToolResult"),
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                "received WorktreeThread outcome for a non-worktree-thread request".into(),
+                unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
         }
     }
@@ -217,91 +329,32 @@ impl InferenceIpcClient {
         model: &str,
         texts: &[String],
     ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::Embed,
-            params: InferenceParams {
-                embed_model: Some(model.to_string()),
-                embed_texts: Some(texts.to_vec()),
-                ..Default::default()
-            },
+        let method = InferenceMethod::Embed;
+        let params = InferenceParams {
+            embed_model: Some(model.to_string()),
+            embed_texts: Some(texts.to_vec()),
+            ..Default::default()
         };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| EmbeddingGenerationError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| EmbeddingGenerationError::Connection("IPC socket closed".into()))?;
-
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(EmbeddingGenerationError::Connection(format!(
-                    "IPC read failed: {e}"
-                )));
-            }
-        };
-
-        let Some(line) = line else {
-            *guard = None;
-            return Err(EmbeddingGenerationError::Connection(
-                "IPC socket closed by server".into(),
-            ));
-        };
-
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(EmbeddingGenerationError::Json(format!(
-                    "IPC deserialize failed: {e}"
-                )));
-            }
-        };
-
-        if response.id != id {
-            *guard = None;
-            return Err(EmbeddingGenerationError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            )));
-        }
-
+        let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::Embeddings { embeddings } => Ok(embeddings),
             InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(
                 format!("{}: {}", error.code, error.message),
             )),
             InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
-                "received Result outcome for an embed request".into(),
+                unexpected_outcome_msg(&method, "Result"),
             )),
             InferenceOutcome::ModelList { .. } => Err(EmbeddingGenerationError::Connection(
-                "received ModelList outcome for an embed request".into(),
+                unexpected_outcome_msg(&method, "ModelList"),
             )),
             InferenceOutcome::Media { .. } => Err(EmbeddingGenerationError::Connection(
-                "received Media outcome for an embed request".into(),
+                unexpected_outcome_msg(&method, "Media"),
             )),
             InferenceOutcome::ToolResult { .. } => Err(EmbeddingGenerationError::Connection(
-                "received ToolResult outcome for an embed request".into(),
+                unexpected_outcome_msg(&method, "ToolResult"),
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
-                "received WorktreeThread outcome for an embed request".into(),
+                unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
         }
     }
@@ -326,83 +379,27 @@ impl InferenceIpcClient {
     async fn call_list_models(
         &self,
     ) -> Result<Vec<hkask_types::inference_ipc::ModelListEntry>, InferenceError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::ListModels,
-            params: InferenceParams {
-                ..Default::default()
-            },
-        };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
-
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
-            }
-        };
-
-        let Some(line) = line else {
-            *guard = None;
-            return Err(InferenceError::Connection(
-                "IPC socket closed by server".into(),
-            ));
-        };
-
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
-            }
-        };
-
-        if response.id != id {
-            *guard = None;
-            return Err(InferenceError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            )));
-        }
-
+        let method = InferenceMethod::ListModels;
+        let response = self
+            .ipc_roundtrip(&method, InferenceParams::default())
+            .await?;
         match response.outcome {
             InferenceOutcome::ModelList { models } => Ok(models),
             InferenceOutcome::Error { error } => Err(error.into()),
             InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
-                "received Result outcome for a list_models request".into(),
+                unexpected_outcome_msg(&method, "Result"),
             )),
             InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                "received Embeddings outcome for a list_models request".into(),
+                unexpected_outcome_msg(&method, "Embeddings"),
             )),
             InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
-                "received Media outcome for a list_models request".into(),
+                unexpected_outcome_msg(&method, "Media"),
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                "received ToolResult outcome for a list_models request".into(),
+                unexpected_outcome_msg(&method, "ToolResult"),
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                "received WorktreeThread outcome for a list_models request".into(),
+                unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
         }
     }
@@ -421,76 +418,33 @@ impl InferenceIpcClient {
         args: serde_json::Value,
         allowed: &[String],
     ) -> Result<serde_json::Value, InferenceError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::ToolInvoke,
-            params: InferenceParams {
-                tool_server: Some(server.to_string()),
-                tool_name: Some(tool.to_string()),
-                tool_args: Some(args),
-                tool_allowlist: Some(allowed.to_vec()),
-                ..Default::default()
-            },
+        let method = InferenceMethod::ToolInvoke;
+        let params = InferenceParams {
+            tool_server: Some(server.to_string()),
+            tool_name: Some(tool.to_string()),
+            tool_args: Some(args),
+            tool_allowlist: Some(allowed.to_vec()),
+            ..Default::default()
         };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
-
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
-            }
-        };
-
-        let Some(line) = line else {
-            *guard = None;
-            return Err(InferenceError::Connection(
-                "IPC socket closed by server".into(),
-            ));
-        };
-
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
-            }
-        };
-
-        if response.id != id {
-            *guard = None;
-            return Err(InferenceError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            )));
-        }
-
+        let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::ToolResult { result } => Ok(result),
             InferenceOutcome::Error { error } => Err(error.into()),
-            other => Err(InferenceError::Connection(format!(
-                "received non-tool-invoke outcome for a tool-invoke request: {other:?}"
-            ))),
+            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Result"),
+            )),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Embeddings"),
+            )),
+            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ModelList"),
+            )),
+            InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Media"),
+            )),
+            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "WorktreeThread"),
+            )),
         }
     }
 
@@ -506,71 +460,33 @@ impl InferenceIpcClient {
         worktree_name: Option<&str>,
         base_ref: Option<&str>,
     ) -> Result<hkask_types::inference_ipc::WorktreeThreadInfo, InferenceError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::CreateWorktreeThread,
-            params: InferenceParams {
-                worktree_prompt: Some(prompt.to_string()),
-                worktree_title: Some(title.to_string()),
-                worktree_name: worktree_name.map(str::to_string),
-                worktree_base_ref: base_ref.map(str::to_string),
-                ..Default::default()
-            },
+        let method = InferenceMethod::CreateWorktreeThread;
+        let params = InferenceParams {
+            worktree_prompt: Some(prompt.to_string()),
+            worktree_title: Some(title.to_string()),
+            worktree_name: worktree_name.map(str::to_string),
+            worktree_base_ref: base_ref.map(str::to_string),
+            ..Default::default()
         };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut guard = self.stream.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
-            }
-        };
-        let Some(line) = line else {
-            *guard = None;
-            return Err(InferenceError::Connection(
-                "IPC socket closed by server".into(),
-            ));
-        };
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
-            }
-        };
-        if response.id != id {
-            *guard = None;
-            return Err(InferenceError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            )));
-        }
+        let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::WorktreeThread { thread } => Ok(thread),
             InferenceOutcome::Error { error } => Err(error.into()),
-            other => Err(InferenceError::Connection(format!(
-                "received non-worktree-thread outcome for a worktree-thread request: {other:?}"
-            ))),
+            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Result"),
+            )),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Embeddings"),
+            )),
+            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ModelList"),
+            )),
+            InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Media"),
+            )),
+            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolResult"),
+            )),
         }
     }
 }
@@ -690,7 +606,7 @@ impl InferencePort for InferenceIpcClient {
                     let name = e.name.clone();
                     hkask_types::ModelEntry {
                         prefixed_name: name.clone(),
-                        model: name.split('/').nth(1).unwrap_or(&name).to_string(),
+                        model: strip_provider_prefix(&name).to_string(),
                         supports_vision: e.supports_vision,
                     }
                 })
@@ -732,5 +648,186 @@ impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
                 .await?;
             Ok(info.message)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a client over the given stream with `next_id` starting at 1
+    /// (matching `connect`). The caller holds the bridge end of the pair to
+    /// feed canned responses.
+    fn client_over(stream: UnixStream) -> InferenceIpcClient {
+        InferenceIpcClient {
+            stream: Arc::new(Mutex::new(Some(stream))),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    /// Serialize a newline-terminated response line for the bridge end.
+    fn response_line(outcome: InferenceOutcome, id: u64) -> String {
+        let resp = InferenceResponse { id, outcome };
+        serde_json::to_string(&resp).unwrap() + "\n"
+    }
+
+    #[test]
+    fn strip_provider_prefix_strips_first_segment_only() {
+        // The bug at the old inline `split('/').nth(1)`: this returned "z-ai".
+        assert_eq!(
+            strip_provider_prefix("OpenRouter/z-ai/glm-5.2"),
+            "z-ai/glm-5.2"
+        );
+        assert_eq!(
+            strip_provider_prefix("ollama/nomic-embed-text"),
+            "nomic-embed-text"
+        );
+        assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
+        assert_eq!(strip_provider_prefix("/leading-slash"), "leading-slash");
+        assert_eq!(strip_provider_prefix("trailing-slash/"), "");
+    }
+
+    #[test]
+    fn unexpected_outcome_msg_names_method_and_variant() {
+        let msg = unexpected_outcome_msg(&InferenceMethod::Generate, "Embeddings");
+        assert!(
+            msg.contains("Embeddings"),
+            "msg should name the variant: {msg}"
+        );
+        assert!(
+            msg.contains("Generate"),
+            "msg should name the method: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ipc_roundtrip_returns_validated_response() {
+        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
+        let client = client_over(client_end);
+        // Pre-buffer the response (id 1, matching next_id starting at 1).
+        bridge_end
+            .write_all(
+                response_line(
+                    InferenceOutcome::ToolResult {
+                        result: serde_json::Value::Null,
+                    },
+                    1,
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let response = client
+            .ipc_roundtrip(&InferenceMethod::ToolInvoke, InferenceParams::default())
+            .await
+            .expect("happy path returns the validated response");
+        assert_eq!(response.id, 1);
+        assert!(matches!(
+            response.outcome,
+            InferenceOutcome::ToolResult { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn ipc_roundtrip_returns_socket_closed_when_stream_nulled() {
+        let client = InferenceIpcClient {
+            stream: Arc::new(Mutex::new(None)),
+            next_id: AtomicU64::new(1),
+        };
+        let err = client
+            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn ipc_roundtrip_nulls_stream_on_id_mismatch() {
+        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
+        let client = client_over(client_end);
+        // Pre-buffer a response with the wrong id (client expects 1).
+        bridge_end
+            .write_all(
+                response_line(
+                    InferenceOutcome::ToolResult {
+                        result: serde_json::Value::Null,
+                    },
+                    999,
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let err = client
+            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            IpcTransportError::Connection(ref m) if m.contains("ID mismatch")
+        ));
+        // The stream was nulled — the next call reports the closed socket.
+        let err2 = client
+            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err2,
+            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn ipc_roundtrip_nulls_stream_on_malformed_json() {
+        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
+        let client = client_over(client_end);
+        bridge_end.write_all(b"not valid json\n").await.unwrap();
+        let err = client
+            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            IpcTransportError::Json(ref m) if m.contains("deserialize failed")
+        ));
+        // The stream was nulled.
+        let err2 = client
+            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err2,
+            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn call_rejects_unexpected_outcome() {
+        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
+        let client = client_over(client_end);
+        // `call` with `Generate` expects `Result`; feed `Embeddings`.
+        bridge_end
+            .write_all(
+                response_line(
+                    InferenceOutcome::Embeddings {
+                        embeddings: vec![vec![0.0]],
+                    },
+                    1,
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let err = client
+            .call(InferenceMethod::Generate, InferenceParams::default())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, InferenceError::Connection(ref m) if m.contains("Embeddings") && m.contains("Generate")),
+            "unexpected-outcome error should name both the variant and the method: {err:?}"
+        );
     }
 }
