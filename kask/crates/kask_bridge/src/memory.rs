@@ -104,15 +104,12 @@ pub struct RealMemoryPort {
     consolidation_cadence_secs: u64,
     /// Confidence floor for semantic cleanup during consolidation.
     confidence_floor: f64,
-    /// Timestamp of the last consolidation pass. Guarded by a mutex so the
-    /// test-only `maybe_consolidate` method can check-and-update atomically.
-    ///
-    /// In production, the background timer (`start_consolidation_timer`) uses
-    /// its own `Arc<Mutex<Option<DateTime>>>` (captured at startup) because the
-    /// timer task must be `Send + 'static` and cannot borrow `&self`. The two
-    /// mutexes are not shared — in production, only the timer runs, so this
-    /// field stays at its initial value (`None`). This is not a bug; it's a
-    /// deliberate split between the test entry point and the production timer.
+    /// Timestamp of the last consolidation pass. Shared by the test-only
+    /// `maybe_consolidate` method and the production timer (via
+    /// `cadence_should_fire`). The timer captures the initial value at startup
+    /// into its own `Arc<Mutex<...>>` because the timer task must be
+    /// `Send + 'static` and cannot borrow `&self`; in production, only the
+    /// timer runs, so this field stays at its initial value (`None`).
     last_consolidation: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
     /// Tokio runtime handle — entered around embedding HTTP calls so that
     /// `reqwest` (which is tokio-backed) has a reactor. The memory port's
@@ -283,26 +280,9 @@ impl RealMemoryPort {
 
         let now = Utc::now();
         let cadence = chrono::Duration::seconds(self.consolidation_cadence_secs as i64);
-        let should_fire = match self.last_consolidation.lock() {
-            Ok(mut guard) => {
-                let elapsed = guard
-                    .map(|last| now.signed_duration_since(last) >= cadence)
-                    .unwrap_or(true);
-                if elapsed {
-                    *guard = Some(now);
-                    true
-                } else {
-                    false
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "reg.memory",
-                    error = %e,
-                    "last_consolidation mutex poisoned — skipping consolidation trigger"
-                );
-                return;
-            }
+        let should_fire = match cadence_should_fire(&self.last_consolidation, now, cadence, true) {
+            Some(fire) => fire,
+            None => return,
         };
         if !should_fire {
             return;
@@ -377,27 +357,11 @@ impl RealMemoryPort {
                 // Check if the cadence has elapsed since the last consolidation.
                 let now = Utc::now();
                 let cadence_dur = chrono::Duration::seconds(cadence as i64);
-                let should_fire = match shared_last_for_timer.lock() {
-                    Ok(mut guard) => {
-                        let elapsed = guard
-                            .map(|last| now.signed_duration_since(last) >= cadence_dur)
-                            .unwrap_or(false);
-                        if elapsed {
-                            *guard = Some(now);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            error = %e,
-                            "consolidation timer: last_consolidation mutex poisoned — stopping timer"
-                        );
-                        return;
-                    }
-                };
+                let should_fire =
+                    match cadence_should_fire(&shared_last_for_timer, now, cadence_dur, false) {
+                        Some(fire) => fire,
+                        None => return,
+                    };
                 if !should_fire {
                     continue;
                 }
@@ -598,17 +562,53 @@ fn open_regulation_archive(
     }
 }
 
+/// Check whether enough time has elapsed since the last consolidation to fire
+/// another pass. Updates the timestamp to `now` when firing.
+///
+/// `fire_when_no_last` reconciles the two calling contexts:
+/// - `maybe_consolidate` (test): `true` — fire on first call (no timer to wait for)
+/// - `start_consolidation_timer` (production): `false` — wait one full cadence
+///   before first fire
+///
+/// Returns `Some(true)` to fire, `Some(false)` to skip, or `None` if the mutex
+/// is poisoned (each caller decides whether to skip or stop the timer).
+fn cadence_should_fire(
+    last: &Mutex<Option<chrono::DateTime<chrono::Utc>>>,
+    now: chrono::DateTime<chrono::Utc>,
+    cadence: chrono::Duration,
+    fire_when_no_last: bool,
+) -> Option<bool> {
+    let mut guard = match last.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                "last_consolidation mutex poisoned — cannot check cadence"
+            );
+            return None;
+        }
+    };
+    let elapsed = guard
+        .map(|l| now.signed_duration_since(l) >= cadence)
+        .unwrap_or(fire_when_no_last);
+    if elapsed {
+        *guard = Some(now);
+        Some(true)
+    } else {
+        Some(false)
+    }
+}
+
 /// Fire one consolidation pass: user episodic→semantic promotion, then the
 /// curator's mirror pass.
 ///
 /// Shared by `maybe_consolidate` (test entry, fires when never-consolidated)
 /// and `start_consolidation_timer` (production, skips the first tick) so the
-/// consolidate-and-log logic lives in one place. The cadence-elapsed *check*
-/// stays in each caller because the timestamp mutex differs
-/// (`&self.last_consolidation` vs a captured `Arc<Mutex<...>>`) and the
-/// first-fire decision differs — that divergence is now the only difference
-/// between the two paths, made explicit at the call site rather than hidden in
-/// a `unwrap_or(true)` vs `unwrap_or(false)` flip across two copies.
+/// consolidate-and-log logic lives in one place. The cadence-elapsed check is
+/// shared via `cadence_should_fire`; the only per-caller difference is the
+/// `fire_when_no_last` flag (test fires immediately, timer waits one cadence)
+/// and the poison response (test skips, timer stops).
 ///
 /// `log_label` distinguishes the two paths in tracing.
 fn fire_consolidation_pass(
@@ -1532,6 +1532,53 @@ mod tests {
             last.is_none(),
             "ingest_turn should not fire consolidation (timer-decoupled)"
         );
+    }
+
+    // ── cadence_should_fire unit tests ─────────────────────────────────
+    // These test the shared cadence check directly, without constructing a
+    // full RealMemoryPort — so the production timer's None-wait semantics are
+    // testable for the first time.
+
+    #[test]
+    fn cadence_waits_when_no_last_and_not_first_run() {
+        let last = Mutex::new(None);
+        let now = Utc::now();
+        let cadence = chrono::Duration::seconds(60);
+        assert_eq!(
+            cadence_should_fire(&last, now, cadence, false),
+            Some(false),
+            "production timer waits one cadence before first fire"
+        );
+    }
+
+    #[test]
+    fn cadence_fires_when_no_last_and_first_run() {
+        let last = Mutex::new(None);
+        let now = Utc::now();
+        let cadence = chrono::Duration::seconds(60);
+        assert_eq!(
+            cadence_should_fire(&last, now, cadence, true),
+            Some(true),
+            "test path fires immediately on first call"
+        );
+    }
+
+    #[test]
+    fn cadence_fires_when_elapsed() {
+        let now = Utc::now();
+        let old = now - chrono::Duration::seconds(120);
+        let last = Mutex::new(Some(old));
+        let cadence = chrono::Duration::seconds(60);
+        assert_eq!(cadence_should_fire(&last, now, cadence, false), Some(true));
+    }
+
+    #[test]
+    fn cadence_skips_when_not_elapsed() {
+        let now = Utc::now();
+        let recent = now - chrono::Duration::seconds(30);
+        let last = Mutex::new(Some(recent));
+        let cadence = chrono::Duration::seconds(60);
+        assert_eq!(cadence_should_fire(&last, now, cadence, false), Some(false));
     }
 
     #[tokio::test]

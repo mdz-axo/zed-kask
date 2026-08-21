@@ -169,12 +169,14 @@ fn strip_provider_prefix(name: &str) -> &str {
 ///
 /// Construct with `InferenceIpcClient::connect()` or
 /// `InferenceIpcClient::from_env()`.
+#[derive(Clone)]
 pub struct InferenceIpcClient {
     /// The socket connection, protected by a mutex so only one request is
     /// in flight at a time (the protocol is request-response, not multiplexed).
     stream: Arc<Mutex<Option<UnixStream>>>,
-    /// Next request ID.
-    next_id: AtomicU64,
+    /// Next request ID. Shared across clones so one connection can serve multiple
+    /// trait objects (see `hkask_inference::resolve_ports`).
+    next_id: Arc<AtomicU64>,
 }
 
 impl InferenceIpcClient {
@@ -185,7 +187,7 @@ impl InferenceIpcClient {
             .map_err(|e| InferenceError::Connection(format!("IPC connect failed: {e}")))?;
         Ok(Self {
             stream: Arc::new(Mutex::new(Some(stream))),
-            next_id: AtomicU64::new(1),
+            next_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -661,7 +663,7 @@ mod tests {
     fn client_over(stream: UnixStream) -> InferenceIpcClient {
         InferenceIpcClient {
             stream: Arc::new(Mutex::new(Some(stream))),
-            next_id: AtomicU64::new(1),
+            next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -732,7 +734,7 @@ mod tests {
     async fn ipc_roundtrip_returns_socket_closed_when_stream_nulled() {
         let client = InferenceIpcClient {
             stream: Arc::new(Mutex::new(None)),
-            next_id: AtomicU64::new(1),
+            next_id: Arc::new(AtomicU64::new(1)),
         };
         let err = client
             .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
