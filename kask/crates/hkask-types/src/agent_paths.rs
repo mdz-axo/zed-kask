@@ -125,7 +125,7 @@ pub fn agent_db(name: &str) -> PathBuf {
 }
 
 /// Memory database — episodic + semantic tool storage.
-pub fn agent_memory_db(name: &str) -> PathBuf {
+pub(crate) fn agent_memory_db(name: &str) -> PathBuf {
     agent_dir(name).join("memory.db")
 }
 

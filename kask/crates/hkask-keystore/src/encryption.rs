@@ -30,7 +30,7 @@ pub(crate) const ARGON2_PARALLELISM: u32 = 4;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum EncryptionError {
+pub(crate) enum EncryptionError {
     #[error("Key derivation failed: {0}")]
     KeyDerivation(String),
     #[error("Encryption failed: {0}")]
@@ -42,7 +42,7 @@ pub enum EncryptionError {
 }
 
 /// Encryption service using AES-256-GCM
-pub struct EncryptionService {
+pub(crate) struct EncryptionService {
     cipher: Aes256Gcm,
 }
 

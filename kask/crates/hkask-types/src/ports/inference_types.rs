@@ -69,7 +69,7 @@ pub struct InferenceUsage {
 
 /// Token probability from LLM response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenProbability {
+pub(crate) struct TokenProbability {
     pub token: String,
     pub prob: f64,
     pub top_k: Vec<TokenProb>,
@@ -77,7 +77,7 @@ pub struct TokenProbability {
 
 /// Top-k token probability
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenProb {
+pub(crate) struct TokenProb {
     pub token: String,
     pub prob: f64,
 }

@@ -13,7 +13,7 @@
 //! redaction utility remains — it has no `reqwest` dependency.
 
 /// Maximum length of a provider response body embedded in an error string.
-pub const ERROR_BODY_MAX_CHARS: usize = 200;
+pub(crate) const ERROR_BODY_MAX_CHARS: usize = 200;
 
 /// Secret-shaped prefixes that a provider error page or proxy debug dump may
 /// echo back (CWE-209). Redaction is a simple prefix scan, not a parser:
@@ -21,7 +21,7 @@ pub const ERROR_BODY_MAX_CHARS: usize = 200;
 ///
 /// All prefixes MUST be lowercase — they are matched against the lowercased
 /// body in `redact_secret_tokens`.
-pub const SECRET_PREFIXES: &[&str] = &[
+pub(crate) const SECRET_PREFIXES: &[&str] = &[
     "authorization:",
     "bearer ",
     "sk-",
@@ -63,7 +63,7 @@ pub fn sanitize_error_body(body: &str) -> String {
     }
 }
 
-pub fn redact_secret_tokens(body: &str) -> String {
+pub(crate) fn redact_secret_tokens(body: &str) -> String {
     // Case-insensitive byte-index scan; prefixes are ASCII so byte matching is exact.
     let lower = body.to_ascii_lowercase();
     let mut output = String::with_capacity(body.len());

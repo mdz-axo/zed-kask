@@ -98,7 +98,7 @@ pub enum MemoryError {
 }
 
 /// Pinned boxed future for dyn-compatibility.
-pub type MemoryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub(crate) type MemoryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Port for ingesting completed thread turns into hKask memory (D6).
 ///

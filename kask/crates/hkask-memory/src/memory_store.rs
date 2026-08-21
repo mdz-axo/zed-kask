@@ -47,7 +47,7 @@ pub enum MemoryStoreError {
 
 /// Result of computing a style centroid over a prefix-scoped embedding set.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CentroidResult {
+pub(crate) struct CentroidResult {
     pub centroid: Vec<f32>,
     pub passage_count: usize,
     pub stored: bool,

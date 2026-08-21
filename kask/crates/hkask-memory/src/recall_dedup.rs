@@ -22,7 +22,7 @@ use std::collections::HashSet;
 /// pre:  h_mem is a valid HMem with entity, attribute, value
 /// post: returns deterministic 32-byte BLAKE3 hash of canonical EAV content
 /// post: same EAV content → same hash (metadata-independent)
-pub fn eav_hash(h_mem: &HMem) -> [u8; 32] {
+pub(crate) fn eav_hash(h_mem: &HMem) -> [u8; 32] {
     let canonical = format!(
         "{}\x00{}\x00{}",
         h_mem.entity,
@@ -67,7 +67,7 @@ fn canonical_value(value: &serde_json::Value) -> String {
 /// post: returns Vec with duplicates removed (by EAV hash)
 /// post: preserves original ordering (first occurrence kept)
 /// post: result.len() ≤ h_mems.len()
-pub fn dedup_h_mems(h_mems: Vec<HMem>) -> Vec<HMem> {
+pub(crate) fn dedup_h_mems(h_mems: Vec<HMem>) -> Vec<HMem> {
     let mut seen = HashSet::new();
     let mut result = Vec::with_capacity(h_mems.len());
 

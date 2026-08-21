@@ -42,9 +42,10 @@ pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, N
 pub use event::{RegulationRecord, RegulationSink};
 
 pub use id::{
-    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
-    IdKind, PhaseId, TaskId, TemplateID, UserID, WebID,
+    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, HMemId, Id, PhaseId,
+    TaskId, TemplateID, WebID,
 };
+pub(crate) use id::{GoalID, IdKind, UserID};
 pub use kanban_status::TaskStatus;
 pub use regulation::LedgerHealth;
 

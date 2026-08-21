@@ -56,7 +56,7 @@ pub struct LedgerTransaction {
 
 /// A computed balance for an account + asset pair.
 #[derive(Debug, Clone, Serialize)]
-pub struct AccountBalance {
+pub(crate) struct AccountBalance {
     pub account: String,
     pub asset: String,
     pub balance: i64,
