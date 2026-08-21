@@ -30,9 +30,3 @@ workspace = true
 [features]
 default = []
 sql = ["dep:rusqlite"]
-
-[dev-dependencies]
-# agent_paths.rs integration tests mutate env vars (unsafe since Rust 2024)
-# and need tempdirs; the crate is `#![forbid(unsafe_code)]` so they live in
-# `tests/` as a separate compilation unit.
-tempfile.workspace = true

@@ -433,8 +433,7 @@ impl ThreadsDatabase {
             // here because the global `Mutex` would leak between concurrent
             // tests (one test setting the override would redirect other
             // tests' `ThreadsDatabase::new` to a file path they don't expect,
-            // causing SQLite schema-migration races). The override hook
-            // itself is exercised by `test_threads_db_override_hook_round_trips`.
+            // causing SQLite schema-migration races).
             let thread = std::thread::current();
             let test_name = thread.name();
             Connection::open_memory(Some(&format!(
