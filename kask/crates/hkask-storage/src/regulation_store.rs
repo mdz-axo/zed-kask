@@ -40,7 +40,7 @@ impl Default for DecayConfig {
 
 /// A RegulationRecord with its computed replay weight.
 #[derive(Debug, Clone)]
-pub(crate) struct WeightedEvent {
+pub struct WeightedEvent {
     pub event: RegulationRecord,
     pub weight: f64,
 }

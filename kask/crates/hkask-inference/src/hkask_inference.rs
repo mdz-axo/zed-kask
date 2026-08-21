@@ -32,7 +32,8 @@ pub mod model_constants;
 pub mod openai_compat;
 
 // Re-exports — public API
-pub use config::{InferenceConfig, ProviderConfig, ProviderId};
+pub(crate) use config::ProviderConfig;
+pub use config::{InferenceConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 
 /// The shared "no IPC bridge" reason. Every stub method names the socket so the

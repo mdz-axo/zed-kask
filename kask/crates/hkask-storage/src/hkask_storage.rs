@@ -21,12 +21,12 @@ pub mod escalation;
 pub mod hmem;
 pub mod regulation_store;
 
-pub(crate) use embeddings::StoredEmbedding;
+pub use embeddings::StoredEmbedding;
 pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult};
 pub(crate) use escalation::{EscalationBatch, EscalationStats};
 pub use escalation::{EscalationEntry, EscalationError, EscalationQueue, EscalationStatus};
 pub use hkask_types::HMemId;
 pub(crate) use hmem::archive::{ArchiveError, BackupArchive, BackupMeta, MigrationReceipt};
 pub use hmem::{HMem, HMemError, HMemStore};
-pub(crate) use regulation_store::WeightedEvent;
+pub use regulation_store::WeightedEvent;
 pub use regulation_store::{DecayConfig, RegulationArchive};

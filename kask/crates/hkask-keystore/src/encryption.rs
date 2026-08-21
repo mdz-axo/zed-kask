@@ -30,7 +30,7 @@ pub(crate) const ARGON2_PARALLELISM: u32 = 4;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub(crate) enum EncryptionError {
+pub enum EncryptionError {
     #[error("Key derivation failed: {0}")]
     KeyDerivation(String),
     #[error("Encryption failed: {0}")]

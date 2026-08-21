@@ -18,7 +18,8 @@
 mod schema;
 mod types;
 
-pub use types::{AccountBalance, DateRange, LedgerError, LedgerTransaction, Posting, QueryFilter};
+pub use types::{DateRange, LedgerError, LedgerTransaction, Posting, QueryFilter};
+pub(crate) use types::AccountBalance;
 
 use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::types::DbError;
