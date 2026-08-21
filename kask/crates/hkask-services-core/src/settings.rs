@@ -22,7 +22,7 @@ pub fn settings_path() -> std::path::PathBuf {
             error = %e,
             path = %path.display(),
             "Failed to create hkask config directory — \
-             save_settings will fail if the directory doesn't exist."
+             settings persistence will fail if the directory doesn't exist."
         );
     }
     path.push("settings.json");
@@ -244,24 +244,4 @@ pub fn load_settings<T: serde::de::DeserializeOwned + Default>() -> T {
         }),
         Err(_) => T::default(),
     }
-}
-
-/// Save any settings type to `~/.config/hkask/settings.json`.
-///
-/// This is the shared save path for CLI, API, and any future surface.
-///
-/// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-/// pre:  settings must implement Serialize
-/// post: settings are written as pretty JSON to settings_path(); Err(ServiceError::Infra) on serialization or I/O failure
-#[must_use = "result must be used"]
-pub(crate) fn save_settings<T: serde::Serialize>(settings: &T) -> Result<(), crate::ServiceError> {
-    let path = settings_path();
-    let json = serde_json::to_string_pretty(settings).map_err(|e| {
-        crate::ServiceError::Infra(hkask_types::InfrastructureError::Serialization(
-            e.to_string(),
-        ))
-    })?;
-    std::fs::write(&path, json).map_err(|e| {
-        crate::ServiceError::Infra(hkask_types::InfrastructureError::Io(e.to_string()))
-    })
 }

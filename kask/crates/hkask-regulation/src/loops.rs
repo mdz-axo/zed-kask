@@ -34,10 +34,9 @@
 // Channel types stay in hkask-regulation (depend on RuntimeAlert).
 pub mod channels;
 
-// Loop type system — actions, core, episodic, signals.
+// Loop type system — actions, core, signals.
 pub mod actions;
 pub mod core;
-pub mod episodic;
 pub mod signals;
 
 pub use actions::{ActionType, RegulatoryAction};

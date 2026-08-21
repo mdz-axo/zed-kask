@@ -885,27 +885,4 @@ impl BudgetConfig {
     }
 }
 
-// ── Keyword Overlap (chat recall ranking) ─────────────────────────────────
-
-/// Extract keywords from a query string for overlap-based episode ranking.
-///
-/// Lowercases the input, splits on whitespace, and filters to words longer
-/// than 2 characters. Returns owned strings so the caller does not need to
-/// hold the lowercased source.
-///
-/// Used by chat recall (`MemoryService::recall_episodic`) and the memory MCP
-/// server (`memory_recall`, `episodic_recall_context`) to rank episodic
-/// memories by keyword overlap with the user's input.
-///
-/// expect: "The system ranks recalled memories by relevance to the query"
-/// pre:  text is a valid &str
-/// post: returns lowercased keywords with length > 2, in input order
-pub(crate) fn extract_keywords(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split_whitespace()
-        .filter(|w| w.len() > 2)
-        .map(|w| w.to_string())
-        .collect()
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────

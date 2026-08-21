@@ -11,12 +11,9 @@ pub mod cybernetics_loop;
 pub(crate) mod dampener;
 pub mod energy;
 
-pub mod infra_span;
 pub mod metacognition;
-pub mod qa_span;
 pub(crate) mod regulation_policy;
 pub mod set_points;
-pub mod skill_span;
 
 pub mod loops;
 pub mod sensor_provider;

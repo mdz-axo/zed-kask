@@ -21,4 +21,3 @@ pub mod settings;
 pub use config::{DEFAULT_DB_PATH, ServiceConfig};
 pub use error::{DomainKind, ErrorKind, ServiceError};
 pub use settings::{HkaskSettings, load_settings, settings_path};
-pub(crate) use settings::save_settings;

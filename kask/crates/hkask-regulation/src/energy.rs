@@ -15,9 +15,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Alert threshold ratio (used/ceiling) above which the regulation loop throttles.
-pub(crate) const DEFAULT_CALL_CAP_ALERT_THRESHOLD: f64 = 0.8;
-
 /// Per-tick call ceiling applied to an agent the composition root never
 /// registered.
 ///
@@ -122,7 +119,6 @@ impl CallCap {
 pub(crate) struct AgentCallCapStatus {
     pub ceiling: u32,
     pub remaining: u32,
-    pub usage_ratio: f64,
 }
 
 impl From<&CallCap> for AgentCallCapStatus {
@@ -130,7 +126,6 @@ impl From<&CallCap> for AgentCallCapStatus {
         Self {
             ceiling: cap.ceiling,
             remaining: cap.remaining,
-            usage_ratio: cap.usage_ratio(),
         }
     }
 }
@@ -315,10 +310,5 @@ impl CallCapManager {
     /// Read access to the cap map (for persistence snapshots).
     pub async fn caps(&self) -> tokio::sync::RwLockReadGuard<'_, HashMap<WebID, CallCap>> {
         self.caps.read().await
-    }
-
-    /// Write access to the cap map (for restoring persisted state).
-    pub async fn caps_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, HashMap<WebID, CallCap>> {
-        self.caps.write().await
     }
 }

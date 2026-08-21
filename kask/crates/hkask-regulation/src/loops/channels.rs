@@ -11,19 +11,6 @@ use hkask_types::WebID;
 // RuntimeAlert is the canonical type in crate::algedonic.
 // Re-imported here so CurationInput::Alert(RuntimeAlert) compiles.
 
-// ── Tool consumption channel: McpRuntime::invoke → Cybernetics ────────────
-
-/// Per-tool consumption report from `McpRuntime::invoke` (in `hkask-mcp`) to Cybernetics.
-///
-/// Replaces `LoopPayload::ToolConsumption`. Sent on a dedicated
-/// `tokio::sync::mpsc::Sender<ToolConsumptionEvent>` channel.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct ToolConsumptionEvent {
-    pub tool_name: String,
-    pub agent: WebID,
-    pub success: bool,
-}
-
 // ── Goal channel: GoalStore → Curation ──────────────────────────────────────
 
 /// Goal state transition notification.
@@ -36,35 +23,6 @@ pub struct GoalTransitionEvent {
     pub from_state: String,
     pub to_state: String,
     pub agent: WebID,
-}
-
-/// Derived goal lifecycle signal that Curation reacts to.
-///
-/// Canonical goal states (Pending/Active/Completed/Blocked/Abandoned) were
-/// modeled by the deleted `GoalState` type. "stale" and "expired" are
-/// *derived* observational states emitted by goal lifecycle watchers, not
-/// canonical variants. This enum makes the Curation-relevant classification
-/// explicit instead of magic-string matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GoalLifecycle {
-    /// Goal has been Active past its staleness window — attention recommended.
-    Stale,
-    /// Goal has passed its deadline without completion.
-    Expired,
-    /// Any other (canonical goal state or unknown) — no Curation action.
-    Other,
-}
-
-impl GoalLifecycle {
-    /// Classify a goal state string into a Curation-relevant lifecycle signal.
-    #[must_use]
-    pub fn from_state_str(state: &str) -> Self {
-        match state {
-            "stale" => Self::Stale,
-            "expired" => Self::Expired,
-            _ => Self::Other,
-        }
-    }
 }
 
 // ── Communication channel: CommunicationWatcher → Curation ──────────────────
