@@ -41,15 +41,6 @@ pub(crate) enum AdapterSource {
     },
 }
 
-impl AdapterSource {
-    /// The repository identifier, regardless of source type.
-    pub fn repository_id(&self) -> &str {
-        match self {
-            AdapterSource::HuggingFace { repo } => repo,
-        }
-    }
-}
-
 // ── Store definition ─────────────────────────────────────────────────────────
 
 define_driver_store!(AdapterStore);
@@ -228,7 +219,7 @@ impl AdapterStore {
     /// expect: "The adapter manages LoRA adapter lifecycle and inference composition"
     /// pre:  adapter has a valid expertise, checksum, owner, and storage_path
     /// post: adapter is persisted to SQLite
-    pub fn store(&self, adapter: &TrainedLoRAAdapter) -> Result<(), AdapterStoreError> {
+    pub(crate) fn store(&self, adapter: &TrainedLoRAAdapter) -> Result<(), AdapterStoreError> {
         let metrics_json =
             serde_json::to_string(&adapter.expertise.training_source.training_metrics)?;
         let manifest_json = serde_json::to_string(&adapter.expertise.capability_manifest)?;
@@ -336,7 +327,10 @@ impl AdapterStore {
     /// expect: "The adapter manages LoRA adapter lifecycle and inference composition"
     /// pre:  id is a valid Uuid
     /// post: returns Some(TrainedLoRAAdapter) if found, None otherwise
-    pub fn get_by_id(&self, id: Uuid) -> Result<Option<TrainedLoRAAdapter>, AdapterStoreError> {
+    pub(crate) fn get_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<TrainedLoRAAdapter>, AdapterStoreError> {
         let sql = format!("{} WHERE adapter_id = ?1", ADAPTER_SELECT);
         let rows: Vec<TrainedLoRAAdapter> = query_map(
             &*self.driver,
@@ -360,7 +354,7 @@ impl AdapterStore {
     /// Note: orders by `created_at DESC`, not by version number. For A/B
     /// comparison against a known current adapter, use
     /// `get_previous_by_skill_name` instead.
-    pub fn get_by_skill_name(
+    pub(crate) fn get_by_skill_name(
         &self,
         skill_name: &str,
     ) -> Result<Option<TrainedLoRAAdapter>, AdapterStoreError> {
@@ -386,7 +380,7 @@ impl AdapterStore {
     /// the prior adapter (not the current one) when a retrain completes.
     ///
     /// Returns `None` if no previous adapter exists for this skill.
-    pub fn get_previous_by_skill_name(
+    pub(crate) fn get_previous_by_skill_name(
         &self,
         skill_name: &str,
         exclude_id: Uuid,

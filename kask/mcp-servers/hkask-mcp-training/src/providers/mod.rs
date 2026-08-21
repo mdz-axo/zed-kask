@@ -20,14 +20,13 @@ pub(crate) mod types;
 
 // ── Re-exports for lib.rs compatibility ──────────────────────────────────
 
-pub(crate) use harness::{AxolotlHarness, HarnessAdapter, LudwigHarness};
+pub(crate) use harness::{AxolotlHarness, LudwigHarness};
 pub(crate) use nebius::NebiusHost;
 pub(crate) use runpod::RunpodHost;
 pub(crate) use trl_harness::TrlHarness;
 pub(crate) use types::{
-    AdvancedParams, HostProviderError, LoraParams, OptimizationParams, PodStatus,
-    QuantizationParams, SequenceParams, TrainingHarnessId, TrainingHost, TrainingHostId,
-    TrainingJob, TrainingJobStatus, TrainingParams, TrlTrainer,
+    HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostId, TrainingJob,
+    TrainingJobStatus, TrainingParams,
 };
 
 // ── Host factory ───────────────────────────────────────────────────────────

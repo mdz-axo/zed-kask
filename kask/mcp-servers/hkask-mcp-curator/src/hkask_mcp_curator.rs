@@ -186,29 +186,6 @@ impl CuratorDb {
         this
     }
 
-    /// Construct a handle over pre-built stores — healing disabled. Used by
-    /// the qa_contract integration tests (compiled as a separate crate, so
-    /// `#[cfg(test)]` doesn't reach them).
-    #[doc(hidden)]
-    pub fn for_tests(stores: CuratorStores) -> Self {
-        Self {
-            stores: RwLock::new(stores),
-            db_path: None,
-            passphrase: None,
-            heal_attempt_logged: AtomicBool::new(false),
-            heal_enabled: false,
-            last_heal_attempt: std::sync::Mutex::new(None),
-        }
-    }
-
-    /// Replace the stores — simulates an outage or a heal. Test-only.
-    #[doc(hidden)]
-    pub fn set_for_tests(&self, stores: CuratorStores) {
-        if let Ok(mut guard) = self.stores.write() {
-            *guard = stores;
-        }
-    }
-
     /// True when the DB-open level failed (all four stores `None`) — the
     /// case a re-open can fix. Partial degradation (a per-store `from_driver`
     /// failure leaving some stores `Some`) is NOT healable by re-open and
@@ -816,7 +793,6 @@ impl CuratorServer {
         })
         .await
     }
-
 }
 
 // ── Server startup ─────────────────────────────────────────────────────

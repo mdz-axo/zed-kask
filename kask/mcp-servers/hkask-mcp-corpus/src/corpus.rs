@@ -6,13 +6,5 @@ mod discover;
 pub(crate) mod embed;
 pub(crate) mod fetch;
 
-pub(crate) use discover::{
-    CompanySourceManifest, DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService,
-    ManifestValidationError, default_corpus_config, download_and_cache, generate_corpus_yaml,
-    slugify,
-};
-pub(crate) use embed::{
-    CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult, EmbedService,
-    EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,
-    Work, ocr_pdf_bytes, strip_html_tags,
-};
+pub(crate) use discover::CompanySourceManifest;
+pub(crate) use embed::{EmbedProgress, EmbedService};

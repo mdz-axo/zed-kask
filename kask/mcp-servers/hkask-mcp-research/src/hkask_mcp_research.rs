@@ -4,7 +4,7 @@
 pub(crate) mod research;
 
 // Re-export service crate modules for test compatibility
-pub(crate) use crate::research::{cache, db, providers, rss_types, strip_html, types};
+pub(crate) use crate::research::db;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -26,7 +26,7 @@ pub(crate) struct QaItem {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IngestQaRequest {
     /// QA pairs to ingest for training.
-    pub qa_items: Vec<QaItem>,
+    pub(crate) qa_items: Vec<QaItem>,
     /// Source document or dataset identifier.
     pub source: String,
     /// Optional training dataset name (default: "default").

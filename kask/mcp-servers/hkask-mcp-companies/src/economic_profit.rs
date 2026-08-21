@@ -71,17 +71,6 @@ impl FadeHorizon {
             FadeHorizon::Default => 10,
         }
     }
-
-    /// Override from user input: "wide", "narrow", "none", "default".
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "wide" => Some(FadeHorizon::Wide),
-            "narrow" => Some(FadeHorizon::Narrow),
-            "none" => Some(FadeHorizon::None),
-            "default" => Some(FadeHorizon::Default),
-            _ => None,
-        }
-    }
 }
 
 // ── Economic profit computation ───────────────────────────────────────────────
@@ -539,7 +528,9 @@ pub(crate) fn extract_roic_from_metrics(metrics_entry: &serde_json::Value) -> Op
 }
 
 /// Extract invested capital from key_metrics data.
-pub(crate) fn extract_invested_capital_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
+pub(crate) fn extract_invested_capital_from_metrics(
+    metrics_entry: &serde_json::Value,
+) -> Option<f64> {
     metrics_entry
         .get("investedCapital")
         .or_else(|| metrics_entry.get("totalAssets"))

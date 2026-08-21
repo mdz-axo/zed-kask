@@ -133,18 +133,6 @@ pub(crate) enum UseCase {
     ContingencyPlanning,
 }
 
-impl UseCase {
-    pub fn display(&self) -> &'static str {
-        match self {
-            Self::StrategicDecision => "Informing a specific strategic decision",
-            Self::InvestmentThesis => "Validating an investment thesis",
-            Self::MonitoringDashboard => "Building an early-warning monitoring dashboard",
-            Self::LandscapeExploration => "General landscape exploration",
-            Self::ContingencyPlanning => "Preparing contingency plans",
-        }
-    }
-}
-
 // ── Time horizons ──────────────────────────────────────────────────────────
 
 /// Planning horizon for scenario construction.
@@ -220,14 +208,6 @@ impl CertaintyTier {
             "proximate" => Self::Proximate,
             "probable" => Self::Probable,
             _ => Self::Possible,
-        }
-    }
-
-    pub fn range(&self) -> &'static str {
-        match self {
-            Self::Proximate => "67–100%",
-            Self::Probable => "33–66%",
-            Self::Possible => "0–32%",
         }
     }
 }
@@ -568,9 +548,9 @@ pub(crate) struct EventTreeNode {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EventTree {
     pub subject: String,
-    pub time_horizon: TimeHorizon,
-    pub scenario_type: ScenarioType,
-    pub nodes: Vec<EventTreeNode>,
+    pub(crate) time_horizon: TimeHorizon,
+    pub(crate) scenario_type: ScenarioType,
+    pub(crate) nodes: Vec<EventTreeNode>,
     /// Root nodes (no dependencies)
     pub root_ids: Vec<String>,
     /// Topologically sorted node IDs

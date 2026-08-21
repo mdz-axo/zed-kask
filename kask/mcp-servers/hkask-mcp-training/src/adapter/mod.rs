@@ -23,5 +23,6 @@ pub(crate) mod adapter_store;
 pub(crate) mod expertise;
 
 // Re-exports — public API
-pub(crate) use adapter_store::{AdapterSource, AdapterStore, AdapterStoreError, TrainedLoRAAdapter};
-pub(crate) use expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};
+pub(crate) use adapter_store::{
+    AdapterSource, AdapterStore, AdapterStoreError, TrainedLoRAAdapter,
+};

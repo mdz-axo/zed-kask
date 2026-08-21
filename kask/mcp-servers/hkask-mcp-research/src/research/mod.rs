@@ -23,28 +23,22 @@ use providers::{
 
 // ── Re-exports ──
 
-pub(crate) use cache::{CacheKey, ResponseCache, cache_key};
+pub(crate) use cache::{ResponseCache, cache_key};
 pub(crate) use feed::{discover_feeds, fetch_feed};
 pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
 pub(crate) use rss_types::{
     Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
-    FetchResult, FetchSyntheticRequest, GetEntriesRequest, ImportOpmlRequest,
-    ListSubscriptionsRequest, MarkReadRequest, SubscribeRequest, SynthesizeRequest,
-    UnreadCountRequest, UnsubscribeRequest,
+    FetchSyntheticRequest, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
+    MarkReadRequest, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
 };
 pub(crate) use types::RateLimiter;
 pub(crate) use types::{
-    AnswerBox, BrowseOutput, BrowseRequest, BrowseResult, COMPOUND_PROVIDER_TIMEOUT_SECS,
-    CiteSource, CiteSourcesRequest, CiteStyle, CompoundSearchResult, DEFAULT_CACHE_MAX_ENTRIES,
-    DEFAULT_CACHE_TTL_SECS, DEFAULT_REQUEST_TIMEOUT_SECS, EvaluateArtifact,
-    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, ExtractedContent,
+    BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES,
+    DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
-    MAX_CACHE_TTL_SECS, MAX_CACHE_VALUE_BYTES, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderFailureRecord,
-    ProviderFilter, ProviderHealthEntry, ProviderInfo, RATE_LIMIT_MAX_REQUESTS,
-    RATE_LIMIT_WINDOW_SECS, RRF_K, RankedResult, RerankSignal, SearchCapability, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResult, SearchResultOutput, SearchStrategy,
-    WebError,
+    MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
+    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, SearchMetadata, SearchOutput, SearchQuery,
+    SearchRequest, SearchResultOutput, SearchStrategy, WebError,
 };
 
 /// Build a `ProviderPool` from a credential map.

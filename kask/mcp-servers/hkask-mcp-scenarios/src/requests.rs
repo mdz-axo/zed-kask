@@ -252,7 +252,7 @@ pub struct SynthesizeRequest {
     /// Event ID to synthesize perspectives for
     pub event_id: String,
     /// Perspectives to aggregate
-    pub perspectives: Vec<Perspective>,
+    pub(crate) perspectives: Vec<Perspective>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
