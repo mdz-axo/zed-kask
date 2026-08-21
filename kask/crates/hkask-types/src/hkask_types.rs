@@ -8,17 +8,17 @@ pub mod corpus;
 
 pub mod curator;
 pub mod document;
-pub mod error;
+pub(crate) mod error;
 pub mod event;
 
-pub mod hmem_ontology;
+pub(crate) mod hmem_ontology;
 pub mod id;
 pub mod inference_ipc;
 
 pub mod json_extract;
-pub mod kanban_status;
+pub(crate) mod kanban_status;
 pub mod kanban_wire;
-pub mod observable_span;
+
 pub mod regulation;
 pub mod secret;
 pub mod template;
@@ -47,7 +47,7 @@ pub use id::{
 pub use kanban_status::TaskStatus;
 pub use regulation::LedgerHealth;
 
-pub use observable_span::ObservableSpan;
+
 pub use template::LLMParameters;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 

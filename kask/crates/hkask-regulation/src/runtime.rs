@@ -544,7 +544,7 @@ impl RegulationLedger {
     /// \[P8\] Constraining: Semantic Grounding — Accept/Stage/Block counts are measured, not guessed
     /// pre:  entry signals and actions are non-empty
     /// post: regulation health counters updated, history appended
-    pub async fn record_regulation_cycle(&self, entry: RegulationCycleEntry) {
+    pub(crate) async fn record_regulation_cycle(&self, entry: RegulationCycleEntry) {
         let mut state = self.state.write().await;
         state.regulation_health.total_cycles += 1;
         state.regulation_health.accepted += entry.accepted;
@@ -578,7 +578,7 @@ impl RegulationLedger {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — history enables trend analysis for loop tuning
     /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
     /// post: returns up to n entries, newest first; never exceeds the configured history cap
-    pub async fn regulation_history(&self, n: usize) -> Vec<RegulationCycleEntry> {
+    pub(crate) async fn regulation_history(&self, n: usize) -> Vec<RegulationCycleEntry> {
         let state = self.state.read().await;
         state
             .regulation_history
@@ -595,7 +595,7 @@ impl RegulationLedger {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — tool stats inform energy and reliability decisions
     /// \[P8\] Constraining: Semantic Grounding — LogNormal distributions are computed from measured data
     /// post: returns `Arc<ToolStats>` shared reference
-    pub async fn tool_stats(&self) -> Arc<ToolStats> {
+    pub(crate) async fn tool_stats(&self) -> Arc<ToolStats> {
         let state = self.state.read().await;
         Arc::clone(&state.tool_stats)
     }
@@ -803,7 +803,7 @@ impl RegulationLedger {
     ///
     /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
     /// post: returns Vec<StoredSkillSpan> (may be empty)
-    pub async fn query_skill_feedback(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
+    pub(crate) async fn query_skill_feedback(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
         let state = self.state.read().await;
         state.skill_spans.query(skill_id, phase)
     }

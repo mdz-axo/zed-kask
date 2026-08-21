@@ -95,7 +95,7 @@ impl RegulationHealth {
 /// different dependency domains (the "cross-cutting concern" test).
 ///
 /// backup, ACP, curator, etc.) have moved to their respective domain crates
-/// as enums implementing [`ObservableSpan`](crate::ObservableSpan).
+/// as enums with inherent `emit()` and `as_str()` methods.
 ///
 /// `CANONICAL_NAMESPACES` (in `event.rs`) is the single source of truth for
 /// **canonical** Regulation spans — essential spans that are `SpanNamespace`-validated,
@@ -157,16 +157,6 @@ impl RegulationSpan {
 impl std::fmt::Display for RegulationSpan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
-    }
-}
-
-impl crate::observable_span::ObservableSpan for RegulationSpan {
-    fn as_str(&self) -> &'static str {
-        RegulationSpan::as_str(self)
-    }
-
-    fn emit(&self, operation: &str) {
-        RegulationSpan::emit(self, operation);
     }
 }
 

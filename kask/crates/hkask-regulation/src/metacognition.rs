@@ -189,7 +189,7 @@ impl MetacognitionLoop {
     }
 
     /// Create with custom configuration.
-    pub fn with_config(
+    pub(crate) fn with_config(
         ledger: Arc<TokioRwLock<RegulationLedger>>,
         config: MetacognitionConfig,
     ) -> Self {

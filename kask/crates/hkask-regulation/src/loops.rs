@@ -32,21 +32,21 @@
 //! No sideways edges. Authority flows downward.
 
 // Channel types stay in hkask-regulation (depend on RuntimeAlert).
-pub mod channels;
+pub(crate) mod channels;
 
 // Loop type system — actions, core, signals.
-pub mod actions;
-pub mod core;
-pub mod signals;
+pub(crate) mod actions;
+pub(crate) mod core;
+pub(crate) mod signals;
 
-pub use actions::{ActionType, RegulatoryAction};
+pub(crate) use actions::{ActionType, RegulatoryAction};
 pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
 pub use channels::CurationInput;
-pub use core::ImpactReport;
+pub(crate) use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
-pub use signals::Signal;
+pub(crate) use signals::Signal;
 pub(crate) use signals::{Deviation, DeviationDirection, SignalMetric};
 
 // Backward-compatible re-export — CuratorDirective was previously re-exported
 // from here but lives in hkask_types::curator.
-pub use hkask_types::curator::CuratorDirective;
+pub(crate) use hkask_types::curator::CuratorDirective;

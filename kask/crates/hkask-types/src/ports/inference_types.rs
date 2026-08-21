@@ -67,21 +67,6 @@ pub struct InferenceUsage {
     pub total_tokens: u32,
 }
 
-/// Token probability from LLM response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenProbability {
-    pub token: String,
-    pub prob: f64,
-    pub top_k: Vec<TokenProb>,
-}
-
-/// Top-k token probability
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenProb {
-    pub token: String,
-    pub prob: f64,
-}
-
 /// OpenAI-compatible tool definition sent to models that support native function calling.
 ///
 /// Serialized as `{"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}`.
@@ -121,7 +106,6 @@ pub struct InferenceResult {
     pub model: String,
     pub usage: InferenceUsage,
     pub finish_reason: String,
-    pub token_probabilities: Option<Vec<TokenProbability>>,
     /// Populated when `finish_reason == "tool_calls"`. For models without native function calling,
     /// always empty — `parse_tool_calls()` in `tool_augmented` handles `<<tool:...>>` fallback.
     #[serde(default)]
