@@ -71,7 +71,13 @@ impl BatchOutcome {
 
 /// Retry an async operation with exponential backoff.
 ///
-/// Backoff: `2^attempts * 5` seconds (10s, 20s, 40s for attempts 1, 2, 3).
+/// Backoff: `2^attempts` seconds (2s, 4s for attempts 1, 2). The previous
+/// `2^attempts * 5` schedule (10s, 20s) caused multi-hour wall times for
+/// large corpus embedding runs where each batch retried independently —
+/// 170 batches × 30s of sleep = 85 minutes of pure backoff. The 2s/4s
+/// schedule is sufficient for transient throttles without making large
+/// runs impractical.
+///
 /// Returns `Ok(result)` on success, `Err(last_error)` after `max_retries`
 /// failures. Each retry logs a warning with the attempt number and backoff.
 pub(crate) async fn retry_with_backoff<T, E, F, Fut>(
@@ -101,7 +107,7 @@ where
                     );
                     return Err(e);
                 }
-                let backoff = std::time::Duration::from_secs(2u64.pow(attempts) * 5);
+                let backoff = std::time::Duration::from_secs(2u64.pow(attempts));
                 tracing::warn!(
                     target = target,
                     context = %context,

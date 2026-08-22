@@ -9190,8 +9190,10 @@ dependencies = [
  "hkask-types",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
+ "zed-reqwest",
 ]
 
 [[package]]

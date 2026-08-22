@@ -443,8 +443,11 @@ impl CorpusServer {
     /// Batch embed chunks from a JSONL file with configurable batch size.
     ///
     /// Reads chunks (entity_ref, source, text, word_count per line), batch-embeds
-    /// in groups of `batch_size`, stores each vector + text/provenance h_mem in the
-    /// DB, and returns a summary (no inline vectors — too large for 33K chunks).
+    /// in groups of `batch_size` **concurrently** using a semaphore-gated
+    /// `tokio::spawn` per batch, stores each vector in the DB, and returns a
+    /// summary. Concurrent batch processing prevents MCP context server timeouts
+    /// on large corpora (33K+ chunks) — the previous sequential loop took
+    /// minutes, exceeding the ~30s MCP timeout.
     async fn embed_batch_from_jsonl(
         &self,
         chunks_path: &str,
@@ -520,47 +523,106 @@ impl CorpusServer {
 
         let store = crate::helpers::open_memory_store(db_path, passphrase)?;
 
-        let mut embedded = 0usize;
-        let mut failed = 0usize;
         let batch = batch_size.max(1);
+        let batches: Vec<Vec<(String, String)>> = chunks.chunks(batch).map(|c| c.to_vec()).collect();
+        let num_batches = batches.len();
 
-        for chunk_batch in chunks.chunks(batch) {
-            let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
-            let vectors = match retry_with_backoff(
-                MAX_RETRIES,
-                "hkask.mcp.docproc.embed",
-                &format!("batch of {}", chunk_batch.len()),
-                || self.inference_router.embed(&model_name, &batch_texts),
-            )
-            .await
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    failed += chunk_batch.len();
-                    Vec::new()
-                }
-            };
-            if vectors.is_empty() {
-                continue;
-            }
-            for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
-                // Store embedding vector only — text and provenance h_mems were
-                // removed as orphans (no downstream pipeline tool consumed them).
-                if let Err(e) = store.store_embedding(&c.0, vector, &model_name) {
-                    failed += 1;
-                    if failed <= 5 {
+        // Concurrent embedding: spawn one task per batch, gated by a semaphore.
+        // The concurrency limit defaults to 4 (matching the embedding batch_size
+        // default) — this keeps Ollama busy without overwhelming it. The
+        // semaphore ensures we don't fire all batches at once.
+        let embed_concurrency = std::env::var("HKASK_EMBED_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(4);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(embed_concurrency));
+        let router = Arc::clone(&self.inference_router);
+        let store = Arc::new(store);
+        let model_name = Arc::new(model_name.clone());
+
+        let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (batch_idx, chunk_batch) in batches.into_iter().enumerate() {
+            let sem = Arc::clone(&semaphore);
+            let router = Arc::clone(&router);
+            let store = Arc::clone(&store);
+            let model_name = Arc::clone(&model_name);
+            let embedded = Arc::clone(&embedded);
+            let failed = Arc::clone(&failed);
+            let batch_len = chunk_batch.len();
+
+            join_set.spawn(async move {
+                let _permit = sem.acquire().await;
+
+                let batch_texts: Vec<String> =
+                    chunk_batch.iter().map(|c| c.1.clone()).collect();
+                let vectors = match retry_with_backoff(
+                    MAX_RETRIES,
+                    "hkask.mcp.docproc.embed",
+                    &format!("batch {batch_idx} of {batch_len}"),
+                    || router.embed(&model_name, &batch_texts),
+                )
+                .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
                         tracing::warn!(
                             target: "hkask.mcp.docproc.embed",
-                            entity = %c.0,
+                            batch = batch_idx,
                             error = %e,
-                            "Failed to store embedding"
+                            "Batch {batch_idx} failed after retries"
                         );
+                        failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
+                        return;
                     }
-                    continue;
+                };
+
+                if vectors.is_empty() {
+                    failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
+                    return;
                 }
-                embedded += 1;
+
+                for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
+                    if let Err(e) = store.store_embedding(&c.0, vector, &model_name) {
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if failed.load(std::sync::atomic::Ordering::Relaxed) <= 5 {
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.embed",
+                                entity = %c.0,
+                                error = %e,
+                                "Failed to store embedding"
+                            );
+                        }
+                        continue;
+                    }
+                    embedded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+        }
+
+        // Wait for all batch tasks to complete.
+        while let Some(res) = join_set.join_next().await {
+            if let Err(e) = res {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.embed",
+                    error = %e,
+                    "Embedding batch task join failed"
+                );
             }
         }
+
+        let embedded = embedded.load(std::sync::atomic::Ordering::Relaxed);
+        let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
+
+        tracing::info!(
+            target: "hkask.mcp.docproc.embed",
+            total, embedded, failed, num_batches, embed_concurrency,
+            "Embedding complete"
+        );
 
         let result = json!({
             "total": total,

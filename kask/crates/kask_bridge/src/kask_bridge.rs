@@ -16,6 +16,7 @@ mod identity;
 mod inference;
 mod inference_ipc_server;
 mod inference_providers;
+mod inference_socket;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
@@ -42,6 +43,7 @@ pub use inference_providers::{
     credential_urls_for_mcp, ensure_openai_compatible_entries, mirror_env_keys_to_keychain,
     resolve_embedding_credentials,
 };
+pub use inference_socket::{get_inference_socket_path, set_inference_socket_path};
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BuiltinMcpServer, build_mcp_server_env, builtin_mcp_server_ids,
     builtin_mcp_server_pairs, filter_credentials_for_server,

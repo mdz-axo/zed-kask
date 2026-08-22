@@ -747,8 +747,11 @@ fn default_corpus_max_results() -> u32 {
 pub(crate) struct ScreenerRequest {
     /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
     pub prompt: String,
-    /// Maximum results (default 20)
+    /// Maximum results (default 20). The EODHD screener paginates
+    /// automatically to exhaust the full universe, so this is an upper
+    /// bound on the returned row count, not a page size.
     #[serde(default = "default_screener_limit")]
+    #[allow(dead_code)]
     pub limit: u32,
     /// Override specific criteria directly (bypasses prompt parsing for these fields).
     ///

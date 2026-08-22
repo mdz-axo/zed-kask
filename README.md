@@ -91,18 +91,6 @@ An updater is installed alongside the binaries; run `update-zed-kask` (or `kask/
 
 ---
 
-## Architecture
-
-Zed-Kask keeps Kask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that Kask crates never depend on Zed crates — Zed-Kask depends on Kask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
-
-The seam between the two sides is small and documented: the named divergence points (D1–D32; five since removed) cover every edit to Zed's tree outside `kask/`. The full table and upstream-sync procedure live in [`DIVERGENCE.md`](./DIVERGENCE.md). The composition-root wiring is documented in [`kask/docs/architecture/zed-host-architecture-plan.md`](./kask/docs/architecture/zed-host-architecture-plan.md).
-
-Tool authority lives at the boundaries whose list the caller does not choose: the per-request `tool_allowlist` on the inference IPC dispatch (fail-closed), each swarm agent card's `mcp_tools` allowlist, and per-server MCP env/credential allowlists. Interrupted tool calls (unknown delivery) are never auto-retried; the three kanban create tools carry server-side idempotency keys so a replay cannot double an effect.
-
-Federation, multiplayer, and sign-in ride on Zed's existing collaboration and identity capabilities. Kask's own Matrix transport and separate identity crate are not carried over — the local Kask pod stays sovereign, and users sign in with their existing Zed account.
-
----
-
 ## License
 
 Zed-Kask inherits Zed's licensing: GPL-3.0-or-later primarily, with Apache-2.0 components where marked. License information for third-party dependencies must be correctly provided for CI to pass; see [`script/licenses/zed-licenses.toml`](./script/licenses/zed-licenses.toml) and the [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) configuration for details.

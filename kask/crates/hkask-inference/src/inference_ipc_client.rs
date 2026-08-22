@@ -15,9 +15,17 @@
 //!
 //! ## Connection management
 //!
-//! The client holds a single socket connection. If the connection drops, the
-//! next call returns an `InferenceError::Connection`. The caller can retry by
-//! constructing a new client.
+//! The client opens a **new connection per request**. This allows concurrent
+//! requests to run in parallel — the server side already spawns a task per
+//! connection (`handle_connection`), so multiple in-flight requests are
+//! handled independently. Unix domain socket `connect()` is a kernel-level
+//! operation with no network round-trip, so the per-request overhead is
+//! negligible (microseconds) compared to the inference call itself (seconds).
+//!
+//! The previous design held a single `Mutex<UnixStream>` which serialized all
+//! requests — even with concurrent `tokio::spawn` tasks, only one request
+//! could be in flight at a time, making parallel embedding of large corpora
+//! impractical.
 //!
 //! ## Why not streaming?
 //!
@@ -28,8 +36,8 @@
 //!
 //! ## Transport vs. outcome errors
 //!
-//! Every IPC method shares one transport skeleton — serialize the request,
-//! acquire the stream lock, write + flush, read the response line, deserialize,
+//! Every IPC method shares one transport skeleton — open a connection,
+//! serialize the request, write + flush, read the response line, deserialize,
 //! verify the correlation id — owned by [`InferenceIpcClient::ipc_roundtrip`].
 //! Transport failures (a dead socket, a malformed line, an id mismatch) are
 //! [`IpcTransportError`]s, mapped to each method's error type by a `From` impl.
@@ -56,7 +64,6 @@ use hkask_types::{
 use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::Mutex;
 
 /// Maximum size of a single newline-delimited IPC response line.
 ///
@@ -169,24 +176,31 @@ fn strip_provider_prefix(name: &str) -> &str {
 ///
 /// Construct with `InferenceIpcClient::connect()` or
 /// `InferenceIpcClient::from_env()`.
+///
+/// Opens a new connection per request so concurrent callers are not
+/// serialized behind a single stream lock. The server side spawns a task
+/// per connection, so parallel requests are handled independently.
 #[derive(Clone)]
 pub struct InferenceIpcClient {
-    /// The socket connection, protected by a mutex so only one request is
-    /// in flight at a time (the protocol is request-response, not multiplexed).
-    stream: Arc<Mutex<Option<UnixStream>>>,
-    /// Next request ID. Shared across clones so one connection can serve multiple
-    /// trait objects (see `resolve_inference_port` and siblings).
+    /// The socket path — each `ipc_roundtrip` opens a fresh connection here.
+    socket_path: Arc<std::path::PathBuf>,
+    /// Next request ID. Shared across clones so each request gets a unique id.
     next_id: Arc<AtomicU64>,
 }
 
 impl InferenceIpcClient {
     /// Connect to a Unix socket at the given path.
+    ///
+    /// Verifies the socket is reachable by opening and immediately closing a
+    /// test connection. The actual socket path is stored for per-request
+    /// connections in `ipc_roundtrip`.
     pub async fn connect(socket_path: &Path) -> Result<Self, InferenceError> {
-        let stream = UnixStream::connect(socket_path)
+        // Verify the socket is reachable — open a connection and drop it.
+        let _ = UnixStream::connect(socket_path)
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC connect failed: {e}")))?;
         Ok(Self {
-            stream: Arc::new(Mutex::new(Some(stream))),
+            socket_path: Arc::new(socket_path.to_path_buf()),
             next_id: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -204,11 +218,12 @@ impl InferenceIpcClient {
 
     /// Send a request and receive the validated response.
     ///
-    /// Owns the transport skeleton shared by every IPC method: serialize the
-    /// request, acquire the stream lock, write + flush, read the response line,
-    /// deserialize, and verify the correlation id. On every error branch the
-    /// cached stream is nulled so the next call reconnects instead of retrying
-    /// on a dead or half-consumed connection.
+    /// Opens a **new connection** to the IPC socket for each call, so
+    /// concurrent callers are not serialized behind a single stream lock.
+    /// The server side spawns a task per connection, so parallel requests
+    /// are handled independently. Unix domain socket `connect()` is a
+    /// kernel-level operation with no network round-trip — the overhead is
+    /// negligible compared to the inference call itself.
     ///
     /// Takes `method` by reference (cloning once for the wire request) so the
     /// caller keeps its owned value for the per-method outcome match. The
@@ -229,65 +244,43 @@ impl InferenceIpcClient {
         let request_json = serde_json::to_string(&request)
             .map_err(|e| IpcTransportError::Json(format!("IPC serialize failed: {e}")))?;
 
-        let mut guard = self.stream.lock().await;
-        let stream = match guard.as_mut() {
-            Some(stream) => stream,
-            None => return Err(IpcTransportError::Connection("IPC socket closed".into())),
-        };
+        // Open a fresh connection for this request. Each connection is
+        // handled by its own server-side task, so concurrent callers run
+        // in parallel.
+        let mut stream = UnixStream::connect(&*self.socket_path)
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC connect failed: {e}")))?;
 
-        // Send the request as a single line. Null the cached stream on every
-        // error branch so the next call reconnects instead of retrying on a
-        // dead/half-consumed stream.
-        if let Err(e) = stream.write_all(request_json.as_bytes()).await {
-            *guard = None;
-            return Err(IpcTransportError::Connection(format!(
-                "IPC write failed: {e}"
-            )));
-        }
-        if let Err(e) = stream.write_all(b"\n").await {
-            *guard = None;
-            return Err(IpcTransportError::Connection(format!(
-                "IPC write failed: {e}"
-            )));
-        }
-        if let Err(e) = stream.flush().await {
-            *guard = None;
-            return Err(IpcTransportError::Connection(format!(
-                "IPC flush failed: {e}"
-            )));
-        }
+        // Send the request as a single line.
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = match read_response_line(stream).await {
-            Ok(line) => line,
-            Err(e) => {
-                *guard = None;
-                return Err(IpcTransportError::Connection(format!(
-                    "IPC read failed: {e}"
-                )));
-            }
-        };
+        let line = read_response_line(&mut stream)
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC read failed: {e}")))?;
         let line = match line {
             Some(line) => line,
             None => {
-                *guard = None;
                 return Err(IpcTransportError::Connection(
                     "IPC socket closed by server".into(),
                 ));
             }
         };
 
-        let response: InferenceResponse = match serde_json::from_str(&line) {
-            Ok(response) => response,
-            Err(e) => {
-                *guard = None;
-                return Err(IpcTransportError::Json(format!(
-                    "IPC deserialize failed: {e}"
-                )));
-            }
-        };
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| IpcTransportError::Json(format!("IPC deserialize failed: {e}")))?;
 
         if response.id != id {
-            *guard = None;
             return Err(IpcTransportError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
@@ -656,14 +649,43 @@ impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UnixListener;
 
-    /// Build a client over the given stream with `next_id` starting at 1
-    /// (matching `connect`). The caller holds the bridge end of the pair to
-    /// feed canned responses.
-    fn client_over(stream: UnixStream) -> InferenceIpcClient {
-        InferenceIpcClient {
-            stream: Arc::new(Mutex::new(Some(stream))),
-            next_id: Arc::new(AtomicU64::new(1)),
+    /// Test harness: binds a Unix listener, returns the socket path and a
+    /// handle that accepts one connection and feeds it a canned response.
+    ///
+    /// The client opens a fresh connection per `ipc_roundtrip` call, so each
+    /// test spawns a listener that accepts exactly one connection, writes the
+    /// pre-buffered response, and closes.
+    struct TestBridge {
+        path: std::path::PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    impl TestBridge {
+        /// Create a test bridge that accepts one connection and writes
+        /// `response_bytes` to it.
+        fn with_response(response_bytes: Vec<u8>) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("test.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                stream.write_all(&response_bytes).await.unwrap();
+                // Keep the stream open until the client reads — don't drop
+                // immediately. The client's `read_response_line` will get
+                // the data before EOF.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            });
+            Self { path, _dir: dir }
+        }
+
+        /// Create a client connected to this bridge's socket.
+        fn client(&self) -> InferenceIpcClient {
+            InferenceIpcClient {
+                socket_path: Arc::new(self.path.clone()),
+                next_id: Arc::new(AtomicU64::new(1)),
+            }
         }
     }
 
@@ -704,21 +726,16 @@ mod tests {
 
     #[tokio::test]
     async fn ipc_roundtrip_returns_validated_response() {
-        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
-        let client = client_over(client_end);
-        // Pre-buffer the response (id 1, matching next_id starting at 1).
-        bridge_end
-            .write_all(
-                response_line(
-                    InferenceOutcome::ToolResult {
-                        result: serde_json::Value::Null,
-                    },
-                    1,
-                )
-                .as_bytes(),
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::ToolResult {
+                    result: serde_json::Value::Null,
+                },
+                1,
             )
-            .await
-            .unwrap();
+            .into_bytes(),
+        );
+        let client = bridge.client();
         let response = client
             .ipc_roundtrip(&InferenceMethod::ToolInvoke, InferenceParams::default())
             .await
@@ -731,9 +748,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ipc_roundtrip_returns_socket_closed_when_stream_nulled() {
+    async fn ipc_roundtrip_returns_connection_error_on_dead_socket() {
+        // A path that doesn't exist — connect will fail.
         let client = InferenceIpcClient {
-            stream: Arc::new(Mutex::new(None)),
+            socket_path: Arc::new(std::path::PathBuf::from("/nonexistent/ipc/sock")),
             next_id: Arc::new(AtomicU64::new(1)),
         };
         let err = client
@@ -742,27 +760,22 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
+            IpcTransportError::Connection(ref m) if m.contains("IPC connect failed")
         ));
     }
 
     #[tokio::test]
-    async fn ipc_roundtrip_nulls_stream_on_id_mismatch() {
-        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
-        let client = client_over(client_end);
-        // Pre-buffer a response with the wrong id (client expects 1).
-        bridge_end
-            .write_all(
-                response_line(
-                    InferenceOutcome::ToolResult {
-                        result: serde_json::Value::Null,
-                    },
-                    999,
-                )
-                .as_bytes(),
+    async fn ipc_roundtrip_returns_error_on_id_mismatch() {
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::ToolResult {
+                    result: serde_json::Value::Null,
+                },
+                999, // wrong id — client expects 1
             )
-            .await
-            .unwrap();
+            .into_bytes(),
+        );
+        let client = bridge.client();
         let err = client
             .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
             .await
@@ -771,22 +784,12 @@ mod tests {
             err,
             IpcTransportError::Connection(ref m) if m.contains("ID mismatch")
         ));
-        // The stream was nulled — the next call reports the closed socket.
-        let err2 = client
-            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err2,
-            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
-        ));
     }
 
     #[tokio::test]
-    async fn ipc_roundtrip_nulls_stream_on_malformed_json() {
-        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
-        let client = client_over(client_end);
-        bridge_end.write_all(b"not valid json\n").await.unwrap();
+    async fn ipc_roundtrip_returns_error_on_malformed_json() {
+        let bridge = TestBridge::with_response(b"not valid json\n".to_vec());
+        let client = bridge.client();
         let err = client
             .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
             .await
@@ -795,34 +798,21 @@ mod tests {
             err,
             IpcTransportError::Json(ref m) if m.contains("deserialize failed")
         ));
-        // The stream was nulled.
-        let err2 = client
-            .ipc_roundtrip(&InferenceMethod::Generate, InferenceParams::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err2,
-            IpcTransportError::Connection(ref m) if m == "IPC socket closed"
-        ));
     }
 
     #[tokio::test]
     async fn call_rejects_unexpected_outcome() {
-        let (client_end, mut bridge_end) = UnixStream::pair().unwrap();
-        let client = client_over(client_end);
-        // `call` with `Generate` expects `Result`; feed `Embeddings`.
-        bridge_end
-            .write_all(
-                response_line(
-                    InferenceOutcome::Embeddings {
-                        embeddings: vec![vec![0.0]],
-                    },
-                    1,
-                )
-                .as_bytes(),
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::Embeddings {
+                    embeddings: vec![vec![0.0]],
+                },
+                1,
             )
-            .await
-            .unwrap();
+            .into_bytes(),
+        );
+        let client = bridge.client();
+        // `call` with `Generate` expects `Result`; feed `Embeddings`.
         let err = client
             .call(InferenceMethod::Generate, InferenceParams::default())
             .await

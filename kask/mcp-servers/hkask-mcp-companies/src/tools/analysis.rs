@@ -4,23 +4,8 @@ use crate::{
     types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::execute_tool_semantic;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
-
-fn parse_screener_response(
-    status: reqwest::StatusCode,
-    body: &str,
-) -> Result<serde_json::Value, McpToolError> {
-    if !status.is_success() {
-        return Err(McpToolError::unavailable(format!(
-            "FMP screener returned HTTP {status}"
-        )));
-    }
-
-    serde_json::from_str(body).map_err(|error| {
-        McpToolError::unavailable(format!("FMP screener returned malformed JSON: {error}"))
-    })
-}
 
 #[tool_router(router = analysis_router, vis = "pub")]
 impl CompaniesServer {
@@ -251,109 +236,76 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Company screener. Parses natural language prompts into FMP stable company-screener API parameters. Supports filtering by market cap, price, volume, beta, annual dividend (dollar amount), sector, industry, country, and exchange. P/E, ROE, ROIC, debt/equity, and price/book are parsed from the prompt but not supported by the current FMP endpoint — they are returned as unsupported_criteria. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt to refine results."
+        description = "Company screener powered by EODHD Screener API. Parses natural language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Supports: market cap, price, volume, average volume, EPS, dividend yield, sector, industry, exchange, daily/weekly price change. Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) are parsed and returned but require per-company fundamentals — use key_metrics for those. Use criteria_overrides to adjust parsed criteria. Paginates automatically to exhaust the full universe beyond the 1,000-result offset limit."
     )]
     pub async fn company_screener(
         &self,
         Parameters(req): Parameters<types::ScreenerRequest>,
     ) -> String {
         execute_tool_semantic(self, "company_screener", Self::ontology_anchor("company_screener"), async {
-            // Parse the prompt
+            // Parse the natural language prompt into structured criteria
             let mut criteria = screener::parse_screening_prompt(&req.prompt);
 
-            // Apply user overrides
+            // Apply user overrides — merge override fields into parsed criteria
             if !req.criteria_overrides.is_null()
-                && let Some(obj) = req.criteria_overrides.as_object()
+                && let Some(override_obj) = req.criteria_overrides.as_object()
                 && let Some(crit_obj) = criteria.as_object_mut()
             {
-                for (k, v) in obj {
+                for (k, v) in override_obj {
                     crit_obj.insert(k.clone(), v.clone());
                 }
             }
 
-            // Add limit
-            if let Some(obj) = criteria.as_object_mut() {
-                obj.insert(
-                    "limit".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(req.limit)),
-                );
-            }
+            // Split criteria into EODHD screener filters and post-screen filters
+            let (screener_filters, post_screen_filters) = screener::split_criteria(&criteria);
 
-            // Split into supported and unsupported criteria.
-            // The FMP stable company-screener endpoint silently ignores
-            // P/E, ROE, ROIC, debt/equity, and price/book filters — sending
-            // them would be a broken feedback loop.
-            let (supported_criteria, unsupported_criteria) =
-                screener::split_supported_criteria(&criteria);
+            let filter_count = screener_filters.len();
+            let post_screen_count = post_screen_filters.as_object().map(|m| m.len()).unwrap_or(0);
 
-            // Build query params from supported criteria only
-            let mut query_params: Vec<(&str, String)> = Vec::new();
-            if let Some(obj) = supported_criteria.as_object() {
-                for (k, v) in obj {
-                    let val_str = match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    query_params.push((k.as_str(), val_str));
-                }
-            }
-
-            // Call FMP stable screener API
-            let url = "https://financialmodelingprep.com/stable/company-screener";
-
-            let response = self
-                .client
-                .get(url)
-                .query(&[("apikey", self.fmp_api_key.as_str())])
-                .query(&[("limit", req.limit.to_string().as_str())])
-                .query(
-                    &query_params
-                        .iter()
-                        .map(|(k, v)| (*k, v.as_str()))
-                        .collect::<Vec<_>>(),
+            // Call EODHD Screener API with the screener-compatible filters
+            let rows = if filter_count > 0 {
+                providers::fetch_eodhd_screener(
+                    &self.client,
+                    &self.eodhd_api_key,
+                    &screener_filters,
                 )
-                .send()
-                .await
-                .map_err(|e| {
-                    McpToolError::unavailable(format!("FMP screener request failed: {e}"))
-                })?;
+                .await?
+            } else {
+                // No screener filters — fetch the full universe sorted by market cap
+                providers::fetch_eodhd_screener(
+                    &self.client,
+                    &self.eodhd_api_key,
+                    &[],
+                )
+                .await?
+            };
 
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|e| {
-                    McpToolError::unavailable(format!("FMP screener body read failed: {e}"))
-                })?;
-
-            let results = parse_screener_response(status, &body)?;
-
-            let count = results.as_array().map(|a| a.len()).unwrap_or(0);
-
-            let has_unsupported = !unsupported_criteria.as_object().map(|m| m.is_empty()).unwrap_or(true);
+            let count = rows.len();
 
             let mut output = serde_json::json!({
                 "prompt": req.prompt,
-                "criteria": criteria,
-                "applied_criteria": supported_criteria,
-                "unsupported_criteria": unsupported_criteria,
+                "parsed_criteria": criteria,
+                "screener_filters": screener_filters,
+                "post_screen_filters": post_screen_filters,
                 "count": count,
-                "results": results,
+                "results": rows,
                 "fibo": {
                     "screener": fibo::STOCK_SCREENER,
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                     "price_earnings_ratio": fibo::PRICE_EARNINGS_RATIO,
                     "dividend_yield": fibo::DIVIDEND_YIELD,
                 },
-                "framework": "FMP Stable Company Screener. Parses natural language screening prompts into FMP stable company-screener API parameters. Supports: market cap, price, volume, beta, annual dividend (dollar amount), sector, industry, country, exchange. P/E, ROE, ROIC, debt/equity, and price/book are parsed but not supported by the current FMP endpoint — see unsupported_criteria. Use criteria_overrides to adjust parsed criteria."
+                "framework": "EODHD Screener API. Parses natural language screening prompts into EODHD filter triples ([field, operation, value], AND-combined). Screener-compatible fields: market_capitalization, adjusted_close, avgvol_1d, avgvol_200d, earnings_share, dividend_yield, sector, industry, exchange, refund_1d_p, refund_5d_p. Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) are parsed and returned in post_screen_filters but require per-company fundamentals from key_metrics. Paginates with market cap band splitting to exhaust the full universe beyond the 1,000-result offset limit.",
+                "source": "EODHD Screener API"
             });
 
-            if has_unsupported {
+            if post_screen_count > 0 {
                 if let Some(obj) = output.as_object_mut() {
                     obj.insert(
                         "warning".to_string(),
                         serde_json::Value::String(
-                            "Some parsed criteria are not supported by the FMP stable company-screener endpoint and were not applied. See unsupported_criteria for details.".to_string(),
+                            "Post-screen criteria require per-company fundamentals. Use key_metrics for each result to apply these filters."
+                                .to_string(),
                         ),
                     );
                 }
@@ -365,14 +317,14 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Exhaustive stock universe listing from EODHD bulk-fundamentals. Returns ALL companies on the specified exchange with market cap above the threshold in a single call — no pagination, no page concept. Each row includes symbol, name, exchange, price, shares outstanding, market cap, sector, industry, and country. Use this as Stage 1 of a multi-stage screen (financial filter, then expectations gap). Default: US exchange, market cap above $500M."
+        description = "Exhaustive stock universe listing from EODHD Screener API. Returns ALL stocks on the specified exchange with market cap above the threshold, paginating through market cap bands to exhaust the full universe. Each row includes symbol, name, exchange, price, market cap, sector, and industry. Use this as Stage 1 of a multi-stage screen (financial filter, then expectations gap). Default: US exchange, market cap above $500M."
     )]
     pub async fn stock_universe(
         &self,
         Parameters(req): Parameters<types::StockUniverseRequest>,
     ) -> String {
         execute_tool_semantic(self, "stock_universe", Self::ontology_anchor("company_screener"), async {
-            let listings = providers::fetch_eodhd_bulk_listing(
+            let listings = providers::fetch_eodhd_screener_listing(
                 &self.client,
                 &self.eodhd_api_key,
                 &req.exchange,
@@ -391,7 +343,7 @@ impl CompaniesServer {
                     "screener": fibo::STOCK_SCREENER,
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                 },
-                "source": "EODHD bulk-fundamentals",
+                "source": "EODHD Screener API",
             });
 
             Ok(fibo::enrich_with_ontology(output, "company_screener"))

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_maybe_stringified};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
@@ -36,7 +36,11 @@ pub struct RenderTemplateToolInput {
     /// `schemars` renders `Value` as bare `true` in `additionalProperties`,
     /// which breaks strict-schema providers — context variables silently
     /// don't arrive.
-    #[serde(default)]
+    ///
+    /// `deserialize_maybe_stringified` tolerates models that emit `context` as
+    /// a stringified JSON string instead of a bare object — the same pattern
+    /// `edit_file.edits` uses.
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     pub context: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
 }
 
@@ -276,5 +280,30 @@ mod tests {
             content.contains("---"),
             "enhance-classify.j2 should have frontmatter"
         );
+    }
+
+    // Regression: when the model emits `context` as a stringified JSON string
+    // instead of a bare object, `deserialize_maybe_stringified` parses the
+    // string and the tool succeeds. Same pattern as `edit_file.edits`.
+    #[test]
+    fn test_context_accepts_stringified_json() {
+        let input =
+            serde_json::json!({"template_ref": "essentialist/essentialist-flow", "context": "{}"});
+        let result: RenderTemplateToolInput =
+            serde_json::from_value(input).expect("stringified context must be accepted");
+        assert!(
+            result.context.is_empty(),
+            "stringified empty object must parse to empty map"
+        );
+    }
+
+    // Positive path: a bare object must still work.
+    #[test]
+    fn test_context_accepts_bare_object() {
+        let input = serde_json::json!({"template_ref": "essentialist/essentialist-flow", "context": {"task": "simplify"}});
+        let result: RenderTemplateToolInput =
+            serde_json::from_value(input).expect("bare object must parse");
+        assert_eq!(result.context.len(), 1);
+        assert!(result.context.contains_key("task"));
     }
 }

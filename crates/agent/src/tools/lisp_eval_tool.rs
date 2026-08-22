@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_maybe_stringified};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
@@ -45,7 +45,13 @@ pub struct LispEvalToolInput {
     /// populate; a bare `serde_json::Value` emits `true`, which strict-schema
     /// providers reject outright. The `HashMap` shape gives the model a clear
     /// `type: object` signal to send a JSON object.
-    #[serde(default)]
+    ///
+    /// `deserialize_maybe_stringified` tolerates models that emit `env` as a
+    /// stringified JSON string (e.g. `"{}"`) instead of a bare object — the
+    /// same pattern `edit_file.edits` uses. Without it, a stringified `env`
+    /// fails with "invalid type: string, expected a map" and the tool errors
+    /// out, wasting a turn.
+    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     #[serde(default = "default_max_steps")]
@@ -138,6 +144,7 @@ impl AgentTool for LispEvalTool {
 
 #[cfg(test)]
 mod tests {
+    use super::LispEvalToolInput;
     use serde_json::json;
 
     // The tool dispatches to `hkask_lisp::eval_sandboxed_with_budget` — these
@@ -210,7 +217,11 @@ mod tests {
             100000,
             64,
         );
-        assert!(result.is_ok(), "compound form should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "compound form should succeed: {:?}",
+            result.err()
+        );
         assert_eq!(result.expect("checked is_ok above"), json!(127));
     }
 
@@ -224,20 +235,59 @@ mod tests {
             100000,
             64,
         );
-        assert!(result.is_ok(), "zero-count guard should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "zero-count guard should succeed: {:?}",
+            result.err()
+        );
         assert_eq!(result.expect("checked is_ok above"), json!(0));
     }
 
     #[test]
     fn test_interp_arithmetic_literal() {
         // The form that was confirmed working via the tool earlier.
-        let result = hkask_lisp::eval_sandboxed_with_budget(
-            "(+ 1 2 3)",
-            &json!({}),
-            100000,
-            64,
+        let result = hkask_lisp::eval_sandboxed_with_budget("(+ 1 2 3)", &json!({}), 100000, 64);
+        assert!(
+            result.is_ok(),
+            "arithmetic should succeed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "arithmetic should succeed: {:?}", result.err());
         assert_eq!(result.expect("checked is_ok above"), json!(6));
+    }
+
+    // Regression: when the model emits `env` as a stringified JSON string
+    // (e.g. `"{}"`) instead of a bare object, `deserialize_maybe_stringified`
+    // parses the string and the tool succeeds. Without it, the deserializer
+    // rejects with "invalid type: string, expected a map" and the tool errors
+    // out. This is the same pattern `edit_file.edits` uses.
+    #[test]
+    fn test_env_accepts_stringified_json() {
+        let input = json!({"form": "(+ 1 2)", "env": "{}"});
+        let result: LispEvalToolInput =
+            serde_json::from_value(input).expect("stringified env must be accepted");
+        assert!(
+            result.env.is_empty(),
+            "stringified empty object must parse to empty map"
+        );
+    }
+
+    // Regression: a valid stringified JSON object must also parse.
+    #[test]
+    fn test_env_accepts_stringified_json_object() {
+        let input = json!({"form": "(+ 1 2)", "env": "{\"step_5_result\": {\"count\": 3}}"});
+        let result: LispEvalToolInput =
+            serde_json::from_value(input).expect("stringified env object must be accepted");
+        assert_eq!(result.env.len(), 1);
+        assert!(result.env.contains_key("step_5_result"));
+    }
+
+    // Positive path: a bare object must still work.
+    #[test]
+    fn test_env_accepts_bare_object() {
+        let input = json!({"form": "(+ 1 2)", "env": {"step_5_result": {"count": 3}}});
+        let result: LispEvalToolInput =
+            serde_json::from_value(input).expect("bare object must parse");
+        assert_eq!(result.env.len(), 1);
+        assert!(result.env.contains_key("step_5_result"));
     }
 }

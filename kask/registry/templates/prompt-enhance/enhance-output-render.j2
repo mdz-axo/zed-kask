@@ -79,33 +79,48 @@ visibility: Public
 type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }} convergence={{ convergence_metric }}
 {%- endset -%}
 
-{# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order) #}
-{%- set findings_table_rows = [] -%}
-{%- for finding in audit_findings -%}
-  {%- set _ = findings_table_rows.append("| " ~ (finding.constraint_force | default("Hypothesis")) ~ " | " ~ (finding.lens | default("unspecified")) ~ " | " ~ (finding.finding | default("unspecified")) ~ " | " ~ (finding.addressed | default(false) | string) ~ " |") -%}
-{%- endfor -%}
-{%- set findings_table = "| Force | Lens | Finding | Addressed |\n|-------|------|---------|----------|\n" ~ (findings_table_rows | join("\n")) -%}
+{# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order)
+   Note: minijinja does not support list.append() — use block-set with inline for loops instead. #}
+{%- set findings_table -%}
+| Force | Lens | Finding | Addressed |
+|-------|------|---------|----------|
+{%- for finding in audit_findings %}
+| {{ finding.constraint_force | default("Hypothesis") }} | {{ finding.lens | default("unspecified") }} | {{ finding.finding | default("unspecified") }} | {{ finding.addressed | default(false) | string }} |
+{%- endfor %}
+{%- endset -%}
 
 {# Grill ratings list #}
-{%- set grill_lines = [] -%}
-{%- for rating in grill_ratings -%}
-  {%- set _ = grill_lines.append("- **" ~ (rating.area | default("unknown")) ~ "** — " ~ (rating.rating | default("unrated")) ~ ": " ~ (rating.evidence | default("no evidence"))) -%}
-{%- endfor -%}
-{%- set grill_ratings_text = (grill_lines | join("\n")) if grill_lines else "_Skipped (low tier or no verify step)." -%}
+{%- if grill_ratings and (grill_ratings | length) > 0 -%}
+{%- set grill_ratings_text -%}
+{%- for rating in grill_ratings %}
+- **{{ rating.area | default("unknown") }}** — {{ rating.rating | default("unrated") }}: {{ rating.evidence | default("no evidence") }}
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set grill_ratings_text = "_Skipped (low tier or no verify step)." -%}
+{%- endif -%}
 
 {# Mutations applied list #}
-{%- set mutation_lines = [] -%}
-{%- for mutation in mutations_applied -%}
-  {%- set _ = mutation_lines.append("- **" ~ (mutation.finding | default("unspecified")) ~ "** → " ~ (mutation.mutation | default("unspecified")) ~ " _(" ~ (mutation.section | default("unspecified")) ~ ")_") -%}
-{%- endfor -%}
-{%- set mutations_text = (mutation_lines | join("\n")) if mutation_lines else "_None._" -%}
+{%- if mutations_applied and (mutations_applied | length) > 0 -%}
+{%- set mutations_text -%}
+{%- for mutation in mutations_applied %}
+- **{{ mutation.finding | default("unspecified") }}** → {{ mutation.mutation | default("unspecified") }} _({{ mutation.section | default("unspecified") }})_
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set mutations_text = "_None._" -%}
+{%- endif -%}
 
 {# Deferred findings list #}
-{%- set deferred_lines = [] -%}
-{%- for deferred in mutations_deferred -%}
-  {%- set _ = deferred_lines.append("- " ~ (deferred.finding | default("unspecified")) ~ " — " ~ (deferred.reason | default("Hypothesis-tier — needs user verification"))) -%}
-{%- endfor -%}
-{%- set deferred_text = (deferred_lines | join("\n")) if deferred_lines else "_None._" -%}
+{%- if mutations_deferred and (mutations_deferred | length) > 0 -%}
+{%- set deferred_text -%}
+{%- for deferred in mutations_deferred %}
+- {{ deferred.finding | default("unspecified") }} — {{ deferred.reason | default("Hypothesis-tier — needs user verification") }}
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set deferred_text = "_None._" -%}
+{%- endif -%}
 
 {# Schema defects (from step 3 deterministic check) #}
 {%- set defects_text = (schema_defects | join(", ")) if schema_defects and (schema_defects | length) > 0 else "_None._" -%}

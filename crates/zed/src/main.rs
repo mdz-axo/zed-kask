@@ -199,13 +199,13 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
-/// The Unix socket path for the inference IPC bridge.
-///
-/// Set by the model-dependent kask wiring block after the inference IPC
-/// server is started. Read by the deferred MCP server launch task to pass
-/// the socket path to MCP server child processes via the `HKASK_INFERENCE_SOCKET`
-/// env var.
-static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
+// zed-kask: D8 — the inference IPC socket path is managed by
+// `kask_bridge::inference_socket` (a re-settable `Mutex<String>`) instead of a
+// local `OnceLock<String>`. The `OnceLock` could not be updated when the IPC
+// server restarted (e.g. when the real model resolved after the no-op
+// fallback), leaving MCP servers with a stale socket path. `kask_bridge` owns
+// the state; `main.rs` calls `set_inference_socket_path` /
+// `get_inference_socket_path`.
 
 /// Per-tick call ceiling seeded for the `swarm-panel` persona (the kask panel's
 /// `ToolInvoker`).
@@ -2071,12 +2071,7 @@ fn main() {
                         ) {
                             Ok(ipc_server) => {
                                 let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
-                                if let Err(prev) = INFERENCE_SOCKET_PATH.set(socket_path.clone()) {
-                                    log::warn!(
-                                        "INFERENCE_SOCKET_PATH already set to {prev} — second wiring attempt dropped. \
-                                         The first socket path remains active; this is expected on re-login or multi-window."
-                                    );
-                                }
+                                kask_bridge::set_inference_socket_path(&socket_path);
                                 log::info!(
                                     "hKask inference IPC server started at {socket_path} — \
                                      MCP servers will route inference through zed"
@@ -2086,12 +2081,21 @@ fn main() {
                                 // up on drop, but we don't drop it until process exit.
                                 std::mem::forget(ipc_server);
                                 // zed-kask: D3/D8 — F19: MCP re-sync (inference socket, deferred).
-                                // Re-sync MCP servers so the inference socket path is
-                                // included in the env passed to context server processes.
-                                // The KaskMcpDescriptor::command() resolves env at call
-                                // time, so this notification triggers maintain_servers
-                                // to restart servers with the updated env.
+                                // Re-sync both MCP server paths so the inference socket path is
+                                // included in the env passed to context server processes:
+                                //   1. `sync_kask_mcp_servers` — restarts the per-project
+                                //      ContextServerStore instances (agent tool picker)
+                                //   2. `sync_kask_mcp_runtime_servers` — restarts the governed
+                                //      McpRuntime instances (skill execution + kask panel)
+                                // Without (2), the governed servers keep their stale env (no
+                                // socket) and all inference calls fail with "IPC bridge not
+                                // configured" even though the socket is live.
                                 sync_kask_mcp_servers(cx);
+                                sync_kask_mcp_runtime_servers(
+                                    mcp_runtime_for_deferred.clone(),
+                                    kask_mcp_restart_env_for_deferred.clone(),
+                                    cx,
+                                );
                             }
                             Err(e) => {
                                 log::warn!(
@@ -2161,7 +2165,12 @@ fn main() {
 
                         // Start the IPC server with a no-op inference port so
                         // `INFERENCE_SOCKET_PATH` is set and MCP servers connect
-                        // to the bridge.
+                        // to the bridge. The embedding port IS passed here —
+                        // embeddings use a separate provider (Ollama) with
+                        // separate credentials, so they work even when no chat
+                        // model is configured. Without this, corpus embedding
+                        // calls fail with "embedding port not configured" when
+                        // the no-model fallback path runs.
                         let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
                         // No tool port here: the no-op port means no chat model
@@ -2170,19 +2179,14 @@ fn main() {
                         // the model resolves) carries the McpRuntime tool port.
                         match kask_bridge::InferenceIpcServer::start(
                             no_model_port,
-                            None,
+                            embedding_port_for_ipc.clone(),
                             None,
                             cx,
                         ) {
                             Ok(ipc_server) => {
                                 let socket_path =
                                     ipc_server.socket_path().to_string_lossy().to_string();
-                                if let Err(prev) = INFERENCE_SOCKET_PATH.set(socket_path.clone()) {
-                                    log::warn!(
-                                        "INFERENCE_SOCKET_PATH already set to {prev} — second wiring attempt dropped. \
-                                         The first socket path remains active; this is expected on re-login or multi-window."
-                                    );
-                                }
+                                kask_bridge::set_inference_socket_path(&socket_path);
                                 log::info!(
                                     "hKask inference IPC server started (no-op port) at {socket_path} — \
                                      MCP servers will route through the bridge and receive a \
@@ -2190,6 +2194,11 @@ fn main() {
                                 );
                                 std::mem::forget(ipc_server);
                                 sync_kask_mcp_servers(cx);
+                                sync_kask_mcp_runtime_servers(
+                                    mcp_runtime_for_deferred.clone(),
+                                    kask_mcp_restart_env_for_deferred.clone(),
+                                    cx,
+                                );
                             }
                             Err(e) => {
                                 log::warn!(
@@ -2852,7 +2861,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
                 &server_id,
                 &settings,
                 credentials_provider.as_ref(),
-                INFERENCE_SOCKET_PATH.get().map(|s| s.as_str()),
+                kask_bridge::get_inference_socket_path().as_deref(),
                 cx,
             )
             .await;
@@ -3009,7 +3018,7 @@ async fn kask_server_env(
         server_id,
         &settings,
         credentials_provider.as_ref(),
-        INFERENCE_SOCKET_PATH.get().map(|s| s.as_str()),
+        kask_bridge::get_inference_socket_path().as_deref(),
         cx,
     )
     .await
