@@ -1452,7 +1452,7 @@ pub async fn fetch_eodhd_bulk_listing(
     exchange: &str,
     min_market_cap: f64,
 ) -> Result<Vec<CompanyListing>, McpToolError> {
-    let url = format!("{EODHD_BASE_URL}/bulk-fundamentals");
+    let url = format!("{EODHD_BASE_URL}/bulk-fundamentals/stock");
     let resp = client
         .get(&url)
         .query(&[

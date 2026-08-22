@@ -3,9 +3,10 @@
   "description": "US-traded companies where market price discounts lower growth than financials support",
   "methodology": "Mauboussin Expectations Investing — 3-stage funnel",
   "created": "2026-08-22",
+  "last_run": "2026-08-22",
   "stages": {
     "stage_1_universe": {
-      "description": "Exhaustive pull of all US-traded common stocks with market cap > $500M",
+      "description": "Pull of US-traded common stocks with market cap > $500M",
       "filters": {
         "marketCapMoreThan": 500000000,
         "country": "US",
@@ -13,8 +14,9 @@
         "isFund": false,
         "excludeTickers": [".TO", ".L", ".PA", ".DE", ".SW", ".AS", ".MI", ".MC"]
       },
-      "data_source": "company_screener (FMP stable endpoint)",
-      "pagination": "Sector-based partitioning — screen per sector with marketCapMoreThan to exhaust within 50-result-per-call limit"
+      "data_source": "company_screener (FMP stable endpoint) — EODHD bulk-fundamentals returned 404 (URL fixed to /bulk-fundamentals/stock but requires server restart to take effect)",
+      "results": "50 companies returned (top 50 by market cap). Filtered to 24 unique US common stocks after removing ETFs, funds, foreign-listed (.TO), and non-US country (TW, NL, KR). Additional companies (SSNC, LUV, WES, ZBH, CF) analyzed from prior session.",
+      "limitation": "company_screener returns max 50 results per call. Exhaustive universe (2,000-4,000 names) requires either fixed EODHD bulk endpoint or sector-based partitioning with multiple screener calls."
     },
     "stage_2_financials": {
       "description": "Filter Stage 1 for companies whose financials support 10%+ growth",
@@ -24,8 +26,9 @@
         "or_roic": ">= 0.15",
         "or_management_guidance_median": ">= 0.10"
       },
-      "data_source": "key_metrics (FMP) + research_search for guidance",
-      "threshold": "Any one criterion passes — company qualifies for Stage 3"
+      "data_source": "expectations_gap (management_guidance field) + key_metrics (FIBO-cached). For WMT, management guidance verified via earnings call transcript.",
+      "threshold": "Any one criterion passes — company qualifies for Stage 3",
+      "survivors": ["AMZN", "SSNC", "LUV", "WES", "BAC", "CSCO", "ABBV", "AVGO", "MU", "TSLA", "SPCX"]
     },
     "stage_3_expectations": {
       "description": "Filter Stage 2 for companies where market-implied growth < 10%",
@@ -33,14 +36,123 @@
         "market_implied_growth": "< 0.10",
         "signal": "market_expects_less"
       },
-      "data_source": "expectations_gap (reverse DCF)",
+      "data_source": "expectations_gap (reverse DCF) + reverse_dcf for timed-out companies",
       "output": "Final candidate list with gap analysis"
     }
   },
   "results": {
-    "stage_1_count": null,
-    "stage_2_count": null,
-    "stage_3_count": null,
-    "candidates": []
+    "stage_1_count": 50,
+    "stage_2_count": 11,
+    "stage_3_count": 6,
+    "candidates": [
+      {
+        "symbol": "AMZN",
+        "company_name": "Amazon.com, Inc.",
+        "sector": "Consumer Cyclical",
+        "market_implied_growth": 0.074,
+        "management_guidance_median": 0.20,
+        "gap_pct": 12.6,
+        "signal": "market_expects_less",
+        "thesis": "Market prices in 7.4% growth but management guides 20% — significant underpricing of growth potential"
+      },
+      {
+        "symbol": "SSNC",
+        "company_name": "SS&C Technologies Holdings, Inc.",
+        "sector": "Technology",
+        "market_implied_growth": -0.072,
+        "management_guidance_median": 0.118,
+        "gap_pct": 19.0,
+        "signal": "market_expects_less",
+        "thesis": "Market implies revenue contraction (-7.2%) but management guides 11.8% growth — largest absolute gap in the screen"
+      },
+      {
+        "symbol": "LUV",
+        "company_name": "Southwest Airlines Co.",
+        "sector": "Industrials",
+        "market_implied_growth": 0.036,
+        "management_guidance_median": 0.175,
+        "gap_pct": 13.9,
+        "signal": "market_expects_less",
+        "thesis": "Market expects 3.6% growth vs management 17.5% — airline recovery underappreciated"
+      },
+      {
+        "symbol": "WES",
+        "company_name": "Western Midstream Partners, LP",
+        "sector": "Energy",
+        "market_implied_growth": 0.038,
+        "management_guidance_median": 0.125,
+        "gap_pct": 8.7,
+        "signal": "market_expects_less",
+        "thesis": "Market expects 3.8% growth vs management 12.5% — midstream energy growth underpriced"
+      },
+      {
+        "symbol": "BAC",
+        "company_name": "Bank of America Corporation",
+        "sector": "Financial Services",
+        "market_implied_growth": -0.108,
+        "management_guidance_median": 0.106,
+        "gap_pct": 21.4,
+        "signal": "market_expects_less",
+        "thesis": "Market implies -10.8% revenue contraction but management guides 10.6% growth — largest gap, potential value opportunity or value trap (bank cyclicality)"
+      },
+      {
+        "symbol": "CSCO",
+        "company_name": "Cisco Systems, Inc.",
+        "sector": "Technology",
+        "market_implied_growth": 0.026,
+        "management_guidance_median": 0.23,
+        "gap_pct": 20.4,
+        "signal": "market_expects_less",
+        "thesis": "Market expects 2.6% growth vs management 23% — networking/AI infrastructure growth significantly underpriced"
+      }
+    ],
+    "borderline": [
+      {
+        "symbol": "ABBV",
+        "company_name": "AbbVie Inc.",
+        "market_implied_growth": 0.10,
+        "management_guidance_median": 0.19,
+        "gap_pct": 9.0,
+        "signal": "borderline",
+        "note": "Market-implied growth exactly at 10% threshold — fails strict < 10% filter but worth monitoring"
+      }
+    ],
+    "eliminated": {
+      "market_expects_more": [
+        {"symbol": "AVGO", "market_implied": 0.393, "mgmt_guidance": 0.47, "reason": "market > 10%"},
+        {"symbol": "NVDA", "market_implied": 0.405, "mgmt_guidance": null, "reason": "market > 10% (high expectations)"},
+        {"symbol": "AMD", "market_implied": 0.45, "mgmt_guidance": null, "reason": "market > 10% (high expectations)"},
+        {"symbol": "GOOGL", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "META", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "LLY", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "AAPL", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "MSFT", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "V", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "MA", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "XOM", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"},
+        {"symbol": "CF", "market_implied": null, "mgmt_guidance": null, "reason": "market expects more than guidance"}
+      ],
+      "fails_stage_2_guidance_below_10pct": [
+        {"symbol": "WMT", "market_implied": -0.14, "mgmt_guidance": 0.0425, "reason": "mgmt guidance ~4.25% (verified via earnings call transcript) — below 10% threshold"},
+        {"symbol": "JNJ", "market_implied": 0.003, "mgmt_guidance": 0.067, "reason": "mgmt guidance 6.7% — below 10% threshold"},
+        {"symbol": "ZBH", "market_implied": -0.209, "mgmt_guidance": 0.045, "reason": "mgmt guidance 4.5% — below 10% threshold"}
+      ],
+      "insufficient_data": [
+        {"symbol": "INTC", "reason": "reverse DCF could not compute market-implied growth"},
+        {"symbol": "ORCL", "reason": "reverse DCF could not compute market-implied growth"},
+        {"symbol": "MU", "market_implied": null, "mgmt_guidance": 0.321, "reason": "market_implied unavailable (mgmt guidance 32.1% — would qualify if market data available)"},
+        {"symbol": "TSLA", "market_implied": null, "mgmt_guidance": 0.239, "reason": "market_implied unavailable (mgmt guidance 23.9% — would qualify if market data available)"},
+        {"symbol": "SPCX", "market_implied": null, "mgmt_guidance": 0.54, "reason": "market_implied unavailable (mgmt guidance 54.0% — would qualify if market data available)"}
+      ],
+      "dcf_not_applicable": [
+        {"symbol": "JPM", "reason": "Bank — working capital ratio outside DCF model range (-0.2..=0.5)"},
+        {"symbol": "BRK-B", "reason": "Holding company/insurance — working capital ratio outside DCF model range"}
+      ]
+    }
+  },
+  "next_steps": {
+    "deep_dive": "For the 6 final candidates, run moat_check, management_scorecard, comparable_analysis, and dcf_valuation to distinguish genuine opportunities from value traps. Priority: BAC (largest gap, bank cyclicality risk), CSCO (large gap, AI infrastructure tailwind), SSNC (largest absolute gap).",
+    "universe_expansion": "Restart MCP server to pick up EODHD URL fix (/bulk-fundamentals/stock), then re-run stock_universe for exhaustive 2,000-4,000 name universe. Alternatively, use sector-based partitioning with company_screener (screen per sector with marketCapMoreThan to exhaust within 50-result limit).",
+    "data_gaps": "MU, TSLA, SPCX have management guidance ≥ 10% but market_implied is unavailable — re-run expectations_gap after server restart to attempt reverse DCF computation."
   }
 }

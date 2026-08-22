@@ -39,11 +39,14 @@ pub struct LispEvalToolInput {
     /// converted to Lisp values: objects become association lists, arrays
     /// become lists, numbers stay numbers, strings stay strings.
     ///
-    /// Uses `AnyJsonValue` (not `serde_json::Value`) because `schemars`
-    /// renders `Value` as bare `true`, which breaks strict-schema providers
-    /// (Ollama, Gemini) — the env parameter silently doesn't arrive.
+    /// Uses `HashMap<String, AnyJsonValue>` (not `serde_json::Value`) so the
+    /// generated schema is `{"type":"object","additionalProperties":{}}` —
+    /// a bare `AnyJsonValue` emits `{}` (any value), which the model doesn't
+    /// populate; a bare `serde_json::Value` emits `true`, which strict-schema
+    /// providers reject outright. The `HashMap` shape gives the model a clear
+    /// `type: object` signal to send a JSON object.
     #[serde(default)]
-    env: hkask_types::AnyJsonValue,
+    env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     #[serde(default = "default_max_steps")]
     max_steps: u64,
@@ -115,9 +118,12 @@ impl AgentTool for LispEvalTool {
                 error: format!("failed to receive input: {e}"),
             })?;
 
+            let env_value = serde_json::Value::Object(
+                input.env.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            );
             let result = hkask_lisp::eval_sandboxed_with_budget(
                 &input.form,
-                &input.env,
+                &env_value,
                 input.max_steps,
                 input.max_depth,
             )
@@ -139,12 +145,35 @@ mod tests {
     // tool uses (same function, same arguments). They verify the skill
     // convergence patterns that `lisp_eval` is designed to support.
     //
-    // NOTE: The `env` field was previously `serde_json::Value`, whose
-    // `JsonSchema` renders as bare `true` — strict-schema providers silently
-    // dropped the parameter, causing "unbound symbol" errors for any form
-    // referencing env variables. Fixed by changing to `AnyJsonValue` (schema
-    // emits `{}`). These tests verify the interpreter itself is correct; the
-    // tool wrapper fix needs a process rebuild to take effect live.
+    // NOTE: The `env` field went through three iterations:
+    //   1. `serde_json::Value` — schemars renders as bare `true`, which
+    //      strict-schema providers (Ollama, Gemini) reject outright.
+    //   2. `AnyJsonValue` — schema emits `{}` (any value). This avoided the
+    //      boolean rejection but the model still didn't populate the parameter
+    //      (no `type` signal → env arrives as null → "unbound symbol").
+    //   3. `HashMap<String, AnyJsonValue>` — schema emits `{"type":"object",
+    //      "additionalProperties":{}}`, giving the model a clear object signal.
+    //      This matches the working `render_template` context pattern.
+    // These tests verify the interpreter itself is correct (they call
+    // `eval_sandboxed_with_budget` directly). The tool wrapper fix (schema
+    // shape) needs a process rebuild to take effect live.
+
+    #[test]
+    fn test_env_schema_has_type_object() {
+        // The env parameter must generate a schema with "type": "object" so the
+        // model populates it. This is the root-cause regression test for the
+        // "unbound symbol" bug: a bare `AnyJsonValue` emits `{}` (no type) and
+        // the model doesn't send the parameter; a bare `serde_json::Value`
+        // emits `true` (boolean schema) which strict-schema providers reject.
+        // `HashMap<String, AnyJsonValue>` emits `{"type":"object",...}`.
+        let schema = schemars::schema_for!(super::LispEvalToolInput);
+        let schema_json = serde_json::to_value(&schema).expect("schema is serializable");
+        let env_schema = &schema_json["properties"]["env"];
+        assert_eq!(
+            env_schema["type"], "object",
+            "env schema must have type:object so the model populates it, got: {env_schema}"
+        );
+    }
 
     #[test]
     fn test_interp_assoc_access_on_json_object() {
