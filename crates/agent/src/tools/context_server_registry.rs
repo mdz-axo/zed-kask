@@ -442,9 +442,25 @@ impl AnyAgentTool for ContextServerTool {
                 response = request.fuse() => match response {
                     Ok(r) => r,
                     Err(e) => {
-                        // zed-kask: D-seam — transport error during tool call.
-                        // The server may have died mid-call. Trigger a restart
-                        // and retry once, mirroring McpRuntime::call_tool_inner.
+                        // zed-kask: D-seam — distinguish timeout from transport death.
+                        // The original code retried on *any* error, including timeouts.
+                        // But a timeout means the server is alive but slow (or its upstream
+                        // is slow) — restarting it wastes 30s and doesn't fix the slowness.
+                        // Only retry on actual transport errors (connection reset, process
+                        // death), where a restart can actually help. The timeout bail
+                        // message ("Context server request timeout") comes from
+                        // `client.rs:483`; matching on the string avoids adding a new
+                        // error variant to the context_server crate's public API.
+                        let is_timeout = e.to_string().contains("Context server request timeout");
+                        if is_timeout {
+                            log::warn!(
+                                "Context server '{}' tool '{}' timed out — not retrying (server is alive but slow)",
+                                server_id.0, tool_name
+                            );
+                            return Err(e.into());
+                        }
+                        // Transport error — server may have died mid-call. Trigger a
+                        // restart and retry once, mirroring McpRuntime::call_tool_inner.
                         log::warn!(
                             "Context server '{}' tool '{}' failed: {} — attempting restart and retry",
                             server_id.0, tool_name, e

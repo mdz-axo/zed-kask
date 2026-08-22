@@ -771,7 +771,11 @@ impl RegulationLedger {
     ///
     /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
     /// post: returns Vec<StoredSkillSpan> (may be empty)
-    pub(crate) async fn query_skill_feedback(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
+    pub(crate) async fn query_skill_feedback(
+        &self,
+        skill_id: &str,
+        phase: &str,
+    ) -> Vec<StoredSkillSpan> {
         let state = self.state.read().await;
         state.skill_spans.query(skill_id, phase)
     }
@@ -849,6 +853,15 @@ impl RegulationLedger {
     pub async fn outcome_success_rate(&self, domain: &str) -> Option<f64> {
         let state = self.state.read().await;
         state.outcome.get(domain).map(|t| t.success_rate())
+    }
+
+    /// List all domains with recorded tool outcomes.
+    ///
+    /// Used by `ToolReliabilitySensor` to aggregate success rates across
+    /// all tracked domains. Returns domain names in arbitrary order.
+    pub async fn tracked_outcome_domains(&self) -> Vec<String> {
+        let state = self.state.read().await;
+        state.outcome.keys().cloned().collect()
     }
 
     /// Increment variety counter for a domain.

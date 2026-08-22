@@ -129,6 +129,15 @@ pub(crate) const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
 /// Cybernetics Loop's `MutationScoreSensor` produces a signal.
 pub(crate) const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
 
+/// Default tool reliability threshold (0.80 = 80% success rate).
+///
+/// When the aggregate tool success rate drops below this, the
+/// `ToolReliabilitySensor` produces a `ToolReliability` signal and the
+/// regulation loop escalates to Curation. This closes the feedback loop
+/// that was blind to systematic tool failures (e.g. MCP server timeouts
+/// looping for minutes without the regulation loop sensing the deviation).
+pub(crate) const DEFAULT_TOOL_RELIABILITY_THRESHOLD: f64 = 0.80;
+
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
@@ -224,6 +233,10 @@ pub struct SetPoints {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Default: 0.50.
     pub mutation_score_floor: f64,
+    /// Minimum tool reliability (success rate) before the Cybernetics Loop
+    /// escalates. Sensed from `RegulationLedger::outcome_success_rate`.
+    /// Default: 0.80.
+    pub tool_reliability_threshold: f64,
     // ── History retention (v0.33.0) ──
     /// Maximum regulation cycles retained for history queries.
     /// Default: 100.
@@ -261,6 +274,7 @@ pub(crate) struct SetPointsConfig {
     pub inference_throttle_mode: Option<InferenceThrottleMode>,
     pub coverage_floor: Option<f64>,
     pub mutation_score_floor: Option<f64>,
+    pub tool_reliability_threshold: Option<f64>,
     pub max_regulation_history: Option<usize>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
@@ -305,6 +319,7 @@ impl Default for SetPoints {
             inference_throttle_mode: InferenceThrottleMode::Off,
             coverage_floor: DEFAULT_COVERAGE_FLOOR,
             mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
+            tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
             max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
@@ -374,6 +389,9 @@ impl SetPoints {
             mutation_score_floor: config
                 .mutation_score_floor
                 .unwrap_or(defaults.mutation_score_floor),
+            tool_reliability_threshold: config
+                .tool_reliability_threshold
+                .unwrap_or(defaults.tool_reliability_threshold),
             max_regulation_history: config
                 .max_regulation_history
                 .unwrap_or(defaults.max_regulation_history),

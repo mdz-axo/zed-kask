@@ -1602,9 +1602,27 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 })?;
             let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
+            // zed-kask: HTTP client with explicit connect+request timeouts.
+            // Without these, a stalled upstream (Kalshi, Polymarket, FRED)
+            // hangs the MCP `tools/call` past the 60s client cap, triggering
+            // a server restart + retry that never converges. A 20s request
+            // timeout surfaces a stalled provider as an error instead of
+            // dragging the whole tool down. `unwrap_or_else` fallback logs
+            // the builder failure (per .rules: opt-in features that fail must
+            // log the failure classification, not collapse silently).
+            let http_client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "hkask-mcp-prediction-markets: HTTP client builder failed, falling back to no-timeout client: {e}"
+                    );
+                    reqwest::Client::new()
+                });
             Ok(PredictionMarketsServer::new(
                 ctx.webid,
-                reqwest::Client::new(),
+                http_client,
                 cache_ttl_secs,
                 std::sync::Arc::new(std::sync::Mutex::new(store)),
                 cache::TtlCache::new(cache_ttl_secs),

@@ -48,10 +48,13 @@ mod analysis;
 pub(crate) mod data_quality;
 pub(crate) mod economic_profit;
 pub(crate) mod fibo;
+pub(crate) mod fibo_cache;
 mod financial_model;
 pub(crate) mod portfolio;
 mod providers;
-pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
+pub(crate) use providers::{
+    CompanyProfile, HistoricalPriceView, KeyMetrics, Provider,
+};
 mod forecast;
 pub(crate) mod learning;
 pub(crate) mod research;
@@ -110,6 +113,7 @@ hkask_mcp_server::mcp_server!(
         pub portfolio: PortfolioManager,
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
+        pub fibo_cache: Option<fibo_cache::FiboDataCache>,
     }
 );
 
@@ -122,18 +126,14 @@ impl CompaniesServer {
         symbol: &str,
         extra: &[(&str, &str)],
     ) -> Result<serde_json::Value, McpToolError> {
-        // Key metrics requires enrichment — FMP stable split the old
-        // key-metrics response across /key-metrics, /ratios, and
-        // /financial-growth. Delegate to fetch_key_metrics which merges
-        // them and adds field aliases (roic, calendarYear, etc.).
-        if tool == "key_metrics" {
-            let limit = extra
-                .iter()
-                .find(|(k, _)| *k == "limit")
-                .and_then(|(_, v)| v.parse::<usize>().ok())
-                .unwrap_or(5);
-            let metrics = self.fetch_key_metrics(symbol, limit).await?;
-            return Ok(metrics.raw().clone());
+        // FIBO cache: check for a fresh raw response before hitting the API.
+        let params_hash = fibo_cache::hash_params(extra);
+
+        if let Some(ref cache) = self.fibo_cache {
+            if let Some(cached) = cache.get_raw(symbol, tool, &params_hash) {
+                tracing::debug!("fibo_cache: hit for {symbol} {tool}");
+                return Ok(cached);
+            }
         }
 
         let l = self
@@ -141,7 +141,7 @@ impl CompaniesServer {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        providers::companies_get(
+        let response = providers::companies_get(
             &self.client,
             tool,
             symbol,
@@ -150,26 +150,28 @@ impl CompaniesServer {
             extra,
             Some(&l),
         )
-        .await
+        .await?;
+        let provider_str = match response.provider {
+            providers::Provider::Fmp => "FMP",
+            providers::Provider::Eodhd => "EODHD",
+        };
+        let result = response.value;
+
+        // Store the fresh response in the FIBO cache and extract concepts.
+        if let Some(ref cache) = self.fibo_cache {
+            cache.store_raw(symbol, tool, &params_hash, &result, provider_str);
+            cache.extract_and_store_concepts(symbol, tool, &result, provider_str);
+        }
+
+        Ok(result)
     }
 
     /// Fetch a company profile as a typed `CompanyProfile` view. Concentrates
     /// field-name knowledge so tool handlers read `profile.market_cap()`
     /// instead of `v.get("mktCap").and_then(|v| v.as_f64())`.
     async fn fetch_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
-        let l = self
-            .learning
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        providers::fetch_company_profile(
-            &self.client,
-            symbol,
-            &self.fmp_api_key,
-            &self.eodhd_api_key,
-            Some(&l),
-        )
-        .await
+        let raw = self.fetch("company_profile", symbol, &[]).await?;
+        Ok(CompanyProfile::from_raw(raw))
     }
 
     /// Fetch key metrics as a typed `KeyMetrics` view.
@@ -178,12 +180,23 @@ impl CompaniesServer {
         symbol: &str,
         limit: usize,
     ) -> Result<KeyMetrics, McpToolError> {
+        let limit_str = limit.to_string();
+        let params_hash = fibo_cache::hash_params(&[("limit", &limit_str)]);
+
+        // Check FIBO cache first.
+        if let Some(ref cache) = self.fibo_cache {
+            if let Some(cached) = cache.get_raw(symbol, "key_metrics", &params_hash) {
+                tracing::debug!("fibo_cache: hit for {symbol} key_metrics");
+                return Ok(KeyMetrics::from_raw(cached));
+            }
+        }
+
         let l = self
             .learning
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        providers::fetch_key_metrics(
+        let metrics = providers::fetch_key_metrics(
             &self.client,
             symbol,
             limit,
@@ -191,7 +204,16 @@ impl CompaniesServer {
             &self.eodhd_api_key,
             Some(&l),
         )
-        .await
+        .await?;
+        let raw = metrics.raw().clone();
+
+        // Cache the merged key-metrics response and extract FIBO concepts.
+        if let Some(ref cache) = self.fibo_cache {
+            cache.store_raw(symbol, "key_metrics", &params_hash, &raw, "FMP");
+            cache.extract_and_store_concepts(symbol, "key_metrics", &raw, "FMP");
+        }
+
+        Ok(KeyMetrics::from_raw(raw))
     }
 
     /// Fetch historical prices as a typed `HistoricalPriceView` view.
@@ -201,21 +223,10 @@ impl CompaniesServer {
         from: &str,
         to: &str,
     ) -> Result<HistoricalPriceView, McpToolError> {
-        let l = self
-            .learning
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        providers::fetch_historical_price(
-            &self.client,
-            symbol,
-            from,
-            to,
-            &self.fmp_api_key,
-            &self.eodhd_api_key,
-            Some(&l),
-        )
-        .await
+        let raw = self
+            .fetch("historical_price", symbol, &[("from", from), ("to", to)])
+            .await?;
+        Ok(HistoricalPriceView::from_raw(raw))
     }
 
     async fn save_forecast(&self, forecast: PersistedForecast) -> Result<(), McpToolError> {
@@ -322,9 +333,49 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // could never arrive and corpus-mode transcript search was
             // permanently unavailable (RR-0061).
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
+            // FIBO financial data cache — stores raw API responses and FIBO-tagged
+            // concept points in SQLite. Failures are non-fatal: the server runs
+            // without caching (every fetch hits the API), but logs a warning.
+            let fibo_cache = match fibo_cache::resolve_cache_db_path(
+                &ctx.webid.to_string(),
+            ) {
+                Ok(path) => match fibo_cache::FiboDataCache::open(&path) {
+                    Ok(cache) => Some(cache),
+                    Err(e) => {
+                        tracing::warn!("fibo_cache: failed to open cache DB: {e}");
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("fibo_cache: failed to resolve cache path: {e}");
+                    None
+                }
+            };
+            // zed-kask: HTTP client with explicit connect+request timeouts.
+            // The MCP client caps any `tools/call` at 60s; without these,
+            // `expectations_gap` (which fans out to 5 FMP/EODHD fetches plus
+            // 3 parallel web-search calls) can stall on a single slow upstream
+            // and hit the 60s cap, triggering a server restart + retry that
+            // never converges. A 20s request timeout keeps each upstream call
+            // well under the cap so a stalled provider surfaces as
+            // `McpToolError::unavailable` and routes to the fallback provider
+            // via `companies_get`, instead of dragging the whole tool down.
+            // `unwrap_or_else` fallback to `Client::new()` matches the
+            // `hkask-mcp-swarm` pattern — builder failure is a misconfig, not
+            // a reason to refuse startup.
+            let http_client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "hkask-mcp-companies: HTTP client builder failed, falling back to no-timeout client: {e}"
+                    );
+                    reqwest::Client::new()
+                });
             Ok(CompaniesServer::new(
                 ctx.webid,
-                reqwest::Client::new(),
+                http_client,
                 fmp_api_key,
                 eodhd_api_key,
                 exa_api_key,
@@ -340,6 +391,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     LearningState::with_staleness_days(days)
                 })),
                 superforecast::FermiDefaults::from_env(),
+                fibo_cache,
             ))
         },
         vec![

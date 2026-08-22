@@ -1,0 +1,46 @@
+{
+  "screen_name": "expectations-gap-undervalued",
+  "description": "US-traded companies where market price discounts lower growth than financials support",
+  "methodology": "Mauboussin Expectations Investing — 3-stage funnel",
+  "created": "2026-08-22",
+  "stages": {
+    "stage_1_universe": {
+      "description": "Exhaustive pull of all US-traded common stocks with market cap > $500M",
+      "filters": {
+        "marketCapMoreThan": 500000000,
+        "country": "US",
+        "isEtf": false,
+        "isFund": false,
+        "excludeTickers": [".TO", ".L", ".PA", ".DE", ".SW", ".AS", ".MI", ".MC"]
+      },
+      "data_source": "company_screener (FMP stable endpoint)",
+      "pagination": "Sector-based partitioning — screen per sector with marketCapMoreThan to exhaust within 50-result-per-call limit"
+    },
+    "stage_2_financials": {
+      "description": "Filter Stage 1 for companies whose financials support 10%+ growth",
+      "filters": {
+        "revenue_growth_3yr_cagr": ">= 0.10",
+        "or_revenue_growth_ttm": ">= 0.10",
+        "or_roic": ">= 0.15",
+        "or_management_guidance_median": ">= 0.10"
+      },
+      "data_source": "key_metrics (FMP) + research_search for guidance",
+      "threshold": "Any one criterion passes — company qualifies for Stage 3"
+    },
+    "stage_3_expectations": {
+      "description": "Filter Stage 2 for companies where market-implied growth < 10%",
+      "filters": {
+        "market_implied_growth": "< 0.10",
+        "signal": "market_expects_less"
+      },
+      "data_source": "expectations_gap (reverse DCF)",
+      "output": "Final candidate list with gap analysis"
+    }
+  },
+  "results": {
+    "stage_1_count": null,
+    "stage_2_count": null,
+    "stage_3_count": null,
+    "candidates": []
+  }
+}

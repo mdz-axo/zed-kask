@@ -28,18 +28,22 @@ impl CompaniesServer {
                 validate_symbol(&req.symbol)?;
 
                 // ── 1. Fetch financial data for reverse DCF ──────────────────
-
-                let req_income = self
-                    .fetch("income_statement", &req.symbol, &[("limit", "5")])
-                    .await;
-                let req_balance = self
-                    .fetch("balance_sheet", &req.symbol, &[("limit", "5")])
-                    .await;
-                let req_cf = self
-                    .fetch("cash_flow_statement", &req.symbol, &[("limit", "5")])
-                    .await;
-                let req_metrics = self.fetch_key_metrics(&req.symbol, 5).await;
-                let req_profile = self.fetch_profile(&req.symbol).await;
+                //
+                // All five fetches are independent (no data dependency between
+                // them) and run concurrently via `tokio::join!`. This is not
+                // `try_join!` — we intentionally tolerate partial failures:
+                // a failed income_statement must not prevent fetching
+                // balance_sheet. The match below handles the Ok/Err cases
+                // per-fetch. Running them concurrently keeps the total under
+                // the 60s MCP `tools/call` cap (worst case = max single
+                // fetch timeout, not sum of all fetch timeouts).
+                let (req_income, req_balance, req_cf, req_metrics, req_profile) = tokio::join! {
+                    self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
+                    self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
+                    self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                    self.fetch_key_metrics(&req.symbol, 5),
+                    self.fetch_profile(&req.symbol),
+                };
 
                 // ── 2. Compute market-implied growth via reverse DCF ──────────
 

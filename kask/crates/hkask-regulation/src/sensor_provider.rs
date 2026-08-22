@@ -301,6 +301,64 @@ impl Sensor for TestCoverageSensor {
     }
 }
 
+/// Senses tool reliability from the Regulation runtime's outcome tracker.
+///
+/// Data source: `RegulationLedger::outcome_success_rate`. Produces a signal
+/// only when the aggregate success rate across all tracked domains drops
+/// below the reliability threshold. This closes the feedback loop that was
+/// blind to systematic tool failures (e.g. MCP server timeouts looping for
+/// minutes without the regulation loop sensing the deviation).
+///
+/// Returns `None` when no outcomes have been recorded yet (the legitimate
+/// "no data" state) — not a signal with value 1.0, which would mask a
+/// broken sensor as "healthy" (the `.rules` `unwrap_or(0)` trap).
+pub(crate) struct ToolReliabilitySensor {
+    ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
+    set_point: f64,
+}
+
+impl ToolReliabilitySensor {
+    pub fn new(
+        ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
+        set_point: f64,
+    ) -> Self {
+        Self { ledger, set_point }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for ToolReliabilitySensor {
+    async fn sense(&self) -> Option<Signal> {
+        let ledger = self.ledger.read().await;
+        // Aggregate success rate across all tracked domains. Each domain's
+        // success rate is weighted equally (not by call count) so a single
+        // high-volume domain doesn't dominate the signal. A domain with
+        // zero operations is excluded (no data, not 0% success).
+        let domains = ledger.tracked_outcome_domains().await;
+        let mut sum = 0.0;
+        let mut count = 0;
+        for domain in &domains {
+            if let Some(rate) = ledger.outcome_success_rate(domain).await {
+                sum += rate;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        let aggregate = sum / count as f64;
+        if aggregate >= self.set_point {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::ToolReliability,
+            aggregate,
+            self.set_point,
+        ))
+    }
+}
+
 /// Senses mutation score from the latest trace run's `metrics.json`.
 ///
 /// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `{HKASK_DATA_DIR}/traces`).

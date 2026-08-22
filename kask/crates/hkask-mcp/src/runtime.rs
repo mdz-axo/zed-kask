@@ -1338,6 +1338,22 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                     tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
                 }
 
+                // Record the outcome in the RegulationLedger so the
+                // `ToolReliabilitySensor` can sense the aggregate success
+                // rate. The domain is the MCP server name (not the tool name)
+                // so reliability is tracked per-server — a single broken
+                // server surfaces as one degraded domain, not scattered across
+                // individual tools. The `record_outcome` call is best-effort:
+                // if the ledger is unavailable the outcome is simply not
+                // recorded, and the sensor stays silent (not 1.0 — the
+                // `.rules` `unwrap_or(0)` trap on sense inputs).
+                let error_kind = result.as_ref().err().map(|e| e.to_string());
+                let cyber_lock = cyber.read().await;
+                cyber_lock
+                    .record_outcome(server, result.is_ok(), error_kind.as_deref())
+                    .await;
+                drop(cyber_lock);
+
                 result
             } else {
                 // No governance configured: dispatch unmetered. Metering is an

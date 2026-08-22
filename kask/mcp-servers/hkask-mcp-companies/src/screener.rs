@@ -232,8 +232,9 @@ enum ValueKind {
 /// Parse a numeric criterion from the prompt.
 ///
 /// Searches for patterns like "KEYWORD OPERATOR VALUE" using regex.
-/// Uses the *first* match found for each keyword group, and within a group
-/// picks the more-than or less-than variant depending on operator.
+/// Runs two independent passes — one for more-than operators, one for
+/// less-than — so compound prompts like "market cap above $500 million and
+/// below $100 billion" capture both bounds.
 fn parse_numeric(
     prompt: &str,
     map: &mut serde_json::Map<String, serde_json::Value>,
@@ -242,25 +243,56 @@ fn parse_numeric(
     less_than_ops: &[(&str, &str)],
     value_kind: ValueKind,
 ) {
-    // Try each keyword
+    // Pass 1: more-than operators
+    parse_numeric_direction(
+        prompt,
+        map,
+        keywords,
+        more_than_ops,
+        value_kind,
+    );
+    // Pass 2: less-than operators
+    parse_numeric_direction(
+        prompt,
+        map,
+        keywords,
+        less_than_ops,
+        value_kind,
+    );
+}
+
+/// Search for numeric criteria in one direction (more-than or less-than).
+/// Stops at the first keyword that matches and inserts the param if not
+/// already present in the map.
+fn parse_numeric_direction(
+    prompt: &str,
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    keywords: &[&str],
+    ops: &[(&str, &str)],
+    value_kind: ValueKind,
+) {
+    if ops.is_empty() {
+        return;
+    }
     for keyword in keywords {
-        // Build a regex: keyword followed by operator and value
-        // We allow whitespace and optional commas/ands between
-        let pattern = build_numeric_pattern(keyword, more_than_ops, less_than_ops);
+        let pattern = build_directional_pattern(keyword, ops);
         if let Some(captures) = Regex::new(&pattern).ok().and_then(|re| re.captures(prompt)) {
             let value_str = captures.name("value").map(|m| m.as_str()).unwrap_or("");
             let operator = captures.name("op").map(|m| m.as_str()).unwrap_or("");
 
-            // Parse the value
             let value = match value_kind {
                 ValueKind::Dollar => parse_dollar_value(value_str),
                 ValueKind::Bare => value_str.trim().parse::<f64>().ok(),
             };
 
             if let Some(v) = value {
-                // Determine which param to use
-                let param = find_param(operator.trim(), more_than_ops, less_than_ops);
-                if let Some(p) = param {
+                let param = ops
+                    .iter()
+                    .find(|(op, _)| *op == operator.trim())
+                    .map(|(_, param)| *param);
+                if let Some(p) = param
+                    && !map.contains_key(p)
+                {
                     map.insert(
                         p.to_string(),
                         serde_json::Value::Number(
@@ -268,27 +300,18 @@ fn parse_numeric(
                                 .unwrap_or_else(|| serde_json::Number::from(0)),
                         ),
                     );
-                    break; // Stop trying this keyword group, continue to next
                 }
+                break; // Found a match for this keyword group
             }
         }
     }
 }
 
-/// Build a regex for a numeric criterion.
-///
-/// Matches: KEYWORD (optionally followed by "is") OPERATOR VALUE
-fn build_numeric_pattern(
-    keyword: &str,
-    more_than_ops: &[(&str, &str)],
-    less_than_ops: &[(&str, &str)],
-) -> String {
-    // Collect all operator strings, sorted longest-first for greedy matching
-    let mut all_ops: Vec<&str> = more_than_ops
-        .iter()
-        .map(|(o, _)| *o)
-        .chain(less_than_ops.iter().map(|(o, _)| *o))
-        .collect();
+/// Build a regex for a numeric criterion in one direction (more-than OR
+/// less-than). Same pattern as build_numeric_pattern but only uses one set
+/// of operators, so the regex matches only that direction.
+fn build_directional_pattern(keyword: &str, ops: &[(&str, &str)]) -> String {
+    let mut all_ops: Vec<&str> = ops.iter().map(|(o, _)| *o).collect();
     all_ops.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
     let ops_alt = all_ops
@@ -297,8 +320,6 @@ fn build_numeric_pattern(
         .collect::<Vec<_>>()
         .join("|");
 
-    // Pattern: keyword (is)? (op) (value)
-    // Value: $10B, $500M, $1.5T, 5%, 20, 1.5, or quoted
     let kw_escaped = regex::escape(keyword);
     format!(
         r"(?i){}\s*(?:is\s+)?(?P<op>{})(?:\s+than)?\s+(?P<value>\$?\d+[.,]?\d*\s*[BMKT%bmkt]?|\d+[.,]?\d*\s*%?)",
@@ -358,25 +379,6 @@ fn parse_string(
             );
         }
     }
-}
-
-/// Find which FMP param corresponds to the matched operator.
-fn find_param<'a>(
-    operator: &str,
-    more_than_ops: &[(&str, &'a str)],
-    less_than_ops: &[(&str, &'a str)],
-) -> Option<&'a str> {
-    for (op_word, param) in more_than_ops {
-        if operator == *op_word {
-            return Some(param);
-        }
-    }
-    for (op_word, param) in less_than_ops {
-        if operator == *op_word {
-            return Some(param);
-        }
-    }
-    None
 }
 
 /// Parse a dollar value: "$10B" → 10_000_000_000, "$500M" → 500_000_000,

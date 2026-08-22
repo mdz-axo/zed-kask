@@ -248,6 +248,12 @@ impl CyberneticsLoop {
                 trace_dir,
                 set_points.mutation_score_floor,
             )));
+            registry.register(Arc::new(
+                crate::sensor_provider::ToolReliabilitySensor::new(
+                    Arc::clone(&ledger),
+                    set_points.tool_reliability_threshold,
+                ),
+            ));
             Arc::new(registry)
         };
 

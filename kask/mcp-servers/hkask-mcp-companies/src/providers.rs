@@ -312,11 +312,23 @@ fn primary_provider(symbol: &str) -> Provider {
     }
 }
 
+// ── Provider response with provenance ─────────────────────────────
+
+/// The result of a provider fetch — the raw JSON value plus which provider
+/// served it. The cache stores the provider so consumers can distinguish
+/// FMP-sourced data from EODHD-sourced data.
+#[derive(Debug, Clone)]
+pub struct ProviderResponse {
+    pub value: Value,
+    pub provider: Provider,
+}
+
 // ── Main routing function ──────────────────────────────────────────
 
 /// Fetch data for a logical tool endpoint, trying primary provider first
 /// then falling back to secondary. Normalizes EODHD responses to match
-/// FMP format when needed.
+/// FMP format when needed. Returns the response with the provider that
+/// served it so the FIBO cache can tag the provenance.
 pub async fn companies_get(
     client: &reqwest::Client,
     tool: &str,
@@ -325,7 +337,7 @@ pub async fn companies_get(
     eodhd_api_key: &str,
     extra_params: &[(&str, &str)],
     learning: Option<&super::LearningState>,
-) -> Result<Value, McpToolError> {
+) -> Result<ProviderResponse, McpToolError> {
     let mapping = endpoint_mapping(tool)
         .ok_or_else(|| McpToolError::invalid_argument(format!("unknown tool: {tool}")))?;
     // Learning-aware routing: feedback state can override default provider.
@@ -357,9 +369,15 @@ pub async fn companies_get(
             // Normalize EODHD response if needed
             if primary == Provider::Eodhd && mapping.normalize_eodhd {
                 emit_provider_reg(tool, symbol, "EODHD", true);
-                Ok(normalize_eodhd(tool, &value, symbol))
+                Ok(ProviderResponse {
+                    value: normalize_eodhd(tool, &value, symbol),
+                    provider: Provider::Eodhd,
+                })
             } else {
-                Ok(value)
+                Ok(ProviderResponse {
+                    value,
+                    provider: primary,
+                })
             }
         }
         Err(_primary_err) => {
@@ -395,9 +413,15 @@ pub async fn companies_get(
                 Ok(value) => {
                     if secondary == Provider::Eodhd && mapping.normalize_eodhd {
                         emit_provider_reg(tool, symbol, "EODHD", true);
-                        Ok(normalize_eodhd(tool, &value, symbol))
+                        Ok(ProviderResponse {
+                            value: normalize_eodhd(tool, &value, symbol),
+                            provider: Provider::Eodhd,
+                        })
                     } else {
-                        Ok(value)
+                        Ok(ProviderResponse {
+                            value,
+                            provider: secondary,
+                        })
                     }
                 }
                 Err(e) => Err(e),
@@ -412,6 +436,7 @@ pub async fn companies_get(
 /// instead of `v.get("companyName").and_then(|v| v.as_str())`. A missing
 /// field is `None`, not a silent zero — the algedonic `tracing::warn!`
 /// pattern from `parse_financial_field` extends to the accessors.
+#[allow(dead_code)]
 pub async fn fetch_company_profile(
     client: &reqwest::Client,
     symbol: &str,
@@ -429,7 +454,7 @@ pub async fn fetch_company_profile(
         learning,
     )
     .await?;
-    Ok(CompanyProfile::from_raw(raw))
+    Ok(CompanyProfile::from_raw(raw.value))
 }
 
 /// Fetch key metrics as a typed `KeyMetrics` view over the retained raw array.
@@ -470,7 +495,7 @@ pub async fn fetch_key_metrics(
     let ratios_raw = fmp_get(client, "/ratios", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
     let growth_raw = fmp_get(client, "/financial-growth", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
 
-    let enriched = enrich_key_metrics(raw, ratios_raw, growth_raw);
+    let enriched = enrich_key_metrics(raw.value, ratios_raw, growth_raw);
     Ok(KeyMetrics::from_raw(enriched))
 }
 
@@ -479,6 +504,7 @@ pub async fn fetch_key_metrics(
 /// FMP stable returns a flat array of daily bars; EODHD (normalized) returns
 /// the legacy `{symbol, historical: [...]}` envelope. `HistoricalPriceView`
 /// handles both shapes.
+#[allow(dead_code)]
 pub async fn fetch_historical_price(
     client: &reqwest::Client,
     symbol: &str,
@@ -498,7 +524,7 @@ pub async fn fetch_historical_price(
         learning,
     )
     .await?;
-    Ok(HistoricalPriceView::from_raw(raw))
+    Ok(HistoricalPriceView::from_raw(raw.value))
 }
 
 /// Merge ratios and financial-growth fields into key-metrics entries by date.
@@ -1393,6 +1419,171 @@ pub async fn eodhd_search_get(
     })
 }
 
+// ── EODHD bulk listing ───────────────────────────────────────────────
+
+/// A flat company listing row — the exhaustive screen output format.
+/// Identifier, name, exchange, price, shares outstanding, market cap.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompanyListing {
+    pub symbol: String,
+    pub name: String,
+    pub exchange: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shares: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub market_cap: Option<f64>,
+    pub sector: Option<String>,
+    pub industry: Option<String>,
+    pub country: Option<String>,
+}
+
+/// Fetch the EODHD bulk-fundamentals endpoint for an exchange, returning a
+/// flat list of all companies with market data in a single call — no
+/// pagination, no page concept. The response is filtered to market cap above
+/// `min_market_cap` and to common stock type on the client side.
+///
+/// EODHD bulk-fundamentals URL:
+/// `https://eodhd.com/api/bulk-fundamentals?api_token={token}&fmt=json&exchange={ex}&filter=General,Highlights,SharesStats`
+pub async fn fetch_eodhd_bulk_listing(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+    exchange: &str,
+    min_market_cap: f64,
+) -> Result<Vec<CompanyListing>, McpToolError> {
+    let url = format!("{EODHD_BASE_URL}/bulk-fundamentals");
+    let resp = client
+        .get(&url)
+        .query(&[
+            ("api_token", eodhd_api_key),
+            ("fmt", "json"),
+            ("exchange", exchange),
+            ("filter", "General,Highlights,SharesStats"),
+        ])
+        .send()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("EODHD bulk-fundamentals request failed: {e}")))?;
+
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("EODHD bulk response read failed: {e}")))?;
+    if !status.is_success() {
+        return Err(classify_http_error("EODHD", status, &body));
+    }
+
+    let raw: Value = serde_json::from_str(&body)
+        .map_err(|e| McpToolError::unavailable(format!("failed to parse EODHD bulk response: {e}")))?;
+
+    Ok(parse_eodhd_bulk_listing(&raw, min_market_cap))
+}
+
+/// Parse the EODHD bulk-fundamentals response into a flat list of
+/// `CompanyListing` rows, filtering by minimum market cap and common stock
+/// type. Handles both object-keyed-by-ticker and array response formats.
+fn parse_eodhd_bulk_listing(raw: &Value, min_market_cap: f64) -> Vec<CompanyListing> {
+    let entries: Vec<(&str, &Value)> = match raw {
+        Value::Object(map) => map.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+        Value::Array(arr) => arr
+            .iter()
+            .map(|v| (v.get("General").and_then(|g| g.get("Code")).and_then(|c| c.as_str()).unwrap_or(""), v))
+            .collect(),
+        _ => return Vec::new(),
+    };
+
+    let mut listings = Vec::new();
+    for (key, entry) in entries {
+        let general = match entry.get("General") {
+            Some(g) => g,
+            None => continue,
+        };
+
+        // Filter: common stock only
+        let stock_type = general.get("Type").and_then(|v| v.as_str()).unwrap_or("");
+        if !stock_type.contains("Common Stock") && !stock_type.contains("common_stock") {
+            continue;
+        }
+
+        let highlights = entry.get("Highlights");
+        let shares_stats = entry.get("SharesStats");
+
+        // Market cap (EODHD uses MarketCapitalization in Highlights)
+        let market_cap = highlights
+            .and_then(|h| h.get("MarketCapitalization"))
+            .and_then(|v| v.as_f64());
+
+        // Filter: market cap above threshold
+        if let Some(mcap) = market_cap {
+            if mcap < min_market_cap {
+                continue;
+            }
+        } else {
+            // Skip if no market cap data
+            continue;
+        }
+
+        // Symbol: prefer General.Code, fall back to the response key
+        let symbol = general
+            .get("Code")
+            .and_then(|v| v.as_str())
+            .unwrap_or(key)
+            .to_string();
+
+        // Name
+        let name = general
+            .get("Name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Exchange
+        let exchange = general
+            .get("Exchange")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Price: try Highlights.Close, then Highlights.LastClose
+        let price = highlights
+            .and_then(|h| h.get("Close"))
+            .or_else(|| highlights.and_then(|h| h.get("LastClose")))
+            .and_then(|v| v.as_f64());
+
+        // Shares outstanding
+        let shares = shares_stats
+            .and_then(|s| s.get("SharesOutstanding"))
+            .and_then(|v| v.as_f64());
+
+        // Sector / industry / country
+        let sector = general.get("Sector").and_then(|v| v.as_str()).map(String::from);
+        let industry = general.get("Industry").and_then(|v| v.as_str()).map(String::from);
+        let country = general.get("CountryISO").and_then(|v| v.as_str()).map(String::from);
+
+        listings.push(CompanyListing {
+            symbol,
+            name,
+            exchange,
+            price,
+            shares,
+            market_cap,
+            sector,
+            industry,
+            country,
+        });
+    }
+
+    // Sort by market cap descending
+    listings.sort_by(|a, b| {
+        b.market_cap
+            .unwrap_or(0.0)
+            .partial_cmp(&a.market_cap.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    listings
+}
 
 /// Resolve a company name or plain ticker to its primary exchange symbol.
 ///

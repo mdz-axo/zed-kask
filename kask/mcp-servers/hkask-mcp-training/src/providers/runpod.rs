@@ -170,13 +170,32 @@ impl RunpodHost {
                 "Loaded persisted pod IDs from previous session — call drain_all_pods() on shutdown to terminate them"
             );
         }
+        // zed-kask: HTTP client with explicit connect+request timeouts.
+        // Without these, a stalled RunPod API call hangs the MCP
+        // `tools/call` past the 60s client cap, triggering a server restart
+        // + retry that never converges. A 30s request timeout (RunPod pod
+        // launches can take longer than typical REST calls) surfaces a
+        // stalled request as an error instead of dragging the whole tool
+        // down. `unwrap_or_else` fallback logs the builder failure (per
+        // .rules: opt-in features that fail must log the failure
+        // classification, not collapse silently).
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "hkask-mcp-training: RunPod HTTP client builder failed, falling back to no-timeout client: {e}"
+                );
+                reqwest::Client::new()
+            });
         Self {
             api_key: init.api_key,
             template_id: init.template_id,
             gpu_type_id: init.gpu_type_id,
             container_disk_gb: init.container_disk_gb,
             docker_image: init.docker_image,
-            client: reqwest::Client::new(),
+            client,
             jobs: Arc::new(Mutex::new(persisted)),
             last_uptime: Arc::new(Mutex::new(HashMap::new())),
             ssh_commands: Arc::new(Mutex::new(HashMap::new())),

@@ -1,6 +1,6 @@
 //! MAIA analysis and research tools.
 use crate::{
-    CompaniesServer, analysis, fibo, research, screener,
+    CompaniesServer, analysis, fibo, providers, research, screener,
     types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
@@ -365,8 +365,39 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Multi-provider fundamental research search. Searches across Exa, Tavily, and Brave for company-specific information and returns raw claims with source URLs. Use with thesis_test, scenario_weight, or guidance_check skills for structured financial analysis."
+        description = "Exhaustive stock universe listing from EODHD bulk-fundamentals. Returns ALL companies on the specified exchange with market cap above the threshold in a single call — no pagination, no page concept. Each row includes symbol, name, exchange, price, shares outstanding, market cap, sector, industry, and country. Use this as Stage 1 of a multi-stage screen (financial filter, then expectations gap). Default: US exchange, market cap above $500M."
     )]
+    pub async fn stock_universe(
+        &self,
+        Parameters(req): Parameters<types::StockUniverseRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "stock_universe", Self::ontology_anchor("company_screener"), async {
+            let listings = providers::fetch_eodhd_bulk_listing(
+                &self.client,
+                &self.eodhd_api_key,
+                &req.exchange,
+                req.min_market_cap,
+            )
+            .await?;
+
+            let count = listings.len();
+
+            let output = serde_json::json!({
+                "exchange": req.exchange,
+                "min_market_cap": req.min_market_cap,
+                "count": count,
+                "results": listings,
+                "fibo": {
+                    "screener": fibo::STOCK_SCREENER,
+                    "market_capitalization": fibo::MARKET_CAPITALIZATION,
+                },
+                "source": "EODHD bulk-fundamentals",
+            });
+
+            Ok(fibo::enrich_with_ontology(output, "company_screener"))
+        })
+        .await
+    }
     pub async fn research_search(
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,
