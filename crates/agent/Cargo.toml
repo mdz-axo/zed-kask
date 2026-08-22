@@ -42,6 +42,7 @@ gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 heck.workspace = true
 hkask-lisp.workspace = true
+hkask-types.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 minijinja.workspace = true

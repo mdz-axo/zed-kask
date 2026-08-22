@@ -7,7 +7,6 @@ use gpui::{App, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use ui::SharedString;
 
 /// Render a Jinja2 template from the kask registry with context variables.
@@ -32,8 +31,13 @@ pub struct RenderTemplateToolInput {
     /// Context variables for Jinja2 interpolation. Keys become template
     /// variables (e.g., `{{ task }}`, `{{ artifact }}`). Values must be
     /// JSON-serializable.
+    ///
+    /// Uses `AnyJsonValue` for values (not `serde_json::Value`) because
+    /// `schemars` renders `Value` as bare `true` in `additionalProperties`,
+    /// which breaks strict-schema providers — context variables silently
+    /// don't arrive.
     #[serde(default)]
-    pub context: std::collections::HashMap<String, Value>,
+    pub context: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,17 +123,19 @@ impl AgentTool for RenderTemplateTool {
 
 /// Read a template file from the registry, trying ref as-is, .j2, then .yaml.
 /// Prevents path traversal outside the base directory.
+///
+/// `resolve_template_path` returns `None` for two reasons: the joined path
+/// escapes the base directory (traversal blocked), or the file doesn't exist
+/// (`canonicalize` fails). Both are safe to fall through from — the `.j2`/`.yaml`
+/// retries are checked against the same base path, so traversal stays blocked.
+/// We only error after all three attempts fail.
 fn read_template_file(base_path: &std::path::Path, template_ref: &str) -> Result<String, String> {
-    let resolved = resolve_template_path(base_path, template_ref).ok_or_else(|| {
-        format!(
-            "template_ref '{template_ref}' escapes base path '{}'",
-            base_path.display()
-        )
-    })?;
-
-    // Try the resolved path as-is.
-    if let Ok(content) = std::fs::read_to_string(&resolved) {
-        return Ok(content);
+    // Try ref as-is. `None` means either traversal blocked or file absent —
+    // fall through to the extension retries rather than erroring immediately.
+    if let Some(resolved) = resolve_template_path(base_path, template_ref) {
+        if let Ok(content) = std::fs::read_to_string(&resolved) {
+            return Ok(content);
+        }
     }
 
     // Try .j2 extension.
@@ -153,8 +159,8 @@ fn read_template_file(base_path: &std::path::Path, template_ref: &str) -> Result
     }
 
     Err(format!(
-        "Template not found at {} (also tried .j2 and .yaml extensions)",
-        resolved.display()
+        "Template not found: tried '{template_ref}', '{template_ref}.j2', '{template_ref}.yaml' under '{}'",
+        base_path.display()
     ))
 }
 
@@ -247,5 +253,28 @@ mod tests {
         );
         let content = result.expect("checked is_ok above");
         assert!(content.contains("---"), "template should have frontmatter");
+    }
+
+    // Regression for the canonicalize-before-existence-check bug: an
+    // extensionless ref whose exact path doesn't exist (the .j2 file does)
+    // must resolve via the .j2 retry, not error out as "escapes base path".
+    #[test]
+    fn test_read_template_file_finds_j2_with_extensionless_ref() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return; // skip in CI without the source tree
+        }
+        // This is the exact ref that failed during the prompt-enhance run.
+        let result = read_template_file(&base, "prompt-enhance/enhance-classify");
+        assert!(
+            result.is_ok(),
+            "extensionless ref should resolve to .j2 file, got: {:?}",
+            result.err()
+        );
+        let content = result.expect("checked is_ok above");
+        assert!(
+            content.contains("---"),
+            "enhance-classify.j2 should have frontmatter"
+        );
     }
 }
