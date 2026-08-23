@@ -263,6 +263,60 @@ impl SwarmPanel {
                                 }
                             })),
                         )
+                        // Push to Cloud — local swarms only.
+                        // Creates an ABW workspace from this swarm.
+                        .when(is_local, |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!(
+                                        "push-swarm-{}",
+                                        detail.workspace_id
+                                    )),
+                                    "Push to Cloud",
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Creates an ABW workspace from this local \
+                                     swarm's name, mission, and roster. Each \
+                                     member hire is consent-gated.",
+                                ))
+                                .on_click(cx.listener({
+                                    let swarm_id = detail.workspace_id.clone();
+                                    move |this, _, _, cx| {
+                                        this.push_local_swarm_to_cloud(swarm_id.clone(), cx);
+                                    }
+                                })),
+                            )
+                        })
+                        // Copy to Local — cloud swarms only.
+                        // Creates a local swarm copy from this ABW workspace.
+                        .when(!is_local, |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!(
+                                        "pull-swarm-{}",
+                                        detail.workspace_id
+                                    )),
+                                    "Copy to Local",
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Creates a local swarm copy from this ABW \
+                                     workspace's name, mission, and roster. \
+                                     No cost.",
+                                ))
+                                .on_click(cx.listener({
+                                    let workspace_id = detail.workspace_id.clone();
+                                    move |this, _, _, cx| {
+                                        this.pull_cloud_swarm_to_local(workspace_id.clone(), cx);
+                                    }
+                                })),
+                            )
+                        })
                         .child(div().flex_1())
                         // Delete — both backends. Stages a confirmation; the
                         // actual delete fires from `confirm_destructive`.

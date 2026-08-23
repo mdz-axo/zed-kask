@@ -91,8 +91,6 @@ pub struct KaskSettings {
     /// tool-directed requests. Defaults match the historical
     /// `LazyToolRouter::new()` hardcoded values (`0.30` / `40`).
     pub tool_router: KaskToolRouterSettings,
-
-    /// Inference provider toggles (non-secret — API keys are in the keychain).
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -176,20 +174,6 @@ pub struct KaskDataServiceSettings {
     /// Enable Nebius (GPU cloud for training).
     pub nebius_enabled: bool,
 }
-
-/// Inference provider toggles. API keys are in the keychain, not here.
-///
-/// When a provider is enabled, the composition root mirrors its API key to
-/// kask MCP servers (see `credential_urls_for_mcp`).
-///
-/// `Default` returns all-false (pure, no side effects). The env-var-based
-/// auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>`,
-/// which is the only production path. This keeps `Default` deterministic for
-/// tests and `KaskSettings::default()`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskInferenceProvidersSettings {
-    /// Enable OpenRouter (unified API for 200+ models).
-    pub openrouter_enabled: bool,
 
 /// Curator configuration.
 ///

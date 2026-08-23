@@ -119,8 +119,7 @@ pub(crate) fn data_service_descriptors()
 }
 
 // ---------------------------------------------------------------------------
-// Shared credential helpers (used by data_services, inference_providers,
-// and curator sub-modules)
+// Shared credential helpers (used by data_services and curator sub-modules)
 // ---------------------------------------------------------------------------
 
 /// Check whether a credential is available — either via env var or in the

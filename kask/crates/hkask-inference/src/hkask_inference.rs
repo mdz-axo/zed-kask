@@ -82,8 +82,8 @@ async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
 ///
 /// Routes through the zed IPC bridge ([`InferenceIpcClient`]) when
 /// `HKASK_INFERENCE_SOCKET` is set and reachable. When the bridge is
-/// unavailable, falls back to [`DirectOllamaEmbeddingPort`] — a direct HTTP
-/// client that talks to Ollama's OpenAI-compatible `/v1/embeddings` endpoint.
+/// unavailable, falls back to [`DirectEmbeddingPort`] — a direct HTTP
+/// client that talks to any OpenAI-compatible `/v1/embeddings` endpoint.
 /// This allows the corpus pipeline's embedding stage to proceed without the
 /// IPC bridge, which is critical for standalone MCP server execution (e.g.
 /// when the corpus server runs outside zed's governed launch). Generation,
@@ -99,16 +99,16 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
             std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::InferencePort>
         }
         None => {
-            // IPC bridge unavailable — attempt direct Ollama embedding fallback.
+            // IPC bridge unavailable — attempt direct embedding fallback.
             // This keeps the corpus pipeline's embedding stage functional when
             // the MCP server runs without zed's governed launch (no IPC socket).
             // Generation/vision/tool-dispatch remain unavailable.
             let embedding_model = model_constants::embedding_model();
-            if let Some(port) = DirectOllamaEmbeddingPort::try_new(&embedding_model) {
+            if let Some(port) = DirectEmbeddingPort::try_new(&embedding_model) {
                 tracing::info!(
                     target: "hkask.inference",
                     model = %embedding_model,
-                    "IPC bridge unavailable — falling back to direct Ollama embedding "
+                    "IPC bridge unavailable — falling back to direct embedding"
                 );
                 std::sync::Arc::new(port) as std::sync::Arc<dyn hkask_types::InferencePort>
             } else {
@@ -205,38 +205,88 @@ impl hkask_types::InferencePort for UnavailableInference {
 /// (configurable via `OLLAMA_API_URL` env var) using `reqwest`. Generation,
 /// vision, and tool-dispatch methods return clear errors — only `embed` is
 /// functional.
+/// A direct HTTP embedding port for any OpenAI-compatible provider.
 ///
-/// The port is constructed only when the embedding model has an `ollama/`
-/// prefix (checked by [`DirectOllamaEmbeddingPort::try_new`]). For non-Ollama
-/// embedding models, `try_new` returns `None` and the caller falls back to
-/// `UnavailableInference`.
-struct DirectOllamaEmbeddingPort {
-    /// The base URL for Ollama's OpenAI-compatible API, e.g.
-    /// `http://localhost:11434/v1`.
+/// Used as a fallback when the zed IPC bridge is unavailable. Resolves the
+/// provider prefix from the model string (e.g. `DeepInfra/`, `ollama/`,
+/// `OpenRouter/`) against a static table to get the API URL and env var name,
+/// then calls the OpenAI-compatible `/v1/embeddings` endpoint directly.
+///
+/// For Ollama (local, no API key), the key is empty. For cloud providers,
+/// the key is read from the env var named in the provider descriptor.
+struct DirectEmbeddingPort {
+    /// The base URL for the provider's OpenAI-compatible API, e.g.
+    /// `https://api.deepinfra.com/v1/openai` or `http://localhost:11434/v1`.
     api_url: String,
+    /// The API key for the provider (empty for local providers like Ollama).
+    api_key: String,
     /// Reusable reqwest client.
     client: reqwest::Client,
 }
 
-impl DirectOllamaEmbeddingPort {
-    /// Attempt to construct the port for an `ollama/`-prefixed embedding model.
+/// A minimal provider descriptor for the direct embedding fallback.
+/// Maps a provider prefix to its API URL and env var name.
+struct DirectEmbeddingProvider {
+    id: &'static str,
+    api_url: &'static str,
+    env_var: &'static str,
+}
+
+/// The provider table for the direct embedding fallback. Mirrors the
+/// `INFERENCE_PROVIDERS` table in `kask_bridge::inference_providers` —
+/// duplicated because `hkask-inference` cannot depend on `kask_bridge`
+/// (that would invert the D8 seam). Keep in sync when adding providers.
+static DIRECT_EMBEDDING_PROVIDERS: &[DirectEmbeddingProvider] = &[
+    DirectEmbeddingProvider {
+        id: "DeepInfra",
+        api_url: "https://api.deepinfra.com/v1/openai",
+        env_var: "DEEPINFRA_API_KEY",
+    },
+    DirectEmbeddingProvider {
+        id: "OpenRouter",
+        api_url: "https://openrouter.ai/api/v1",
+        env_var: "OPENROUTER_API_KEY",
+    },
+    DirectEmbeddingProvider {
+        id: "ollama",
+        api_url: "http://localhost:11434/v1",
+        env_var: "",
+    },
+];
+
+impl DirectEmbeddingPort {
+    /// Attempt to construct the port for a provider-prefixed embedding model.
     ///
     /// Returns `None` if:
-    /// - The model string has no `ollama/` prefix (not an Ollama model).
+    /// - The model string has no recognized provider prefix.
+    /// - The provider requires an API key but the env var is not set.
     /// - The reqwest client cannot be constructed (TLS backend failure).
     ///
-    /// The API URL is resolved from `OLLAMA_API_URL` env var, falling back to
-    /// `http://localhost:11434/v1` (Ollama's default OpenAI-compatible endpoint).
+    /// For Ollama (empty `env_var`), no key is needed — the key is empty.
     #[must_use]
     fn try_new(embedding_model: &str) -> Option<Self> {
-        // Only applies to ollama-prefixed models.
-        let model_id = embedding_model.strip_prefix("ollama/")?;
-        if model_id.is_empty() {
-            return None;
-        }
+        // Find the provider by matching the prefix (case-insensitive).
+        let provider = DIRECT_EMBEDDING_PROVIDERS.iter().find(|p| {
+            let prefix = format!("{}/", p.id);
+            embedding_model.len() >= prefix.len()
+                && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        })?;
 
-        let api_url = std::env::var("OLLAMA_API_URL")
-            .unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
+        // Resolve the API key. Local providers (empty env_var) need no key.
+        let api_key = if provider.env_var.is_empty() {
+            String::new()
+        } else {
+            std::env::var(provider.env_var).ok().or_else(|| {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    provider = provider.id,
+                    env_var = provider.env_var,
+                    "Direct embedding fallback: env var not set — \
+                     embedding will not work without the IPC bridge"
+                );
+                None
+            })?
+        };
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -245,19 +295,20 @@ impl DirectOllamaEmbeddingPort {
                 tracing::warn!(
                     target: "hkask.inference",
                     error = %e,
-                    "Failed to construct reqwest client for direct Ollama embedding fallback"
+                    "Failed to construct reqwest client for direct embedding fallback"
                 );
             })
             .ok()?;
 
         Some(Self {
-            api_url,
+            api_url: provider.api_url.to_string(),
+            api_key,
             client,
         })
     }
 }
 
-impl hkask_types::InferencePort for DirectOllamaEmbeddingPort {
+impl hkask_types::InferencePort for DirectEmbeddingPort {
     fn generate(
         &self,
         _prompt: &str,
@@ -273,7 +324,7 @@ impl hkask_types::InferencePort for DirectOllamaEmbeddingPort {
     > {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
-                "generation unavailable on direct Ollama embedding fallback \
+                "generation unavailable on direct embedding fallback \
                  — only embed is supported without the IPC bridge".to_string(),
             ))
         })
@@ -295,14 +346,16 @@ impl hkask_types::InferencePort for DirectOllamaEmbeddingPort {
     > {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
-                "vision inference unavailable on direct Ollama embedding fallback".to_string(),
+                "vision inference unavailable on direct embedding fallback".to_string(),
             ))
         })
     }
 
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
-        let model_id = model.strip_prefix("ollama/").unwrap_or(model).to_string();
+        // Strip any provider prefix — the API expects the bare model id.
+        let model_id = model.split_once('/').map(|(_, rest)| rest).unwrap_or(model).to_string();
         let api_url = self.api_url.clone();
+        let api_key = self.api_key.clone();
         let client = self.client.clone();
         let texts = texts.to_vec();
         Box::pin(async move {
@@ -316,15 +369,21 @@ impl hkask_types::InferencePort for DirectOllamaEmbeddingPort {
                 "input": texts,
             });
 
-            let response = client
+            let mut request = client
                 .post(&uri)
                 .header("Content-Type", "application/json")
-                .json(&body)
+                .json(&body);
+
+            if !api_key.is_empty() {
+                request = request.header("Authorization", format!("Bearer {api_key}"));
+            }
+
+            let response = request
                 .send()
                 .await
                 .map_err(|e| {
                     hkask_types::EmbeddingGenerationError::Connection(format!(
-                        "direct Ollama embedding request failed: {e}"
+                        "direct embedding request failed: {e}"
                     ))
                 })?;
 
@@ -348,7 +407,7 @@ impl hkask_types::InferencePort for DirectOllamaEmbeddingPort {
 
             let parsed: EmbeddingResponse = response.json().await.map_err(|e| {
                 hkask_types::EmbeddingGenerationError::Json(format!(
-                    "failed to parse Ollama embedding response: {e}"
+                    "failed to parse embedding response: {e}"
                 ))
             })?;
 

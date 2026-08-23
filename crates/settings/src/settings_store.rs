@@ -1836,10 +1836,10 @@ mod tests {
     // (triggering the file watcher) and `cx.update_global::<SettingsStore>`
     // (whose `end_global_lease` pushes `NotifyGlobalObservers` even when
     // `set_user_settings` returns `Unchanged`), which created a self-
-    // sustaining feedback loop when a `SettingsStore` observer (notably
-    // `ensure_openai_compatible_entries`) re-wrote the same content on every
-    // notification. This test pins the no-op skip: if the skip is removed, the
-    // file watcher fires and `parse_results` gains an `Unchanged` entry.
+    // sustaining feedback loop when a `SettingsStore` observer re-wrote the
+    // same content on every notification. This test pins the no-op skip: if
+    // the skip is removed, the file watcher fires and `parse_results` gains
+    // an `Unchanged` entry.
     #[gpui::test]
     async fn test_update_settings_file_skips_noop_write(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background_executor.clone());

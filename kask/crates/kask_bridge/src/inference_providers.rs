@@ -39,10 +39,11 @@ pub struct InferenceProviderDescriptor {
     pub dashboard_url: &'static str,
 }
 
-/// The inference providers surfaced in kask settings.
+/// The inference providers used for credential injection and embedding
+/// model resolution. Providers are registered in zed's native Settings →
+/// AI → LLM Providers, not via kask settings.
 ///
-/// OpenRouter is included for API-key mirroring to MCP servers, not for
-/// `openai_compatible` registration (see `ensure_openai_compatible_entries`).
+/// OpenRouter is included for API-key mirroring to MCP servers.
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
         id: "OpenRouter",
@@ -57,8 +58,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // writes the key to the Zed keychain under `api_url` (where the RunPod
     // provider's `ApiKeyState` reads it), in addition to the
     // `kask://credentials/runpod` write handled by `DATA_SERVICES`. Skipped in
-    // `ensure_openai_compatible_entries` (no `openai_compatible` entry) and
-    // in `credential_urls_for_mcp`'s `INFERENCE_PROVIDERS` loop (MCP injection
+    // `credential_urls_for_mcp`'s `INFERENCE_PROVIDERS` loop (MCP injection
     // is handled by the `DATA_SERVICES` loop via `runpod_enabled`).
     InferenceProviderDescriptor {
         id: "RunPod",
