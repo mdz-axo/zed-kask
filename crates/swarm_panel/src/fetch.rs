@@ -532,7 +532,7 @@ impl SwarmPanel {
                         }
                         Err(err) => {
                             this.spend.hire_error =
-                                Some(format!("Failed to clone to local: {err}").into());
+                                Some(format!("Failed to copy to local: {err}").into());
                         }
                     }
                     cx.notify();

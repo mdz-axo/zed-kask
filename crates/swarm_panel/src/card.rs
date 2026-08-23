@@ -177,7 +177,7 @@ impl SwarmPanel {
                                                                 let panel_handle =
                                                                     panel_handle.clone();
                                                                 menu = menu.entry(
-                                                                    "Clone to Local",
+                                                                    "Copy to Local",
                                                                     None,
                                                                     move |_, cx| {
                                                                         if let Some(panel) =
@@ -258,13 +258,16 @@ impl SwarmPanel {
                 let swarm_mission = swarm.description.clone();
                 let detail_id = swarm_id.clone();
                 let detail_name = swarm_name.clone();
-                let detail_source = swarm_source;
+                let detail_source = swarm_source.clone();
                 let detail_mission = swarm_mission;
                 let detail_agent_count = swarm.agent_count;
                 let detail_budget = swarm.budget;
                 let detail_remaining = swarm.remaining;
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
+                let clone_id = swarm_id.clone();
+                let clone_is_local = swarm_source == AgentSource::Local;
+                let panel_handle: WeakEntity<SwarmPanel> = cx.entity().downgrade();
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -300,7 +303,7 @@ impl SwarmPanel {
                                     .label_size(LabelSize::XSmall)
                                     .tooltip(Tooltip::text(
                                         "Open this swarm's roster and configuration view \
-                                         — add/remove agents, view mission.",
+                                         — add/remove agents, edit metadata, clone, delete.",
                                     ))
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
@@ -337,6 +340,80 @@ impl SwarmPanel {
                                             );
                                         },
                                     )),
+                                )
+                                // Secondary actions: Clone + Delete behind an
+                                // ellipsis PopoverMenu (same pattern as the
+                                // agent card). Keeps the button row from
+                                // overflowing on narrow dock panels.
+                                .child(
+                                    PopoverMenu::new(SharedString::from(format!(
+                                        "swarm-secondary-actions-{swarm_id}",
+                                    )))
+                                    .trigger_with_tooltip(
+                                        IconButton::new(
+                                            SharedString::from(format!(
+                                                "swarm-secondary-trigger-{swarm_id}",
+                                            )),
+                                            IconName::Ellipsis,
+                                        )
+                                        .icon_size(IconSize::Small),
+                                        Tooltip::text("More actions"),
+                                    )
+                                    .menu({
+                                        move |window, cx| {
+                                            let panel_handle = panel_handle.clone();
+                                            let clone_id = clone_id.clone();
+                                            let clone_is_local = clone_is_local;
+                                            Some(ContextMenu::build(
+                                                window,
+                                                cx,
+                                                |mut menu, _window, _cx| {
+                                                    let panel_handle =
+                                                        panel_handle.clone();
+                                                    menu = menu.entry(
+                                                        "Copy",
+                                                        None,
+                                                        move |_, cx| {
+                                                            if let Some(panel) =
+                                                                panel_handle.upgrade()
+                                                            {
+                                                                panel.update(cx, |this, cx| {
+                                                                    if clone_is_local {
+                                                                        this.clone_local_swarm(
+                                                                            clone_id.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    } else {
+                                                                        // Cloud clone: open the
+                                                                        // detail — the Clone
+                                                                        // button there pre-fills
+                                                                        // Compose for review.
+                                                                        if let Some(detail) =
+                                                                            this.detail
+                                                                                .swarm_detail
+                                                                                .clone()
+                                                                        {
+                                                                            this.open_swarm_detail(
+                                                                                detail.workspace_id.clone(),
+                                                                                detail.name,
+                                                                                detail.source,
+                                                                                detail.mission,
+                                                                                detail.agent_count,
+                                                                                detail.budget,
+                                                                                detail.remaining,
+                                                                                cx,
+                                                                            );
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                    );
+                                                    menu
+                                                },
+                                            ))
+                                        }
+                                    }),
                                 ),
                         ),
                 )

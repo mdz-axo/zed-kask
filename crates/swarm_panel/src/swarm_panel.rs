@@ -527,11 +527,37 @@ struct SpendState {
 }
 
 /// R2: the browse-mode drill-down state — the swarm roster detail view, the
-/// run-status strip, and the add-agent editor. Only active in Browse mode.
+/// run-status strip, the add-agent editor, the edit-metadata editors, and the
+/// pending destructive-action confirmation. Only active in Browse mode.
 struct DetailState {
     swarm_detail: Option<SwarmDetailView>,
     run_status: Option<RunStatusView>,
     add_agent_editor: Entity<Editor>,
+    /// Editors for the edit-metadata form (local swarms only). Reused across
+    /// opens; populated from the loaded swarm when edit mode is entered.
+    edit_name_editor: Entity<Editor>,
+    edit_mission_editor: Entity<Editor>,
+    /// A destructive action awaiting explicit confirmation (delete swarm,
+    /// remove/fire agent). When `Some`, the detail view renders a
+    /// confirmation banner with Confirm / Cancel buttons instead of firing
+    /// immediately.
+    pending_destructive: Option<DestructiveAction>,
+}
+
+/// A destructive action pending operator confirmation. The two-step pattern
+/// prevents accidental irreversible ops (delete swarm, fire/remove agent).
+#[derive(Clone, Debug)]
+enum DestructiveAction {
+    DeleteSwarm {
+        swarm_id: String,
+        source: AgentSource,
+        name: String,
+    },
+    RemoveAgent {
+        swarm_id: String,
+        agent_id: String,
+        source: AgentSource,
+    },
 }
 
 /// R2: AI Assist / validation state — shared by the Author and Compose
@@ -697,6 +723,12 @@ pub(crate) struct SwarmRosterAgent {
     agent_id: String,
     agent_type: String,
     description: String,
+    /// Port labels this agent accepts (typed inputs). Empty when the backend
+    /// does not carry them (local rosters are ids-only until enriched;
+    /// ABW rosters may omit the field).
+    accepts: Vec<String>,
+    /// Port labels this agent produces (typed outputs).
+    produces: Vec<String>,
 }
 
 /// The swarm roster drill-down: replaces the browse list while open.
@@ -704,9 +736,9 @@ pub(crate) struct SwarmRosterAgent {
 struct SwarmDetailView {
     workspace_id: String,
     name: String,
-    /// The swarm's mission / description. Displayed read-only in the detail
-    /// header — there is no MCP tool to rename a swarm or change its mission,
-    /// so the panel surfaces it as context rather than an editable field.
+    /// The swarm's mission / description. Editable for local swarms via
+    /// `swarm_update_local_swarm`; read-only for ABW swarms (ABW has no
+    /// metadata-edit endpoint — PATCH /workspaces/{id} is 405).
     mission: String,
     /// Which substrate this swarm lives on. Drives the add/remove affordances:
     /// `Local` uses `swarm_add_agent_local` / `swarm_remove_agent_local` /
@@ -728,6 +760,10 @@ struct SwarmDetailView {
     loading: bool,
     error: Option<SharedString>,
     agents: Vec<SwarmRosterAgent>,
+    /// Whether the metadata edit form (name + mission) is open. Local-only —
+    /// ABW has no metadata-edit endpoint. Toggled by the "Edit" button in
+    /// the detail header.
+    editing_metadata: bool,
 }
 
 /// A swarm's recent run status (ABW workspace messages). Rendered as a
@@ -860,6 +896,16 @@ impl SwarmPanel {
                 e.set_placeholder_text("Agent id to add to this swarm", window, cx);
                 e
             });
+            let edit_name_editor = cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("Swarm name", window, cx);
+                e
+            });
+            let edit_mission_editor = cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("Mission", window, cx);
+                e
+            });
 
             let mut this = Self {
                 workspace: workspace_handle,
@@ -902,6 +948,9 @@ impl SwarmPanel {
                     swarm_detail: None,
                     run_status: None,
                     add_agent_editor: swarm_add_agent_editor,
+                    edit_name_editor,
+                    edit_mission_editor,
+                    pending_destructive: None,
                 },
                 ai_assist: AiAssistState {
                     busy: false,
@@ -3533,7 +3582,7 @@ mod tests {
         assert!(status_is_warning("Tool invoker not wired."));
         assert!(status_is_warning("AI Assist unavailable: timeout"));
         assert!(status_is_warning(
-            "ABW agents cannot be updated from this panel. Clone to Local to edit."
+            "ABW agents cannot be updated from this panel. Copy to Local to edit."
         ));
         assert!(status_is_warning(
             "Name contains characters that will be stripped on the local substrate."
@@ -4372,6 +4421,8 @@ mod tests {
             description: "desc".into(),
             display_name: String::new(),
             cloud_swarm_id: Some("efra_communication".into()),
+            accepts: vec![],
+            produces: vec![],
         };
 
         let mut entries = vec![cloud];
@@ -4387,5 +4438,64 @@ mod tests {
         assert_eq!(rows.len(), 1, "clone must not produce a duplicate row");
         assert_eq!(rows[0].id, "efra_communication");
         assert_eq!(rows[0].source, AgentSource::Synced);
+    }
+
+    // ── D33: swarm panel full CRUD ───────────────────────────────────────────
+    //
+    // The new management surface adds: confirmation flow for destructive ops,
+    // edit-metadata (local), copy/duplicate (local + ABW via Compose), cloud
+    // swarm delete, and accepts/produces port display in roster rows.
+
+    #[test]
+    fn destructive_action_delete_swarm_carries_source_and_name() {
+        let action = DestructiveAction::DeleteSwarm {
+            swarm_id: "team_alpha".into(),
+            source: AgentSource::Local,
+            name: "Team Alpha".into(),
+        };
+        match &action {
+            DestructiveAction::DeleteSwarm { swarm_id, source, name } => {
+                assert_eq!(swarm_id, "team_alpha");
+                assert_eq!(*source, AgentSource::Local);
+                assert_eq!(name, "Team Alpha");
+            }
+            _ => panic!("expected DeleteSwarm"),
+        }
+    }
+
+    #[test]
+    fn destructive_action_remove_agent_carries_source() {
+        let action = DestructiveAction::RemoveAgent {
+            swarm_id: "ws_123".into(),
+            agent_id: "analyst".into(),
+            source: AgentSource::Cloud,
+        };
+        match &action {
+            DestructiveAction::RemoveAgent { swarm_id, agent_id, source } => {
+                assert_eq!(swarm_id, "ws_123");
+                assert_eq!(agent_id, "analyst");
+                assert_eq!(*source, AgentSource::Cloud);
+            }
+            _ => panic!("expected RemoveAgent"),
+        }
+    }
+
+    #[test]
+    fn new_swarm_tools_are_in_swarm_tool_names() {
+        // The panel calls these tool names via string literals. They must
+        // exist in the server's TOOL_NAMES so the dispatch succeeds and the
+        // Steer prompt-token test stays green.
+        assert!(
+            parse::SWARM_TOOLS.contains(&"swarm_update_local_swarm"),
+            "swarm_update_local_swarm must be in TOOL_NAMES"
+        );
+        assert!(
+            parse::SWARM_TOOLS.contains(&"swarm_clone_local_swarm"),
+            "swarm_clone_local_swarm must be in TOOL_NAMES"
+        );
+        assert!(
+            parse::SWARM_TOOLS.contains(&"swarm_delete_swarm"),
+            "swarm_delete_swarm must be in TOOL_NAMES (cloud delete)"
+        );
     }
 }

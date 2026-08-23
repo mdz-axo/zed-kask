@@ -71,23 +71,47 @@ pub(crate) fn classify_moat(
     }
 }
 
-/// Extract gross margin values from FMP key-metrics JSON array.
-/// Returns Vec of (year, grossProfitMargin) sorted by year ascending.
-pub(crate) fn extract_gross_margins(metrics_json: &Value) -> Vec<(String, f64)> {
-    let arr = match metrics_json.as_array() {
+/// Extract gross margin values from FMP income-statement JSON array.
+/// Computes grossProfit / revenue per period since the stable key-metrics
+/// endpoint does not include grossProfitMargin.
+/// Returns Vec of (year, margin) sorted by year ascending.
+pub(crate) fn extract_gross_margins(income_json: &Value) -> Vec<(String, f64)> {
+    let arr = match income_json.as_array() {
         Some(a) => a,
         None => return vec![],
     };
     let mut margins: Vec<(String, f64)> = arr
         .iter()
         .filter_map(|entry| {
-            let year = entry.get("calendarYear")?.as_str().unwrap_or("");
-            let margin = entry.get("grossProfitMargin")?.as_f64()?;
-            Some((year.to_string(), margin))
+            let year = extract_year(entry)?;
+            let gross_profit = entry.get("grossProfit")?.as_f64()?;
+            let revenue = entry.get("revenue")?.as_f64()?;
+            if revenue == 0.0 {
+                return None;
+            }
+            Some((year, gross_profit / revenue))
         })
         .collect();
     margins.sort_by(|a, b| a.0.cmp(&b.0));
     margins
+}
+
+/// Extract a year label from a JSON entry, trying `calendarYear`,
+/// `fiscalYear`, then `date` (first 4 chars).
+pub(crate) fn extract_year(entry: &Value) -> Option<String> {
+    if let Some(y) = entry.get("calendarYear").and_then(|v| v.as_str()) {
+        return Some(y.to_string());
+    }
+    if let Some(y) = entry.get("fiscalYear").and_then(|v| v.as_str()) {
+        return Some(y.to_string());
+    }
+    if let Some(y) = entry.get("fiscalYear").and_then(|v| v.as_i64()) {
+        return Some(y.to_string());
+    }
+    entry
+        .get("date")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.get(..4).map(String::from))
 }
 
 /// Compute working capital days (DPO, DSO, DIO) from a set of balance sheet / income
@@ -156,6 +180,7 @@ pub(crate) fn ceo_capital_allocation_score(returns: &[f64], invested_capital: &[
 }
 
 /// Extract ROIC values from FMP key-metrics JSON array.
+/// Tries `roic` (v3 field) then `returnOnInvestedCapital` (stable field).
 /// Returns Vec of (year, roic) sorted by year ascending.
 pub(crate) fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
     let arr = match metrics_json.as_array() {
@@ -165,9 +190,12 @@ pub(crate) fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
     let mut values: Vec<(String, f64)> = arr
         .iter()
         .filter_map(|entry| {
-            let year = entry.get("calendarYear")?.as_str().unwrap_or("");
-            let roic = entry.get("roic")?.as_f64()?;
-            Some((year.to_string(), roic))
+            let year = extract_year(entry)?;
+            let roic = entry
+                .get("roic")
+                .and_then(|v| v.as_f64())
+                .or_else(|| entry.get("returnOnInvestedCapital").and_then(|v| v.as_f64()))?;
+            Some((year, roic))
         })
         .collect();
     values.sort_by(|a, b| a.0.cmp(&b.0));
@@ -184,9 +212,9 @@ pub(crate) fn extract_invested_capital(balance_sheets: &Value) -> Vec<(String, f
     let mut values: Vec<(String, f64)> = arr
         .iter()
         .filter_map(|entry| {
-            let year = entry.get("calendarYear")?.as_str().unwrap_or("");
+            let year = extract_year(entry)?;
             let assets = entry.get("totalAssets")?.as_f64()?;
-            Some((year.to_string(), assets))
+            Some((year, assets))
         })
         .collect();
     values.sort_by(|a, b| a.0.cmp(&b.0));

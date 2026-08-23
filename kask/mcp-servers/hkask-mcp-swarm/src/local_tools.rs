@@ -1229,6 +1229,81 @@ impl SwarmServer {
         .await
     }
 
+    /// Update a local swarm's display name and mission in place. The
+    /// `swarm_id` (on-disk identity) is preserved — only the human-readable
+    /// `name` and `mission` change. No cost, no consent token. The local
+    /// counterpart of an ABW metadata-edit endpoint (ABW has none — PATCH
+    /// /workspaces/{id} is 405, verified live 2026-08-13).
+    #[tool(
+        description = "Update a local swarm's name and mission in place (swarm_id preserved). No cost, no consent token. ABW has no metadata-edit endpoint, so this is local-only."
+    )]
+    pub(crate) async fn swarm_update_local_swarm(
+        &self,
+        parameters: Parameters<UpdateLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_update_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "name must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self
+                    .local_swarms
+                    .update_metadata(&req.swarm_id, &req.name, &req.mission)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
+                    serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name })
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Clone a local swarm: create a new swarm with a fresh slug id,
+    /// copying the source's mission and roster. The new name is suffixed
+    /// with " (copy)". Member ids are preserved as-is — a member whose card
+    /// no longer exists is not an error (the roster is ids; resolution
+    /// happens at delegation time). No cost, no consent token.
+    #[tool(
+        description = "Clone a local swarm by swarm_id: creates a new swarm with a fresh id, copying the mission and roster. Member ids are preserved as-is (a member whose card was deleted is not an error). No cost, no consent token."
+    )]
+    pub(crate) async fn swarm_clone_local_swarm(
+        &self,
+        parameters: Parameters<CloneLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_clone_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self
+                    .local_swarms
+                    .clone_swarm(&req.swarm_id)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
+                    serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name })
+                }))
+            },
+        )
+        .await
+    }
+
     /// AI assist for the swarm panel authoring forms — suggests completions for
     /// partial inputs or validates well-formedness. Authoring aid — read-only,
     /// spends nothing. Uses the inference port directly to generate composition

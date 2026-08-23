@@ -14,7 +14,7 @@
 //!   `swarm_reconfigure_local_agent` (updates `system_prompt`/`model`/
 //!   `mcp_tools`/`skills`, preserves `cloud_swarm_id` and the rest of the card).
 //!   Cloud agents have no update tool — the form renders read-only with a
-//!   note pointing the operator to "Clone to Local" to edit.
+//!   note pointing the operator to "Copy to Local" to edit.
 
 use gpui::{Context, Window};
 use serde_json::json;
@@ -322,7 +322,7 @@ impl SwarmPanel {
                             if !is_local {
                                 this.author.status = Some(
                                     "Viewing ABW agent. Edits cannot be saved \
-                                     (no ABW update tool). Clone to Local to edit."
+                                     (no ABW update tool). Copy to Local to edit."
                                         .into(),
                                 );
                             }
@@ -422,7 +422,7 @@ impl SwarmPanel {
         let is_local = self.author.create_target == super::CreateTarget::Local;
         if !is_local {
             self.author.status = Some(
-                "ABW agents cannot be updated from this panel. Clone to Local \
+                "ABW agents cannot be updated from this panel. Copy to Local \
                  to edit."
                     .into(),
             );

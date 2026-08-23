@@ -283,6 +283,56 @@ impl LocalSwarmRegistry {
         Ok(())
     }
 
+    /// Update a local swarm's display name and mission in place. The
+    /// `swarm_id` (on-disk directory name) is **not** changed — it is the
+    /// stable identity other systems (Steer conversation, ledger) reference,
+    /// and renaming the directory would orphan those references. Only the
+    /// human-readable `name` and `mission` fields are updated. Errors if the
+    /// swarm does not exist or `name` is empty. The local counterpart of an
+    /// ABW metadata-edit endpoint (ABW has none — `PATCH /workspaces/{id}` is
+    /// 405, verified live 2026-08-13).
+    pub fn update_metadata(
+        &self,
+        swarm_id: &str,
+        name: &str,
+        mission: &str,
+    ) -> Result<LocalSwarm, LocalSwarmError> {
+        if name.trim().is_empty() {
+            return Err(LocalSwarmError::InvalidInput(
+                "swarm name must be non-empty".to_string(),
+            ));
+        }
+        let mut swarm = self.get(swarm_id).ok_or_else(|| {
+            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
+        })?;
+        swarm.name = name.trim().to_string();
+        swarm.mission = mission.to_string();
+        self.write_swarm(&swarm)?;
+        Ok(swarm)
+    }
+
+    /// Clone a local swarm: create a new swarm with a fresh slug id, copying
+    /// the source's mission and roster. The new `name` is the source name
+    /// suffixed with " (copy)" so the operator can distinguish the duplicate
+    /// in the browse list; the caller may rename it via `update_metadata`.
+    ///
+    /// Member ids are copied as-is — the roster is ids, and resolution happens
+    /// at delegation time (mirrors ABW workspaces). An id whose card no longer
+    /// exists in `LocalAgentRegistry` is **not** an error here: the clone
+    /// preserves the roster faithfully, and the operator sees the gap at
+    /// delegation time, not as a silent drop during clone. This satisfies the
+    /// "handle agents that no longer exist: skip or tombstone, do not panic"
+    /// requirement — we preserve (tombstone-by-identity) rather than panic.
+    ///
+    /// Errors if the source swarm does not exist.
+    pub fn clone_swarm(&self, swarm_id: &str) -> Result<LocalSwarm, LocalSwarmError> {
+        let source = self.get(swarm_id).ok_or_else(|| {
+            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
+        })?;
+        let new_name = format!("{} (copy)", source.name);
+        self.create(&new_name, &source.mission, source.members.clone())
+    }
+
     /// Write (or overwrite) a swarm to `<dir>/<swarm_id>/swarm.json`, then
     /// reload so the change is visible to subsequent `list`/`get` calls. The
     /// `swarm_id` is re-sanitized before joining the registry root
@@ -334,5 +384,96 @@ impl LocalSwarmRegistry {
         })?;
         self.load()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_registry() -> LocalSwarmRegistry {
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-swarm-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        LocalSwarmRegistry::new(dir.to_string_lossy().to_string())
+    }
+
+    #[test]
+    fn update_metadata_changes_name_and_mission_preserving_id() {
+        let registry = tmp_registry();
+        let swarm = registry
+            .create("Alpha Team", "original mission", vec!["a1".into()])
+            .unwrap();
+        let id = swarm.swarm_id.clone();
+
+        let updated = registry
+            .update_metadata(&id, "Beta Team", "new mission")
+            .unwrap();
+
+        assert_eq!(updated.swarm_id, id, "swarm_id must be preserved");
+        assert_eq!(updated.name, "Beta Team");
+        assert_eq!(updated.mission, "new mission");
+        assert_eq!(updated.members, vec!["a1".to_string()], "roster preserved");
+
+        // The change persists across a reload (it is on disk, not in-memory).
+        let reloaded = registry.get(&id).unwrap();
+        assert_eq!(reloaded.name, "Beta Team");
+        assert_eq!(reloaded.mission, "new mission");
+    }
+
+    #[test]
+    fn update_metadata_rejects_empty_name() {
+        let registry = tmp_registry();
+        let swarm = registry.create("Gamma", "m", vec![]).unwrap();
+        let err = registry.update_metadata(&swarm.swarm_id, "   ", "m").unwrap_err();
+        assert!(matches!(err, LocalSwarmError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn update_metadata_errors_on_missing_swarm() {
+        let registry = tmp_registry();
+        let err = registry.update_metadata("nope", "Name", "m").unwrap_err();
+        assert!(matches!(err, LocalSwarmError::NotFound(_)));
+    }
+
+    #[test]
+    fn clone_swarm_copies_mission_and_roster_with_fresh_id() {
+        let registry = tmp_registry();
+        let source = registry
+            .create("Delta", "recon mission", vec!["d1".into(), "d2".into()])
+            .unwrap();
+
+        let clone = registry.clone_swarm(&source.swarm_id).unwrap();
+
+        assert_ne!(clone.swarm_id, source.swarm_id, "clone gets a fresh id");
+        assert_eq!(clone.name, "Delta (copy)");
+        assert_eq!(clone.mission, "recon mission");
+        assert_eq!(clone.members, vec!["d1".to_string(), "d2".to_string()]);
+        // Both swarms coexist on disk.
+        assert!(registry.get(&source.swarm_id).is_some());
+        assert!(registry.get(&clone.swarm_id).is_some());
+    }
+
+    #[test]
+    fn clone_swarm_preserves_members_that_no_longer_exist() {
+        // The roster is ids — a member whose card was deleted must not cause a
+        // panic or silent drop during clone. The id is preserved faithfully.
+        let registry = tmp_registry();
+        let source = registry
+            .create("Epsilon", "m", vec!["ghost_agent".into()])
+            .unwrap();
+        let clone = registry.clone_swarm(&source.swarm_id).unwrap();
+        assert_eq!(clone.members, vec!["ghost_agent".to_string()]);
+    }
+
+    #[test]
+    fn clone_swarm_errors_on_missing_source() {
+        let registry = tmp_registry();
+        let err = registry.clone_swarm("nope").unwrap_err();
+        assert!(matches!(err, LocalSwarmError::NotFound(_)));
     }
 }

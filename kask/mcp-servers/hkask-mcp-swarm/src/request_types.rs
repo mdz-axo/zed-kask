@@ -583,6 +583,31 @@ pub struct RemoveAgentFromLocalSwarmRequest {
     pub agent_name: String,
 }
 
+/// Update a local swarm's display name and mission in place. The `swarm_id`
+/// (on-disk identity) is preserved — only the human-readable `name` and
+/// `mission` change. ABW has no metadata-edit endpoint (PATCH /workspaces/{id}
+/// is 405), so this is local-only.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateLocalSwarmRequest {
+    /// The `swarm_id` of the swarm to edit.
+    pub swarm_id: String,
+    /// New display name (non-empty).
+    pub name: String,
+    /// New mission / description.
+    #[serde(default)]
+    pub mission: String,
+}
+
+/// Clone a local swarm: create a new swarm with a fresh slug id, copying the
+/// source's mission and roster. The new name is suffixed with " (copy)".
+/// Member ids are preserved as-is — a member whose card no longer exists is
+/// not an error (the roster is ids; resolution happens at delegation time).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloneLocalSwarmRequest {
+    /// The `swarm_id` of the source swarm to clone.
+    pub swarm_id: String,
+}
+
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FireRequest {

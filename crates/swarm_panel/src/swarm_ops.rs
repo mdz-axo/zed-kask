@@ -4,16 +4,17 @@
 //! `fetch_all` / `open_swarm_detail`); this module owns the tool invocations.
 //! See `detail.rs` / `author.rs` for the same extraction pattern.
 
-use gpui::Context;
+use gpui::{Context, Window};
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 
+use crate::DestructiveAction;
 use crate::RunStatusView;
 use crate::SWARM_SERVER;
 use crate::SwarmDetailView;
 use crate::SwarmPanel;
 use crate::SwarmRosterAgent;
-use crate::parse::{AgentSource, parse_run_status_messages, parse_swarm_roster};
+use crate::parse::{AgentSource, LocalAgentInfo, LocalAgentListResponse, extract_wallet_balance, parse_run_status_messages, parse_swarm_roster};
 
 impl SwarmPanel {
     /// Open the roster drill-down for a swarm (item 4). The fetch is
@@ -50,68 +51,147 @@ impl SwarmPanel {
             loading: true,
             error: None,
             agents: Vec::new(),
+            editing_metadata: false,
         });
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
             async move |this, cx| {
-                let result = if is_local {
-                    invoker
+                if is_local {
+                    // Fetch the swarm roster and the local agent catalogue
+                    // in parallel so member ids can be enriched with
+                    // agent_type, description, accepts, and produces from
+                    // the card data. A failed agent-list fetch must NOT
+                    // blank the roster — the swarm fetch is the authority;
+                    // enrichment is best-effort.
+                    let swarm_result = invoker
                         .invoke_tool(
                             SWARM_SERVER,
                             "swarm_get_local_swarm",
                             json!({ "swarm_id": workspace_id }),
                         )
-                        .await
+                        .await;
+                    let agents_result = invoker
+                        .invoke_tool(SWARM_SERVER, "swarm_list_local_agents", json!({}))
+                        .await;
+                    this.update(cx, |this, cx| {
+                        let Some(detail) = this.detail.swarm_detail.as_mut() else {
+                            return;
+                        };
+                        detail.loading = false;
+                        match swarm_result {
+                            Ok(output) => {
+                                let parsed = parse_tool_response(&output);
+                                let member_ids = parsed.and_then(|c| {
+                                    c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                        members
+                                            .iter()
+                                            .filter_map(|m| m.as_str().map(str::to_string))
+                                            .collect::<Vec<_>>()
+                                    })
+                                });
+                                match member_ids {
+                                    Some(ids) => {
+                                        // Build a lookup from the local
+                                        // agent catalogue response. A failed
+                                        // or unparseable catalogue yields an
+                                        // empty vec — members are still
+                                        // shown with empty metadata.
+                                        let cards: Vec<LocalAgentInfo> =
+                                            agents_result
+                                                .as_ref()
+                                                .ok()
+                                                .and_then(|out| parse_tool_response(out))
+                                                .and_then(|c| {
+                                                    serde_json::from_value::<
+                                                        LocalAgentListResponse,
+                                                    >(c)
+                                                    .ok()
+                                                })
+                                                .map(|r| r.agents)
+                                                .unwrap_or_default();
+                                        detail.agents = ids
+                                            .iter()
+                                            .map(|id| {
+                                                if let Some(card) =
+                                                    cards.iter().find(|c| c.agent_id == *id)
+                                                {
+                                                    SwarmRosterAgent {
+                                                        agent_id: id.clone(),
+                                                        agent_type: card.agent_type.clone(),
+                                                        description: card.description.clone(),
+                                                        accepts: card.accepts.clone(),
+                                                        produces: card.produces.clone(),
+                                                    }
+                                                } else {
+                                                    // Member id has no card
+                                                    // (deleted or not yet
+                                                    // created) — preserve the
+                                                    // id with empty metadata.
+                                                    // The roster is ids;
+                                                    // resolution happens at
+                                                    // delegation time.
+                                                    SwarmRosterAgent {
+                                                        agent_id: id.clone(),
+                                                        agent_type: String::new(),
+                                                        description: String::new(),
+                                                        accepts: Vec::new(),
+                                                        produces: Vec::new(),
+                                                    }
+                                                }
+                                            })
+                                            .collect();
+                                    }
+                                    None => {
+                                        detail.error = Some(
+                                            format!("Failed to parse roster: {output}")
+                                                .into(),
+                                        );
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                detail.error =
+                                    Some(format!("Failed to fetch roster: {err}").into());
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
                 } else {
-                    invoker
+                    let result = invoker
                         .invoke_tool(
                             SWARM_SERVER,
                             "swarm_get_swarm",
                             json!({ "workspace_id": workspace_id }),
                         )
-                        .await
-                };
-                this.update(cx, |this, cx| {
-                    let Some(detail) = this.detail.swarm_detail.as_mut() else {
-                        return;
-                    };
-                    detail.loading = false;
-                    match result {
-                        Ok(output) => {
-                            let parsed = parse_tool_response(&output);
-                            let agents = if is_local {
-                                parsed.and_then(|c| {
-                                    c.get("members").and_then(|m| m.as_array()).map(|members| {
-                                        members
-                                            .iter()
-                                            .filter_map(|m| m.as_str().map(str::to_string))
-                                            .map(|agent_id| SwarmRosterAgent {
-                                                agent_id,
-                                                agent_type: String::new(),
-                                                description: String::new(),
-                                            })
-                                            .collect()
-                                    })
-                                })
-                            } else {
-                                parsed.and_then(parse_swarm_roster)
-                            };
-                            match agents {
-                                Some(agents) => detail.agents = agents,
-                                None => {
-                                    detail.error =
-                                        Some(format!("Failed to parse roster: {output}").into());
+                        .await;
+                    this.update(cx, |this, cx| {
+                        let Some(detail) = this.detail.swarm_detail.as_mut() else {
+                            return;
+                        };
+                        detail.loading = false;
+                        match result {
+                            Ok(output) => {
+                                let parsed = parse_tool_response(&output);
+                                match parsed.and_then(parse_swarm_roster) {
+                                    Some(agents) => detail.agents = agents,
+                                    None => {
+                                        detail.error = Some(
+                                            format!("Failed to parse roster: {output}").into(),
+                                        );
+                                    }
                                 }
                             }
+                            Err(err) => {
+                                detail.error =
+                                    Some(format!("Failed to fetch roster: {err}").into());
+                            }
                         }
-                        Err(err) => {
-                            detail.error = Some(format!("Failed to fetch roster: {err}").into());
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
+                        cx.notify();
+                    })
+                    .ok();
+                }
             }
         })
         .detach();
@@ -506,5 +586,329 @@ impl SwarmPanel {
             }
         })
         .detach();
+    }
+
+    // ── Confirmation flow for destructive actions ───────────────────────────
+
+    /// Stage a delete-swarm action for confirmation. The detail view renders
+    /// a confirmation banner; the operator must click "Confirm" to execute.
+    /// For ABW swarms, the confirmation auto-fetches run status so active
+    /// runs are visible before the irreversible delete.
+    pub(crate) fn request_delete_swarm(
+        &mut self,
+        swarm_id: String,
+        source: AgentSource,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        // Check before moving `source` into the enum — AgentSource is Clone
+        // but not Copy.
+        let is_cloud = source != AgentSource::Local;
+        self.detail.pending_destructive = Some(DestructiveAction::DeleteSwarm {
+            swarm_id: swarm_id.clone(),
+            source,
+            name: name.clone(),
+        });
+        // For ABW swarms, fetch run status so the confirmation banner can
+        // surface active runs. Local swarms have no ABW run-status endpoint.
+        if is_cloud {
+            self.show_run_status(swarm_id, name, cx);
+        }
+        cx.notify();
+    }
+
+    /// Stage a remove/fire-agent action for confirmation.
+    pub(crate) fn request_remove_agent(
+        &mut self,
+        swarm_id: String,
+        agent_id: String,
+        source: AgentSource,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail.pending_destructive = Some(DestructiveAction::RemoveAgent {
+            swarm_id,
+            agent_id,
+            source,
+        });
+        cx.notify();
+    }
+
+    /// Cancel a pending destructive action.
+    pub(crate) fn cancel_destructive(&mut self, cx: &mut Context<Self>) {
+        self.detail.pending_destructive = None;
+        cx.notify();
+    }
+
+    /// Execute the pending destructive action. Dispatches to the appropriate
+    /// backend operation and clears the pending state. The individual
+    /// operations set `in_flight` and surface errors to `hire_error`.
+    pub(crate) fn confirm_destructive(&mut self, cx: &mut Context<Self>) {
+        let Some(action) = self.detail.pending_destructive.take() else {
+            return;
+        };
+        match action {
+            DestructiveAction::DeleteSwarm {
+                swarm_id,
+                source,
+                name: _,
+            } => {
+                if source == AgentSource::Local {
+                    self.delete_local_swarm(swarm_id, cx);
+                } else {
+                    self.delete_cloud_swarm(swarm_id, cx);
+                }
+            }
+            DestructiveAction::RemoveAgent {
+                swarm_id,
+                agent_id,
+                source,
+            } => {
+                if source == AgentSource::Local {
+                    self.remove_agent_from_swarm(swarm_id, agent_id, cx);
+                } else {
+                    self.fire_agent(swarm_id, agent_id, cx);
+                }
+            }
+        }
+    }
+
+    // ── Cloud swarm delete ──────────────────────────────────────────────────
+
+    /// Permanently delete an ABW workspace (swarm). Calls `swarm_delete_swarm`
+    /// (`DELETE /api/teams/{id}`). Irreversible — the workspace and its roster
+    /// are removed. On success, closes the detail and re-fetches the swarm
+    /// list so the deleted swarm disappears.
+    pub(crate) fn delete_cloud_swarm(&mut self, workspace_id: String, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend.in_flight = Some(format!("delete-cloud-swarm-{workspace_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_delete_swarm",
+                        json!({ "workspace_id": workspace_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend.in_flight = None;
+                    match result {
+                        Ok(output) => {
+                            if let Some(b) = extract_wallet_balance(&output) {
+                                this.spend.wallet_balance = Some(b);
+                            }
+                            this.close_swarm_detail(cx);
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.spend.hire_error =
+                                Some(format!("Failed to delete ABW swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ── Edit swarm metadata (local only) ────────────────────────────────────
+
+    /// Enter metadata-edit mode: populates the name and mission editors from
+    /// the loaded swarm and flips `editing_metadata`. Local swarms only — ABW
+    /// has no metadata-edit endpoint.
+    pub(crate) fn begin_edit_metadata(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(detail) = self.detail.swarm_detail.as_ref() else {
+            return;
+        };
+        let name = detail.name.clone();
+        let mission = detail.mission.clone();
+        self.detail
+            .edit_name_editor
+            .update(cx, |e, cx| e.set_text(name, window, cx));
+        self.detail
+            .edit_mission_editor
+            .update(cx, |e, cx| e.set_text(mission, window, cx));
+        if let Some(detail) = self.detail.swarm_detail.as_mut() {
+            detail.editing_metadata = true;
+        }
+        cx.notify();
+    }
+
+    /// Exit metadata-edit mode without saving.
+    pub(crate) fn cancel_edit_metadata(&mut self, cx: &mut Context<Self>) {
+        if let Some(detail) = self.detail.swarm_detail.as_mut() {
+            detail.editing_metadata = false;
+        }
+        cx.notify();
+    }
+
+    /// Save the edited name and mission via `swarm_update_local_swarm`. On
+    /// success, re-opens the detail so the header reflects the new metadata.
+    pub(crate) fn save_swarm_metadata(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let Some(detail) = self.detail.swarm_detail.as_ref() else {
+            return;
+        };
+        let swarm_id = detail.workspace_id.clone();
+        let name = self.detail.edit_name_editor.read(cx).text(cx).trim().to_string();
+        let mission = self.detail.edit_mission_editor.read(cx).text(cx);
+        if name.is_empty() {
+            self.spend.hire_error = Some("Swarm name must be non-empty.".into());
+            cx.notify();
+            return;
+        }
+        self.spend.in_flight = Some(format!("edit-swarm-{swarm_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_update_local_swarm",
+                        json!({
+                            "swarm_id": swarm_id,
+                            "name": name,
+                            "mission": mission,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend.in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            if let Some(detail) = this.detail.swarm_detail.as_mut() {
+                                detail.editing_metadata = false;
+                            }
+                            // Re-open the detail to reflect the new metadata.
+                            if let Some(detail) = this.detail.swarm_detail.clone() {
+                                this.open_swarm_detail(
+                                    detail.workspace_id.clone(),
+                                    detail.name,
+                                    detail.source,
+                                    detail.mission,
+                                    detail.agent_count,
+                                    detail.budget,
+                                    detail.remaining,
+                                    cx,
+                                );
+                            }
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.spend.hire_error =
+                                Some(format!("Failed to update swarm metadata: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ── Copy swarm ─────────────────────────────────────────────────────────
+
+    /// Copy a local swarm via `swarm_clone_local_swarm`. Creates a new swarm
+    /// with a fresh slug id, copying the mission and roster. On success,
+    /// re-fetches the swarm list so the copy appears.
+    pub(crate) fn clone_local_swarm(&mut self, swarm_id: String, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend.in_flight = Some(format!("clone-swarm-{swarm_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_clone_local_swarm",
+                        json!({ "swarm_id": swarm_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend.in_flight = None;
+                    match result {
+                        Ok(output) => {
+                            let cloned_id = parse_tool_response(&output).and_then(|c| {
+                                c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string)
+                            });
+                            this.fetch_all(cx);
+                            if let Some(id) = cloned_id {
+                                this.spend.hire_error =
+                                    Some(format!("Copied swarm created: {id}").into());
+                            }
+                        }
+                        Err(err) => {
+                            this.spend.hire_error =
+                                Some(format!("Failed to copy swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Copy an ABW swarm by pre-filling the Compose form with the source
+    /// swarm's name, mission, and roster, then navigating to Compose mode.
+    /// The operator reviews and completes the create (which handles consent
+    /// and credit cost). This avoids inventing an ABW clone endpoint — clone
+    /// = read + create, using existing tools. Missing agents surface as hire
+    /// failures during the create flow.
+    pub(crate) fn clone_swarm_to_compose(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(detail) = self.detail.swarm_detail.as_ref() else {
+            return;
+        };
+        let name = format!("{} (copy)", detail.name);
+        let mission = detail.mission.clone();
+        let agents = detail
+            .agents
+            .iter()
+            .map(|a| a.agent_id.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.compose
+            .name
+            .update(cx, |e, cx| e.set_text(name, window, cx));
+        self.compose
+            .mission
+            .update(cx, |e, cx| e.set_text(mission, window, cx));
+        self.compose
+            .agents
+            .update(cx, |e, cx| e.set_text(agents, window, cx));
+        self.compose.create_target = crate::CreateTarget::Cloud;
+        self.compose.status =
+            Some("Review and create to copy this ABW swarm.".into());
+        self.close_swarm_detail(cx);
+        self.set_mode(crate::PanelMode::Compose, window, cx);
+        cx.notify();
     }
 }

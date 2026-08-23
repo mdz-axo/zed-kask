@@ -36,7 +36,21 @@ impl CompaniesServer {
                     }
                 };
 
-                let gross_margins = analysis::extract_gross_margins(&metrics);
+                // Fetch income statement for gross margin computation.
+                // The stable key-metrics endpoint does not include grossProfitMargin,
+                // so we compute it from grossProfit / revenue in the income statement.
+                let income_result = self
+                    .fetch("income_statement", &symbol, &[("limit", limit)])
+                    .await;
+
+                let income = match income_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+
+                let gross_margins = analysis::extract_gross_margins(&income);
                 if gross_margins.is_empty() {
                     let output = serde_json::json!({
                         "symbol": symbol,
@@ -183,7 +197,7 @@ impl CompaniesServer {
             let periods: Vec<serde_json::Value> = arr
                 .iter()
                 .filter_map(|entry| {
-                    let year = entry.get("calendarYear")?.as_str().unwrap_or("");
+                    let year = analysis::extract_year(entry)?;
                     let period = entry
                         .get("period")
                         .and_then(|p| p.as_str())

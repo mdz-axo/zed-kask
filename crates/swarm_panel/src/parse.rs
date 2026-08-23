@@ -151,6 +151,13 @@ pub(crate) struct LocalAgentInfo {
     /// The ABW agent id this local card is synced with. `None` = local-only.
     #[serde(default, rename = "cloud_id")]
     pub(crate) cloud_swarm_id: Option<String>,
+    /// Port labels this agent accepts (typed inputs). Carried by
+    /// `swarm_list_local_agents`; used to enrich the local swarm roster view.
+    #[serde(default)]
+    pub(crate) accepts: Vec<String>,
+    /// Port labels this agent produces (typed outputs).
+    #[serde(default)]
+    pub(crate) produces: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,10 +290,27 @@ pub(crate) fn parse_swarm_roster(content: serde_json::Value) -> Option<Vec<Swarm
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    accepts: extract_port_labels(a, "accepts"),
+                    produces: extract_port_labels(a, "produces"),
                 })
             })
             .collect(),
     )
+}
+
+/// Extract a port-label array (`accepts` or `produces`) from an agent object.
+/// Returns an empty vec when the field is absent or not an array — the ABW
+/// roster payload may omit ports, and local rosters carry ids only.
+fn extract_port_labels(agent: &serde_json::Value, field: &str) -> Vec<String> {
+    agent
+        .get(field)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Extract renderable message lines from a `swarm_run_status` response.
