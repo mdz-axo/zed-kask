@@ -1537,6 +1537,15 @@ impl SwarmPanel {
     /// (no cost, no consent — members are agent ids); in ABW mode the existing
     /// consent-gated `swarm_create_swarm` path is used, hiring any listed agents.
     fn create_swarm(&mut self, cx: &mut Context<Self>) {
+        // If editing an existing swarm, dispatch to the update path
+        // instead of creating a new one. This handles the case where
+        // the operator loaded a swarm into the compose form via the
+        // Edit button and is now saving changes.
+        if self.compose.editing_swarm_id.is_some() {
+            self.save_swarm_metadata(cx);
+            return;
+        }
+
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.compose.status = Some("Tool invoker not wired.".into());
             cx.notify();

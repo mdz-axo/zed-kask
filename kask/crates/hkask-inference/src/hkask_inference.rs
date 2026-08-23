@@ -78,63 +78,40 @@ async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
     }
 }
 
-/// Resolve the best available `InferencePort` for an MCP server.
+/// Resolve the inference port for an MCP server.
 ///
-/// Routes through the zed IPC bridge ([`InferenceIpcClient`]) when
-/// `HKASK_INFERENCE_SOCKET` is set and reachable. When the bridge is
-/// unavailable, falls back to [`DirectEmbeddingPort`] — a direct HTTP
-/// client that talks to any OpenAI-compatible `/v1/embeddings` endpoint.
-/// This allows the corpus pipeline's embedding stage to proceed without the
-/// IPC bridge, which is critical for standalone MCP server execution (e.g.
-/// when the corpus server runs outside zed's governed launch). Generation,
-/// vision, and tool-dispatch methods on the fallback port return clear errors
-/// — only `embed` is functional.
-///
-/// `pre`: none (reads env vars). `post`: an `Arc<dyn InferencePort>` ready for
-/// inference calls.
+/// Returns a [`LazyInferencePort`] that tries the IPC bridge on each call
+/// and falls back to [`DirectEmbeddingPort`] when the socket is unavailable.
+/// This eliminates the resolve-once-at-startup problem where the corpus
+/// MCP server starts before the IPC socket exists and never gets
+/// restarted with it.
 #[must_use]
 pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
-    match connect_bridge("MCP inference").await {
-        Some(client) => {
-            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::InferencePort>
-        }
-        None => {
-            // IPC bridge unavailable — attempt direct embedding fallback.
-            // This keeps the corpus pipeline's embedding stage functional when
-            // the MCP server runs without zed's governed launch (no IPC socket).
-            // Generation/vision/tool-dispatch remain unavailable.
-            let embedding_model = model_constants::embedding_model();
-            if let Some(port) = DirectEmbeddingPort::try_new(&embedding_model) {
-                tracing::info!(
-                    target: "hkask.inference",
-                    model = %embedding_model,
-                    "IPC bridge unavailable — falling back to direct embedding"
-                );
-                std::sync::Arc::new(port) as std::sync::Arc<dyn hkask_types::InferencePort>
-            } else {
-                std::sync::Arc::new(UnavailableInference)
-            }
+    let embedding_model = model_constants::embedding_model();
+    std::sync::Arc::new(LazyInferencePort::new(&embedding_model))
+        as std::sync::Arc<dyn hkask_types::InferencePort>
+}
+
+/// A lazy inference port that tries the IPC bridge on each call and
+/// falls back to `DirectEmbeddingPort` when the socket is unavailable.
+struct LazyInferencePort {
+    embedding_model: String,
+}
+
+impl LazyInferencePort {
+    fn new(embedding_model: &str) -> Self {
+        Self {
+            embedding_model: embedding_model.to_string(),
         }
     }
 }
 
-/// Inference stub for MCP servers without the IPC bridge. Every method returns
-/// a clear, socket-named error so callers can distinguish "dispatch
-/// unavailable" from "no models" / "backend doesn't implement vision" / other
-/// failures. The trait's default impls are overridden for `generate_vision`,
-/// `embed`, and `list_models` specifically because their defaults are **not**
-/// socket-named: `list_models` defaults to `Ok(Vec::new())` (a broken bridge
-/// read as an empty registry), `generate_vision` to a generic
-/// `VisionUnsupported`, and `embed` to a generic `Connection`. Overriding them
-/// keeps the "every method names the missing socket" contract honest.
-struct UnavailableInference;
-
-impl hkask_types::InferencePort for UnavailableInference {
+impl hkask_types::InferencePort for LazyInferencePort {
     fn generate(
         &self,
-        _prompt: &str,
-        _parameters: &hkask_types::template::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -143,11 +120,7 @@ impl hkask_types::InferencePort for UnavailableInference {
                 + '_,
         >,
     > {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(format!(
-                "inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
-            )))
-        })
+        self.generate_with_model(prompt, parameters, None, tools)
     }
 
     fn generate_vision(
@@ -165,17 +138,77 @@ impl hkask_types::InferencePort for UnavailableInference {
         >,
     > {
         Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(format!(
-                "vision inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
-            )))
+            Err(hkask_types::InferenceError::Connection(
+                "vision inference unavailable on lazy inference port".to_string(),
+            ))
         })
     }
 
-    fn embed<'a>(&'a self, _model: &str, _texts: &[String]) -> hkask_types::EmbedFuture<'a> {
-        Box::pin(async {
-            Err(hkask_types::EmbeddingGenerationError::Connection(format!(
-                "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
-            )))
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        let prompt = prompt.to_string();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        let tools = tools.map(|t| t.to_vec());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_with_model(
+                        &prompt,
+                        &params,
+                        model_override.as_deref(),
+                        tools.as_deref(),
+                    )
+                    .await;
+            }
+            // Fall back to direct HTTP.
+            let port = DirectEmbeddingPort::try_new(&self.embedding_model)
+                .ok_or_else(|| {
+                    hkask_types::InferenceError::Connection(format!(
+                        "No inference available: {IPC_BRIDGE_UNAVAILABLE} \
+                         and direct fallback failed (no API key or provider)"
+                    ))
+                })?;
+            port.generate_with_model(
+                &prompt,
+                &params,
+                model_override.as_deref(),
+                tools.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        let embedding_model = self.embedding_model.clone();
+        Box::pin(async move {
+            // Try the IPC bridge first.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.embed(&model, &texts).await;
+            }
+            // Fall back to direct HTTP.
+            let port = DirectEmbeddingPort::try_new(&embedding_model)
+                .ok_or_else(|| {
+                    hkask_types::EmbeddingGenerationError::Connection(format!(
+                        "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+                    ))
+                })?;
+            port.embed(&model, &texts).await
         })
     }
 
@@ -190,6 +223,10 @@ impl hkask_types::InferencePort for UnavailableInference {
         >,
     > {
         Box::pin(async {
+            // Try the IPC bridge first.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.list_models().await;
+            }
             Err(hkask_types::InferenceError::Connection(format!(
                 "list_models unavailable: {IPC_BRIDGE_UNAVAILABLE}"
             )))
@@ -197,6 +234,15 @@ impl hkask_types::InferencePort for UnavailableInference {
     }
 }
 
+/// Inference stub for MCP servers without the IPC bridge. Every method returns
+/// a clear, socket-named error so callers can distinguish "dispatch
+/// unavailable" from "no models" / "backend doesn't implement vision" / other
+/// failures. The trait's default impls are overridden for `generate_vision`,
+/// `embed`, and `list_models` specifically because their defaults are **not**
+/// socket-named: `list_models` defaults to `Ok(Vec::new())` (a broken bridge
+/// read as an empty registry), `generate_vision` to a generic
+/// `VisionUnsupported`, and `embed` to a generic `Connection`. Overriding them
+/// keeps the "every method names the missing socket" contract honest.
 /// Direct HTTP embedding port for Ollama's OpenAI-compatible endpoint.
 ///
 /// When the IPC bridge is unavailable (e.g. the corpus MCP server runs
@@ -205,12 +251,13 @@ impl hkask_types::InferencePort for UnavailableInference {
 /// (configurable via `OLLAMA_API_URL` env var) using `reqwest`. Generation,
 /// vision, and tool-dispatch methods return clear errors — only `embed` is
 /// functional.
-/// A direct HTTP embedding port for any OpenAI-compatible provider.
+/// A direct HTTP inference port for any OpenAI-compatible provider.
 ///
 /// Used as a fallback when the zed IPC bridge is unavailable. Resolves the
 /// provider prefix from the model string (e.g. `DeepInfra/`, `ollama/`,
 /// `OpenRouter/`) against a static table to get the API URL and env var name,
-/// then calls the OpenAI-compatible `/v1/embeddings` endpoint directly.
+/// then calls the OpenAI-compatible `/v1/embeddings` and `/chat/completions`
+/// endpoints directly.
 ///
 /// For Ollama (local, no API key), the key is empty. For cloud providers,
 /// the key is read from the env var named in the provider descriptor.
@@ -311,8 +358,8 @@ impl DirectEmbeddingPort {
 impl hkask_types::InferencePort for DirectEmbeddingPort {
     fn generate(
         &self,
-        _prompt: &str,
-        _parameters: &hkask_types::template::LLMParameters,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
         _tools: Option<&[hkask_types::ChatToolDefinition]>,
     ) -> std::pin::Pin<
         Box<
@@ -322,12 +369,8 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 + '_,
         >,
     > {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(
-                "generation unavailable on direct embedding fallback \
-                 — only embed is supported without the IPC bridge".to_string(),
-            ))
-        })
+        let default_model = model_constants::DEFAULT_FALLBACK_MODEL.to_string();
+        self.generate_with_model(prompt, parameters, Some(&default_model), None)
     }
 
     fn generate_vision(
@@ -346,8 +389,145 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
     > {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
-                "vision inference unavailable on direct embedding fallback".to_string(),
+                "vision inference unavailable on direct inference fallback".to_string(),
             ))
+        })
+    }
+
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        // Resolve the model: strip the provider prefix for the API call.
+        let model_str = model_override
+            .unwrap_or(model_constants::DEFAULT_FALLBACK_MODEL)
+            .to_string();
+        let model_id = model_str
+            .split_once('/')
+            .map(|(_, rest)| rest)
+            .unwrap_or(&model_str)
+            .to_string();
+
+        // Resolve the API URL + key for this model's provider.
+        let (api_url, api_key) = match DIRECT_EMBEDDING_PROVIDERS.iter().find(|p| {
+            let prefix = format!("{}/", p.id);
+            model_str.len() >= prefix.len()
+                && model_str[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        }) {
+            Some(provider) => {
+                let key = if provider.env_var.is_empty() {
+                    String::new()
+                } else {
+                    std::env::var(provider.env_var).unwrap_or_default()
+                };
+                (provider.api_url.to_string(), key)
+            }
+            None => (self.api_url.clone(), self.api_key.clone()),
+        };
+
+        let client = self.client.clone();
+        let temperature = parameters.temperature;
+        let top_p = parameters.top_p;
+        let disable_thinking = parameters.disable_thinking;
+        let prompt = prompt.to_string();
+
+        Box::pin(async move {
+            let uri = format!("{api_url}/chat/completions");
+            let mut body = serde_json::json!({
+                "model": model_id,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "top_p": top_p,
+            });
+            if disable_thinking {
+                body["reasoning"] = serde_json::json!({"effort": "none"});
+            }
+
+            let mut request = client
+                .post(&uri)
+                .header("Content-Type", "application/json")
+                .json(&body);
+
+            if !api_key.is_empty() {
+                request = request.header("Authorization", format!("Bearer {api_key}"));
+            }
+
+            let response = request.send().await.map_err(|e| {
+                hkask_types::InferenceError::Connection(format!(
+                    "direct inference request failed: {e}"
+                ))
+            })?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body_text = response.text().await.unwrap_or_default();
+                return Err(hkask_types::InferenceError::Connection(format!(
+                    "chat API error: status {status}: {body_text}"
+                )));
+            }
+
+            #[derive(serde::Deserialize)]
+            struct ChatChoice {
+                message: ChatMessageContent,
+                finish_reason: Option<String>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ChatMessageContent {
+                content: Option<String>,
+                reasoning: Option<String>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ChatUsage {
+                prompt_tokens: Option<u32>,
+                completion_tokens: Option<u32>,
+                total_tokens: Option<u32>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ChatResponse {
+                choices: Vec<ChatChoice>,
+                usage: Option<ChatUsage>,
+                model: Option<String>,
+            }
+
+            let parsed: ChatResponse = response.json().await.map_err(|e| {
+                hkask_types::InferenceError::Connection(format!(
+                    "failed to parse chat response: {e}"
+                ))
+            })?;
+
+            let choice = parsed.choices.into_iter().next().ok_or_else(|| {
+                hkask_types::InferenceError::Connection(
+                    "chat response has no choices".to_string(),
+                )
+            })?;
+
+            let text = choice.message.content.unwrap_or_default();
+            let model = parsed.model.unwrap_or_default();
+            let usage = hkask_types::InferenceUsage {
+                prompt_tokens: parsed.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0),
+                completion_tokens: parsed.usage.as_ref().and_then(|u| u.completion_tokens).unwrap_or(0),
+                total_tokens: parsed.usage.as_ref().and_then(|u| u.total_tokens).unwrap_or(0),
+            };
+
+            Ok(hkask_types::InferenceResult {
+                text,
+                model,
+                usage,
+                finish_reason: choice.finish_reason.unwrap_or_default(),
+                tool_calls: Vec::new(),
+                reasoning: choice.message.reasoning,
+                cost_usd: None,
+            })
         })
     }
 
@@ -434,7 +614,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
     > {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
-                "list_models unavailable on direct Ollama embedding fallback".to_string(),
+                "list_models unavailable on direct inference fallback".to_string(),
             ))
         })
     }

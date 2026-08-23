@@ -608,6 +608,15 @@ pub fn into_open_router(
                 exclude: Some(false),
                 enabled: Some(true),
             })
+        } else if !request.thinking_allowed {
+            // zed-kask: when thinking is explicitly disabled, send
+            // reasoning with effort: none so the model skips reasoning.
+            Some(open_router::Reasoning {
+                effort: Some("none".to_string()),
+                max_tokens: None,
+                exclude: Some(false),
+                enabled: Some(false),
+            })
         } else {
             None
         },

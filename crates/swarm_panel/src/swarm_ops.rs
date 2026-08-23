@@ -231,7 +231,9 @@ impl SwarmPanel {
             AgentSource::Cloud => crate::CreateTarget::Cloud,
             AgentSource::Local | AgentSource::Synced => crate::CreateTarget::Local,
         };
-        self.compose.status = Some(String::from("Loading swarm details…").into());
+        self.compose.status = Some(
+            ["Loading swarm details…", "Loading swarm details…"][0].to_string().into()
+        );
         self.compose.busy = false;
 
         // Pre-fill the form with the known values. The roster (agents)
@@ -927,12 +929,25 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        let Some(detail) = self.detail.swarm_detail.as_ref() else {
-            return;
-        };
-        let swarm_id = detail.workspace_id.clone();
-        let name = self.detail.edit_name_editor.read(cx).text(cx).trim().to_string();
-        let mission = self.detail.edit_mission_editor.read(cx).text(cx);
+        // The swarm id comes from either the compose form's editing_swarm_id
+        // (when editing via the compose surface) or the detail view's
+        // swarm_detail (when editing via the detail surface).
+        let (swarm_id, name, mission) =
+            if let Some(editing_id) = self.compose.editing_swarm_id.as_ref() {
+                (
+                    editing_id.clone(),
+                    self.compose.name.read(cx).text(cx).trim().to_string(),
+                    self.compose.mission.read(cx).text(cx),
+                )
+            } else if let Some(detail) = self.detail.swarm_detail.as_ref() {
+                (
+                    detail.workspace_id.clone(),
+                    self.detail.edit_name_editor.read(cx).text(cx).trim().to_string(),
+                    self.detail.edit_mission_editor.read(cx).text(cx),
+                )
+            } else {
+                return;
+            };
         if name.is_empty() {
             self.spend.hire_error = Some("Swarm name must be non-empty.".into());
             cx.notify();
@@ -961,6 +976,11 @@ impl SwarmPanel {
                             if let Some(detail) = this.detail.swarm_detail.as_mut() {
                                 detail.editing_metadata = false;
                             }
+                            // Clear the compose editing state if the
+                            // save was triggered from the compose form.
+                            this.compose.editing_swarm_id = None;
+                            this.compose.editing_swarm_source = None;
+                            this.compose.status = Some("Swarm updated.".into());
                             // Re-open the detail to reflect the new metadata.
                             if let Some(detail) = this.detail.swarm_detail.clone() {
                                 this.open_swarm_detail(

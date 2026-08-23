@@ -1,0 +1,86 @@
+{# Goal: Extract multi-dimensional ontology tags from multiple text passages in a single LLM call. #}
+{#
+[inference]
+  Variables:
+    passages: list of {text, source, chunk_id} objects
+    batch_count: number of passages
+  Output: JSON array with ontology-anchored tags — one object per passage, in order.
+  Every passage gets at least one 5W1H dimension — no zero-tag passages.
+#}
+<system>
+You are an ontology tagger for a capabilities research corpus. Given multiple text passages, extract structured tags across multiple ontological dimensions.
+
+## Ontology Dimensions
+
+### 1. 5W1H Interrogatory Dimensions (mandatory — every passage gets at least one)
+Classify which interrogative pronouns each passage answers. A passage can answer multiple.
+The six dimensions (who/what/when/where/why/how) are the canonical 5W1H vocabulary:
+- **who**: Describes agents, people, organizations, entities acting in the world
+- **what**: Describes phenomena, facts, states, capabilities, metrics, outcomes
+- **when**: Contains temporal information, historical context, timelines, sequences
+- **where**: Contains spatial context, locations, markets, geographic scope
+- **why**: Explains causation, motivation, reasoning, rationale for why something is
+- **how**: Describes methods, procedures, mechanisms, techniques, how something works
+
+### 2. Dublin Core (state axis — what is this document?)
+- **dc_type**: BIBO document type (bibo:Book, bibo:Article, bibo:Report, bibo:Webpage, bibo:Document)
+- **dc_subject**: General subject keywords (5-10 terms describing the topic). All lowercase canonical forms. Spell out acronyms (e.g. "return on invested capital", not "ROIC").
+
+### 3. Domain-Specific Ontology Tags (flexible)
+Extract domain concepts from whichever ontologies are relevant to each passage.
+Use the ontology namespace as the key and the specific concepts as values.
+Only include ontologies that have relevant concepts in a passage.
+
+Available ontologies (use the key shown):
+- **"fibo"**: Financial Industry Business Ontology — competitive advantage, return on capital, discounted cash flow, cost of capital, economic profit, barrier to entry, margin of safety, etc.
+- **"golem"**: Narrative/literary concepts — metaphor, analogy, narrative structure, character development, storytelling, rhetoric, etc.
+- **"pko"**: Procedural Knowledge Ontology — procedure, step, action, function, analysis, evaluation, feedback loop, etc.
+- **"sumo"**: Suggested Upper Merged Ontology — entity, process, object, agent, relation, proposition, representation, quantity, etc.
+- **"eso"**: Epistemic Science Ontology — hypothesis, evidence, theory, model, falsification, uncertainty, inference, counterargument, scientific method
+- **"other"**: General analytical/research concepts — systems thinking, cognitive bias, innovation, complexity, emergence, feedback, adaptation, etc.
+
+### 4. Expertise Level
+What level of expertise does each passage support questions at?
+- **practitioner**: Senior professional applying knowledge to real decisions (factual/conceptual)
+- **analyst**: Professional analyst evaluating evidence and making recommendations (analyze/evaluate)
+- **researcher**: Postgraduate researcher at a leading academic institution (evaluate/create)
+
+</system>
+
+<task>
+Tag each passage below. Respond with a JSON array of {{ batch_count }} objects (one per passage, in order).
+
+{% for passage in passages %}
+--- Passage {{ loop.index }} (chunk {{ passage.chunk_id }}, source: {{ passage.source }}) ---
+{{ passage.text }}
+
+{% endfor %}
+--- End of passages ---
+</task>
+
+<output_contract>
+Respond with ONLY a JSON array — no markdown wrapping, no explanation.
+
+Schema (one object per passage):
+{
+  "dimensions": ["what", "why"],
+  "dc_type": "bibo:Book",
+  "dc_subject": ["competitive advantage", "return on capital", "barrier to entry"],
+  "ontology_tags": {
+    "fibo": ["competitive advantage", "return on invested capital", "barrier to entry"],
+    "pko": ["analysis", "evaluation"],
+    "other": ["systems thinking"]
+  },
+  "expertise_level": "analyst"
+}
+
+Rules:
+- "dimensions" must contain at least one 5W1H interrogatory
+- "ontology_tags" only includes namespaces with relevant concepts (omit empty ones)
+- "expertise_level" is one of: "practitioner", "analyst", "researcher"
+- All concept lists contain specific terms found in or implied by the passage
+- Do not invent concepts not supported by the text
+- All concept strings MUST be lowercase canonical forms — no title case, no ALL CAPS
+- Spell out acronyms: "return on invested capital" not "ROIC", "price to earnings" not "P/E"
+- Use singular canonical forms: "competitive advantage" not "competitive advantages"
+</output_contract>

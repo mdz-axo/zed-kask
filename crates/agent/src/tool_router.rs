@@ -338,12 +338,31 @@ impl ToolRouter for LazyToolRouter {
         // asymmetry is deliberate: dropping a needed tool costs a failed turn,
         // whereas carrying a spare costs a few dozen tokens, so the budget errs
         // generous.
-        let selected: Vec<SharedString> = scored
+        // Exact-name bypass: if the user message contains a candidate's
+        // exact tool name, always retain it regardless of score. This
+        // ensures that subagent messages like "Call the corpus_tag_chunks
+        // MCP tool" don't lose the tool to budget/threshold filtering.
+        let message_lower = message.to_lowercase();
+        let exact_name_matches: std::collections::HashSet<SharedString> = context
+            .candidates
+            .iter()
+            .filter(|candidate| message_lower.contains(candidate.name.as_ref().to_lowercase().as_str()))
+            .map(|candidate| candidate.name.clone())
+            .collect();
+
+        let mut selected: Vec<SharedString> = scored
             .iter()
             .take(self.selection_budget)
             .filter(|(score, _)| *score >= self.threshold)
             .map(|(_, candidate)| candidate.name.clone())
             .collect();
+
+        // Merge in exact-name matches that were filtered out.
+        for name in &exact_name_matches {
+            if !selected.contains(name) {
+                selected.push(name.clone());
+            }
+        }
 
         Some(selected)
     }

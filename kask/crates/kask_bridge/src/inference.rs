@@ -448,6 +448,7 @@ impl LanguageModelInferencePort {
             tools: req_tools,
             temperature: Some(parameters.temperature),
             max_tokens: None,
+            thinking_allowed: !parameters.disable_thinking,
             // zed-kask: D25 — when a structured-output tool (emit_result) is offered,
             // force the model to call it via tool_choice: Any ("required" in
             // OpenAI's API). With Auto, the model may return prose instead of

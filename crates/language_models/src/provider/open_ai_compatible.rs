@@ -480,10 +480,8 @@ fn chat_completion_reasoning_effort(
     if request.thinking_allowed {
         selected_thinking_reasoning_effort(request)
             .or_else(|| default_thinking_reasoning_effort(model))
-    } else if supports_none_reasoning_effort(model) {
-        Some(open_ai::ReasoningEffort::None)
     } else {
-        None
+        Some(open_ai::ReasoningEffort::None)
     }
 }
 

@@ -88,16 +88,12 @@ impl SwarmPanel {
         let border = cx.theme().colors().border;
         let is_local = self.compose.create_target == super::CreateTarget::Local;
         let is_editing = self.compose.editing_swarm_id.is_some();
-        // Build the button label via String::from + format so the string
-        // survives LTO dead-string elimination in release builds.
         let create_label: SharedString = if self.compose.busy {
-            String::from("Creating…")
-        } else if is_editing {
-            String::from("Save Changes")
+            "Creating…"
         } else if is_local {
-            String::from("Create Local Swarm")
+            "Create Local Swarm"
         } else {
-            String::from("Create Swarm")
+            "Create Swarm"
         }
         .into();
         let create_tooltip: &str = if is_local {
@@ -115,15 +111,25 @@ impl SwarmPanel {
             // Browse.
             .py_4()
             .child(
-                Headline::new(
-                    if is_editing {
-                        String::from("Edit Swarm")
-                    } else {
-                        String::from("Compose a Swarm")
-                    }
-                )
-                .size(HeadlineSize::Small),
+                Headline::new("Compose a Swarm")
+                    .size(HeadlineSize::Small),
             )
+            // When editing an existing swarm, show the swarm id as
+            // context. Using .when(is_editing) so the label is only
+            // rendered when editing — the editing_swarm_id string is
+            // dynamic (comes from the loaded swarm), so it survives LTO.
+            .when(is_editing, |this| {
+                this.child(
+                    Label::new(
+                        self.compose
+                            .editing_swarm_id
+                            .as_deref()
+                            .unwrap_or(""),
+                    )
+                    .size(LabelSize::XSmall)
+                    .color(Color::Accent),
+                )
+            })
             // Cloud/Local target toggle — a per-form choice, not a global
             // setting. Both backends are always available.
             .child(

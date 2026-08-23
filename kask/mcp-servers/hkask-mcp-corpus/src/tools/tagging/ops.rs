@@ -36,6 +36,37 @@ struct InputChunk {
     word_count: usize,
 }
 
+/// Coerce JSON values that may be strings or arrays of strings into
+/// `Vec<String>` values within a `HashMap<String, Vec<String>>`. Models
+/// sometimes return `{"fibo": "concept"}` instead of `{"fibo": ["concept"]}`
+/// — this deserializer handles both forms uniformly at the field level.
+fn coerce_string_or_array<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let map: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::deserialize(deserializer)?;
+    let mut result: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (ns, val) in map {
+        let concepts: Vec<String> = match val {
+            serde_json::Value::Array(arr) => arr
+                .into_iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            serde_json::Value::String(s) => vec![s],
+            _ => Vec::new(),
+        };
+        if !concepts.is_empty() {
+            result.insert(ns, concepts);
+        }
+    }
+    Ok(result)
+}
+
 /// Ontology tags extracted by the LLM from a passage.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 struct OntologyTags {
@@ -49,7 +80,8 @@ struct OntologyTags {
     #[serde(default)]
     dc_subject: Vec<String>,
     /// Flexible ontology tags keyed by namespace (e.g., "fibo", "golem", "pko", "other").
-    #[serde(default)]
+    /// Values may be strings or arrays — `coerce_string_or_array` handles both.
+    #[serde(default, deserialize_with = "coerce_string_or_array")]
     ontology_tags: std::collections::HashMap<String, Vec<String>>,
     /// Expertise level — deserialized via `ExpertiseLevel`'s custom serde,
     /// which maps invalid strings to `Analyst`.
@@ -89,21 +121,6 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
         })
         .collect();
     hkask_memory::salience::compute_salience_batch(&all_tags)
-}
-
-/// Parse an LLM tagging response into validated OntologyTags.
-///
-/// This is the tagging pipeline's trust boundary (RR-0016): raw LLM text is
-/// JSON-extracted, deserialized, and normalized through
-/// `validate_ontology_tags` before it can become a `TaggedChunk`. Extracted
-/// as a named function so the pipeline shape (extract → parse → validate) is
-/// directly testable — a refactor that drops the validation step fails the
-/// test, not just a grep.
-fn parse_and_validate_tags(response_text: &str) -> Option<OntologyTags> {
-    let cleaned = extract_json_from_response(response_text);
-    serde_json::from_str::<OntologyTags>(&cleaned)
-        .map(validate_ontology_tags)
-        .ok()
 }
 
 /// Validate and normalize LLM-extracted ontology tags before they enter the
@@ -213,6 +230,7 @@ impl CorpusServer {
             let sem = Arc::new(tokio::sync::Semaphore::new(req.concurrency.max(1)));
             let router = Arc::clone(&self.inference_router);
             let model_override = classifier_model();
+            let batch_size = req.tag_batch_size.max(1);
 
             // Results: index → OntologyTags
             let results: Arc<std::sync::Mutex<Vec<Option<OntologyTags>>>> =
@@ -224,32 +242,69 @@ impl CorpusServer {
             let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-            let mut handles = Vec::with_capacity(total);
+            // Group chunks into batches of `batch_size` for batched LLM calls.
+            // Each batch sends N chunks in a single prompt and expects a JSON
+            // array of N tag objects back. This amortizes the ~2K-token system
+            // prompt across multiple chunks, cutting API calls by ~10x.
+            let batches: Vec<(usize, Vec<InputChunk>)> = chunks
+                .chunks(batch_size)
+                .map(|batch| batch.to_vec())
+                .enumerate()
+                .map(|(batch_idx, batch_chunks)| {
+                    // Global start index for this batch
+                    let start = batch_idx * batch_size;
+                    (start, batch_chunks)
+                })
+                .collect();
+            let num_batches = batches.len();
+            tracing::info!(
+                total_chunks = total,
+                batches = num_batches,
+                batch_size,
+                concurrency = req.concurrency,
+                "Batched tagging: {} batches of up to {} chunks",
+                num_batches,
+                batch_size
+            );
 
-            for (i, chunk) in chunks.iter().enumerate() {
+            let mut handles = Vec::with_capacity(num_batches);
+
+            for (batch_idx, (start_idx, batch_chunks)) in batches.into_iter().enumerate() {
                 let router = Arc::clone(&router);
                 let sem = Arc::clone(&sem);
                 let results = Arc::clone(&results);
                 let completed = Arc::clone(&completed);
                 let failed = Arc::clone(&failed);
                 let model_override = model_override.clone();
-                let text = chunk.text.clone();
-                let source = chunk.source.clone();
-                let chunk_id = chunk.entity_ref.clone();
+                let batch_len = batch_chunks.len();
+
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await;
 
-                    // Render tagging prompt from Jinja2 template
-                    let mut vars = std::collections::HashMap::new();
-                    vars.insert("text", text.clone());
-                    vars.insert("source", source.clone());
-                    vars.insert("chunk_id", chunk_id.clone());
-                    let prompt = render_docproc_template("tag-chunks", &vars);
+                    // Render the batch tagging prompt from the Jinja2 template.
+                    // The template handles the system prompt, passage formatting,
+                    // and output contract — keeping the prompt versioned and
+                    // maintainable rather than inlined as a string literal.
+                    let passages: Vec<std::collections::HashMap<&str, String>> =
+                        batch_chunks.iter().map(|chunk| {
+                            let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+                            vars.insert("text", chunk.text.clone());
+                            vars.insert("source", chunk.source.clone());
+                            vars.insert("chunk_id", chunk.entity_ref.clone());
+                            vars
+                        }).collect();
+                    let mut template_vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+                    template_vars.insert("passages", serde_json::to_string(&passages).unwrap_or_default());
+                    template_vars.insert("batch_count", batch_len.to_string());
+                    let prompt = render_docproc_template("tag-chunks-batch", &template_vars);
                     let prompt = if prompt.is_empty() {
-                        // Fallback if template not found
-                        format!(
-                            "Analyze this passage and extract ontology tags.\n\nPassage (chunk {chunk_id}, source: {source}):\n{text}\n\nRespond with JSON: {{\"dimensions\": [\"what\"], \"dc_type\": \"bibo:Document\", \"dc_subject\": [], \"pko_concepts\": [], \"fibo_concepts\": [], \"golem_concepts\": [], \"other_concepts\": [], \"expertise_level\": \"analyst\"}}"
-                        )
+                        // Fallback if template not found — compact inline prompt.
+                        let mut p = format!("Tag each passage below. Respond with a JSON array of {batch_len} objects.\n\n");
+                        for (i, chunk) in batch_chunks.iter().enumerate() {
+                            p.push_str(&format!("--- Passage {} ---\n{}\n\n", i + 1, chunk.text));
+                        }
+                        p.push_str("Return a JSON array now. Schema: {\"dimensions\":[\"what\"],\"dc_type\":\"bibo:Document\",\"dc_subject\":[],\"ontology_tags\":{},\"expertise_level\":\"analyst\"}");
+                        p
                     } else {
                         prompt
                     };
@@ -269,32 +324,54 @@ impl CorpusServer {
                     let response: Option<_> = retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
-                        &chunk_id,
+                        &format!("batch {batch_idx} of {batch_len}"),
                         || router.generate_with_model(&prompt, &params, Some(&model_override), None),
                     )
                     .await
                     .ok();
 
-                    let parse_result = response
+                    // Parse the JSON array response.
+                    let parsed_tags: Vec<OntologyTags> = response
                         .as_ref()
-                        .and_then(|resp| parse_and_validate_tags(&resp.text));
+                        .and_then(|resp| {
+                            let cleaned = extract_json_from_response(&resp.text);
+                            // Try array first, then single object (model may return
+                            // a single object for a 1-chunk batch).
+                            // The `coerce_string_or_array` deserializer on
+                            // `ontology_tags` handles string-or-array values.
+                            serde_json::from_str::<Vec<OntologyTags>>(&cleaned)
+                                .ok()
+                                .or_else(|| {
+                                    serde_json::from_str::<OntologyTags>(&cleaned)
+                                        .ok()
+                                        .map(|t| vec![t])
+                                })
+                        })
+                        .unwrap_or_default();
 
-                    if let Some(tags) = parse_result {
-                        let mut results = results.lock().unwrap();
-                        results[i] = Some(tags);
-                        completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    } else {
-                        // Fallback: minimal tags after retries exhausted
-                        let fallback = OntologyTags {
-                            dimensions: vec!["what".to_string()],
-                            dc_type: "bibo:Document".to_string(),
-                            dc_subject: Vec::new(),
-                            ontology_tags: std::collections::HashMap::new(),
-                            expertise_level: hkask_types::corpus::ExpertiseLevel::default(),
-                        };
-                        let mut results = results.lock().unwrap();
-                        results[i] = Some(fallback);
-                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Map parsed tags back to individual chunk indices.
+                    {
+                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
+                        for (i, tags) in parsed_tags.into_iter().enumerate() {
+                            if start_idx + i < results.len() {
+                                let validated = validate_ontology_tags(tags);
+                                results[start_idx + i] = Some(validated);
+                                completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        // Fallback for chunks that didn't get tags
+                        for i in 0..batch_len {
+                            if results[start_idx + i].is_none() {
+                                results[start_idx + i] = Some(OntologyTags {
+                                    dimensions: vec!["what".to_string()],
+                                    dc_type: "bibo:Document".to_string(),
+                                    dc_subject: Vec::new(),
+                                    ontology_tags: std::collections::HashMap::new(),
+                                    expertise_level: hkask_types::corpus::ExpertiseLevel::default(),
+                                });
+                                failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
                     }
 
                 });
@@ -317,7 +394,7 @@ impl CorpusServer {
             tracing::info!("  Tagged: {} ok, {} failed, {:.1}s", c, f, elapsed);
 
             // Build tagged chunk outputs with salience
-            let tags_guard = results.lock().unwrap();
+            let tags_guard = results.lock().unwrap_or_else(|e| e.into_inner());
             let mut tagged: Vec<TaggedChunk> = chunks
                 .iter()
                 .enumerate()
@@ -416,15 +493,29 @@ impl CorpusServer {
 
 // ── Tag chunks request (ontology annotation) ───────────────────────────────
 
+/// Default number of chunks to send in a single LLM call. Batching amortizes
+/// the ~2K-token system prompt across multiple chunks, cutting API calls by
+/// 10x and reducing total wall time proportionally.
+const DEFAULT_TAG_BATCH_SIZE: usize = 10;
+
+fn default_tag_batch_size() -> usize {
+    DEFAULT_TAG_BATCH_SIZE
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct TagChunksRequest {
     /// Path to chunks JSONL (entity_ref, source, text, word_count per line).
     pub chunks_jsonl: String,
     /// Output path for tagged chunks JSONL with ontology annotations.
     pub output: String,
-    /// Max concurrent LLM tagging calls.
+    /// Max concurrent LLM tagging calls (each call tags `tag_batch_size` chunks).
     #[serde(default = "default_tag_concurrency")]
     pub concurrency: usize,
+    /// Number of chunks to tag in a single LLM call. Higher values amortize
+    /// the system prompt but may exceed the model's context window for long
+    /// chunks. Default 10.
+    #[serde(default = "default_tag_batch_size")]
+    pub tag_batch_size: usize,
     /// If true, only report stats without LLM calls or writing output.
     #[serde(default)]
     pub dry_run: bool,
