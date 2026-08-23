@@ -1035,7 +1035,7 @@ fn main() {
         }
         // zed-kask: D8 — F8: global Fs registration (replaces upstream's set_global).
         // Register the global Fs so `<dyn Fs>::global(cx)` works (used by
-        // kask_bridge::ensure_openai_compatible_entries and other callers).
+        // kask_bridge credential injection and other callers).
         // Upstream zed sets this in the same position; the kask fork was
         // missing the call, causing a panic on startup.
         <dyn fs::Fs>::set_global(fs.clone(), cx);
@@ -1141,25 +1141,6 @@ fn main() {
                  (McpRuntime governance gate remains active)"
             );
         }
-
-        // zed-kask: D8/D12 — F11: ensure_openai_compatible_entries.
-        // Ensure `openai_compatible.<provider_id>` entries exist in settings.json
-        // for every enabled inference provider. This makes the providers appear
-        // in Settings → AI → LLM Providers and the agent model picker via the
-        // existing `register_compatible_providers` machinery in `language_models`.
-        // Must run before `language_models::init` so the providers are registered
-        // on the first settings observation.
-        kask_bridge::ensure_openai_compatible_entries(cx);
-
-        // zed-kask: D8/D12 — F12: openai_compatible re-sync on settings change (Guardrail).
-        // Re-sync `openai_compatible` entries whenever kask settings change so
-        // toggling a provider in the settings UI takes effect immediately
-        // (without requiring a restart). The `language_models` crate's own
-        // `SettingsStore` observer then registers/unregisters the provider.
-        cx.observe_global::<SettingsStore>(move |cx| {
-            kask_bridge::ensure_openai_compatible_entries(cx);
-        })
-        .detach();
 
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
             kask_bridge::BUILT_IN_MCP_SERVERS

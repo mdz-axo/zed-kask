@@ -40,7 +40,7 @@ pub use inference::NoModelInferencePort;
 pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
-    credential_urls_for_mcp, ensure_openai_compatible_entries, mirror_env_keys_to_keychain,
+    credential_urls_for_mcp, mirror_env_keys_to_keychain,
     resolve_embedding_credentials,
 };
 pub use inference_socket::{get_inference_socket_path, set_inference_socket_path};
@@ -56,7 +56,7 @@ pub use model_resolution::resolve_model_names;
 pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
     KaskCuratorSettings, KaskDataServiceSettings, KaskGeneralSettings,
-    KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
+    KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
     KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
     KaskSettings, KaskSwarmSettings, KaskToolRouterSettings, KaskTrainingSettings, SwarmModeConfig,
 };

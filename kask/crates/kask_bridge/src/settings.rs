@@ -12,7 +12,7 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
-    KaskGeneralSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
+    KaskGeneralSettingsContent, KaskMcpSettingsContent,
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
     KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
@@ -93,7 +93,6 @@ pub struct KaskSettings {
     pub tool_router: KaskToolRouterSettings,
 
     /// Inference provider toggles (non-secret — API keys are in the keychain).
-    pub inference_providers: KaskInferenceProvidersSettings,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -191,24 +190,6 @@ pub struct KaskDataServiceSettings {
 pub struct KaskInferenceProvidersSettings {
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
-    /// Enable DeepInfra (cloud embeddings via Qwen models).
-    pub deepinfra_enabled: bool,
-}
-
-impl KaskInferenceProvidersSettings {
-    /// Construct from the process environment — auto-enables providers whose
-    /// API key env var is set. This is the same logic `From<Content>` uses
-    /// when the user hasn't explicitly set a toggle. Exposed as a public
-    /// method so the settings UI (which doesn't depend on `settings_content`)
-    /// can resolve the same defaults without constructing a `Content` struct.
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self {
-            openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
-            deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
-        }
-    }
-}
 
 /// Curator configuration.
 ///
@@ -1435,20 +1416,6 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
     }
 }
 
-impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSettings {
-    fn from(c: KaskInferenceProvidersSettingsContent) -> Self {
-        // When the user hasn't explicitly set a toggle (field is `None`),
-        // auto-enable the provider if its API key is present in the process
-        // environment. `from_env()` is the single source of truth for this
-        // logic — `Default` returns all-false so that `KaskSettings::default()`
-        // and tests remain deterministic and side-effect-free.
-        let from_env = Self::from_env();
-        Self {
-            openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
-            deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
-        }
-    }
-}
 
 impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
@@ -1470,10 +1437,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             training: c.training.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
             tool_router: c.tool_router.map(Into::into).unwrap_or_default(),
-            inference_providers: c
-                .inference_providers
-                .map(Into::into)
-                .unwrap_or_else(KaskInferenceProvidersSettings::from_env),
         }
     }
 }
@@ -2030,79 +1993,4 @@ mod tests {
         );
     }
 
-    // `KaskInferenceProvidersSettings::default()` must be pure (all-false) —
-    // no env-var reads. This keeps `KaskSettings::default()` and tests
-    // deterministic. The env-var auto-enable logic lives in `from_env()` and
-    // `From<Content>`, not `Default`.
-    #[test]
-    fn inference_providers_default_is_all_false() {
-        let default = KaskInferenceProvidersSettings::default();
-        assert!(!default.openrouter_enabled);
-        assert!(!default.deepinfra_enabled);
-    }
-
-    // `KaskSettings::default()` must also have all-false inference providers,
-    // since it delegates to `KaskInferenceProvidersSettings::default()`.
-    #[test]
-    fn kask_settings_default_inference_providers_all_false() {
-        let settings = KaskSettings::default();
-        assert!(!settings.inference_providers.openrouter_enabled);
-    }
-
-    // `from_env()` reads env vars — this test verifies it doesn't panic and
-    // returns a valid struct. We can't assert specific values because the
-    // test environment may or may not have API keys set.
-    #[test]
-    fn inference_providers_from_env_does_not_panic() {
-        let _ = KaskInferenceProvidersSettings::from_env();
-    }
-
-    // Regression test for the polarity inversion in the credential-injection
-    // path (now `build_mcp_server_env`). The skip check `std::env::var(env_var).is_ok()`
-    // treated an empty env var (`FOO=`) as "present" and suppressed keychain
-    // injection, leaving the child process with no key. The fix skips only
-    // non-empty parent env vars. This test pins the `From<Content>` resolution
-    // path that feeds `credential_urls_for_mcp`: when a toggle is explicitly
-    // `false`, no credential URL is produced for that provider, so the polarity
-    // bug cannot suppress a key that should never be injected in the first
-    // place. The toggle→credential-URL gate is the upstream guard.
-    #[test]
-    fn credential_urls_for_mcp_omits_disabled_inference_providers() {
-        let settings = KaskSettings::default();
-        // All inference toggles default to false → no inference credential URLs.
-        let urls = crate::inference_providers::credential_urls_for_mcp(&settings);
-        let has_inference_key = urls
-            .iter()
-            .any(|(env_var, _)| env_var == "OPENROUTER_API_KEY");
-        assert!(
-            !has_inference_key,
-            "disabled inference providers must not produce credential URLs — \
-             this is the gate that prevents the polarity bug from suppressing \
-             keys that should be injected"
-        );
-    }
-
-    // When an inference provider is explicitly enabled, its credential URL
-    // must appear in the MCP credential list. This is the cascade root: the
-    // UI toggle writes `inference_providers.<provider>_enabled = true` →
-    // `credential_urls_for_mcp` includes the URL → `build_mcp_server_env`
-    // injects the keychain value as an env var → MCP server `resolve_api_key`
-    // Tier 1 finds it. If any link breaks, inference fails with "API key not
-    // configured".
-    #[test]
-    fn credential_urls_for_mcp_includes_enabled_inference_providers() {
-        let mut settings = KaskSettings::default();
-        settings.inference_providers.openrouter_enabled = true;
-        let urls = crate::inference_providers::credential_urls_for_mcp(&settings);
-        let openrouter_url = urls
-            .iter()
-            .find(|(env_var, _)| env_var == "OPENROUTER_API_KEY")
-            .map(|(_, url)| url.clone());
-        assert_eq!(
-            openrouter_url.as_deref(),
-            Some("kask://credentials/openrouter"),
-            "enabled OpenRouter must produce its credential URL so the bridge \
-             injects the keychain value into MCP server env"
-        );
-    }
 }

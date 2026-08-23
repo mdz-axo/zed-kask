@@ -1623,14 +1623,6 @@ pub struct KaskSettingsContent {
     /// tool-directed requests.
     #[serde(default)]
     pub tool_router: Option<KaskToolRouterSettingsContent>,
-
-    /// Inference provider toggles and API key configuration.
-    ///
-    /// API keys are stored in the keychain under the provider's `api_url`
-    /// (so zed's OpenAI-compatible provider finds them) and mirrored to
-    /// `kask://credentials/<env_var>` for MCP server env injection.
-    #[serde(default)]
-    pub inference_providers: Option<KaskInferenceProvidersSettingsContent>,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -1669,16 +1661,6 @@ pub struct KaskDataServiceSettingsContent {
     pub nebius_enabled: Option<bool>,
 }
 
-/// Inference provider toggles (non-secret — API keys are in the keychain).
-///
-/// When a provider is enabled, its API key is mirrored to kask MCP servers
-/// (see `kask_bridge::inference_providers::credential_urls_for_mcp`).
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskInferenceProvidersSettingsContent {
-    pub openrouter_enabled: Option<bool>,
-    /// Enable DeepInfra (cloud embeddings + LLM serving).
-    pub deepinfra_enabled: Option<bool>,
-}
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskCuratorSettingsContent {

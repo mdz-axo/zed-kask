@@ -570,24 +570,18 @@ impl SettingsStore {
                         let new_text = update(old_text.clone(), cx.clone())?;
 
                         // zed-kask: D32 — skip no-op settings writes.
-                        // `update_settings_file` callers (notably
-                        // `ensure_openai_compatible_entries`, wired to a
-                        // `SettingsStore` observer) can produce a `new_text`
-                        // that is byte-for-byte identical to `old_text`. The
-                        // prior code unconditionally called
+                        // `update_settings_file` callers can produce a
+                        // `new_text` that is byte-for-byte identical to
+                        // `old_text`. The prior code unconditionally called
                         // `fs.atomic_write` (triggering the file watcher) and
                         // `cx.update_global::<SettingsStore>` (whose
                         // `end_global_lease` pushes `NotifyGlobalObservers`
                         // even when `set_user_settings` returns `Unchanged`),
-                        // which re-fired the observer → re-ran
-                        // `ensure_openai_compatible_entries` → re-wrote the
-                        // same file → a self-sustaining feedback loop. The
-                        // RunPod "no API key" warning fired on every iteration
-                        // because the RunPod `State` observer called
-                        // `cx.notify()` unconditionally. Skipping both the
-                        // write and the in-memory update when the text is
-                        // unchanged breaks the loop for all callers, not just
-                        // the kask one. `set_user_settings` already early-
+                        // which re-fired the observer → re-wrote the same
+                        // file → a self-sustaining feedback loop. Skipping
+                        // both the write and the in-memory update when the
+                        // text is unchanged breaks the loop for all callers.
+                        // `set_user_settings` already early-
                         // returns `Unchanged` on identical content, so
                         // skipping the `update_global` entirely is consistent
                         // with the in-memory store's own idempotency.

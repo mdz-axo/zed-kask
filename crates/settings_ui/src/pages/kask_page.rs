@@ -21,12 +21,12 @@ mod condenser;
 mod curator;
 mod data_services;
 mod general;
-mod inference_providers;
+
 pub(crate) use {
     companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
-    inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
+    mcp_servers::render_mcp_servers_page,
     media::render_media_page, memory::render_memory_page, models::render_models_page,
     prediction_markets::render_prediction_markets_page, research::render_research_page,
     scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
@@ -496,28 +496,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: false,
             files: USER,
             render: render_data_services_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Inference Providers".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.inference_providers"),
-            description: Some(
-                "Configure API keys for inference providers (OpenRouter). \
-                 OpenRouter has a built-in zed provider; its toggle mirrors the \
-                 key to kask MCP servers."
-                    .into(),
-            ),
-            search_aliases: &[
-                "inference",
-                "provider",
-                "openrouter",
-                "glm",
-                "llm",
-                "model",
-            ],
-            in_json: true,
-            files: USER,
-            render: render_inference_providers_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "MCP Servers".into(),

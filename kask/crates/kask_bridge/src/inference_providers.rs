@@ -375,23 +375,18 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
         }
     }
 
-    // Inference providers — inject the API key as the env var the MCP servers
-    // and hKask's InferenceConfig expect. RunPod is skipped here: it's in
-    // `INFERENCE_PROVIDERS` for the keychain `api_url` mirror (so the RunPod
-    // `LanguageModelProvider` finds the key), but MCP env injection is handled
-    // by the `DATA_SERVICES` loop above via `runpod_enabled`.
+    // Inference providers — inject API keys for all providers that have an
+    // env var. There are no kask-level toggles for inference providers; zed's
+    // native provider infrastructure (Settings → AI → LLM Providers) handles
+    // registration. The keychain read in `build_mcp_server_env` is the final
+    // filter: if the key isn't in the keychain, it won't be injected.
+    // RunPod is skipped (handled by DATA_SERVICES above via `runpod_enabled`).
+    // Ollama is skipped (empty env_var — local, no key needed).
     for provider in INFERENCE_PROVIDERS {
         if provider.credential_key == "runpod" || provider.env_var.is_empty() {
             continue;
         }
-        let enabled = match provider.credential_key {
-            "openrouter" => settings.inference_providers.openrouter_enabled,
-            "deepinfra" => settings.inference_providers.deepinfra_enabled,
-            _ => false,
-        };
-        if enabled {
-            urls.push((provider.env_var.to_string(), provider.credential_url()));
-        }
+        urls.push((provider.env_var.to_string(), provider.credential_url()));
     }
 
     // Note: HKASK_SMTP_PASSWORD is in DATA_SERVICES as a Secret (unconditional
@@ -401,92 +396,6 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // harmless when email is not configured.
 
     urls
-}
-
-/// Write `openai_compatible.<provider_id>` entries for enabled providers and
-/// remove entries for disabled or removed providers.
-///
-/// Called by the composition root after `KaskSettings` are loaded. zed's
-/// `register_compatible_providers` watches the `openai_compatible` settings
-/// section and registers/unregisters providers in `LanguageModelRegistry`
-/// automatically.
-///
-/// OpenRouter is skipped: zed's built-in `OpenRouterLanguageModelProvider`
-/// already registers it, so a kask `openai_compatible.OpenRouter` entry would
-/// duplicate it in the LLM picker. OpenRouter's kask toggle still mirrors its
-/// key to MCP servers via `credential_urls_for_mcp` (which iterates
-/// `INFERENCE_PROVIDERS` directly, not this function).
-///
-/// DeepInfra is registered here as an `openai_compatible.DeepInfra` entry
-/// with `auto_discover: true` so zed fetches its full model list (chat,
-/// embeddings, vision) via `/v1/models`. The API key is stored in the
-/// keychain under the provider's `api_url`, same pattern as any other
-/// OpenAI-compatible provider.
-pub fn ensure_openai_compatible_entries(cx: &mut App) {
-    // Scrub stale entries from removed providers, then write the DeepInfra
-    // entry if enabled.
-
-    // Stale `openai_compatible` entries to scrub. The api_url guard avoids
-    // removing a user's custom provider that happens to share an id.
-    // OpenRouter is included to clean up entries written by prior versions.
-    // The last two entries scrub inference providers removed in prior
-    // versions — the id + api_url literals are required to match stale
-    // user settings.json entries written by prior versions (they are scrub
-    // data, not provider support). Together AI was removed 2026-08-22;
-    // AtlasCloud was removed 2026-08-20.
-    let removed_providers: [(&'static str, &str); 6] = [
-        ("fal.ai", "https://api.fal.ai/v1"),
-        ("Cline", "https://api.cline.bot/api/v1"),
-        ("KiloCode", "https://api.kilo.ai/api/gateway"),
-        ("OpenRouter", "https://openrouter.ai/api/v1"),
-        ("AtlasCloud", "https://api.atlascloud.ai/v1"),
-        ("Together", "https://api.together.xyz/v1"),
-    ];
-
-    // Check if DeepInfra is enabled in kask settings.
-    let kask_settings = KaskSettings::get_global(cx).clone();
-    let deepinfra_enabled = kask_settings.inference_providers.deepinfra_enabled;
-
-    let fs = <dyn fs::Fs>::global(cx);
-    SettingsStore::global(cx).update_settings_file(fs, move |content, _| {
-        let openai_compatible = content
-            .language_models
-            .get_or_insert_default()
-            .openai_compatible
-            .get_or_insert_default();
-
-        // Scrub stale entries for removed providers.
-        for (id, known_api_url) in removed_providers {
-            let id: std::sync::Arc<str> = std::sync::Arc::from(id);
-            if let Some(existing) = openai_compatible.get(&id)
-                && existing.api_url == known_api_url
-            {
-                openai_compatible.remove(&id);
-            }
-        }
-
-        // Write or remove the DeepInfra entry based on the toggle.
-        let deepinfra_id: std::sync::Arc<str> = std::sync::Arc::from("DeepInfra");
-        if deepinfra_enabled {
-            openai_compatible.insert(
-                deepinfra_id,
-                settings_content::OpenAiCompatibleSettingsContent {
-                    api_url: "https://api.deepinfra.com/v1/openai".to_string(),
-                    available_models: Vec::new(),
-                    custom_headers: None,
-                    auto_discover: true,
-                },
-            );
-        } else {
-            // Remove the entry if the toggle is off (and it matches our api_url
-            // guard, so we don't remove a user's custom provider).
-            if let Some(existing) = openai_compatible.get(&deepinfra_id)
-                && existing.api_url == "https://api.deepinfra.com/v1/openai"
-            {
-                openai_compatible.remove(&deepinfra_id);
-            }
-        }
-    });
 }
 
 /// Resolve `(api_url, api_key)` for an embedding model string directly from
@@ -600,7 +509,7 @@ impl MirrorTarget {
     /// The settings-UI remediation path for this credential category.
     fn remediation_path(&self) -> &'static str {
         match self {
-            Self::InferenceProvider { .. } => "Settings → Kask → Inference Providers",
+            Self::InferenceProvider { .. } => "Settings → AI → LLM Providers",
             Self::DataService { .. } => "Settings → Kask → Data Services",
         }
     }
