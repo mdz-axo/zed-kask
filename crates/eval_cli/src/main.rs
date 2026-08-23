@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
-use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
+use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -809,7 +809,7 @@ async fn run_agent(
         NativeAgent::new(thread_store, Templates::new(), app_state.fs.clone(), cx)
     });
 
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
     let acp_thread = match cx
         .update(|cx| {
             connection

@@ -35,6 +35,13 @@ pub(crate) struct ComposeForm {
     /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
     pub(crate) create_target: super::CreateTarget,
     pub(crate) xaman_busy: bool,
+    /// When `Some`, the form is editing an existing swarm (loaded via the
+    /// Edit button on the browse card). The name field is read-only for
+    /// local swarms (renaming is a separate `swarm_update_local_swarm`
+    /// operation). When `None`, the form is creating a new swarm.
+    pub(crate) editing_swarm_id: Option<String>,
+    /// The source of the swarm being edited (`Cloud`, `Local`, `Synced`).
+    pub(crate) editing_swarm_source: Option<crate::parse::AgentSource>,
 }
 
 impl ComposeForm {
@@ -67,6 +74,8 @@ impl ComposeForm {
             xaman_suggested_agents: Vec::new(),
             create_target: super::CreateTarget::Cloud,
             xaman_busy: false,
+            editing_swarm_id: None,
+            editing_swarm_source: None,
         }
     }
 }
@@ -78,13 +87,19 @@ impl SwarmPanel {
     pub(crate) fn render_compose(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
         let is_local = self.compose.create_target == super::CreateTarget::Local;
-        let create_label = if self.compose.busy {
-            "Creating…"
+        let is_editing = self.compose.editing_swarm_id.is_some();
+        // Build the button label via String::from + format so the string
+        // survives LTO dead-string elimination in release builds.
+        let create_label: SharedString = if self.compose.busy {
+            String::from("Creating…")
+        } else if is_editing {
+            String::from("Save Changes")
         } else if is_local {
-            "Create Local Swarm"
+            String::from("Create Local Swarm")
         } else {
-            "Create Swarm"
-        };
+            String::from("Create Swarm")
+        }
+        .into();
         let create_tooltip: &str = if is_local {
             "Creates the swarm on the local substrate (agents/local/swarms). No cost, no consent."
         } else {
@@ -99,7 +114,16 @@ impl SwarmPanel {
             // inset comes from the column's px_4 — px here would double it vs
             // Browse.
             .py_4()
-            .child(Headline::new("Compose a Swarm").size(HeadlineSize::Small))
+            .child(
+                Headline::new(
+                    if is_editing {
+                        String::from("Edit Swarm")
+                    } else {
+                        String::from("Compose a Swarm")
+                    }
+                )
+                .size(HeadlineSize::Small),
+            )
             // Cloud/Local target toggle — a per-form choice, not a global
             // setting. Both backends are always available.
             .child(

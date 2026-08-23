@@ -4206,7 +4206,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create agent and connection
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store, templates.clone(), fake_fs.clone(), cx));
-    let connection = NativeAgentConnection(agent.clone());
+    let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
@@ -5716,7 +5716,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -5852,7 +5852,7 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6001,7 +6001,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6132,7 +6132,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6783,7 +6783,7 @@ async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6911,7 +6911,7 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -7090,7 +7090,7 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {

@@ -671,10 +671,11 @@ impl NativeAgent {
         cx.spawn(async move |cx| {
             let templates = Templates::new();
             let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
-            Ok(Rc::new(NativeAgentConnection(agent)) as Rc<dyn acp_thread::AgentConnection>)
+            Ok(Rc::new(NativeAgentConnection(agent, ZED_AGENT_ID.clone())) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 
+    /// Enable the Curator overlay on this agent.
     /// Kicks off a one-time scan of the global skills directory if one
     /// isn't already in progress and a watch isn't already active.
     ///
@@ -906,7 +907,12 @@ impl NativeAgent {
         ref_count: usize,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
-        let connection = Rc::new(NativeAgentConnection(cx.entity()));
+        let agent_id = if self.curator_static_context.is_some() {
+            CURATOR_AGENT_ID.clone()
+        } else {
+            ZED_AGENT_ID.clone()
+        };
+        let connection = Rc::new(NativeAgentConnection(cx.entity(), agent_id));
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
@@ -2079,7 +2085,7 @@ impl NativeAgent {
                 }
             })?;
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2115,7 +2121,7 @@ impl NativeAgent {
                 acp_thread.update_token_usage(None, cx);
             });
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2209,7 +2215,7 @@ impl NativeAgent {
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2225,7 +2231,7 @@ impl NativeAgent {
 
 /// Wrapper struct that implements the AgentConnection trait
 #[derive(Clone)]
-pub struct NativeAgentConnection(pub Entity<NativeAgent>);
+pub struct NativeAgentConnection(pub Entity<NativeAgent>, pub AgentId);
 
 impl NativeAgentConnection {
     pub fn thread(&self, session_id: &acp::SessionId, cx: &App) -> Option<Entity<Thread>> {
@@ -3062,7 +3068,7 @@ pub(crate) fn tool_router() -> Option<Arc<dyn crate::tool_router::ToolRouter>> {
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
-        ZED_AGENT_ID.clone()
+        self.1.clone()
     }
 
     fn telemetry_id(&self) -> SharedString {
@@ -4680,7 +4686,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let acp_thread = cx
             .update(|cx| {
                 connection.clone().new_session(
@@ -4724,7 +4730,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -5174,7 +5180,7 @@ mod internal_tests {
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // Creating a session registers the project and triggers context building.
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5269,7 +5275,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5332,7 +5338,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -5432,7 +5438,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5523,7 +5529,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5592,7 +5598,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5705,7 +5711,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _parent_acp = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -5800,7 +5806,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -6003,7 +6009,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -6090,7 +6096,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -6275,6 +6281,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let connection = NativeAgentConnection(
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx)),
+            ZED_AGENT_ID.clone(),
         );
 
         // Create a thread/session
@@ -6351,7 +6358,7 @@ mod internal_tests {
         // Create the agent and connection
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
         // Create a thread/session
         let acp_thread = cx
@@ -6448,7 +6455,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
         let acp_thread = cx
             .update(|cx| {
@@ -6539,7 +6546,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -6591,7 +6598,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         // Register a thinking model.
         let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
@@ -6693,7 +6700,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         // Register a model where id() != name(), like real Anthropic models
         // (e.g. id="claude-sonnet-4-5-thinking-latest", name="Claude Sonnet 4.5 Thinking").
@@ -6806,7 +6813,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
             "fake-corp",
@@ -7014,7 +7021,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -7195,7 +7202,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -7275,7 +7282,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -7358,7 +7365,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -7502,7 +7509,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -7706,6 +7713,70 @@ mod internal_tests {
                 );
             });
         });
+    }
+
+    /// Pin that `NativeAgentConnection::agent_id()` reports the correct
+    /// identity for Curator vs native connections. Before the fix, the
+    /// method hardcoded `ZED_AGENT_ID` unconditionally, causing Curator
+    /// threads to persist as Zed Agent threads (D2). The thread metadata
+    /// store reads `connection().agent_id()` to stamp the `agent_id` column,
+    /// so a wrong identity here propagates through serialize → reload →
+    /// `restore_new_draft` → `set_selected_agent_and_persist`, reverting
+    /// the panel to `Agent::NativeAgent` on every restart.
+    #[gpui::test]
+    async fn test_curator_connection_reports_curator_agent_id(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+
+        // Curator connection → CURATOR_AGENT_ID
+        let curator_server = CuratorAgentServer::new(fs.clone(), thread_store.clone());
+        let curator_connection = cx
+            .update(|cx| {
+                curator_server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("curator connect");
+        assert_eq!(
+            curator_connection.agent_id().as_ref(),
+            CURATOR_AGENT_ID.as_ref(),
+            "CuratorAgentServer connections must report CURATOR_AGENT_ID, \
+             not ZED_AGENT_ID — otherwise Curator threads persist as Zed Agent \
+             threads and the panel reverts to NativeAgent on reload"
+        );
+
+        // Native connection → ZED_AGENT_ID
+        let native_server = NativeAgentServer::new(fs.clone(), thread_store);
+        let native_connection = cx
+            .update(|cx| {
+                native_server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("native connect");
+        assert_eq!(
+            native_connection.agent_id().as_ref(),
+            ZED_AGENT_ID.as_ref(),
+            "NativeAgentServer connections must report ZED_AGENT_ID"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

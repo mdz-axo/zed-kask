@@ -72,6 +72,7 @@ pub(crate) struct AgentCard {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct SwarmCard {
     pub(crate) id: String,
     pub(crate) name: String,

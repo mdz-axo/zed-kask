@@ -205,6 +205,166 @@ impl SwarmPanel {
         cx.notify();
     }
 
+    /// Open the compose panel with `swarm`'s existing details loaded, so the
+    /// operator can view and edit the composition. Mirrors
+    /// `load_agent_into_author` for swarms: fetches the swarm's roster, pre-fills
+    /// the compose form (name, mission, agents), and switches to Compose mode.
+    ///
+    /// Sets `editing_swarm_id` on the form so the submit path knows it's an
+    /// edit, not a create. The name field is kept editable for local swarms
+    /// (the save calls `swarm_update_local_swarm`); for cloud swarms the name
+    /// is read-only (ABW has no metadata-edit endpoint) but the roster can
+    /// still be reviewed.
+    pub(crate) fn load_swarm_into_compose(
+        &mut self,
+        swarm_id: String,
+        name: String,
+        source: AgentSource,
+        mission: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Set editing state on the compose form.
+        self.compose.editing_swarm_id = Some(swarm_id.clone());
+        self.compose.editing_swarm_source = Some(source.clone());
+        self.compose.create_target = match source {
+            AgentSource::Cloud => crate::CreateTarget::Cloud,
+            AgentSource::Local | AgentSource::Synced => crate::CreateTarget::Local,
+        };
+        self.compose.status = Some(String::from("Loading swarm details…").into());
+        self.compose.busy = false;
+
+        // Pre-fill the form with the known values. The roster (agents)
+        // will be enriched after the fetch — for now set what we have
+        // from the card.
+        self.compose
+            .name
+            .update(cx, |e, cx| e.set_text(name, window, cx));
+        self.compose
+            .mission
+            .update(cx, |e, cx| e.set_text(mission, window, cx));
+        self.compose
+            .agents
+            .update(cx, |e, cx| e.set_text(String::new(), window, cx));
+
+        // Close any open detail view and switch to Compose mode.
+        self.close_swarm_detail(cx);
+        self.set_mode(crate::PanelMode::Compose, window, cx);
+
+        // Fetch the swarm's roster to populate the agents field.
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.compose.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let is_local = source == AgentSource::Local;
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = if is_local {
+                    invoker
+                        .invoke_tool(
+                            crate::SWARM_SERVER,
+                            "swarm_get_local_swarm",
+                            json!({ "swarm_id": swarm_id }),
+                        )
+                        .await
+                } else {
+                    invoker
+                        .invoke_tool(
+                            crate::SWARM_SERVER,
+                            "swarm_get_swarm",
+                            json!({ "workspace_id": swarm_id }),
+                        )
+                        .await
+                };
+                this.update_in(cx, |this, window, cx| {
+                    match result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output);
+                            // Extract member agent ids from the response.
+                            let members: Vec<String> = if is_local {
+                                parsed
+                                    .and_then(|c| {
+                                        c.get("members").and_then(|m| m.as_array()).map(
+                                            |members| {
+                                                members
+                                                    .iter()
+                                                    .filter_map(|m| m.as_str().map(str::to_string))
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                // ABW roster: extract agent ids from the
+                                // workspace payload.
+                                parsed
+                                    .and_then(|c| {
+                                        let candidates = [
+                                            c.get("agents"),
+                                            c.get("workspace").and_then(|w| w.get("agents")),
+                                            c.get("team").and_then(|t| t.get("agents")),
+                                        ];
+                                        candidates
+                                            .into_iter()
+                                            .find_map(|c| c?.as_array())
+                                            .map(|agents| {
+                                                agents
+                                                    .iter()
+                                                    .filter_map(|a| {
+                                                        a.get("agent_id")
+                                                            .or_else(|| a.get("agent_name"))
+                                                            .and_then(|v| v.as_str())
+                                                            .map(str::to_string)
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            })
+                                    })
+                                    .unwrap_or_default()
+                            };
+                            let agents_str = members.join(", ");
+                            this.compose
+                                .agents
+                                .update(cx, |e, cx| e.set_text(agents_str, window, cx));
+                            this.compose.status = None;
+                        }
+                        Err(err) => {
+                            this.compose.status =
+                                Some(format!("Failed to load swarm roster: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Reset the compose form to a fresh create state (clear
+    /// `editing_swarm_id`, make the name field editable again). Called
+    /// when the operator clicks the Compose mode toggle in the header.
+    pub(crate) fn reset_compose_form_for_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compose.editing_swarm_id = None;
+        self.compose.editing_swarm_source = None;
+        self.compose.create_target = self.active_backend;
+        self.compose.status = None;
+        self.compose
+            .name
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.compose
+            .mission
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.compose
+            .agents
+            .update(cx, |e, cx| e.clear(window, cx));
+    }
+
     /// Fetch and show a swarm's recent run status (item 3):
     /// `swarm_run_status(workspace_id)`. Rendered as a dismissible strip.
     pub(crate) fn show_run_status(

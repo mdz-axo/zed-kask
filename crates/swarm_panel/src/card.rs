@@ -260,17 +260,6 @@ impl SwarmPanel {
                 let detail_name = swarm_name.clone();
                 let detail_source = swarm_source.clone();
                 let detail_mission = swarm_mission;
-                let detail_agent_count = swarm.agent_count;
-                let detail_budget = swarm.budget;
-                let detail_remaining = swarm.remaining;
-                let detail_cloud_workspace_id = swarm.cloud_workspace_id.clone();
-                // Clones for the Edit button's closure — the Details
-                // button's `move` closure captures the originals.
-                let edit_detail_id = detail_id.clone();
-                let edit_detail_name = detail_name.clone();
-                let edit_detail_source = detail_source.clone();
-                let edit_detail_mission = detail_mission.clone();
-                let edit_detail_cloud = detail_cloud_workspace_id.clone();
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
                 MarketplaceCard::new().child(
@@ -302,25 +291,22 @@ impl SwarmPanel {
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("detail-{swarm_id}")),
-                                        "Details",
+                                        "Edit",
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
                                     .tooltip(Tooltip::text(
-                                        "Open this swarm's roster and configuration view \
-                                         — add/remove agents, edit metadata, clone, delete.",
+                                        "Open this swarm in the compose view to \
+                                         view and edit its details, mission, and roster.",
                                     ))
                                     .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.open_swarm_detail(
+                                        move |this, _, window, cx| {
+                                            this.load_swarm_into_compose(
                                                 detail_id.clone(),
                                                 detail_name.clone(),
                                                 detail_source.clone(),
                                                 detail_mission.clone(),
-                                                detail_agent_count,
-                                                detail_budget,
-                                                detail_remaining,
-                                                detail_cloud_workspace_id.clone(),
+                                                window,
                                                 cx,
                                             );
                                         },
@@ -347,45 +333,6 @@ impl SwarmPanel {
                                         },
                                     )),
                                 )
-                                // Edit button — visible for local swarms
-                                // only (ABW has no edit endpoint). Opens the
-                                // detail view where the operator can change
-                                // name and mission. Placed before Delete so
-                                // `swarm_source` is still available for the
-                                // `.when()` check.
-                                .when(swarm_source == AgentSource::Local, |this| {
-                                    this.child(
-                                        Button::new(
-                                            SharedString::from(format!("card-edit-{swarm_id}")),
-                                            "Edit",
-                                        )
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::XSmall)
-                                        .tooltip(Tooltip::text(
-                                            "Edit this swarm's name and mission.",
-                                        ))
-                                        .on_click(cx.listener({
-                                            let edit_detail_id = edit_detail_id.clone();
-                                            let edit_detail_name = edit_detail_name.clone();
-                                            let edit_detail_source = edit_detail_source.clone();
-                                            let edit_detail_mission = edit_detail_mission.clone();
-                                            let edit_detail_cloud = edit_detail_cloud.clone();
-                                            move |this, _, _, cx| {
-                                                this.open_swarm_detail(
-                                                    edit_detail_id.clone(),
-                                                    edit_detail_name.clone(),
-                                                    edit_detail_source.clone(),
-                                                    edit_detail_mission.clone(),
-                                                    detail_agent_count,
-                                                    detail_budget,
-                                                    detail_remaining,
-                                                    edit_detail_cloud.clone(),
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                    )
-                                })
                                 // Delete button — visible on the card for
                                 // both backends. Stages a confirmation in the
                                 // detail view.

@@ -3061,6 +3061,7 @@ impl Render for SwarmPanel {
                                     ToggleButtonSimple::new(
                                         "Compose",
                                         cx.listener(|this, _event, window, cx| {
+                                            this.reset_compose_form_for_create(window, cx);
                                             this.set_mode(PanelMode::Compose, window, cx);
                                         }),
                                     ),

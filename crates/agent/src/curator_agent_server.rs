@@ -160,7 +160,7 @@ impl AgentServer for CuratorAgentServer {
                     }
                 });
             });
-            Ok(Rc::new(crate::NativeAgentConnection(agent)) as Rc<dyn acp_thread::AgentConnection>)
+            Ok(Rc::new(crate::NativeAgentConnection(agent, crate::CURATOR_AGENT_ID.clone())) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 

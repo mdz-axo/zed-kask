@@ -5,7 +5,7 @@ use crate::headless_project::HeadlessProject;
 use agent::{
     AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
     SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
-    skills_resolver_for_project,
+    ZED_AGENT_ID, skills_resolver_for_project,
 };
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -3731,7 +3731,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
     let _acp_thread = cx
         .update(|cx| {
             connection.clone().new_session(
