@@ -3,13 +3,19 @@ use super::portfolio::run_portfolio;
 use crate::{
     CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
-    portfolio::PersistedForecast, projected_terminal_multiple, scenarios, superforecast, types,
+    portfolio::PersistedForecast, projected_terminal_multiple, providers, scenarios, superforecast, types,
     validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use uuid::Uuid;
+
+/// Result of auto-peer discovery for comparable analysis.
+struct DiscoveredPeers {
+    peers: Vec<String>,
+    source: String,
+}
 
 fn validate_finite(name: &str, value: f64) -> Result<(), McpToolError> {
     if value.is_finite() {
@@ -72,7 +78,7 @@ fn extract_historical_arrays<'a>(
 #[tool_router(router = valuation_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Comparable company analysis. Gathers valuation multiples (P/E, P/B, P/S, EV/EBITDA) from peer companies in the same industry, alongside a DCF intrinsic value overlay for the target. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation. Accepts optional comma-separated peer list."
+        description = "Comparable company analysis. Gathers valuation multiples (P/E, P/B, P/S, EV/EBITDA) from peer companies in the same industry, alongside a DCF intrinsic value overlay for the target. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation. Accepts optional comma-separated peer list. When no peers are provided, auto-discovers peers using the EODHD Screener API — same sector, similar market cap (0.25x–4x of target), ranked by market-cap proximity. Methodology: CFA Institute (Knudsen et al. 2017), Damodaran (NYU Stern), IB best practices (5–12 peers)."
     )]
     pub async fn comparable_analysis(
         &self,
@@ -91,7 +97,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "company profile not found"}));
             };
 
-            // 2. Parse peers (comma-separated)
+            // 2. Parse peers (comma-separated) or auto-discover
             let peers: Vec<String> = req
                 .peers
                 .as_ref()
@@ -102,6 +108,18 @@ impl CompaniesServer {
                         .collect()
                 })
                 .unwrap_or_default();
+
+            // Auto-discover peers when none are provided.
+            // Uses EODHD Screener to find same-sector companies with
+            // similar market cap (0.25x–4x of target), ranked by proximity.
+            // Methodology: CFA Institute (Knudsen et al. 2017) — 6 peers
+            // minimum; IB best practices — 5–12 peers.
+            let (peers, peer_source) = if peers.is_empty() {
+                let discovered = self.discover_peers(&req.symbol, &profile).await?;
+                (discovered.peers, discovered.source)
+            } else {
+                (peers, "user-provided".to_string())
+            };
 
             // 3. Fetch peer profiles and metrics as typed views. A failed peer
             //    fetch yields an empty `CompanyProfile` (raw `Null`), so its
@@ -169,6 +187,7 @@ impl CompaniesServer {
                 "sector": sector,
                 "industry": industry,
                 "peers": peers,
+                "peer_source": peer_source,
                 "dcf_overlay": dcf_overlay,
                 "comparison": comparison,
                 "fibo": {
@@ -180,7 +199,7 @@ impl CompaniesServer {
                     "dividend_yield": fibo::DIVIDEND_YIELD,
                     "revenue_growth": fibo::REVENUE_GROWTH_RATE,
                 },
-                "framework": "Comparable company analysis. Valuation multiples (P/E, P/B, P/S) from peer companies alongside DCF intrinsic value. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation.",
+                "framework": "Comparable company analysis. Valuation multiples (P/E, P/B, P/S) from peer companies alongside DCF intrinsic value. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation. Auto-peer discovery: CFA Institute (Knudsen et al. 2017) SARD approach, Damodaran (NYU Stern) growth/risk/return matching, IB best practices (5–12 peers).",
             });
 
             Ok(output)
@@ -250,6 +269,79 @@ impl CompaniesServer {
             }
             _ => Ok(serde_json::json!({"error": "DCF overlay unavailable"})),
         }
+    }
+
+    /// Auto-discover peer companies using the EODHD Screener API.
+    ///
+    /// Methodology (CFA Institute Knudsen et al. 2017, Damodaran NYU Stern,
+    /// IB best practices):
+    /// 1. Get target's sector + market cap from company profile
+    /// 2. Screen EODHD for same-sector companies with market cap in 0.25x–4x range
+    /// 3. Exclude the target itself, deduplicate, rank by market-cap proximity
+    /// 4. Return top 8 peers (CFA: 6 minimum, IB: 5–12 range)
+    async fn discover_peers(
+        &self,
+        target_symbol: &str,
+        profile: &CompanyProfile,
+    ) -> Result<DiscoveredPeers, McpToolError> {
+        let target_sym_upper = target_symbol.to_uppercase();
+        let target_mcap = profile.market_cap().unwrap_or(0.0);
+        let sector = profile.sector().unwrap_or("");
+
+        if sector.is_empty() || target_mcap == 0.0 {
+            return Ok(DiscoveredPeers {
+                peers: Vec::new(),
+                source: "auto-discovery failed: missing sector or market cap".to_string(),
+            });
+        }
+
+        // Market cap band: 0.25x to 4x of target (IB best practice: similar size)
+        let mcap_lower = target_mcap * 0.25;
+        let mcap_upper = target_mcap * 4.0;
+
+        // EODHD Screener filters: same sector + market cap band
+        let filters = vec![
+            serde_json::json!(["sector", "=", sector]),
+            serde_json::json!(["market_capitalization", ">=", mcap_lower]),
+            serde_json::json!(["market_capitalization", "<", mcap_upper]),
+            serde_json::json!(["exchange", "=", "US"]),
+        ];
+
+        let rows = providers::fetch_eodhd_screener(
+            &self.client,
+            &self.eodhd_api_key,
+            &filters,
+        )
+        .await?;
+
+        // Rank by market-cap proximity to target (closest first)
+        let mut candidates: Vec<(String, f64)> = rows
+            .iter()
+            .filter_map(|row| {
+                let code = row.get("code").and_then(|v| v.as_str())?;
+                let mcap = row.get("market_capitalization").and_then(|v| v.as_f64())?;
+                if code.eq_ignore_ascii_case(&target_sym_upper) {
+                    return None;
+                }
+                let proximity = (mcap - target_mcap).abs() / target_mcap;
+                Some((code.to_string(), proximity))
+            })
+            .collect();
+
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Take top 8 (CFA: 6 min, IB: 5–12 range)
+        let peers: Vec<String> = candidates.iter().take(8).map(|(s, _)| s.clone()).collect();
+
+        let source = format!(
+            "auto-discovered via EODHD Screener (sector={}, mcap band ${:.0}B–${:.0}B, {} candidates, top 8)",
+            sector,
+            mcap_lower / 1e9,
+            mcap_upper / 1e9,
+            candidates.len(),
+        );
+
+        Ok(DiscoveredPeers { peers, source })
     }
 
     #[tool(

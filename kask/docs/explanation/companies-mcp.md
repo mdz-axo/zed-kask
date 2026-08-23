@@ -19,7 +19,7 @@ The server exposes **44 tools** (`#[tool]` functions under `kask/mcp-servers/hka
 | Module | Tools | Count |
 |--------|-------|-------|
 | `tools/financial_data.rs` | `company_profile`, `stock_quote`, `income_statement`, `balance_sheet`, `cash_flow_statement`, `key_metrics`, `historical_price`, `symbol_search` | 8 |
-| `tools/analysis.rs` | `moat_check`, `management_scorecard`, `working_capital_cycle`, `company_screener`, `research_search` | 5 |
+| `tools/analysis.rs` | `moat_check`, `management_scorecard`, `working_capital_cycle`, `company_screener`, `company_research_search` | 5 |
 | `tools/expectations.rs` | `expectations_gap` | 1 |
 | `tools/analytics.rs` | `portfolio_attribution`, `portfolio_characteristics`, `dcf_valuation`, `reverse_dcf`, `scenario_analysis` | 5 |
 | `tools/economic_profit.rs` | `ep_valuation` | 1 |
@@ -40,7 +40,7 @@ HKASK_FMP_API_KEY=your_fmp_key
 HKASK_EODHD_API_KEY=your_eodhd_key
 ```
 
-4. Optional research providers (enable `research_search`) — also configurable via Settings → Kask → Data Services:
+4. Optional research providers (enable `company_research_search`) — also configurable via Settings → Kask → Data Services:
 
 ```
 HKASK_EXA_API_KEY=your_exa_key
@@ -134,7 +134,7 @@ Compare `implied_growth` against your own estimate and management guidance to sp
 
 ## How to quantify the expectations gap
 
-1. Populate claims with `research_search` (management guidance, analyst estimates).
+1. Populate claims with `company_research_search` (management guidance, analyst estimates).
 2. Call `expectations_gap` with the symbol, your own growth estimate, and the gathered claims.
 
 ```
@@ -364,13 +364,13 @@ Encoded payloads above the attachment byte limit are rejected. `file_delete` rem
 2. Search across Exa, Tavily, and Brave:
 
 ```
-research_search {
+company_research_search {
   "query": "AAPL services segment gross margin 2026",
   "max_results": 10
 }
 ```
 
-Claims are classified, tickers are detected, and numeric values are extracted. `research_search` bypasses the FMP/EODHD provider path. Pair it with the `thesis_test`, `scenario_weight`, or `guidance_check` skills for structured analysis.[^rag-companies]
+Claims are classified, tickers are detected, and numeric values are extracted. `company_research_search` bypasses the FMP/EODHD provider path. Pair it with the `thesis_test`, `scenario_weight`, or `guidance_check` skills for structured analysis.[^rag-companies]
 
 ## How to screen companies
 
@@ -391,7 +391,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
 | `invalid_argument: symbol must be ...` | Symbol exceeds 32 chars or contains invalid characters | Use a valid exchange symbol; international symbols are supported (e.g. `VOD.L`) |
 | Provider returns stale data | Provider flagged chronically stale (>90 days) | Call `result_feedback` with a low score to update the `LearningState`; the flaky override reroutes future calls |
 | `forecast task failed` | Portfolio SQLite error or owner mismatch | Verify the `forecast_id` belongs to the authenticated owner; forecasts are owner-scoped |
-| `research_search` returns empty | No research provider keys configured | Set at least one of `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_BRAVE_API_KEY` via Settings → Kask → Data Services or env vars |
+| `company_research_search` returns empty | No research provider keys configured | Set at least one of `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_BRAVE_API_KEY` via Settings → Kask → Data Services or env vars |
 
 ## Cross-links
 
@@ -435,7 +435,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
     Cited for the time-weighted and money-weighted return methodologies the portfolio returns tools compute.
 
 [^rag-companies]: Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. arXiv. https://arxiv.org/abs/2005.11401
-    Cited for the retrieval-augmented generation paradigm the `research_search` tool follows — classify, detect tickers, extract values from retrieved text.
+    Cited for the retrieval-augmented generation paradigm the `company_research_search` tool follows — classify, detect tickers, extract values from retrieved text.
 
 [^fmp-screener]: Financial Modeling Prep. (2024). *FMP Stock Screener API*. https://site.financialmodelingprep.com/developer/docs/stock-screener-api
     Cited for the FMP screener endpoint the natural-language criteria map to.

@@ -58,18 +58,6 @@ impl CompaniesServer {
         .await
     }
 
-    #[tool(description = "List all portfolios")]
-    pub async fn portfolio_list(&self) -> String {
-        execute_tool_semantic(self, "portfolio_list", Self::ontology_anchor("portfolio_list"), async {
-            let names = run_portfolio(self.portfolio.clone(), |portfolio| portfolio.list()).await?;
-            Ok(fibo::enrich_with_ontology(
-                serde_json::json!({"portfolios": names, "fibo": {"portfolio": fibo::PORTFOLIO}}),
-                "portfolio_list",
-            ))
-        })
-        .await
-    }
-
     #[tool(description = "Import transactions from CSV or JSON into a portfolio ledger")]
     pub async fn ledger_import(
         &self,

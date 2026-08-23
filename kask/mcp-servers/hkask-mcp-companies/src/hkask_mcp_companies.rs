@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (45) — pinned by `tool_surface_is_exactly_44_registered_tools`
+//! ## Tools (44) — `portfolio_list` moved to portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -20,7 +20,7 @@
 //!   portfolio_comparison, portfolio_returns
 //! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
 //! - `tools/expectations.rs` — expectations_gap
-//! - `tools/portfolio.rs` — ledger_import, ledger_export, portfolio_list,
+//! - `tools/portfolio.rs` — ledger_import, ledger_export,
 //!   portfolio_delete, transaction_note_append, note_add, note_list, note_delete,
 //!   file_attach, file_list, file_delete
 //! - `tools/transcript.rs` — earnings-call transcript tools

@@ -364,11 +364,11 @@ impl CompaniesServer {
         })
         .await
     }
-    pub async fn research_search(
+    pub async fn company_research_search(
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,
     ) -> String {
-        execute_tool_semantic(self, "research_search", Self::ontology_anchor("research_search"), async {
+        execute_tool_semantic(self, "company_research_search", Self::ontology_anchor("company_research_search"), async {
             // 1. Fetch company profile for name (typed view — `companyName`
             //    knowledge lives in the `CompanyProfile` accessor).
             let profile = self.fetch_profile(&req.symbol).await?;
@@ -414,7 +414,7 @@ impl CompaniesServer {
                 "framework": "Multi-provider fundamental research search (Exa, Tavily, Brave). Claims are classified by category and numeric values extracted. Use with thesis_test, scenario_weight, or guidance_check skills for structured financial analysis mapping claims to DCF assumptions."
             });
 
-            Ok(fibo::enrich_with_ontology(output, "research_search"))
+            Ok(fibo::enrich_with_ontology(output, "company_research_search"))
         }).await
     }
 

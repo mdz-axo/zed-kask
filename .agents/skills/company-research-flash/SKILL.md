@@ -5,7 +5,7 @@ description: "Equity research flash pipeline converted from EFRA-AI (Replicant-P
 
 # Company Research — Flash Pipeline
 
-Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step process producing a flash note / initiation report. MCP tool calls (forecast_list, research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
+Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step process producing a flash note / initiation report. MCP tool calls (forecast_list, company_research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
@@ -25,7 +25,7 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 ### intel-mosaic
 
-1. Synthesize research_search and web_search MCP tool outputs into a business context 8-step (identity, geography, business model, competitive position, customers, management, risks, catalysts).
+1. Synthesize company_research_search and web_search MCP tool outputs into a business context 8-step (identity, geography, business model, competitive position, customers, management, risks, catalysts).
 2. Build the information mosaic with source-tier classification and horizon tagging.
 3. Form 3–5 testable hypotheses with PENDING / VALIDATED / UNRESOLVABLE lifecycle.
 4. Emit mosaic_clear (false = MNPI HALT terminal gate), business_model, news_items, hypotheses, data_gaps.
@@ -102,7 +102,7 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | Template | Purpose |
 |----------|---------|
 | `scout-alpha-score.j2` | Agent 01 SCOUT. Computes the firm-specific alpha score (coverage gap × 0.30 + market cap fit × 0.20 + sector relevance × 0.25 + valuation anomaly × 0.25, plus EM GDP / Bessembinder / low-coverage bonuses up to +25) and applies the 11-criterion excellence universe (S1–S11) where `in_excellence_universe` is true. Emits `decision` (MUST_COVER / REVIEW_ZONE / DROP), `alpha_score`, `horizon_tag`, `downstream_mode` (valentine / gunn / dual). DROP is a terminal early-exit gate. |
-| `intel-mosaic.j2` | Agent 02 INTEL (DEEPEN). Business-context 8-step + information mosaic. Consumes `research_search` and `web_search` MCP tool outputs (bound via input_mapping from prior direct tool calls) and the `listening/apply-template` earnings-call verdict (cross-skill step 3). Emits `mosaic_clear` (false = MNPI HALT terminal gate), `business_model`, `news_items`, `hypotheses` (PENDING / VALIDATED / UNRESOLVABLE lifecycle), `data_gaps`. Per .rules: failed MCP tools surface as `data_gaps` entries, never collapse to None. |
+| `intel-mosaic.j2` | Agent 02 INTEL (DEEPEN). Business-context 8-step + information mosaic. Consumes `company_research_search` and `web_search` MCP tool outputs (bound via input_mapping from prior direct tool calls) and the `listening/apply-template` earnings-call verdict (cross-skill step 3). Emits `mosaic_clear` (false = MNPI HALT terminal gate), `business_model`, `news_items`, `hypotheses` (PENDING / VALIDATED / UNRESOLVABLE lifecycle), `data_gaps`. Per .rules: failed MCP tools surface as `data_gaps` entries, never collapse to None. |
 | `forensic-pre-screen.j2` | Agent 04 FORENSIC (pre-screen). Quick risk pre-screen across accounting red flags, governance, going-concern signals. Emits `severity` (SEV-1 minor → SEV-5 fraud/restatement), `recommendation` (CLEAR+adj / CONDITIONAL / BLOCK), `eps_haircut`, `dr_add_bps`. BLOCK is a terminal early-exit gate. FORENSIC cannot be skipped (EFRA-AI invariant). |
 | `critical-factor.j2` | Agent 03 CRITICAL FACTOR. Identifies the 3–5 critical factors that drive the business and constructs Bull / Base / Bear scenarios with EPS impact. Consumes `scenario_build` MCP tool output (bound via input_mapping) for structured scenario generation. Emits `factors` (empty = DROP terminal gate), `scenarios` (bull/base/bear with probabilities and EPS impact), `eps_impact_pct`. Cross-references `superforecasting/stage_3_probability_estimate` methodology for granular (0.35) vs round (0.50) probabilities. |
 | `forensic-full.j2` | Agent 04 FORENSIC (full). Full audit: accruals quality, governance (board independence, COB/CEO separation), management profile (owner- operator, capital allocation track record). Consumes `company_transcript` MCP tool output for management quotes. Emits `severity`, `recommendation` (BLOCK terminal gate), `management_quality`, `governance_score`, `accruals_score`. FORENSIC cannot be skipped. |

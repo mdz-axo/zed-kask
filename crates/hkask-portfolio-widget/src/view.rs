@@ -688,10 +688,10 @@ impl PortfolioWidget {
                 "market_lookup",
                 serde_json::json!({ "query": symbol, "limit": 5 }),
             ),
-            // Default (companies or no provenance): research_search.
+            // Default (companies or no provenance): company_research_search.
             _ => (
                 "hkask-mcp-companies",
-                "research_search",
+                "company_research_search",
                 serde_json::json!({ "query": symbol }),
             ),
         };
@@ -1482,7 +1482,7 @@ mod tests {
             .clone();
         assert_eq!(calls.len(), 1, "exactly one explain dispatch");
         assert_eq!(calls[0].0, "hkask-mcp-companies");
-        assert_eq!(calls[0].1, "research_search");
+        assert_eq!(calls[0].1, "company_research_search");
         assert_eq!(calls[0].2["query"], "AAPL");
 
         let (symbol, error) = cx.update(|cx| {

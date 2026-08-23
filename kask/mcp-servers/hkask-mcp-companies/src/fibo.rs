@@ -128,7 +128,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "moat_check" => Some(COMPETITIVE_ADVANTAGE),
         "management_scorecard" => Some(CAPITAL_ALLOCATION),
         "working_capital_cycle" => Some(NET_WORKING_CAPITAL),
-        "research_search" => Some(CORPORATION),
+        "company_research_search" => Some(CORPORATION),
         // Financial data tools
         "company_profile" => Some(CORPORATION),
         "stock_quote" | "historical_price" => Some(MARKET_CAPITALIZATION),
