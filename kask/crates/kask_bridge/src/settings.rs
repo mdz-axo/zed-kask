@@ -191,6 +191,8 @@ pub struct KaskDataServiceSettings {
 pub struct KaskInferenceProvidersSettings {
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
+    /// Enable DeepInfra (cloud embeddings via Qwen models).
+    pub deepinfra_enabled: bool,
 }
 
 impl KaskInferenceProvidersSettings {
@@ -203,6 +205,7 @@ impl KaskInferenceProvidersSettings {
     pub fn from_env() -> Self {
         Self {
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
+            deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
         }
     }
 }
@@ -1442,6 +1445,7 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
         let from_env = Self::from_env();
         Self {
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
+            deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
         }
     }
 }
@@ -2034,6 +2038,7 @@ mod tests {
     fn inference_providers_default_is_all_false() {
         let default = KaskInferenceProvidersSettings::default();
         assert!(!default.openrouter_enabled);
+        assert!(!default.deepinfra_enabled);
     }
 
     // `KaskSettings::default()` must also have all-false inference providers,

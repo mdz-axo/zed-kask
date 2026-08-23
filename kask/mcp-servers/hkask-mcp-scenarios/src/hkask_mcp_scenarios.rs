@@ -463,8 +463,16 @@ impl ScenariosServer {
         Parameters(req): Parameters<MarketsBridgeRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets", Self::ontology_anchor("scenario_from_markets"), async {
+            // The market_record may arrive as a JSON object or as a
+            // JSON string containing a serialized object (some MCP
+            // frameworks encode complex parameters as strings).
+            let record_value: serde_json::Value = match &*req.market_record {
+                serde_json::Value::String(s) => serde_json::from_str(s)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON string: {e}")))?,
+                other => other.clone(),
+            };
             let record: hkask_mcp_prediction_markets::types::MarketRecord =
-                serde_json::from_value(req.market_record.into())
+                serde_json::from_value(record_value)
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
 
             let (event, warnings) = {
@@ -526,8 +534,15 @@ impl ScenariosServer {
         Parameters(req): Parameters<MarketsSetBridgeRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets_set", Self::ontology_anchor("scenario_from_markets_set"), async {
+            // The market_records may arrive as a JSON array or as a
+            // JSON string containing a serialized array.
+            let records_value: serde_json::Value = match &*req.market_records {
+                serde_json::Value::String(s) => serde_json::from_str(s)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON string: {e}")))?,
+                other => other.clone(),
+            };
             let records: Vec<hkask_mcp_prediction_markets::types::MarketRecord> =
-                serde_json::from_value(req.market_records.into())
+                serde_json::from_value(records_value)
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON array: {e}")))?;
 
             let confidences = req.match_confidences.unwrap_or_else(|| vec![None; records.len()]);

@@ -56,6 +56,7 @@ pub(crate) fn render_inference_providers_page(
         // must agree or every toggle renders off and writes no-op.
         let enabled = match desc.credential_key {
             "openrouter" => inference.openrouter_enabled,
+            "deepinfra" => inference.deepinfra_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(
@@ -279,6 +280,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
     // the lowercase arms match the display-form id.
     let credential_key = match provider_id {
         "OpenRouter" => "openrouter",
+        "DeepInfra" => "deepinfra",
         other => other,
     }
     .to_string();
@@ -287,6 +289,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         let inference = kask.inference_providers.get_or_insert_default();
         match credential_key.as_str() {
             "openrouter" => inference.openrouter_enabled = Some(enabled),
+            "deepinfra" => inference.deepinfra_enabled = Some(enabled),
             _ => {}
         }
     });

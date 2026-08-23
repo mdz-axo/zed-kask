@@ -673,7 +673,11 @@ impl CompaniesServer {
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
             // Parse the scenario tree JSON from scenario_quantify.
-            let tree: financial_model::ScenarioTreeInput = serde_json::from_str(&req.scenario_tree)
+            // Normalize the scenario server's EventTree format (nested
+            // event fields, topo_order alias) into the flat format.
+            let normalized_tree_json = financial_model::normalize_scenario_tree_json(&req.scenario_tree)
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid scenario_tree JSON: {e}")))?;
+            let tree: financial_model::ScenarioTreeInput = serde_json::from_str(&normalized_tree_json)
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid scenario_tree JSON: {e}")))?;
 
             // Parse the per-node impact mappings.

@@ -1676,6 +1676,8 @@ pub struct KaskDataServiceSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskInferenceProvidersSettingsContent {
     pub openrouter_enabled: Option<bool>,
+    /// Enable DeepInfra (cloud embeddings + LLM serving).
+    pub deepinfra_enabled: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

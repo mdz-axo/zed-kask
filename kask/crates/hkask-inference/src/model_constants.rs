@@ -23,13 +23,16 @@
 /// and the `LanguageModelRegistry` resolves the `OpenRouter/` prefix to the provider.
 pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Default embedding model. No bundled cloud provider serves embeddings
-/// (OpenRouter doesn't; RunPod is vision/OCR-only), so this defaults to a
-/// local Ollama embedding model. Operators without a local Ollama must set
-/// `HKASK_EMBEDDING_MODEL` (or the corpus embedding settings) to a provider
-/// they have credentials for — embedding calls fail with a clear error
-/// otherwise.
-pub const DEFAULT_EMBEDDING_MODEL: &str = "ollama/qwen3-embedding:0.6b";
+/// Default embedding model. Served by DeepInfra (OpenAI-compatible
+/// `/v1/embeddings` endpoint). The `DeepInfra/` prefix routes through
+/// `resolve_embedding_credentials` to `https://api.deepinfra.com/v1/openai`
+/// with the `DEEPINFRA_API_KEY` env var. Operators must set this key (via
+/// the settings UI or env var) for embedding-based recall to work.
+///
+/// Previously defaulted to `ollama/qwen3-embedding:0.6b` (local Ollama),
+/// which works but is impractically slow on CPU for large corpora (33K+
+/// chunks). The cloud endpoint serves the same Qwen model at scale.
+pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
 
 /// Default OCR model for scanned PDF fallback.
 /// Uses OLMOCR-2 on RunPod serverless (endpoint `hsldzov6932wf5`, named `kask-ocr`

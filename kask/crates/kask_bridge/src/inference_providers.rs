@@ -1,12 +1,14 @@
-//! Inference provider descriptors and `openai_compatible` settings sync.
+//! Inference provider descriptors for MCP server credential injection.
 //!
-//! OpenRouter is NOT registered here — zed already ships a built-in
-//! `OpenRouterLanguageModelProvider`. Its kask toggle only mirrors the API
-//! key to MCP servers via `credential_urls_for_mcp`.
-//!
-//! Removed providers (fal.ai, Cline, KiloCode, and two former media/LLM
-//! providers, plus stale OpenRouter entries from prior versions) are scrubbed
-//! from settings.json by `ensure_openai_compatible_entries`.
+//! Kask uses zed's native inference provider infrastructure — providers are
+//! registered in Settings → AI → LLM Providers, not via kask settings. This
+//! module only maintains the `INFERENCE_PROVIDERS` descriptor table used by:
+//! - `resolve_embedding_credentials` (maps a provider-prefixed model string
+//!   to `(api_url, api_key)` for MCP servers that can't access zed's
+//!   `LanguageModelRegistry`)
+//! - `credential_urls_for_mcp` (builds keychain URLs so MCP server child
+//!   processes receive API keys via `build_mcp_server_env`)
+//! - `mirror_env_keys_to_keychain` (mirrors `.env` values into the keychain)
 //!
 //! API keys are stored in the keychain under the provider's `api_url` (the
 //! same URL zed's OpenAI-compatible provider reads) and mirrored to
@@ -15,8 +17,7 @@
 use std::sync::Arc;
 
 use credentials_provider::CredentialsProvider;
-use gpui::{App, ReadGlobal as _, Task};
-use settings::SettingsStore;
+use gpui::{App, Task};
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Must match `kask_bridge::KASK_CREDENTIAL_NAMESPACE`.
@@ -80,6 +81,18 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "",
         credential_key: "ollama",
         dashboard_url: "https://ollama.com/",
+    },
+    // DeepInfra is a cloud inference platform serving Qwen embedding models
+    // via an OpenAI-compatible `/v1/embeddings` endpoint. The default
+    // embedding model (`DEFAULT_EMBEDDING_MODEL`) routes through this provider.
+    // Operators must set `DEEPINFRA_API_KEY` (via the settings UI or env var).
+    InferenceProviderDescriptor {
+        id: "DeepInfra",
+        name: "DeepInfra",
+        api_url: "https://api.deepinfra.com/v1/openai",
+        env_var: "DEEPINFRA_API_KEY",
+        credential_key: "deepinfra",
+        dashboard_url: "https://deepinfra.com/",
     },
 ];
 
@@ -373,6 +386,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
         }
         let enabled = match provider.credential_key {
             "openrouter" => settings.inference_providers.openrouter_enabled,
+            "deepinfra" => settings.inference_providers.deepinfra_enabled,
             _ => false,
         };
         if enabled {
@@ -402,27 +416,36 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 /// duplicate it in the LLM picker. OpenRouter's kask toggle still mirrors its
 /// key to MCP servers via `credential_urls_for_mcp` (which iterates
 /// `INFERENCE_PROVIDERS` directly, not this function).
+///
+/// DeepInfra is registered here as an `openai_compatible.DeepInfra` entry
+/// with `auto_discover: true` so zed fetches its full model list (chat,
+/// embeddings, vision) via `/v1/models`. The API key is stored in the
+/// keychain under the provider's `api_url`, same pattern as any other
+/// OpenAI-compatible provider.
 pub fn ensure_openai_compatible_entries(cx: &mut App) {
-    // No kask `openai_compatible` providers remain to write: OpenRouter and
-    // RunPod are skipped (built-in / dedicated zed providers), and the former
-    // kask-registered providers have been removed. This function now only
-    // scrubs stale entries so user settings.json stays clean.
+    // Scrub stale entries from removed providers, then write the DeepInfra
+    // entry if enabled.
 
     // Stale `openai_compatible` entries to scrub. The api_url guard avoids
     // removing a user's custom provider that happens to share an id.
     // OpenRouter is included to clean up entries written by prior versions.
-    // The last two entries scrub the two inference providers removed
-    // 2026-08-20 — the id + api_url literals are required to match stale
+    // The last two entries scrub inference providers removed in prior
+    // versions — the id + api_url literals are required to match stale
     // user settings.json entries written by prior versions (they are scrub
-    // data, not provider support).
+    // data, not provider support). Together AI was removed 2026-08-22;
+    // AtlasCloud was removed 2026-08-20.
     let removed_providers: [(&'static str, &str); 6] = [
         ("fal.ai", "https://api.fal.ai/v1"),
         ("Cline", "https://api.cline.bot/api/v1"),
         ("KiloCode", "https://api.kilo.ai/api/gateway"),
         ("OpenRouter", "https://openrouter.ai/api/v1"),
-        ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
         ("AtlasCloud", "https://api.atlascloud.ai/v1"),
+        ("Together", "https://api.together.xyz/v1"),
     ];
+
+    // Check if DeepInfra is enabled in kask settings.
+    let kask_settings = KaskSettings::get_global(cx).clone();
+    let deepinfra_enabled = kask_settings.inference_providers.deepinfra_enabled;
 
     let fs = <dyn fs::Fs>::global(cx);
     SettingsStore::global(cx).update_settings_file(fs, move |content, _| {
@@ -439,6 +462,28 @@ pub fn ensure_openai_compatible_entries(cx: &mut App) {
                 && existing.api_url == known_api_url
             {
                 openai_compatible.remove(&id);
+            }
+        }
+
+        // Write or remove the DeepInfra entry based on the toggle.
+        let deepinfra_id: std::sync::Arc<str> = std::sync::Arc::from("DeepInfra");
+        if deepinfra_enabled {
+            openai_compatible.insert(
+                deepinfra_id,
+                settings_content::OpenAiCompatibleSettingsContent {
+                    api_url: "https://api.deepinfra.com/v1/openai".to_string(),
+                    available_models: Vec::new(),
+                    custom_headers: None,
+                    auto_discover: true,
+                },
+            );
+        } else {
+            // Remove the entry if the toggle is off (and it matches our api_url
+            // guard, so we don't remove a user's custom provider).
+            if let Some(existing) = openai_compatible.get(&deepinfra_id)
+                && existing.api_url == "https://api.deepinfra.com/v1/openai"
+            {
+                openai_compatible.remove(&deepinfra_id);
             }
         }
     });

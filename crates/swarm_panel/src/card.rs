@@ -264,14 +264,25 @@ impl SwarmPanel {
                 let detail_budget = swarm.budget;
                 let detail_remaining = swarm.remaining;
                 let detail_cloud_workspace_id = swarm.cloud_workspace_id.clone();
+                // Clones for the ellipsis menu's Edit entry — the Details
+                // button's `move` closure captures the originals.
+                let menu_detail_id = detail_id.clone();
+                let menu_detail_name = detail_name.clone();
+                let menu_detail_source = detail_source.clone();
+                let menu_detail_mission = detail_mission.clone();
+                let menu_detail_cloud = detail_cloud_workspace_id.clone();
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
                 let clone_id = swarm_id.clone();
                 let clone_is_local = swarm_source == AgentSource::Local;
                 let push_id = swarm_id.clone();
                 let pull_id = swarm_id.clone();
+                let delete_id = swarm_id.clone();
+                let delete_source = swarm_source;
+                let delete_name = swarm.name.clone();
                 let show_push = clone_is_local;
                 let show_pull = !clone_is_local;
+                let show_edit = clone_is_local;
                 let panel_handle: WeakEntity<SwarmPanel> = cx.entity().downgrade();
                 MarketplaceCard::new().child(
                     h_flex()
@@ -454,6 +465,88 @@ impl SwarmPanel {
                                                                     panel.update(cx, |this, cx| {
                                                                         this.pull_cloud_swarm_to_local(
                                                                             pull_id.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+                                                    }
+                                                    // Edit metadata — local only
+                                                    // (ABW has no edit endpoint).
+                                                    // Opens the detail view in
+                                                    // edit mode so the operator
+                                                    // can change name/mission.
+                                                    if show_edit {
+                                                        let edit_handle = panel_handle.clone();
+                                                        let edit_detail_id = menu_detail_id.clone();
+                                                        let edit_detail_name = menu_detail_name.clone();
+                                                        let edit_detail_source = menu_detail_source.clone();
+                                                        let edit_detail_mission = menu_detail_mission.clone();
+                                                        let edit_detail_agent_count = detail_agent_count;
+                                                        let edit_detail_budget = detail_budget;
+                                                        let edit_detail_remaining = detail_remaining;
+                                                        let edit_detail_cloud = menu_detail_cloud.clone();
+                                                        menu = menu.entry(
+                                                            "Edit…",
+                                                            None,
+                                                            move |_, cx| {
+                                                                if let Some(panel) =
+                                                                    edit_handle.upgrade()
+                                                                {
+                                                                    panel.update(cx, |this, cx| {
+                                                                        this.open_swarm_detail(
+                                                                            edit_detail_id.clone(),
+                                                                            edit_detail_name.clone(),
+                                                                            edit_detail_source.clone(),
+                                                                            edit_detail_mission.clone(),
+                                                                            edit_detail_agent_count,
+                                                                            edit_detail_budget,
+                                                                            edit_detail_remaining,
+                                                                            edit_detail_cloud.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+                                                    }
+                                                    // Delete — both backends.
+                                                    // Stages a confirmation
+                                                    // in the detail view.
+                                                    {
+                                                        let delete_handle = panel_handle.clone();
+                                                        let delete_id = delete_id.clone();
+                                                        let delete_source = delete_source.clone();
+                                                        let delete_name = delete_name.clone();
+                                                        menu = menu.entry(
+                                                            "Delete…",
+                                                            None,
+                                                            move |_, cx| {
+                                                                if let Some(panel) =
+                                                                    delete_handle.upgrade()
+                                                                {
+                                                                    panel.update(cx, |this, cx| {
+                                                                        // Open the detail so
+                                                                        // the confirmation
+                                                                        // banner is visible.
+                                                                        this.open_swarm_detail(
+                                                                            delete_id.clone(),
+                                                                            delete_name.clone(),
+                                                                            delete_source.clone(),
+                                                                            String::new(),
+                                                                            None,
+                                                                            None,
+                                                                            None,
+                                                                            None,
+                                                                            cx,
+                                                                        );
+                                                                        // Stage the delete
+                                                                        // confirmation.
+                                                                        this.request_delete_swarm(
+                                                                            delete_id.clone(),
+                                                                            delete_source.clone(),
+                                                                            delete_name.clone(),
                                                                             cx,
                                                                         );
                                                                     });

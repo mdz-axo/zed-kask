@@ -93,8 +93,51 @@ pub(crate) struct ScenarioTreeDependency {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ScenarioTreeInput {
     pub nodes: Vec<ScenarioTreeNode>,
-    #[serde(default)]
+    #[serde(default, alias = "topo_order")]
     pub topological_order: Vec<String>,
+}
+
+/// Normalize the scenario server's `EventTree` JSON into the flat
+/// `ScenarioTreeInput` format that `scenario_impact_dcf` expects.
+///
+/// The scenario server (`hkask-mcp-scenarios`) serializes `EventTree`
+/// with:
+/// - `topo_order` (not `topological_order`)
+/// - `nodes` containing `EventTreeNode` which nests `event: ScenarioEvent`
+///   inside (so `id`, `name`, `depends_on` are under `event`, not at
+///   the top level)
+///
+/// This function flattens the nested `event` fields to the top level of
+/// each node and renames `topo_order` to `topological_order`. If the
+/// JSON is already in the flat format (e.g., user-authored), it passes
+/// through unchanged.
+pub(crate) fn normalize_scenario_tree_json(json: &str) -> Result<String, serde_json::Error> {
+    let mut root: serde_json::Value = serde_json::from_str(json)?;
+
+    if let Some(obj) = root.as_object_mut() {
+        // Rename topo_order → topological_order if needed
+        if let Some(topo) = obj.remove("topo_order") {
+            obj.entry("topological_order").or_insert(topo);
+        }
+
+        // Flatten nested event fields in each node
+        if let Some(nodes) = obj.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+            for node in nodes {
+                if let Some(node_obj) = node.as_object_mut() {
+                    if let Some(event) = node_obj.remove("event") {
+                        if let Some(event_obj) = event.as_object() {
+                            for (key, value) in event_obj {
+                            // Only insert if not already present at top level
+                                node_obj.entry(key.clone()).or_insert(value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&root)
 }
 
 // ── Result types ──────────────────────────────────────────────────────────

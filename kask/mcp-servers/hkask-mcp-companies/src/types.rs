@@ -660,8 +660,10 @@ pub struct ResearchSearchRequest {
 pub(crate) struct ScenarioImpactValuationRequest {
     pub symbol: String,
     /// JSON string of the resolved scenario event tree from `scenario_quantify`
-    /// (hkask-mcp-scenarios). Must contain `nodes` (array with `id`,
-    /// `marginal_probability`, `depends_on`) and optionally `topological_order`.
+    /// (hkask-mcp-scenarios). Accepts both the scenario server's native
+    /// `EventTree` format (nested `event` fields, `topo_order`) and the
+    /// flat format (`nodes` with `id`, `marginal_probability`, `depends_on`
+    /// and `topological_order`). Normalization is applied automatically.
     pub scenario_tree: String,
     /// JSON array of per-node impact mappings. Each entry has `node_id`,
     /// `yes_deltas` (additive DCF assumption deltas when the node resolves
