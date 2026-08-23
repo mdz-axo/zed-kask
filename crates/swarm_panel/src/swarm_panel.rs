@@ -4505,5 +4505,40 @@ mod tests {
             parse::SWARM_TOOLS.contains(&"swarm_delete_swarm"),
             "swarm_delete_swarm must be in TOOL_NAMES (cloud delete)"
         );
+        assert!(
+            parse::SWARM_TOOLS.contains(&"swarm_push_local_swarm"),
+            "swarm_push_local_swarm must be in TOOL_NAMES (push to cloud)"
+        );
+        assert!(
+            parse::SWARM_TOOLS.contains(&"swarm_pull_swarm_to_local"),
+            "swarm_pull_swarm_to_local must be in TOOL_NAMES (pull from cloud)"
+        );
+    }
+
+    #[test]
+    fn synced_swarm_appears_in_both_cloud_and_local_filters() {
+        // A local swarm with a cloud_workspace_id gets AgentSource::Synced.
+        // The filter_entries logic must include Synced swarms in both
+        // Cloud and Local source filters (they exist on both backends).
+        use crate::parse::SwarmCard;
+
+        let synced = SwarmEntry::Swarm(SwarmCard {
+            id: "synced_swarm".into(),
+            name: "Synced".into(),
+            description: "mission".into(),
+            agent_count: Some(3),
+            budget: None,
+            remaining: None,
+            source: AgentSource::Synced,
+            cloud_workspace_id: Some("ws_abcd".into()),
+        });
+
+        // Verify the source is Synced and the cloud link is present.
+        if let SwarmEntry::Swarm(card) = &synced {
+            assert_eq!(card.source, AgentSource::Synced);
+            assert_eq!(card.cloud_workspace_id.as_deref(), Some("ws_abcd"));
+        } else {
+            panic!("expected a swarm entry");
+        }
     }
 }

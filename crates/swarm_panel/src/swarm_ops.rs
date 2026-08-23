@@ -354,7 +354,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
-                                    detail.cloud_workspace_id.clone(),
+                                    detail.cloud_workspace_id,
                                     cx,
                                 );
                             }
@@ -411,7 +411,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
-                                    detail.cloud_workspace_id.clone(),
+                                    detail.cloud_workspace_id,
                                     cx,
                                 );
                             }
@@ -468,7 +468,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
-                                    detail.cloud_workspace_id.clone(),
+                                    detail.cloud_workspace_id,
                                     cx,
                                 );
                             }
@@ -811,7 +811,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
-                                    detail.cloud_workspace_id.clone(),
+                                    detail.cloud_workspace_id,
                                     cx,
                                 );
                             }
@@ -941,7 +941,6 @@ impl SwarmPanel {
         self.spend.in_flight = Some(format!("push-swarm-{swarm_id}"));
         cx.notify();
         cx.spawn({
-            let swarm_id = swarm_id.clone();
             async move |this, cx| {
                 // Step 1: fetch the local swarm to get its members.
                 let swarm_result = invoker_clone

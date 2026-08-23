@@ -72,6 +72,7 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "Board"
         | "kanban_board_create"
         | "kanban_board_list"
+        | "kanban_board_delete"
         | "kanban_board_export"
         | "kanban_board_import" => Some(PROCEDURE),
         "Task" | "kanban_task_create" | "kanban_task_list" => Some(STEP),

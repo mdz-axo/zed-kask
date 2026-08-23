@@ -412,7 +412,7 @@ impl SwarmPanel {
                                                                                 detail.agent_count,
                                                                                 detail.budget,
                                                                                 detail.remaining,
-                                                                                detail.cloud_workspace_id.clone(),
+                                                                                detail.cloud_workspace_id,
                                                                                 cx,
                                                                             );
                                                                         }

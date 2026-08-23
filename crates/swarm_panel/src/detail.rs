@@ -230,9 +230,9 @@ impl SwarmPanel {
                                 })),
                             )
                         })
-                        // Clone — both backends. Local: one-click via
-                        // `swarm_clone_local_swarm`. ABW: pre-fills the Compose
-                        // form for operator review (clone = read + create).
+                        // Copy — both backends. Local: one-click via
+                        // `swarm_clone_local_swarm`. ABW: pre-fills the
+                        // Compose form for operator review (copy = read + create).
                         .child(
                             Button::new(
                                 SharedString::from(format!(

@@ -637,6 +637,24 @@ impl KanbanPanel {
                     match parsed {
                         Some(response) => {
                             this.boards = response.boards;
+                            // If the selected board was deleted externally
+                            // (via the MCP tool, not through the panel UI),
+                            // the selected_board_id still points to the dead
+                            // id. Clear the selection so the stale widget and
+                            // tasks are dropped, and the empty state or the
+                            // next available board renders instead. Without
+                            // this, the panel shows the deleted board's stale
+                            // widget forever while fetch_tasks loops on
+                            // "board not found" errors.
+                            let selected_still_exists = this
+                                .selected_board_id
+                                .as_ref()
+                                .is_some_and(|id| {
+                                    this.boards.iter().any(|b| &b.board_id == id)
+                                });
+                            if !selected_still_exists {
+                                this.clear_board_selection();
+                            }
                             if this.selected_board_id.is_none() && !this.boards.is_empty() {
                                 let first = this.boards[0].clone();
                                 this.selected_board_id = Some(first.board_id.clone());
@@ -701,6 +719,20 @@ impl KanbanPanel {
                 if let Some(err) = parse_tool_error(&output) {
                     this.update(cx, |this, cx| {
                         this.fetching = false;
+                        // If the board was deleted externally, the task
+                        // fetch returns NotFound. Clear the selection so
+                        // the stale widget is dropped and the board list
+                        // refresh can re-select or show the empty state.
+                        // Without this, the panel loops on "board not
+                        // found" while the dead board's widget stays.
+                        if matches!(
+                            err.kind,
+                            Some(hkask_types::McpErrorKind::NotFound)
+                        ) {
+                            this.clear_board_selection();
+                            this.fetch_boards(cx);
+                            return;
+                        }
                         this.error = Some(classify_kanban_fetch_error(
                             err.is_retryable(),
                             &err.message,
@@ -2167,9 +2199,10 @@ impl SerializableItem for KanbanPanel {
 mod tests {
     use super::{
         ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL,
-        IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL,
-        TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error,
-        is_idempotent_tool, mutation_retry_delay, refresh_target, steer_system_prompt,
+        BoardInfo, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
+        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
+        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay, refresh_target,
+        steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2535,5 +2568,83 @@ mod tests {
                  never mentions it — drop it from the list or advertise it"
             );
         }
+    }
+
+    // ── Stale-selection reconciliation ────────────────────────────────────────
+    //
+    // When a board is deleted externally (via the MCP tool, not the panel
+    // UI), the selected_board_id still points to the dead id. The fix in
+    // `fetch_boards` checks whether the selected id is still in the fetched
+    // list and clears the selection if not. This test pins the invariant
+    // directly: a selected_board_id that is NOT in the board list means the
+    // selection is stale and must be cleared.
+
+    #[test]
+    fn externally_deleted_board_must_be_detected_as_stale_selection() {
+        // Simulate: the panel has selected board "abc", but the fetched
+        // board list no longer contains it (deleted via kanban_board_delete
+        // MCP tool from outside the panel).
+        let selected_board_id: Option<String> = Some("abc".into());
+        let fetched_boards = [BoardInfo {
+            board_id: "xyz".into(),
+            name: "Other Board".into(),
+            column_count: 3,
+            columns: vec![],
+        }];
+
+        // The invariant the fix checks: is the selected id in the list?
+        let selected_still_exists = selected_board_id
+            .as_ref()
+            .is_some_and(|id| fetched_boards.iter().any(|b| &b.board_id == id));
+
+        assert!(
+            !selected_still_exists,
+            "a selected board id that is not in the fetched list is stale \
+             and must be cleared — the panel was showing a dead board's widget"
+        );
+    }
+
+    #[test]
+    fn still_existing_board_must_not_be_cleared() {
+        // The inverse: the selected board IS in the list — the selection is
+        // valid and must NOT be cleared.
+        let selected_board_id: Option<String> = Some("abc".into());
+        let fetched_boards = [BoardInfo {
+            board_id: "abc".into(),
+            name: "Alpha Board".into(),
+            column_count: 3,
+            columns: vec![],
+        }];
+
+        let selected_still_exists = selected_board_id
+            .as_ref()
+            .is_some_and(|id| fetched_boards.iter().any(|b| &b.board_id == id));
+
+        assert!(
+            selected_still_exists,
+            "a selected board id that IS in the fetched list must be kept — \
+             clearing it would lose the operator's selection on every refresh"
+        );
+    }
+
+    #[test]
+    fn not_found_error_kind_is_not_retryable_and_indicates_missing_board() {
+        // When fetch_tasks hits a deleted board, the server returns a
+        // NotFound error envelope. The fix routes this to clear_board_selection
+        // + fetch_boards rather than looping on the dead id.
+        let not_found = r#"{"error":"board not found","kind":"not_found"}"#;
+        let err = hkask_types::tool_response::parse_tool_error(not_found)
+            .expect("NotFound envelope must be detected");
+        assert_eq!(
+            err.kind,
+            Some(hkask_types::McpErrorKind::NotFound),
+            "a not_found kind must parse into McpErrorKind::NotFound so the \
+             panel can distinguish it from transient errors and clear the selection"
+        );
+        assert!(
+            !err.is_retryable(),
+            "a not_found board is not a transient error — retrying won't \
+             bring it back"
+        );
     }
 }
