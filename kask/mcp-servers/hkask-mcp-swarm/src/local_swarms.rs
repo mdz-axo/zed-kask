@@ -46,6 +46,13 @@ pub struct LocalSwarm {
     pub member_sources: Vec<MemberSource>,
     #[serde(default)]
     pub created_at: String,
+    /// The ABW workspace id this local swarm is synced with. `None` =
+    /// local-only. Set by `swarm_push_local_swarm` (after ABW workspace
+    /// creation) and `swarm_pull_swarm_to_local` (when copying from ABW).
+    /// Backward-compatible: existing `swarm.json` files without this field
+    /// deserialize with `None`.
+    #[serde(default)]
+    pub cloud_workspace_id: Option<String>,
 }
 
 /// The provenance of a member's addition to a local swarm. Mirrors fermi's
@@ -196,6 +203,7 @@ impl LocalSwarmRegistry {
                 .collect(),
             members,
             created_at: chrono::Utc::now().to_rfc3339(),
+            cloud_workspace_id: None,
         };
         self.write_swarm(&swarm)?;
         Ok(swarm)
@@ -333,6 +341,23 @@ impl LocalSwarmRegistry {
         self.create(&new_name, &source.mission, source.members.clone())
     }
 
+    /// Record the ABW workspace id this local swarm is synced with. Called
+    /// after `swarm_push_local_swarm` (ABW workspace created) or
+    /// `swarm_pull_swarm_to_local` (copied from ABW). Passing `None` clears
+    /// the link. Errors if the swarm does not exist.
+    pub fn set_cloud_workspace_id(
+        &self,
+        swarm_id: &str,
+        cloud_workspace_id: Option<String>,
+    ) -> Result<LocalSwarm, LocalSwarmError> {
+        let mut swarm = self.get(swarm_id).ok_or_else(|| {
+            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
+        })?;
+        swarm.cloud_workspace_id = cloud_workspace_id;
+        self.write_swarm(&swarm)?;
+        Ok(swarm)
+    }
+
     /// Write (or overwrite) a swarm to `<dir>/<swarm_id>/swarm.json`, then
     /// reload so the change is visible to subsequent `list`/`get` calls. The
     /// `swarm_id` is re-sanitized before joining the registry root
@@ -408,7 +433,7 @@ mod tests {
         let swarm = registry
             .create("Alpha Team", "original mission", vec!["a1".into()])
             .unwrap();
-        let id = swarm.swarm_id.clone();
+        let id = swarm.swarm_id;
 
         let updated = registry
             .update_metadata(&id, "Beta Team", "new mission")
@@ -475,5 +500,41 @@ mod tests {
         let registry = tmp_registry();
         let err = registry.clone_swarm("nope").unwrap_err();
         assert!(matches!(err, LocalSwarmError::NotFound(_)));
+    }
+
+    #[test]
+    fn cloud_workspace_id_defaults_to_none_on_existing_swarm_json() {
+        // A freshly created swarm has no cloud link.
+        let registry = tmp_registry();
+        let swarm = registry.create("Zeta", "m", vec![]).unwrap();
+        assert!(swarm.cloud_workspace_id.is_none());
+    }
+
+    #[test]
+    fn set_cloud_workspace_id_persists_across_reload() {
+        let registry = tmp_registry();
+        let swarm = registry.create("Eta", "m", vec!["a1".into()]).unwrap();
+
+        let updated = registry
+            .set_cloud_workspace_id(&swarm.swarm_id, Some("ws_abcd".into()))
+            .unwrap();
+        assert_eq!(updated.cloud_workspace_id.as_deref(), Some("ws_abcd"));
+
+        // Persists on disk.
+        let reloaded = registry.get(&swarm.swarm_id).unwrap();
+        assert_eq!(reloaded.cloud_workspace_id.as_deref(), Some("ws_abcd"));
+    }
+
+    #[test]
+    fn set_cloud_workspace_id_can_clear_link() {
+        let registry = tmp_registry();
+        let swarm = registry.create("Theta", "m", vec![]).unwrap();
+        registry
+            .set_cloud_workspace_id(&swarm.swarm_id, Some("ws_xyz".into()))
+            .unwrap();
+        let cleared = registry
+            .set_cloud_workspace_id(&swarm.swarm_id, None)
+            .unwrap();
+        assert!(cleared.cloud_workspace_id.is_none());
     }
 }

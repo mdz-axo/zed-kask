@@ -263,6 +263,7 @@ impl SwarmPanel {
                                                 budget: w.workspace_budget,
                                                 remaining: w.workspace_remaining,
                                                 source: AgentSource::Cloud,
+                                                cloud_workspace_id: None,
                                             })
                                         })
                                         .collect::<Vec<_>>();
@@ -456,6 +457,7 @@ impl SwarmPanel {
                                     .swarms
                                     .into_iter()
                                     .map(|s| {
+                                        let is_synced = s.cloud_workspace_id.is_some();
                                         SwarmEntry::Swarm(SwarmCard {
                                             id: s.swarm_id.unwrap_or_default(),
                                             name: s.name.unwrap_or_default(),
@@ -463,7 +465,12 @@ impl SwarmPanel {
                                             agent_count: Some(s.members.len() as u64),
                                             budget: None,
                                             remaining: None,
-                                            source: AgentSource::Local,
+                                            source: if is_synced {
+                                                AgentSource::Synced
+                                            } else {
+                                                AgentSource::Local
+                                            },
+                                            cloud_workspace_id: s.cloud_workspace_id,
                                         })
                                     })
                                     .collect::<Vec<_>>();

@@ -82,11 +82,15 @@ pub(crate) struct SwarmCard {
     pub(crate) agent_count: Option<u64>,
     pub(crate) budget: Option<u64>,
     pub(crate) remaining: Option<u64>,
-    /// Where this swarm lives: `Cloud` (an ABW workspace) or `Local` (a
-    /// `LocalSwarmRegistry` entry). The backend mode toggle filters the
-    /// browse list by this field — ABW mode shows cloud swarms, Local mode
-    /// shows local swarms.
+    /// Where this swarm lives: `Cloud` (an ABW workspace), `Local` (a
+    /// `LocalSwarmRegistry` entry), or `Synced` (a local swarm with a
+    /// `cloud_workspace_id` link to an ABW workspace). The backend mode
+    /// toggle filters the browse list by this field.
     pub(crate) source: AgentSource,
+    /// The ABW workspace id this local swarm is synced with. `None` for
+    /// cloud-only and local-only swarms. Shown as a "synced with" badge
+    /// in the detail view.
+    pub(crate) cloud_workspace_id: Option<String>,
 }
 
 // ── MCP response structs (minimal, mirror hkask-mcp-swarm's tool output) ────
@@ -195,6 +199,11 @@ pub(crate) struct LocalSwarmInfo {
     pub(crate) mission: String,
     #[serde(default)]
     pub(crate) members: Vec<String>,
+    /// The ABW workspace id this local swarm is synced with. `None` =
+    /// local-only. Used to show a "synced with" badge and determine the
+    /// `AgentSource::Synced` badge for swarms.
+    #[serde(default)]
+    pub(crate) cloud_workspace_id: Option<String>,
 }
 
 /// The canonical list of tool names exposed by the `swarm` MCP server —
@@ -217,13 +226,14 @@ pub(crate) const KANBAN_TOOLS: &[&str] = &[
     "kanban_board_create",
     "kanban_board_list",
     "kanban_board_delete",
+    "kanban_board_export",
+    "kanban_board_import",
     // Task tools.
     "kanban_task_create",
     "kanban_task_list",
     "kanban_task_move",
     "kanban_task_assign",
     "kanban_task_verify",
-    "kanban_task_add_gas",
     "kanban_task_add_rjoules",
     "kanban_task_comment",
     "kanban_task_comments_since",

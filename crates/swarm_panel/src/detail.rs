@@ -67,6 +67,17 @@ impl SwarmPanel {
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
+            // Synced-with badge: shown when a local swarm has a cloud
+            // workspace link (set by push/pull). Surfaces the local↔cloud
+            // connection so the operator can see which ABW workspace this
+            // local swarm mirrors.
+            .when_some(detail.cloud_workspace_id.clone(), |this, cloud_id| {
+                this.child(
+                    Label::new(format!("synced with ABW: {}", cloud_id))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Accent),
+                )
+            })
             // ── Metadata: edit form or read-only mission ───────────────────
             .when(detail.editing_metadata, |this| {
                 this.child(

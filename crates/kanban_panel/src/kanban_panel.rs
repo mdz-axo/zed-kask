@@ -334,6 +334,7 @@ const ADVERTISED_KANBAN_TOOLS: &[&str] = &[
     "kanban_task_kata_coaching",
     "kanban_task_kata_improvement",
     "kanban_task_kata_practice",
+    "contract_propose_expect",
 ];
 
 fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
@@ -356,7 +357,8 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          **Communication**: `kanban_task_comment`, `kanban_task_comments_since`, `kanban_task_add_deliverable`.\n\
          **Swarm delegation**: `kanban_task_spawn` (delegates a task to a subagent or swarm agent), \
          `kanban_task_delegate_result` (reads the structured delegation result and verdict).\n\
-         **Kata coaching**: `kanban_task_kata_coaching`, `kanban_task_kata_improvement`, `kanban_task_kata_practice`.\n\
+         **Kata coaching**: `kanban_task_kata_coaching`, `kanban_task_kata_improvement`, `kanban_task_kata_practice`.
+         **Contract grounding**: `contract_propose_expect` (creates tasks for contracts missing expect: annotations).
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \
          cascade is available. Pass the board id so the cascade writes the durable link on every \

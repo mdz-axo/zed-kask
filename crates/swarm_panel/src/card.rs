@@ -263,10 +263,15 @@ impl SwarmPanel {
                 let detail_agent_count = swarm.agent_count;
                 let detail_budget = swarm.budget;
                 let detail_remaining = swarm.remaining;
+                let detail_cloud_workspace_id = swarm.cloud_workspace_id.clone();
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
                 let clone_id = swarm_id.clone();
                 let clone_is_local = swarm_source == AgentSource::Local;
+                let push_id = swarm_id.clone();
+                let pull_id = swarm_id.clone();
+                let show_push = clone_is_local;
+                let show_pull = !clone_is_local;
                 let panel_handle: WeakEntity<SwarmPanel> = cx.entity().downgrade();
                 MarketplaceCard::new().child(
                     h_flex()
@@ -315,6 +320,7 @@ impl SwarmPanel {
                                                 detail_agent_count,
                                                 detail_budget,
                                                 detail_remaining,
+                                                detail_cloud_workspace_id.clone(),
                                                 cx,
                                             );
                                         },
@@ -364,28 +370,33 @@ impl SwarmPanel {
                                             let panel_handle = panel_handle.clone();
                                             let clone_id = clone_id.clone();
                                             let clone_is_local = clone_is_local;
+                                            let push_id = push_id.clone();
+                                            let pull_id = pull_id.clone();
                                             Some(ContextMenu::build(
                                                 window,
                                                 cx,
                                                 |mut menu, _window, _cx| {
-                                                    let panel_handle =
-                                                        panel_handle.clone();
+                                                    // Clone all captures here so each
+                                                    // `move` entry closure owns its
+                                                    // own copy.
+                                                    let copy_handle = panel_handle.clone();
+                                                    let copy_id = clone_id.clone();
                                                     menu = menu.entry(
                                                         "Copy",
                                                         None,
                                                         move |_, cx| {
                                                             if let Some(panel) =
-                                                                panel_handle.upgrade()
+                                                                copy_handle.upgrade()
                                                             {
                                                                 panel.update(cx, |this, cx| {
                                                                     if clone_is_local {
                                                                         this.clone_local_swarm(
-                                                                            clone_id.clone(),
+                                                                            copy_id.clone(),
                                                                             cx,
                                                                         );
                                                                     } else {
-                                                                        // Cloud clone: open the
-                                                                        // detail — the Clone
+                                                                        // Cloud copy: open the
+                                                                        // detail — the Copy
                                                                         // button there pre-fills
                                                                         // Compose for review.
                                                                         if let Some(detail) =
@@ -401,6 +412,7 @@ impl SwarmPanel {
                                                                                 detail.agent_count,
                                                                                 detail.budget,
                                                                                 detail.remaining,
+                                                                                detail.cloud_workspace_id.clone(),
                                                                                 cx,
                                                                             );
                                                                         }
@@ -409,6 +421,46 @@ impl SwarmPanel {
                                                             }
                                                         },
                                                     );
+                                                    if show_push {
+                                                        let push_handle = panel_handle.clone();
+                                                        let push_id = push_id.clone();
+                                                        menu = menu.entry(
+                                                            "Push to Cloud",
+                                                            None,
+                                                            move |_, cx| {
+                                                                if let Some(panel) =
+                                                                    push_handle.upgrade()
+                                                                {
+                                                                    panel.update(cx, |this, cx| {
+                                                                        this.push_local_swarm_to_cloud(
+                                                                            push_id.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+                                                    }
+                                                    if show_pull {
+                                                        let pull_handle = panel_handle.clone();
+                                                        let pull_id = pull_id.clone();
+                                                        menu = menu.entry(
+                                                            "Copy to Local",
+                                                            None,
+                                                            move |_, cx| {
+                                                                if let Some(panel) =
+                                                                    pull_handle.upgrade()
+                                                                {
+                                                                    panel.update(cx, |this, cx| {
+                                                                        this.pull_cloud_swarm_to_local(
+                                                                            pull_id.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+                                                    }
                                                     menu
                                                 },
                                             ))

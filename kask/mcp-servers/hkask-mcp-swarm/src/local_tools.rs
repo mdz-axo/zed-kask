@@ -4,7 +4,7 @@
 //! `hkask_mcp_swarm.rs` (M2). All operate on the local registry/runtime; no
 //! ABW round-trips except `swarm_clone_to_local`/`swarm_push_to_cloud`.
 use crate::SwarmServer;
-use crate::abw_util::url_encode_segment;
+use crate::abw_util::{make_swarm_slug, url_encode_segment};
 use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
 use crate::local_knowledge;
 use crate::local_registry::{
@@ -12,6 +12,13 @@ use crate::local_registry::{
 };
 use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
 use crate::request_types::*;
+use crate::sanitize::{
+    filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
+    sanitize_workspace_payload,
+};
+use crate::spend_gate;
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 /// Task-set cap for `swarm_eval_agent_local`. Bounds one harness call's
 /// breadth; the total-rollout cap below bounds its depth × breadth.
@@ -27,11 +34,6 @@ pub const MAX_EVAL_REPEATS: u32 = 10;
 /// rollout is a real inference call with real token cost, so the product —
 /// not just the factors — needs a ceiling.
 pub const MAX_EVAL_ROLLOUTS: usize = 50;
-use crate::sanitize::{
-    filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
-};
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 /// Run a deterministic evaluator check against a response. Shared by
 /// `swarm_evaluate_local` and `swarm_execute_plan_local` so the evaluation
@@ -119,6 +121,36 @@ fn eval_task_report(
         "pass_rate_std_error": std_error,
         "mean_latency_ms": mean_latency_ms,
     })
+}
+
+/// Extract agent ids from an ABW workspace payload's roster. The roster
+/// shape varies (top-level `agents`, nested `workspace.agents`, `team.agents`,
+/// etc.) — this mirrors the panel's `parse_swarm_roster` candidate paths.
+/// Returns an empty vec when no roster is found (the local swarm is created
+/// with an empty roster; the operator can add agents manually).
+fn extract_roster_member_ids(workspace: &serde_json::Value) -> Vec<String> {
+    let candidates = [
+        workspace.get("agents"),
+        workspace.get("workspace").and_then(|w| w.get("agents")),
+        workspace.get("team").and_then(|t| t.get("agents")),
+        workspace
+            .get("workspace")
+            .and_then(|w| w.get("team"))
+            .and_then(|t| t.get("agents")),
+    ];
+    let agents = match candidates.into_iter().find_map(|c| c?.as_array()) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+    agents
+        .iter()
+        .filter_map(|a| {
+            a.get("agent_id")
+                .or_else(|| a.get("agent_name"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .collect()
 }
 
 #[tool_router(router = local_router, vis = "pub")]
@@ -1304,7 +1336,229 @@ impl SwarmServer {
         .await
     }
 
-    /// AI assist for the swarm panel authoring forms — suggests completions for
+    /// Push a local swarm to ABW: create an ABW workspace from the local
+    /// swarm's name, mission, and roster, hiring each member agent with a
+    /// consent token. On success, the ABW `workspace_id` is stored back on
+    /// the local swarm's `cloud_workspace_id` so the local↔cloud link is
+    /// tracked. Requires ABW API key + consent tokens for each member.
+    #[tool(
+        description = "Push a local swarm to ABW: creates an ABW workspace from the local swarm's name, mission, and roster. Each member agent hire is consent-gated. On success, stores the ABW workspace_id back on the local swarm. Requires ABW API key."
+    )]
+    pub(crate) async fn swarm_push_local_swarm(
+        &self,
+        parameters: Parameters<PushLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_push_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+                })?;
+
+                // Create the ABW workspace (free) — same pattern as
+                // `swarm_create_swarm`.
+                let slug_base: String = swarm
+                    .name
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect();
+                let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
+                let team = self
+                    .client
+                    .post(
+                        "/teams",
+                        &serde_json::json!({
+                            "name": swarm.name,
+                            "slug": slug,
+                            "description": swarm.mission,
+                            "mission": swarm.mission,
+                        }),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+
+                let workspace_id = team
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        SwarmError::ApiVersionMismatch("team create returned no id".to_string())
+                            .into_tool_error()
+                    })?;
+
+                // Hire each member agent, gated by consent tokens. Same
+                // spend_gate flow as `swarm_create_swarm`. A missing token for
+                // an agent is reported in hire_errors, not a hard abort — the
+                // workspace is already created.
+                let tokens = &req.consent_tokens;
+                let mut hired = Vec::new();
+                let mut hire_errors = Vec::new();
+                for (ix, agent) in swarm.members.iter().enumerate() {
+                    let spend_auth = match tokens.get(ix) {
+                        Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
+                        None => {
+                            hire_errors.push(serde_json::json!({
+                                "agent": agent,
+                                "error": "no consent token provided for this hire",
+                            }));
+                            continue;
+                        }
+                    };
+                    match spend_gate::authorize_hire(
+                        &self.client,
+                        &self.consent,
+                        spend_auth,
+                        agent,
+                        0,
+                        None,
+                        false,
+                    )
+                    .await
+                    {
+                        Ok(auth) => match spend_gate::complete_hire(
+                            &self.client,
+                            &self.consent,
+                            auth,
+                            &workspace_id,
+                            agent,
+                            false,
+                        )
+                        .await
+                        {
+                            Ok(_) => hired.push(agent.clone()),
+                            Err(e) => hire_errors.push(serde_json::json!({
+                                "agent": agent,
+                                "error": e.to_string(),
+                            })),
+                        },
+                        Err(e) => hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": e.to_string(),
+                        })),
+                    }
+                }
+
+                // Store the ABW workspace_id back on the local swarm so the
+                // local↔cloud link is tracked. A failure here is logged, not
+                // fatal — the workspace was created; the link can be set
+                // manually.
+                if let Err(e) = self
+                    .local_swarms
+                    .set_cloud_workspace_id(&req.swarm_id, Some(workspace_id.clone()))
+                {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        "failed to store cloud_workspace_id on local swarm '{}': {e}",
+                        req.swarm_id
+                    );
+                }
+
+                Ok(self
+                    .client
+                    .with_wallet(serde_json::json!({
+                        "workspace_id": workspace_id,
+                        "local_swarm_id": req.swarm_id,
+                        "hired": hired,
+                        "hire_errors": hire_errors,
+                    }))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Pull an ABW workspace to local: read the ABW workspace's name, mission,
+    /// and roster, then create a local swarm copy. No consent token — local
+    /// creates are free. Member ids (ABW agent names) are copied as-is into
+    /// the local roster. On success, the ABW `workspace_id` is stored on the
+    /// new local swarm's `cloud_workspace_id`.
+    #[tool(
+        description = "Pull an ABW workspace to local: creates a local swarm copy from an ABW workspace's name, mission, and roster. No cost, no consent. Stores the ABW workspace_id on the new local swarm for link tracking."
+    )]
+    pub(crate) async fn swarm_pull_swarm_to_local(
+        &self,
+        parameters: Parameters<PullSwarmToLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_pull_swarm_to_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+
+                // Fetch the ABW workspace.
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                let workspace = sanitize_workspace_payload(data);
+
+                // Extract name, mission, and roster from the workspace payload.
+                // The roster shape varies (see `parse_swarm_roster` in the
+                // panel); extract agent ids defensively.
+                let name = workspace
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Pulled Swarm")
+                    .to_string();
+                let mission = workspace
+                    .get("mission")
+                    .or_else(|| workspace.get("description"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let members = extract_roster_member_ids(&workspace);
+
+                // Create the local swarm copy.
+                let swarm = self
+                    .local_swarms
+                    .create(&name, &mission, members)
+                    .map_err(map_local_swarm_error)?;
+
+                // Store the ABW workspace_id on the new local swarm.
+                let swarm = self
+                    .local_swarms
+                    .set_cloud_workspace_id(
+                        &swarm.swarm_id,
+                        Some(req.workspace_id.clone()),
+                    )
+                    .map_err(map_local_swarm_error)?;
+
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "swarm_id": swarm.swarm_id,
+                        "name": swarm.name,
+                        "cloud_workspace_id": req.workspace_id,
+                    })
+                }))
+            },
+        )
+        .await
+    }
     /// partial inputs or validates well-formedness. Authoring aid — read-only,
     /// spends nothing. Uses the inference port directly to generate composition
     /// guidance from the form fields.

@@ -32,6 +32,7 @@ impl SwarmPanel {
         agent_count: Option<u64>,
         budget: Option<u64>,
         remaining: Option<u64>,
+        cloud_workspace_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
@@ -52,6 +53,7 @@ impl SwarmPanel {
             error: None,
             agents: Vec::new(),
             editing_metadata: false,
+            cloud_workspace_id,
         });
         cx.notify();
         cx.spawn({
@@ -352,6 +354,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
+                                    detail.cloud_workspace_id.clone(),
                                     cx,
                                 );
                             }
@@ -408,6 +411,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
+                                    detail.cloud_workspace_id.clone(),
                                     cx,
                                 );
                             }
@@ -464,6 +468,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
+                                    detail.cloud_workspace_id.clone(),
                                     cx,
                                 );
                             }
@@ -806,6 +811,7 @@ impl SwarmPanel {
                                     detail.agent_count,
                                     detail.budget,
                                     detail.remaining,
+                                    detail.cloud_workspace_id.clone(),
                                     cx,
                                 );
                             }
@@ -910,5 +916,243 @@ impl SwarmPanel {
         self.close_swarm_detail(cx);
         self.set_mode(crate::PanelMode::Compose, window, cx);
         cx.notify();
+    }
+
+    // ── Push local swarm to cloud ────────────────────────────────────────────
+
+    /// Push a local swarm to ABW. Calls `swarm_push_local_swarm` which creates
+    /// an ABW workspace from the local swarm's name, mission, and roster.
+    /// Consent tokens for member hires are minted first (same flow as
+    /// `create_swarm`). On success, re-fetches so the swarm list shows the
+    /// updated `cloud_workspace_id` link.
+    pub(crate) fn push_local_swarm_to_cloud(
+        &mut self,
+        swarm_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+
+        // Fetch the local swarm to get its members for consent minting.
+        let invoker_clone = invoker.clone();
+        self.spend.in_flight = Some(format!("push-swarm-{swarm_id}"));
+        cx.notify();
+        cx.spawn({
+            let swarm_id = swarm_id.clone();
+            async move |this, cx| {
+                // Step 1: fetch the local swarm to get its members.
+                let swarm_result = invoker_clone
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_get_local_swarm",
+                        json!({ "swarm_id": swarm_id }),
+                    )
+                    .await;
+
+                let members: Vec<String> = match swarm_result {
+                    Ok(output) => parse_tool_response(&output)
+                        .and_then(|c| {
+                            c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                members
+                                    .iter()
+                                    .filter_map(|m| m.as_str().map(str::to_string))
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .unwrap_or_default(),
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            this.spend.in_flight = None;
+                            this.spend.hire_error =
+                                Some(format!("Failed to fetch local swarm: {err}").into());
+                            cx.notify();
+                        })
+                        .ok();
+                        return;
+                    }
+                };
+
+                // Step 2: mint consent tokens for each member agent.
+                let mut consent_tokens = Vec::new();
+                let mut consent_failures = Vec::new();
+                for agent in &members {
+                    let cost_result = invoker_clone
+                        .invoke_tool(
+                            SWARM_SERVER,
+                            "swarm_hire_cost",
+                            json!({ "agent_name": agent }),
+                        )
+                        .await;
+                    let credits = match cost_result {
+                        Ok(output) => parse_tool_response(&output).and_then(|c| {
+                            c.get("total_hire_cost").and_then(|v| v.as_u64())
+                        }).map(|c| c as u32),
+                        Err(err) => {
+                            log::warn!("swarm-panel: hire cost fetch for '{agent}' failed: {err}");
+                            consent_failures.push(agent.clone());
+                            continue;
+                        }
+                    };
+                    let Some(credits) = credits else {
+                        log::warn!("swarm-panel: hire cost fetch for '{agent}' returned no total_hire_cost");
+                        consent_failures.push(agent.clone());
+                        continue;
+                    };
+                    match invoker_clone
+                        .invoke_tool(
+                            SWARM_SERVER,
+                            "swarm_request_consent",
+                            json!({ "action": "hire", "target": agent, "credits_authorized": credits }),
+                        )
+                        .await
+                    {
+                        Ok(output) => {
+                            let token = parse_tool_response(&output).and_then(|c| {
+                                c.get("consent_token")
+                                    .and_then(|t| t.as_str())
+                                    .map(str::to_string)
+                            });
+                            match token {
+                                Some(t) => consent_tokens.push(t),
+                                None => {
+                                    log::warn!("swarm-panel: consent mint for '{agent}' returned no token");
+                                    consent_failures.push(agent.clone());
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            log::warn!("swarm-panel: consent mint for '{agent}' failed: {err}");
+                            consent_failures.push(agent.clone());
+                        }
+                    }
+                }
+
+                if !consent_failures.is_empty() {
+                    this.update(cx, |this, cx| {
+                        this.spend.in_flight = None;
+                        this.spend.hire_error = Some(
+                            format!(
+                                "Consent failed for {} — swarm not pushed.",
+                                consent_failures.join(", ")
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+
+                // Step 3: push the swarm.
+                let result = invoker_clone
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_push_local_swarm",
+                        json!({
+                            "swarm_id": swarm_id,
+                            "consent_tokens": consent_tokens,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend.in_flight = None;
+                    match result {
+                        Ok(output) => {
+                            if let Some(b) = extract_wallet_balance(&output) {
+                                this.spend.wallet_balance = Some(b);
+                            }
+                            let hire_errors = parse_tool_response(&output)
+                                .and_then(|c| {
+                                    c.get("hire_errors")
+                                        .and_then(|e| e.as_array())
+                                        .cloned()
+                                })
+                                .unwrap_or_default();
+                            if hire_errors.is_empty() {
+                                this.spend.hire_error =
+                                    Some("Swarm pushed to ABW.".into());
+                            } else {
+                                let failed: Vec<String> = hire_errors
+                                    .iter()
+                                    .filter_map(|e| {
+                                        e.get("agent").and_then(|a| a.as_str()).map(str::to_string)
+                                    })
+                                    .collect();
+                                this.spend.hire_error = Some(format!(
+                                    "Swarm pushed to ABW, but {} hire(s) failed: {}",
+                                    failed.len(),
+                                    failed.join(", ")
+                                ).into());
+                            }
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.spend.hire_error =
+                                Some(format!("Failed to push swarm to ABW: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ── Pull ABW swarm to local ──────────────────────────────────────────────
+
+    /// Pull an ABW workspace to local. Calls `swarm_pull_swarm_to_local` which
+    /// reads the ABW workspace and creates a local swarm copy. No consent
+    /// needed (local creates are free). On success, re-fetches so the new local
+    /// swarm appears in the list.
+    pub(crate) fn pull_cloud_swarm_to_local(
+        &mut self,
+        workspace_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend.in_flight = Some(format!("pull-swarm-{workspace_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_pull_swarm_to_local",
+                        json!({ "workspace_id": workspace_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend.in_flight = None;
+                    match result {
+                        Ok(output) => {
+                            let local_id = parse_tool_response(&output).and_then(|c| {
+                                c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string)
+                            });
+                            this.fetch_all(cx);
+                            this.spend.hire_error = Some(format!(
+                                "Pulled ABW swarm to local{}.",
+                                local_id.map(|id| format!(": {id}")).unwrap_or_default()
+                            ).into());
+                        }
+                        Err(err) => {
+                            this.spend.hire_error =
+                                Some(format!("Failed to pull ABW swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }

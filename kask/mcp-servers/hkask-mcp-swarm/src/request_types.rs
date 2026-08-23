@@ -608,6 +608,33 @@ pub struct CloneLocalSwarmRequest {
     pub swarm_id: String,
 }
 
+/// Push a local swarm to ABW: create an ABW workspace from the local swarm's
+/// name, mission, and roster. Each member agent needs a consent token to hire
+/// (same consent flow as `swarm_create_swarm`). On success, the ABW
+/// `workspace_id` is stored back on the local swarm's `cloud_workspace_id`
+/// field so the local↔cloud link is tracked. Member agents that fail consent
+/// or hire are reported in `hire_errors` — the workspace is still created.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PushLocalSwarmRequest {
+    /// The local `swarm_id` to push to ABW.
+    pub swarm_id: String,
+    /// Consent tokens for each member agent hire (one per agent, same order as
+    /// the roster). Minted via `swarm_request_consent` with action "hire".
+    #[serde(default)]
+    pub consent_tokens: Vec<String>,
+}
+
+/// Pull an ABW workspace to local: read the ABW workspace's name, mission, and
+/// roster, then create a local swarm copy. No consent token — local creates
+/// are free. Member ids (ABW agent names) are copied as-is into the local
+/// roster. On success, the ABW `workspace_id` is stored on the new local
+/// swarm's `cloud_workspace_id` field.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PullSwarmToLocalRequest {
+    /// The ABW workspace id to pull from.
+    pub workspace_id: String,
+}
+
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FireRequest {

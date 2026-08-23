@@ -764,6 +764,10 @@ struct SwarmDetailView {
     /// ABW has no metadata-edit endpoint. Toggled by the "Edit" button in
     /// the detail header.
     editing_metadata: bool,
+    /// The ABW workspace id this local swarm is synced with. `None` for
+    /// local-only and cloud-only swarms. Shown as a "synced with" badge in
+    /// the detail header.
+    cloud_workspace_id: Option<String>,
 }
 
 /// A swarm's recent run status (ABW workspace messages). Rendered as a
@@ -2230,13 +2234,17 @@ impl SwarmPanel {
                         SwarmEntry::Agent(a) => {
                             a.source == AgentSource::Cloud || a.source == AgentSource::Synced
                         }
-                        SwarmEntry::Swarm(s) => s.source == AgentSource::Cloud,
+                        SwarmEntry::Swarm(s) => {
+                            s.source == AgentSource::Cloud || s.source == AgentSource::Synced
+                        }
                     },
                     SourceFilter::Local => match entry {
                         SwarmEntry::Agent(a) => {
                             a.source == AgentSource::Local || a.source == AgentSource::Synced
                         }
-                        SwarmEntry::Swarm(s) => s.source == AgentSource::Local,
+                        SwarmEntry::Swarm(s) => {
+                            s.source == AgentSource::Local || s.source == AgentSource::Synced
+                        }
                     },
                 };
                 if !source_matches {
@@ -4231,7 +4239,7 @@ mod tests {
         // the const is caught.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            23,
+            24,
             "tool count changed — update KANBAN_TOOLS to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );
