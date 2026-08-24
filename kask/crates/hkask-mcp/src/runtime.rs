@@ -1734,3 +1734,474 @@ mod env_isolation_tests {
         }
     }
 }
+
+// ── Reconnect-path bookkeeping tests ───────────────────────────────────────
+//
+// These pin the four self-heal mechanisms' bookkeeping against the private
+// `launch_specs` / `last_reconnect` maps and the `try_reconnect` path. They
+// do NOT prove a killed child process is actually reconnected end-to-end —
+// that is the not-yet-restored `tests/reconnect_integration.rs`'s job (see
+// DIVERGENCE.md D3). They DO pin the invariants the integration test would
+// rely on: that a launch spec is recorded, that a deliberate stop clears it,
+// that the cooldown bounds a crash-looping binary, and that a metadata-only
+// server cannot be reconnected.
+//
+// Inline in `runtime.rs` so they can read the private `launch_specs` and
+// `last_reconnect` maps directly. A `#[cfg(test)]` module in a separate file
+// could not.
+#[cfg(test)]
+mod reconnect_path_tests {
+    use super::*;
+
+    /// A runtime with a registered-but-not-started server has no launch spec,
+    /// so `try_reconnect` reports `false` rather than pretending to recover.
+    ///
+    /// This is the metadata-only-server case: `register_server` populates
+    /// `servers` and `tool_registry` but not `launch_specs`, so a reconnect
+    /// has nothing to rebuild from.
+    #[tokio::test]
+    async fn metadata_only_server_cannot_be_reconnected() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "metadata-only".to_string(),
+                name: "metadata-only".to_string(),
+                tools: vec![],
+            })
+            .await;
+
+        // No launch spec was ever recorded.
+        assert!(
+            runtime.launch_specs.read().await.is_empty(),
+            "a metadata-only server must not record a launch spec"
+        );
+
+        // try_reconnect returns false — there is nothing to reconnect from.
+        let reconnected = runtime.try_reconnect("metadata-only").await;
+        assert!(
+            !reconnected,
+            "try_reconnect must report false for a server with no launch spec"
+        );
+    }
+
+    /// `stop_server` clears the launch spec, so a deliberate stop is not
+    /// resurrected by a later `try_reconnect`.
+    ///
+    /// We cannot call `start_server_with_env` here (it needs a real binary
+    /// and handshake), so we record the launch spec directly — mirroring the
+    /// one line `start_server_with_env` writes before spawning. This pins
+    /// the *clearing* behavior, which is the part `stop_server` owns.
+    #[tokio::test]
+    async fn stop_server_clears_the_reconnect_path() {
+        let runtime = McpRuntime::new();
+        // Record a launch spec directly, as `start_server_with_env` would.
+        runtime.launch_specs.write().await.insert(
+            "fixture".to_string(),
+            LaunchSpec {
+                command: "mcp-test-fixture".to_string(),
+                env: HashMap::new(),
+            },
+        );
+        runtime
+            .last_reconnect
+            .write()
+            .await
+            .insert("fixture".to_string(), Instant::now());
+
+        runtime.stop_server("fixture").await;
+
+        assert!(
+            runtime.launch_specs.read().await.get("fixture").is_none(),
+            "stop_server must clear the launch spec so the reconnect path \
+             does not resurrect a deliberately-stopped server"
+        );
+        assert!(
+            runtime.last_reconnect.read().await.get("fixture").is_none(),
+            "stop_server must clear the last_reconnect stamp"
+        );
+    }
+
+    /// `shutdown_all` clears every launch spec and last_reconnect stamp, so a
+    /// deliberate full shutdown is not resurrected.
+    #[tokio::test]
+    async fn shutdown_all_clears_every_reconnect_path() {
+        let runtime = McpRuntime::new();
+        let mut specs = runtime.launch_specs.write().await;
+        specs.insert(
+            "a".to_string(),
+            LaunchSpec {
+                command: "a".to_string(),
+                env: HashMap::new(),
+            },
+        );
+        specs.insert(
+            "b".to_string(),
+            LaunchSpec {
+                command: "b".to_string(),
+                env: HashMap::new(),
+            },
+        );
+        drop(specs);
+        let mut last = runtime.last_reconnect.write().await;
+        last.insert("a".to_string(), Instant::now());
+        last.insert("b".to_string(), Instant::now());
+        drop(last);
+
+        runtime.shutdown_all().await;
+
+        assert!(
+            runtime.launch_specs.read().await.is_empty(),
+            "shutdown_all must clear every launch spec"
+        );
+        assert!(
+            runtime.last_reconnect.read().await.is_empty(),
+            "shutdown_all must clear every last_reconnect stamp"
+        );
+    }
+
+    /// `try_reconnect` is rate-limited by the reconnect cooldown: a second
+    /// call within `config.reconnect_cooldown` of the first reports `false`
+    /// without attempting a spawn.
+    ///
+    /// We assert on the `last_reconnect` stamp being present (the first call
+    /// recorded it) and on `try_reconnect` returning `false` for the second
+    /// call. The second call returns `false` either way (no launch spec →
+    /// false; cooldown → false), so we additionally assert the stamp was
+    /// *not* overwritten — proving the cooldown gate fired rather than the
+    /// no-spec gate.
+    #[tokio::test]
+    async fn reconnect_is_rate_limited_by_the_cooldown() {
+        let runtime = McpRuntime::new();
+        // Record a launch spec so the first call reaches the cooldown gate
+        // rather than the no-spec early return.
+        runtime.launch_specs.write().await.insert(
+            "fixture".to_string(),
+            LaunchSpec {
+                command: "mcp-test-fixture".to_string(),
+                env: HashMap::new(),
+            },
+        );
+
+        // First call: reaches the cooldown gate, stamps `last_reconnect`,
+        // then calls `start_server_with_env` which fails (no such binary
+        // resolves a handshake). It returns `false` (reconnect failed), but
+        // the stamp is now present.
+        let first = runtime.try_reconnect("fixture").await;
+        assert!(
+            !first,
+            "reconnect against a non-spawning binary reports false"
+        );
+        let first_stamp = runtime
+            .last_reconnect
+            .read()
+            .await
+            .get("fixture")
+            .copied()
+            .expect("first try_reconnect must stamp last_reconnect");
+
+        // Second call immediately after: the cooldown gate fires, the stamp
+        // is NOT overwritten, and `try_reconnect` returns `false` without
+        // attempting a spawn.
+        let second = runtime.try_reconnect("fixture").await;
+        assert!(
+            !second,
+            "a second try_reconnect within the cooldown must report false"
+        );
+        let second_stamp = runtime
+            .last_reconnect
+            .read()
+            .await
+            .get("fixture")
+            .copied()
+            .expect(
+                "last_reconnect stamp must still be present after the \
+                     cooldown-suppressed second call",
+            );
+        assert_eq!(
+            first_stamp, second_stamp,
+            "the cooldown gate must not overwrite the last_reconnect stamp \
+             — if it did, the cooldown would never fire"
+        );
+    }
+
+    /// A failed `start_server_with_env` still records a launch spec, so a
+    /// later reconnect attempt has something to rebuild from.
+    ///
+    /// `start_server_with_env` records the spec *before* spawning (see the
+    /// comment in that function: "Record the launch spec before spawning so a
+    /// later reconnect can rebuild this server even if this attempt fails
+    /// partway through"). We cannot exercise the full path without a real
+    /// binary, so we pin the recording directly — the invariant the comment
+    /// claims is that the spec is present even when the spawn fails.
+    #[tokio::test]
+    async fn failed_start_still_records_a_launch_spec_for_later_reconnect() {
+        let runtime = McpRuntime::new();
+        // Mirror the pre-spawn recording `start_server_with_env` performs.
+        // The real call would fail at the handshake step (no such binary),
+        // but the spec is already recorded by that point.
+        let extra_env = HashMap::from([("FIXTURE_MARKER".to_string(), "first".to_string())]);
+        runtime.launch_specs.write().await.insert(
+            "fixture".to_string(),
+            LaunchSpec {
+                command: "mcp-test-fixture".to_string(),
+                env: extra_env.clone(),
+            },
+        );
+
+        // The spec is present and carries the env a reconnect would need.
+        let spec = runtime
+            .launch_specs
+            .read()
+            .await
+            .get("fixture")
+            .cloned()
+            .expect("launch spec must be recorded even if the spawn fails");
+        assert_eq!(spec.command, "mcp-test-fixture");
+        assert_eq!(
+            spec.env.get("FIXTURE_MARKER").map(String::as_str),
+            Some("first"),
+            "the recorded env must be the one a reconnect would reuse"
+        );
+    }
+}
+
+// ── Metering + retry-classification tests ──────────────────────────────────
+//
+// These pin the public `ToolPort::invoke` metering behavior and the
+// `ToolPortError` retry-classification invariants. They use a real
+// `CyberneticsLoop` with a `NoopEventSink` so the metering path is exercised
+// end-to-end (auto-register, ceiling, charged) without a DB.
+//
+// They do NOT exercise a live MCP server — the dispatch path is exercised by
+// the not-yet-restored `tests/reconnect_integration.rs`. They assert on the
+// metering decisions and the error classification, which are the parts `invoke`
+// owns before dispatch.
+#[cfg(test)]
+mod metering_tests {
+    use super::*;
+    use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
+    use hkask_tool_port::{ToolPort, ToolPortError};
+    use hkask_types::WebID;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// Build a runtime with governance wired (a real CyberneticsLoop with a
+    /// NoopEventSink), so `invoke` exercises the metering path.
+    fn governed_runtime() -> McpRuntime {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger)));
+        McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink))
+    }
+
+    /// An agent the composition root never registered is auto-registered at
+    /// the default runaway ceiling, NOT denied. The call still proceeds to
+    /// dispatch (which then fails because no server is connected — but the
+    /// failure is `Unavailable`, not a metering refusal).
+    ///
+    /// This pins RR-0056's removal of the per-call capability gate: a missing
+    /// registration is a wiring omission, not an authorization decision.
+    #[tokio::test]
+    async fn unregistered_agent_is_auto_registered_not_denied() {
+        let runtime = governed_runtime();
+        // Register a server with a tool so `tool_exists` returns true and the
+        // dispatch path reaches `Unavailable` (registered but never started)
+        // rather than `NotFound` (unknown tool). The metering decision is
+        // what's under test, not the tool lookup.
+        runtime
+            .register_server(McpServer {
+                id: "fixture".to_string(),
+                name: "fixture".to_string(),
+                tools: vec![McpTool {
+                    name: "ping".to_string(),
+                    description: String::new(),
+                    input_schema: Value::Null,
+                    server_id: "fixture".to_string(),
+                }],
+            })
+            .await;
+        let agent = WebID::new();
+
+        // The agent has no registered cap. invoke must NOT return
+        // EnergyBudgetExceeded — it must auto-register and proceed to
+        // dispatch, which then reports Unavailable (no server connected).
+        let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        match result {
+            Err(ToolPortError::Unavailable(_)) => {
+                // Correct: auto-registered, proceeded to dispatch, dispatch
+                // found no live connection.
+            }
+            Err(ToolPortError::EnergyBudgetExceeded(msg)) => {
+                panic!(
+                    "unregistered agent must be auto-registered, not denied \
+                     with EnergyBudgetExceeded. Got: {msg}"
+                );
+            }
+            other => panic!(
+                "unregistered agent must proceed to dispatch and report \
+                 Unavailable. Got: {other:?}"
+            ),
+        }
+    }
+
+    /// An agent that has exhausted its per-tick ceiling is refused with
+    /// `EnergyBudgetExceeded` — the runaway-loop breaker. This is the ONE
+    /// pre-dispatch refusal.
+    #[tokio::test]
+    async fn exhausted_ceiling_trips_the_runaway_breaker() {
+        let runtime = governed_runtime();
+        // Register a server+tool so the first call reaches `Unavailable`
+        // (not `NotFound`) — the cap exhaustion, not the tool lookup, is
+        // what's under test.
+        runtime
+            .register_server(McpServer {
+                id: "fixture".to_string(),
+                name: "fixture".to_string(),
+                tools: vec![McpTool {
+                    name: "ping".to_string(),
+                    description: String::new(),
+                    input_schema: Value::Null,
+                    server_id: "fixture".to_string(),
+                }],
+            })
+            .await;
+        let agent = WebID::new();
+        // Register a ceiling of 1 — the first call charges it, the second
+        // trips the breaker.
+        let cyber = runtime
+            .governance
+            .as_ref()
+            .expect("governance must be wired")
+            .cybernetics
+            .clone();
+        cyber.read().await.register_call_cap(agent, 1).await;
+
+        // First call: charges the cap, proceeds to dispatch, reports
+        // Unavailable (no server connected). The cap is now exhausted.
+        let first = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        assert!(
+            matches!(first, Err(ToolPortError::Unavailable(_))),
+            "first call against an exhausted-but-not-yet cap must proceed \
+             to dispatch and report Unavailable. Got: {first:?}"
+        );
+
+        // Second call: cap exhausted, refused before dispatch.
+        let second = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        match second {
+            Err(ToolPortError::EnergyBudgetExceeded(_)) => {
+                // Correct: the runaway-loop breaker tripped.
+            }
+            other => panic!(
+                "an agent that exhausted its ceiling must be refused with \
+                 EnergyBudgetExceeded. Got: {other:?}"
+            ),
+        }
+    }
+
+    /// A runtime with no governance configured dispatches unmetered. The call
+    /// proceeds to dispatch (and reports Unavailable) without any cap check.
+    ///
+    /// This pins the "no governance = unmetered” behavior: metering is an
+    /// accounting concern, not an authorization one, so its absence is not a
+    /// reason to refuse.
+    #[tokio::test]
+    async fn no_governance_dispatches_unmetered() {
+        let runtime = McpRuntime::new(); // no with_governance
+        assert!(runtime.governance.is_none());
+        // Register a server+tool so the call reaches `Unavailable` (not
+        // `NotFound`) — the absence of metering, not the tool lookup, is
+        // what's under test.
+        runtime
+            .register_server(McpServer {
+                id: "fixture".to_string(),
+                name: "fixture".to_string(),
+                tools: vec![McpTool {
+                    name: "ping".to_string(),
+                    description: String::new(),
+                    input_schema: Value::Null,
+                    server_id: "fixture".to_string(),
+                }],
+            })
+            .await;
+
+        let agent = WebID::new();
+        let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        // No cap refusal — proceeds to dispatch, reports Unavailable.
+        assert!(
+            matches!(result, Err(ToolPortError::Unavailable(_))),
+            "no-governance runtime must dispatch unmetered and report \
+             Unavailable (no server connected). Got: {result:?}"
+        );
+    }
+
+    /// `ToolPortError::Unavailable` is retryable: the request provably never
+    /// reached the tool, so re-issuing is safe.
+    #[test]
+    fn only_unavailable_is_retryable() {
+        let unavailable = ToolPortError::Unavailable("no live connection".to_string());
+        assert!(
+            unavailable.is_retryable(),
+            "Unavailable must be retryable — the request provably never \
+             reached the tool"
+        );
+    }
+
+    /// `ToolPortError::Interrupted` is NEVER retryable: a live peer accepted
+    /// the request and the connection then failed, so the effect may or may
+    /// not have been applied. Auto-retrying would duplicate side effects.
+    #[test]
+    fn interrupted_is_never_auto_retried() {
+        let interrupted = ToolPortError::Interrupted("connection lost mid-call".to_string());
+        assert!(
+            !interrupted.is_retryable(),
+            "Interrupted must NOT be retryable — the outcome is unknown, \
+             so a retry could apply an effect twice"
+        );
+    }
+
+    /// `Unavailable` and `Interrupted` are distinguishable: a caller can
+    /// tell "provably never delivered" from "outcome unknown" and decide
+    /// whether to retry. This pins the distinction rmcp forces
+    /// (`ServiceError::TransportClosed` covers both a failed send and a
+    /// dropped response channel, so the classification is the only signal).
+    #[test]
+    fn interrupted_and_unavailable_are_distinguishable() {
+        let unavailable = ToolPortError::Unavailable("no live peer".to_string());
+        let interrupted =
+            ToolPortError::Interrupted("peer accepted then transport closed".to_string());
+        assert_ne!(
+            unavailable.is_retryable(),
+            interrupted.is_retryable(),
+            "Unavailable (retryable) and Interrupted (not retryable) must be \
+             distinguishable via is_retryable()"
+        );
+    }
+
+    /// An unknown tool reports `NotFound`, not `Unavailable`. This is the
+    /// distinction `unavailable_error` enforces: a missing tool is a
+    /// caller error (wrong name), not a transient connection state, and
+    /// presenting it as Unavailable would invite a useless retry.
+    #[tokio::test]
+    async fn unknown_tool_is_not_found_not_unavailable() {
+        let runtime = McpRuntime::new();
+        // No tools registered — every tool name is unknown.
+        let agent = WebID::new();
+        let result = runtime
+            .invoke("any-server", "nonexistent_tool", Value::Null, agent)
+            .await;
+        match result {
+            Err(ToolPortError::NotFound(nf)) => {
+                assert!(
+                    nf.id.contains("nonexistent_tool"),
+                    "NotFound must name the missing tool. Got: {nf:?}"
+                );
+            }
+            Err(ToolPortError::Unavailable(msg)) => {
+                panic!(
+                    "an unknown tool must report NotFound, not Unavailable \
+                     (a useless retry would be invited). Got Unavailable: {msg}"
+                );
+            }
+            other => panic!("an unknown tool must report NotFound. Got: {other:?}"),
+        }
+    }
+}

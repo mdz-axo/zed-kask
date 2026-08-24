@@ -1641,6 +1641,10 @@ pub struct KaskGeneralSettingsContent {
     /// at `concurrency_step` permits and adds `concurrency_step` per ramp
     /// tick on success until `max_concurrency` or a throttle. Default 4.
     pub concurrency_step: Option<u32>,
+
+    /// Wall-clock timeout for a single inference call. 0 disables (legacy
+    /// behavior). Default 300 (5 minutes).
+    pub inference_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

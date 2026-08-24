@@ -23,7 +23,9 @@ pub mod error;
 pub mod keychain;
 pub mod keychain_keys;
 pub mod master_key;
+pub mod passphrase;
 
 pub use encryption::derive_key;
 pub use error::KeystoreError;
 pub use keychain::{Keychain, KeychainError, resolve};
+pub use passphrase::generate_random_passphrase;

@@ -113,6 +113,13 @@ pub struct KaskGeneralSettings {
     /// at `concurrency_step` permits and adds `concurrency_step` per ramp
     /// tick on success until `max_concurrency` or a throttle. Default 4.
     pub concurrency_step: u32,
+
+    /// Wall-clock timeout for a single inference call (stream establishment +
+    /// event drain). A hung provider stalls the request indefinitely without
+    /// this — the cybernetics variety check flagged this as a critical gap
+    /// (disturbance class D2: provider timeout, no response). 0 disables the
+    /// timeout (legacy behavior). Default 300 (5 minutes).
+    pub inference_timeout_secs: u64,
 }
 
 impl Default for KaskGeneralSettings {
@@ -120,6 +127,7 @@ impl Default for KaskGeneralSettings {
         Self {
             max_concurrency: 96,
             concurrency_step: 4,
+            inference_timeout_secs: 300,
         }
     }
 }
@@ -1175,7 +1183,9 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
         // Treat 0 as "use default" — a user setting `max_concurrency: 0` would
         // construct a limiter that admits no permits, deadlocking every
         // inference call. Same for `concurrency_step: 0` (the ramp origin
-        // and increment must be ≥ 1).
+        // and increment must be ≥ 1). `inference_timeout_secs: 0` is the
+        // legitimate "disable timeout" value (legacy behavior), so it
+        // passes through without the filter.
         Self {
             max_concurrency: c
                 .max_concurrency
@@ -1185,6 +1195,9 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
                 .concurrency_step
                 .filter(|&v| v > 0)
                 .unwrap_or(default.concurrency_step),
+            inference_timeout_secs: c
+                .inference_timeout_secs
+                .unwrap_or(default.inference_timeout_secs),
         }
     }
 }

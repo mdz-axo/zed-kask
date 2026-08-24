@@ -13,8 +13,9 @@
 //! struct itself only holds channel senders (`Send + Sync`).
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use futures_util::{FutureExt, StreamExt};
+use futures_util::{FutureExt, StreamExt, TryFutureExt};
 use gpui::AsyncApp;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
@@ -185,11 +186,22 @@ impl LanguageModelInferencePort {
     ///
     /// The receiver task runs on the GPUI foreground executor and processes
     /// inference requests. Drop the returned `Task` to stop it.
-    pub fn new(model: Arc<dyn LanguageModel>, cx: AsyncApp) -> (Self, gpui::Task<()>) {
+    ///
+    /// `inference_timeout` bounds the wall-clock time for a single inference
+    /// call (stream establishment + event drain). A hung provider stalls the
+    /// request indefinitely without this — the cybernetics variety check
+    /// flagged this as a critical gap (disturbance class D2: provider timeout,
+    /// no response). `Duration::ZERO` disables the timeout (legacy behavior).
+    pub fn new(
+        model: Arc<dyn LanguageModel>,
+        inference_timeout: Duration,
+        cx: AsyncApp,
+    ) -> (Self, gpui::Task<()>) {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let (stream_tx, mut stream_rx) =
             tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
         let model_for_task = model.clone();
+        let timeout_for_task = inference_timeout;
 
         let task = cx.spawn(async move |cx| {
             // Process both channels on the GPUI foreground executor.
@@ -203,14 +215,16 @@ impl LanguageModelInferencePort {
                 tokio::select! {
                     Some(req) = rx.recv() => {
                         let model = model_for_task.clone();
+                        let timeout = timeout_for_task;
                         cx.spawn(async move |cx| {
-                            Self::handle_non_streaming(req, &model, cx).await;
+                            Self::handle_non_streaming(req, &model, timeout, cx).await;
                         }).detach();
                     }
                     Some(req) = stream_rx.recv() => {
                         let model = model_for_task.clone();
+                        let timeout = timeout_for_task;
                         cx.spawn(async move |cx| {
-                            Self::handle_streaming(req, &model, cx).await;
+                            Self::handle_streaming(req, &model, timeout, cx).await;
                         }).detach();
                     }
                     else => break,
@@ -263,16 +277,39 @@ impl LanguageModelInferencePort {
     async fn handle_non_streaming(
         req: InferenceRequest,
         model_for_task: &Arc<dyn LanguageModel>,
+        inference_timeout: Duration,
         cx: &AsyncApp,
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
         let request = req.request;
         let result = async move {
-            let stream_result = model
+            let stream_future = model
                 .stream_completion(request, &cx)
-                .await
                 .map_err(|e| InferenceError::Connection(e.to_string()));
+
+            // Apply the wall-clock timeout if non-zero. A hung provider
+            // stalls the request indefinitely without this — the cybernetics
+            // variety check flagged this as a critical gap (D2: provider
+            // timeout, no response). `Duration::ZERO` disables (legacy).
+            let stream_result = if inference_timeout.is_zero() {
+                stream_future.await
+            } else {
+                match tokio::time::timeout(inference_timeout, stream_future).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            target: "hkask.inference",
+                            timeout_secs = inference_timeout.as_secs(),
+                            "Inference stream establishment timed out — returning Connection error"
+                        );
+                        Err(InferenceError::Connection(format!(
+                            "inference timed out after {}s",
+                            inference_timeout.as_secs()
+                        )))
+                    }
+                }
+            };
 
             match stream_result {
                 Err(e) => Err(e),
@@ -302,6 +339,7 @@ impl LanguageModelInferencePort {
     async fn handle_streaming(
         req: StreamInferenceRequest,
         model_for_task: &Arc<dyn LanguageModel>,
+        inference_timeout: Duration,
         cx: &AsyncApp,
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
@@ -310,10 +348,31 @@ impl LanguageModelInferencePort {
         let reply = req.reply;
 
         async move {
-            let stream_result = model
+            let stream_future = model
                 .stream_completion(request, &cx)
-                .await
                 .map_err(|e| InferenceError::Connection(e.to_string()));
+
+            // Apply the wall-clock timeout if non-zero. Same rationale as
+            // `handle_non_streaming` — a hung provider stalls the stream
+            // indefinitely without this.
+            let stream_result = if inference_timeout.is_zero() {
+                stream_future.await
+            } else {
+                match tokio::time::timeout(inference_timeout, stream_future).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            target: "hkask.inference",
+                            timeout_secs = inference_timeout.as_secs(),
+                            "Streaming inference stream establishment timed out — returning Connection error"
+                        );
+                        Err(InferenceError::Connection(format!(
+                            "inference timed out after {}s",
+                            inference_timeout.as_secs()
+                        )))
+                    }
+                }
+            };
 
             match stream_result {
                 Err(e) => {
@@ -1058,7 +1117,11 @@ impl BridgeEditPredictionPort {
     /// `api_url` is the OpenAI-compatible base URL (e.g.
     /// `https://openrouter.ai/api/v1`). `api_key` is the bearer token.
     /// `model_id` is the bare model id (prefix stripped, e.g. `z-ai/glm-5.2`).
-    pub fn new(
+    ///
+    /// `pub(crate)` because the only caller is `from_registry`, which is the
+    /// public entry point. Tightening from `pub` per the essentialist G2
+    /// finding (zero external callers confirmed via grep).
+    pub(crate) fn new(
         api_url: String,
         api_key: String,
         model_id: String,

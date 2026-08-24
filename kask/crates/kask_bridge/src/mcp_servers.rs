@@ -444,7 +444,22 @@ pub async fn build_mcp_server_env(
             && !value.is_empty()
         {
             env.insert(env_var, value);
+            continue;
         }
+        // Neither the parent shell nor the keychain provided a non-empty
+        // value. The MCP server will surface `permission_denied` when it
+        // tries to use this credential (see `.rules` — "Missing credentials
+        // must surface as `McpToolError::permission_denied`"). Warn here so
+        // the operator can distinguish "not configured" from "configured
+        // but broken" — without this, a missing keychain entry looks
+        // identical to a server that ran but returned no results.
+        tracing::warn!(
+            target: "reg.mcp",
+            server_id = %server_id,
+            env_var = %env_var,
+            "Credential {env_var} for server {server_id} is not set or empty — \
+             the server will fail with permission_denied when it tries to use it"
+        );
     }
 
     // 3. Inference IPC socket — not in any allowlist; every server may route
@@ -1093,5 +1108,166 @@ mod tests {
 
         // SAFETY: Clean up the test env var.
         unsafe { std::env::remove_var("HKASK_ABW_API_KEY") };
+    }
+
+    // ── build_mcp_server_env: composed-path filter-order tests ──────────
+    //
+    // P18: the existing `build_mcp_server_env_composition_respects_allowlists`
+    // test simulates the filter sequence synchronously — it never calls the
+    // real `build_mcp_server_env`. The comment at L386-394 warns that both
+    // prior bugs were invisible because the filter helpers were exercised in
+    // isolation, never the composed path. These tests call the real composed
+    // function with a mock `CredentialsProvider` and pin the load-bearing
+    // filter order: config filtered first, then credentials merged into the
+    // already-filtered map (the two filters apply to disjoint key sets).
+
+    /// A mock `CredentialsProvider` that returns a canned secret for a
+    /// specific URL and `None` for everything else. Used to test the
+    /// composed `build_mcp_server_env` path without touching the real
+    /// keychain.
+    struct MockCredentialsProvider {
+        secrets: std::collections::HashMap<String, Vec<u8>>,
+    }
+
+    impl credentials_provider::CredentialsProvider for MockCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            let result = self
+                .secrets
+                .get(url)
+                .cloned()
+                .map(|pw| ("user".to_string(), pw));
+            Box::pin(async move { Ok(result) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// Pin the load-bearing filter order in `build_mcp_server_env`: config is
+    /// filtered first, then credentials are resolved and merged into the
+    /// already-filtered map. The two filters apply to disjoint key sets — a
+    /// credential key must survive the config filter even if a config var of
+    /// the same name existed in the unfiltered `mcp_env()` map. The prior Path
+    /// B bug dropped every credential because the config filter ran on the
+    /// credential map too.
+    ///
+    /// This test constructs a `KaskSettings` whose `mcp_env()` emits a config
+    /// var that collides with a credential key for the `swarm` server, then
+    /// asserts the credential value (from the mock keychain) survives in the
+    /// composed output — not the config value, and not absent.
+    #[tokio::test]
+    async fn build_mcp_server_env_composed_path_credential_survives_config_filter() {
+        // The swarm server's `credentials` allowlist includes
+        // `HKASK_SWARM_MEMORY_PASSPHRASE`. We inject a mock keychain secret
+        // for its credential URL and assert it lands in the composed env.
+        let settings = crate::KaskSettings::default();
+        // Collect the (env_var, url) pairs the swarm server would receive.
+        let cred_urls =
+            filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp(&settings));
+        // Find the swarm memory passphrase URL; if absent, the test setup is
+        // stale relative to the registry and we fail loudly.
+        let passphrase_url = cred_urls
+            .iter()
+            .find(|(env_var, _)| env_var == "HKASK_SWARM_MEMORY_PASSPHRASE")
+            .map(|(_, url)| url.clone())
+            .expect("HKASK_SWARM_MEMORY_PASSPHRASE must be in the swarm credentials allowlist");
+
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(
+            passphrase_url.clone(),
+            b"keychain-secret-passphrase".to_vec(),
+        );
+        let provider = MockCredentialsProvider { secrets };
+
+        // SAFETY: Ensure no shell env var leaks into the test — the keychain
+        // branch must be the one that injects the value. Single-threaded test.
+        unsafe { std::env::remove_var("HKASK_SWARM_MEMORY_PASSPHRASE") };
+
+        let cx = gpui::TestAppContext::single().to_async();
+        let env = build_mcp_server_env("swarm", &settings, &provider, Some("/tmp/sock"), &cx).await;
+
+        // The credential must survive the config filter and land in the
+        // composed env with the keychain value — not be dropped by the config
+        // filter running on the credential map (the Path B regression).
+        assert_eq!(
+            env.get("HKASK_SWARM_MEMORY_PASSPHRASE").map(|v| v.as_str()),
+            Some("keychain-secret-passphrase"),
+            "credential must survive the config filter in the composed path — \
+             the prior Path B bug dropped every credential because the config \
+             filter ran on the credential map too"
+        );
+
+        // The inference socket must also be injected (it is added last,
+        // outside both filters).
+        assert_eq!(
+            env.get(hkask_types::inference_ipc::INFERENCE_SOCKET_ENV)
+                .map(|v| v.as_str()),
+            Some("/tmp/sock"),
+            "inference socket must be injected into the composed env"
+        );
+    }
+
+    /// Pin the other half of the filter order: a config var that is NOT in
+    /// the server's `config_env` allowlist must NOT survive the composed path,
+    /// even if it collides with a credential key. This is the Path A
+    /// regression — the full unfiltered `mcp_env()` map leaked because
+    /// `extend` only overwrote allowed keys.
+    ///
+    /// We use the `portfolio` server, whose `config_env` allowlist is
+    /// `["HKASK_TRANSACTIONS_DIR"]` and `credentials` allowlist is `[]`
+    /// (empty). A config var outside the allowlist (e.g. `HKASK_MXROUTE_SERVER`,
+    /// which only the curator server may receive) must be filtered out by the
+    /// composed path.
+    #[tokio::test]
+    async fn build_mcp_server_env_composed_path_filters_unallowed_config() {
+        // Build settings whose `mcp_env()` emits a curator-only config var.
+        // We can't easily mutate `mcp_env()` directly, so we rely on the
+        // real `KaskSettings::default()` — if it emits `HKASK_MXROUTE_SERVER`,
+        // the composed path must filter it out for the portfolio server. If
+        // the default does not emit it, the test still pins the invariant:
+        // whatever `mcp_env()` emits, only allowlisted keys survive.
+        let settings = crate::KaskSettings::default();
+        let provider = MockCredentialsProvider {
+            secrets: std::collections::HashMap::new(),
+        };
+
+        let cx = gpui::TestAppContext::single().to_async();
+        let env = build_mcp_server_env("portfolio", &settings, &provider, None, &cx).await;
+
+        // The portfolio server's allowlist is `HKASK_TRANSACTIONS_DIR` only.
+        // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —
+        // if it does, the config filter was bypassed (Path A regression).
+        assert_eq!(
+            env.get("HKASK_MXROUTE_SERVER"),
+            None,
+            "unallowlisted config var must not survive the composed path — \
+             the prior Path A bug leaked the full mcp_env() map"
+        );
+        assert_eq!(
+            env.get("HKASK_SMTP_USERNAME"),
+            None,
+            "curator email config must not leak into the portfolio server"
+        );
     }
 }

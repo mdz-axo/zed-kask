@@ -60,132 +60,6 @@ pub fn agent_name_from_username(username: &str) -> Option<String> {
     }
 }
 
-/// A curated list of common English words, each 8+ letters.
-/// Used to generate a human-readable DB passphrase on first run.
-/// The user can change it later via the keychain or settings.
-const PASSPHRASE_WORDS: &[&str] = &[
-    "absolute",
-    "adventure",
-    "amplitude",
-    "architect",
-    "asteroid",
-    "atmosphere",
-    "backbone",
-    "blueprint",
-    "boundary",
-    "butterfly",
-    "calendar",
-    "catalyst",
-    "cathedral",
-    "champion",
-    "chandelier",
-    "cheesecake",
-    "cinnamon",
-    "composer",
-    "computer",
-    "constellation",
-    "corridor",
-    "courtyard",
-    "daffodil",
-    "daybreak",
-    "dinosaur",
-    "directory",
-    "driftwood",
-    "elephant",
-    "epiphany",
-    "eternity",
-    "festival",
-    "flamingo",
-    "fountain",
-    "gossamer",
-    "helicopter",
-    "hospital",
-    "hummingbird",
-    "identity",
-    "infinity",
-    "inspiration",
-    "kaleidoscope",
-    "lavender",
-    "lemonade",
-    "lighthouse",
-    "limousine",
-    "magnolia",
-    "manuscript",
-    "marigold",
-    "meridian",
-    "midnight",
-    "mountain",
-    "mushroom",
-    "mystique",
-    "nightingale",
-    "novelette",
-    "oblivion",
-    "opulence",
-    "orchestra",
-    "palindrome",
-    "panorama",
-    "paradise",
-    "parchment",
-    "passenger",
-    "pavilion",
-    "peppermint",
-    "pinnacle",
-    "platinum",
-    "pomegranate",
-    "porcelain",
-    "primrose",
-    "propeller",
-    "quicksilver",
-    "radiance",
-    "reflection",
-    "refrigerator",
-    "renaissance",
-    "resonance",
-    "rhinoceros",
-    "riverbed",
-    "rosewood",
-    "sapphire",
-    "satellite",
-    "scintilla",
-    "seashell",
-    "serenity",
-    "silhouette",
-    "snowfall",
-    "solstice",
-    "spectrum",
-    "stardust",
-    "starlight",
-    "sunflower",
-    "tapestry",
-    "tortoise",
-    "tradition",
-    "tranquility",
-    "turbulence",
-    "umbrella",
-    "undertow",
-    "universe",
-    "upholstery",
-    "vanguard",
-    "waterfall",
-    "whimsical",
-    "wildflower",
-    "windmill",
-    "yesterday",
-];
-
-/// Pick a random word from the passphrase word list.
-///
-/// Uses `rand::thread_rng` for cryptographic randomness — the passphrase
-/// protects an encrypted database, so we don't want a predictable seed.
-fn random_passphrase_word() -> String {
-    use rand::seq::IndexedRandom;
-    let mut rng = rand::rng();
-    PASSPHRASE_WORDS
-        .choose(&mut rng)
-        .map(|word| word.to_string())
-        .unwrap_or_else(|| "kask".to_string())
-}
-
 /// The result of provisioning an agent — everything needed to construct
 /// a `RealMemoryPort` directly, without going through `from_env()`.
 pub struct ProvisionedAgent {
@@ -342,7 +216,7 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
         Ok(passphrase) => Ok(passphrase.to_string()),
         Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
             // First run — generate a random English word and store it.
-            let word = random_passphrase_word();
+            let word = hkask_keystore::generate_random_passphrase();
             let keychain = Keychain::default();
             keychain
                 .store_by_key(KEY_DB_PASSPHRASE, &word)

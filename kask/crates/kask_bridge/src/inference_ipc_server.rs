@@ -1421,6 +1421,155 @@ mod tests {
         }
     }
 
+    // ── dispatch: early-return coverage for non-generate methods ───────
+    //
+    // P17 / P3: the `dispatch` function has a defensive error arm at the
+    // bottom of the final `match request.method` that catches
+    // `Embed | ListModels | ToolInvoke | CreateWorktreeThread` and returns
+    // `InferenceOutcome::Error` instead of panicking (the prior `unreachable!`
+    // was a DoS vector on peer-supplied values). That arm is only reachable
+    // if a non-generate method bypasses its early-return block — which the
+    // early-returns make impossible. These tests pin that each non-generate
+    // method is caught by its early-return (and thus the defensive arm is
+    // never hit): if a future refactor removes an early-return, the
+    // defensive arm would be reached and these tests would still pass —
+    // but the defensive arm's error message is distinct, so a regression
+    // test that asserts the early-return's specific error message catches
+    // the removal.
+
+    #[tokio::test]
+    async fn dispatch_list_models_errors_when_channel_dropped() {
+        // `ListModels` is caught by an early-return that sends on
+        // `list_models_tx`. If the receiver was dropped (server shutting
+        // down), dispatch must return a Connection error — not reach the
+        // defensive arm. This pins the early-return for `ListModels`.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        // Create a channel whose receiver is immediately dropped — `send`
+        // will return `Err`.
+        let (tx, rx) =
+            tokio::sync::mpsc::unbounded_channel::<(
+                tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+            )>();
+        drop(rx);
+        let list_models_tx = Arc::new(tx);
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::ListModels,
+            params: InferenceParams::default(),
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(
+                    error.message.contains("list_models task dropped"),
+                    "expected list_models task-dropped error, got: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_create_worktree_thread_errors_without_spawn_port() {
+        // `CreateWorktreeThread` is caught by an early-return that checks
+        // for `worktree_spawn_tx`. If the port is absent (no active
+        // workspace), dispatch must return a Connection error — not reach
+        // the defensive arm. This pins the early-return for
+        // `CreateWorktreeThread`.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::CreateWorktreeThread,
+            params: InferenceParams {
+                worktree_prompt: Some("do a thing".to_string()),
+                worktree_title: Some("Test Task".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None, // no worktree spawn port
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(
+                    error.message.contains("worktree spawn port not configured"),
+                    "expected worktree-spawn-port-not-configured error, got: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_create_worktree_thread_errors_when_channel_dropped() {
+        // `CreateWorktreeThread` early-return: the spawn port is present but
+        // the receiver was dropped (server shutting down). Dispatch must
+        // return a Connection error — not reach the defensive arm.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
+        drop(rx);
+        let worktree_spawn_tx = Arc::new(tx);
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::CreateWorktreeThread,
+            params: InferenceParams {
+                worktree_prompt: Some("do a thing".to_string()),
+                worktree_title: Some("Test Task".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            Some(&worktree_spawn_tx),
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(
+                    error.message.contains("worktree_spawn task dropped"),
+                    "expected worktree-spawn-task-dropped error, got: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
     // ── Socket path / directory tests ──────────────────────────────────
 
     #[test]

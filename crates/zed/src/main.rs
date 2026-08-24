@@ -1953,9 +1953,13 @@ fn main() {
                             }
                         };
 
+                        let inference_timeout = std::time::Duration::from_secs(
+                            kask_settings.general.inference_timeout_secs,
+                        );
                         let (inference_port, inference_task) =
                             kask_bridge::LanguageModelInferencePort::new(
                                 inference_model.clone(),
+                                inference_timeout,
                                 async_cx,
                             );
                         inference_task.detach();
