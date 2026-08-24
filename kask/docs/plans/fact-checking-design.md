@@ -1,10 +1,14 @@
-# Fact-Checking and Hypothesis-Verification Design for the Company-Research-Deep Pipeline
+---
+title: "Fact-Checking and Hypothesis-Verification Design for the Company-Research-Deep Pipeline"
+audience: [skill authors, pipeline maintainers, architects]
+last_updated: 2026-08-24
+version: "1.1.0"
+status: "Active"
+domain: "company-research"
+mds_categories: [trust, composition]
+---
 
-**Status:** Implemented (grounding-verify skill created + company-research-deep wired)
-**Last-Updated:** 2026-08-21
-**Audience:** Skill authors, pipeline maintainers
-**MDS Categories:** trust, composition
-**Domain:** company-research-deep
+# Fact-Checking and Hypothesis-Verification Design for the Company-Research-Deep Pipeline
 
 **Implementation notes:**
 - Standalone skill: `.agents/skills/grounding-verify/SKILL.md` (7-step process, 3 registry templates)
@@ -919,6 +923,13 @@ graph TD
     PE -.->|verification_findings| V2
     V2 -->|fact_score_final, confidence_adjustment| S10
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-FACT-001
+verified_date: 2026-08-24
+verified_against: .agents/skills/grounding-verify/SKILL.md, .agents/skills/company-research-deep/SKILL.md (verify-early-anchor, verify-late-gate steps), kask/registry/templates/grounding-verify/extract-claims.j2, assign-provenance.j2, scan-narrative.j2
+status: VERIFIED
+-->
 
 ---
 

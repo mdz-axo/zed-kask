@@ -1,8 +1,8 @@
 ---
 title: "hKask Viz-Core — Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
+last_updated: 2026-08-24
+version: "1.1.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition]
@@ -42,6 +42,7 @@ classDiagram
     class create_kanban_widget
     class create_portfolio_widget
     class create_scenarios_widget
+    class create_swarm_widget
 
     block_renderer ..> VizCache : thread-local LRU max 32
     block_renderer ..> cache_key
@@ -49,16 +50,18 @@ classDiagram
     block_renderer ..> create_kanban_widget
     block_renderer ..> create_portfolio_widget
     block_renderer ..> create_scenarios_widget
+    block_renderer ..> create_swarm_widget
     VizCache o-- CachedWidget : holds strong refs
     CachedWidget ..> GraphWidget
     CachedWidget ..> KanbanWidget
     CachedWidget ..> PortfolioWidget
     CachedWidget ..> ScenariosWidget
+    CachedWidget ..> SwarmWidget
 ```
 
 **Selection order** (intentional): graph (`viz: "event_tree"`), kanban
 (`viz: "kanban"`), portfolio (`viz: "portfolio"`), scenarios
-(`viz: "scenarios"`). A body claimed by none
+(`viz: "scenarios"`), swarm (`viz: "swarm_delegate_results"`). A body claimed by none
 returns `None` and falls through to the default code-block renderer.
 
 **Wiring seam:** `crates/agent_ui/src/conversation_view.rs` —
@@ -68,7 +71,7 @@ The upstream D18 field/builder/dispatch in `markdown` stay unchanged (see
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
-verified_date: 2026-08-04
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs; crates/hkask-graph-widget/src/view.rs; crates/hkask-kanban-widget/src/view.rs; crates/hkask-portfolio-widget/src/view.rs; crates/hkask-scenarios-widget/src/view.rs; crates/agent_ui/src/conversation_view.rs
+verified_date: 2026-08-24
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (imports L55-63, VizWidget trait L85-100, block_renderer, create_* factories, VizCache, cache_key); crates/hkask-graph-widget/src/view.rs; crates/hkask-kanban-widget/src/view.rs; crates/hkask-portfolio-widget/src/view.rs; crates/hkask-scenarios-widget/src/view.rs; crates/hkask-swarm-widget/src/hkask_swarm_widget.rs; crates/agent_ui/src/conversation_view.rs
 status: VERIFIED
 -->

@@ -78,6 +78,13 @@ flowchart TD
     Consolidator -->|"background timer"| MemStore
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-MEM-ARCH
+verified_date: 2026-08-24
+verified_against: kask/crates/hkask-memory/src/ (MemoryStore, MemoryConsolidator), kask/crates/hkask-storage/src/hmem.rs (HMemStore), kask/crates/kask_bridge/src/memory.rs (RealMemoryPort, BridgeMemoryPort, LanguageModelEmbeddingPort)
+status: VERIFIED
+-->
+
 ### Components
 
 | Component                    | Crate           | Role                                                                                      |

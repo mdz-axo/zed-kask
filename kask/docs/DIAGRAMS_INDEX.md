@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [maintainers, agents]
-last_updated: 2026-08-20
-version: "0.38.0"
+last_updated: 2026-08-24
+version: "0.39.0"
 status: "Active"
 domain: "documentation"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -126,7 +126,7 @@ Removed 2026-08-05 with their parent plans (all deleted): DIAG-PLAN-SIGN-A, DIAG
 
 ## 14. Viz Widgets (D18) — class diagrams
 
-The D18 viz widgets render fenced code blocks (`graph, `kanban, `portfolio, ```scenarios) inline in agent markdown via `hkask-viz-core`'s composed `block_renderer`. They live under `crates/` (zed-kask-side, because they render GPUI elements and must depend on `gpui`/`theme`). Class diagrams for each were added 2026-08-03.
+The D18 viz widgets render fenced code blocks (`graph, `kanban, `portfolio, ```scenarios, ```swarm_delegate_results) inline in agent markdown via `hkask-viz-core`'s composed `block_renderer`. They live under `crates/` (zed-kask-side, because they render GPUI elements and must depend on `gpui`/`theme`). Class diagrams for each were added 2026-08-03; the swarm widget diagram was added 2026-08-24.
 
 | Diagram ID         | Widget crate                    | Block keyword | Renders                                                                                            | Diagram                                    | Source anchor                                                                                    | Status                 |
 | ------------------ | ------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------- |
@@ -135,40 +135,49 @@ The D18 viz widgets render fenced code blocks (`graph, `kanban, `portfolio, ```s
 | DIAG-VIZ-KANBAN    | `kask/crates/hkask-kanban-widget`    | `kanban`      | kanban board columns + interactive move + card detail popover (replaces deleted `KanbanBoardView`) | `diagrams/class-hkask-kanban-widget.md`    | `crates/hkask-kanban-widget/src/{block,view,move_controller}.rs`                                 | ✅ VERIFIED 2026-08-09 |
 | DIAG-VIZ-PORTFOLIO | `kask/crates/hkask-portfolio-widget` | `portfolio`   | portfolio dashboard (replaces deleted `PortfolioDashboardView`)                                    | `diagrams/class-hkask-portfolio-widget.md` | `crates/hkask-portfolio-widget/src/{block,view}.rs`                                              | ✅ VERIFIED 2026-08-03 |
 | DIAG-VIZ-SCENARIOS | `kask/crates/hkask-scenarios-widget` | `scenarios`   | scenario pipeline / matrix / timeline (replaces deleted `ScenariosView`)                           | `diagrams/class-hkask-scenarios-widget.md` | `crates/hkask-scenarios-widget/src/{block,view}.rs`                                              | ✅ VERIFIED 2026-08-03 |
+| DIAG-VIZ-SWARM     | `kask/crates/hkask-swarm-widget`     | `swarm_delegate_results` | per-agent delegation result cards (agent id, task-success badge, response, metrics) | `diagrams/class-hkask-swarm-widget.md`     | `crates/hkask-swarm-widget/src/{hkask_swarm_widget,block}.rs`                                    | ✅ VERIFIED 2026-08-24 |
 
 Wiring seam: `crates/agent_ui/src/conversation_view.rs` — `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`. See `DIVERGENCE.md` D18.
 
-## 15. Kanban State Diagrams
+## 15. Event Store Diagrams
+
+The `hkask-event-store` crate is the append-only event log for agent rollouts. It is the data-plane substrate for agent evaluation, training-data generation, and regulation.
+
+| Diagram ID | Type  | File                                  | Description                                                                                                           | Verified Against                                                                                                                                                            | Status                 |
+| ----------- | ----- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| DIAG-ES-001 | class | `diagrams/class-hkask-event-store.md` | EventStore collaborators — EventRecord, EventFilter, EventStoreError, VerdictSource, RolloutKind, DatabaseDriver trait | `kask/crates/hkask-event-store/src/{hkask_event_store,types}.rs`, `kask/crates/kask_bridge/src/rollout_event_bridge.rs`, `kask/crates/hkask-regulation/src/cybernetics_loop.rs:58` | ✅ VERIFIED 2026-08-24 |
+
+## 16. Kanban State Diagrams
 
 | Diagram ID             | Type  | File                                       | Description                                                                                                           | Verified Against                                                                                                          | Status                 |
 | ---------------------- | ----- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | DIAG-STATE-TASK-STATUS | state | `diagrams/state-task-status.md`            | TaskStatus lifecycle — 5 standard statuses, one-step transitions, task_reopen escape hatch, budget-exhaust completion | `kask/crates/hkask-types/src/kanban_status.rs`, `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/dejam.rs` | ✅ VERIFIED 2026-08-09 |
 | DIAG-STATE-KANBAN-MOVE | state | `diagrams/state-kanban-move-controller.md` | KanbanMoveController dispatch state machine — Idle/Pending/InFlight/Error, stage/confirm/cancel/evaluate transitions  | `crates/hkask-kanban-widget/src/move_controller.rs`, `crates/hkask-kanban-widget/src/view.rs`                             | ✅ VERIFIED 2026-08-09 |
 
-## 16. Diataxis Per-Crate Diagrams
+## 17. Diataxis Per-Crate Diagrams
 
 The `docs/diataxis/` set carries one diagram per artifact across 9 crates (`hkask-tool-port`, `hkask-condenser`, `hkask-inference`, `hkask-mcp-server`, `hkask-regulation`, `hkask-storage`, `hkask-types`, `kask_bridge`, `swarm_system`) — ~36 diagrams total (explanation / how-to / reference / tutorial per crate). These are tracked in [`diataxis/INDEX.md`](diataxis/INDEX.md) and are not duplicated row-by-row here. A few diataxis diagrams of cross-cutting interest are also listed above (DIAG-IC-BRIDGE, DIAG-IC-TYPES, DIAG-PL-STORAGE, DIAG-PL-HMEM).
 
-## 17. Summary
+## 18. Summary
 
-**Surviving diagram inventory (2026-08-15):**
+**Surviving diagram inventory (2026-08-24):**
 
 | Location                                                                                                             | Count   |
 | -------------------------------------------------------------------------------------------------------------------- | ------- |
-| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 5 viz widgets + 2 kanban state + 3 skill/MCP/credential seam diagrams) | 19      |
+| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 6 viz widgets + 2 kanban state + 3 skill/MCP/credential seam diagrams + event-store) | 22      |
 | `docs/explanation/` (cognition-and-replica, training-and-adapters, skills-and-composition)                           | ~12     |
 | `docs/reference/mcp-servers/` (README, companies, scenarios, swarm)                                       | 4       |
 | `docs/reference/regulation-spans.md`                                                                                 | 1       |
 | `docs/architecture/` (MDS ×4, DOCUMENTATION_STANDARDS ×1)                                                            | 5       |
 | `docs/plans/` (cybernetic-swarm ×3)                                                           | 3       |
 | `docs/diataxis/` (9 crates × ~4)                                                                                    | ~36     |
-| **Total surviving**                                                                                                  | **~81** |
+| **Total surviving**                                                                                                  | **~83** |
 
 **Removed from this registry (2026-08-03):** all "PARENT DELETED" / "removed — host status report" entries (~26 diagrams whose parents were deleted in the 2026-07-24 cleanup). Recoverable via git history.
 
 **New seam diagrams (2026-08-15):** 3 reference-quadrant diagrams added under `docs/diagrams/` — `architecture-skill-mcp-lisp-seam.md` (the three-surface seam), `sequence-mcp-tool-call.md` (`LazyToolRouter` built-in bypass → `McpRuntime::invoke` metering → `unwrap_tool_envelope`), and `erd-credential-resolution.md` (`ctx.credentials` → keychain → `nudge_mcp_servers` re-sync). All three cite grep-verified symbols.
 
-**Widgets (D18):** 5 viz-widget class diagrams under `docs/diagrams/` (class-hkask-viz-core, class-hkask-graph-widget, class-hkask-kanban-widget, class-hkask-portfolio-widget, class-hkask-scenarios-widget). The kanban widget diagram was re-verified 2026-08-09 after Wave 1/S9 (move_controller.rs extracted) and Wave 2/B3+S8 (card detail popover + WIP limits).
+**Widgets (D18):** 6 viz-widget class diagrams under `docs/diagrams/` (class-hkask-viz-core, class-hkask-graph-widget, class-hkask-kanban-widget, class-hkask-portfolio-widget, class-hkask-scenarios-widget, class-hkask-swarm-widget). The kanban widget diagram was re-verified 2026-08-09 after Wave 1/S9 (move_controller.rs extracted) and Wave 2/B3+S8 (card detail popover + WIP limits). The swarm widget diagram was added 2026-08-24.
 
 **Kanban state diagrams (2026-08-09):** 2 state diagrams added — `state-task-status.md` (TaskStatus lifecycle + transitions + budget-exhaust paths) and `state-kanban-move-controller.md` (KanbanMoveController dispatch state machine: Idle/Pending/InFlight/Error).
 

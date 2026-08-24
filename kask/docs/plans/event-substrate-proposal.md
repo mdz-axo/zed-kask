@@ -1,3 +1,13 @@
+---
+title: "Event Substrate Proposal — Agent Lightning-Style Harness for Local Swarm Agents"
+audience: [architects, developers, researchers]
+last_updated: 2026-08-24
+version: "0.2.0"
+status: "Draft"
+domain: "Swarm"
+mds_categories: [composition, lifecycle, domain]
+---
+
 # Event Substrate Proposal — An Agent Lightning-Style Harness for Local Swarm Agents
 
 Status: PROPOSAL (analysis complete, no code written)

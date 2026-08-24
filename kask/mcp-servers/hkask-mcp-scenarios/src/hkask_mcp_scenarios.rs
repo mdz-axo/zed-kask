@@ -1409,12 +1409,19 @@ impl ScenariosServer {
                     "brier_score": result.brier_score,
                     "interpretation": result.brier_interpretation,
                 },
-                "calibration_note": if result.brier_score < 0.10 {
-                    "Well calibrated — keep tracking. Your forecasts are meaningfully better than climatology."
-                } else if result.brier_score < 0.20 {
-                    "Moderately calibrated — review your Fermi decompositions and base rates. There is room for improvement."
-                } else {
-                    "Poorly calibrated — your forecasts are not beating a coin flip. Revisit your outside-view base rates and inside-view adjustments."
+                "calibration_note": match result.brier_score {
+                    Some(bs) if bs < 0.10 => {
+                        "Well calibrated — keep tracking. Your forecasts are meaningfully better than climatology."
+                    }
+                    Some(bs) if bs < 0.20 => {
+                        "Moderately calibrated — review your Fermi decompositions and base rates. There is room for improvement."
+                    }
+                    Some(_) => {
+                        "Poorly calibrated — your forecasts are not beating a coin flip. Revisit your outside-view base rates and inside-view adjustments."
+                    }
+                    None => {
+                        "No Brier score available — scoring failed (empty input or length mismatch). Record resolved outcomes and re-score."
+                    }
                 },
                 "auto_update_suggestions": superforecast::auto_update_suggestions(events, &outcome_pairs),
                 "update_guidance": "The auto_update_suggestions above show suggested probability adjustments based on forecast error direction. Apply them via scenario_update to close the feedback loop. Each adjustment is clamped to ±15% and respects [0.01, 0.99] bounds.",

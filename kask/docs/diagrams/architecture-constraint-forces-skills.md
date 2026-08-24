@@ -1,3 +1,13 @@
+---
+title: "Interdisciplinary Constraint-Forces Skills — Architecture"
+audience: [architects, developers, agents]
+last_updated: 2026-08-24
+version: "1.1.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
+---
+
 # Interdisciplinary Constraint-Forces Skills — Architecture
 
 This diagram shows the relationship between the two scaffolded skills (GSR, CFR), their delegate skills, and the ontology-source providers. It serves as a **reference** document in the Diataxis framework — austere and factual, for architects and developers who need to understand the skill composition.
@@ -55,7 +65,6 @@ graph TD
     GSR_HYP -.->|delegates| FALS
     GSR_HYP -.->|delegates| META
     GSR_PRIOR -.->|delegates| PCYB
-    GSR_MAP -.->|delegates| GRAPH
     GSR_DETECT -.->|inherits taxonomy| GHUNT
 
     GSR_SEED -->|seed_concepts| CFR_REP
@@ -63,6 +72,13 @@ graph TD
     CFR_3CRIT -.->|methodological anchor| FALS
     CFR_FRON -.->|methodological anchor| GPA
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-SKILL-CFR
+verified_date: 2026-08-24
+verified_against: .agents/skills/gradient-seeded-recombination/SKILL.md, .agents/skills/constraint-forces-recast/SKILL.md, .agents/skills/falsifiability/SKILL.md, .agents/skills/gradient-hunter/SKILL.md, .agents/skills/gpa-evolution/SKILL.md, .agents/skills/pragmatic-cybernetics/SKILL.md, .agents/skills/metacognition/SKILL.md
+status: VERIFIED
+-->
 
 ## Cross-Links
 

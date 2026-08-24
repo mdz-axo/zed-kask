@@ -1,3 +1,13 @@
+---
+title: "Upstream Rebase Management Process — zed-kask"
+audience: [architects, integrators, release engineers]
+last_updated: 2026-08-24
+version: "1.1.0"
+status: "Active"
+domain: "Lifecycle"
+mds_categories: [lifecycle, composition]
+---
+
 # Upstream Rebase Management Process — zed-kask
 
 **Purpose:** a repeatable, auditable process for bringing zed-kask up to upstream

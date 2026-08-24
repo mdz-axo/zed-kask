@@ -166,6 +166,13 @@ classDiagram
     InferenceIpcClient ..> UnavailableWorktreeSpawn : resolve_ports falls back to stubs
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-INF-REF
+verified_date: 2026-08-24
+verified_against: kask/crates/hkask-inference/src/config.rs (ProviderId, InferenceConfig, ProviderConfig), kask/crates/hkask-inference/src/inference_ipc_client.rs (InferenceIpcClient), kask/crates/hkask-inference/src/hkask_inference.rs:277 (InferencePorts)
+status: VERIFIED
+-->
+
 The three unavailable stubs (`UnavailableInference`, `UnavailableToolDispatch`,
 `UnavailableWorktreeSpawn`) are the fallbacks `resolve_ports` / the per-port
 resolvers return when the bridge is down. `UnavailableWorktreeSpawn` is `pub(crate)`

@@ -60,6 +60,13 @@ flowchart TD
     D --> E
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-INF-WIRE
+verified_date: 2026-08-24
+verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:94 (resolve_inference_port), :189 (resolve_tool_dispatch_port), :229 (resolve_worktree_spawn_port), :277 (InferencePorts), :290 (resolve_ports), kask/crates/hkask-inference/src/inference_ipc_client.rs:197 (from_env)
+status: VERIFIED
+-->
+
 ### Step 1: Resolve the port(s) at startup
 
 An MCP server calls the per-port resolver it needs once at startup. The
@@ -128,6 +135,13 @@ flowchart TD
     F --> G[Add settings toggle]
     G --> H[Add tests]
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-INF-PROVIDER
+verified_date: 2026-08-24
+verified_against: kask/crates/hkask-inference/src/config.rs:34 (ProviderId enum), kask/crates/kask_bridge/src/settings.rs (INFERENCE_PROVIDERS), kask/crates/kask_bridge/src/mcp_servers.rs
+status: VERIFIED
+-->
 
 ### Step 1: Add a `ProviderId` variant
 

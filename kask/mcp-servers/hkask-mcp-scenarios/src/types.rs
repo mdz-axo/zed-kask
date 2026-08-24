@@ -575,9 +575,12 @@ pub(crate) struct ForecastOutcome {
     pub outcome_date: NaiveDate,
     /// Per-event outcomes: event_id → occurred (true/false)
     pub event_outcomes: Vec<(String, bool)>,
-    /// Brier score across all events
-    pub brier_score: f64,
-    /// Interpretation: excellent, good, fair, poor, worse_than_climatology
+    /// Brier score across all events. `None` when scoring failed (empty input,
+    /// length mismatch) — never a fabricated number. Matches the `stale` pattern
+    /// in `hkask-mcp-prediction-markets::calibration::CalibrationReading`.
+    pub brier_score: Option<f64>,
+    /// Interpretation: excellent, good, fair, poor, worse_than_climatology.
+    /// Empty string when `brier_score` is `None`.
     pub brier_interpretation: String,
 }
 // ── Cross-Validation ────────────────────────────────────────────────────

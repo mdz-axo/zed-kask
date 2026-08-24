@@ -1,3 +1,13 @@
+---
+title: "Standardized Artifact Storage"
+audience: [developers, architects, operators, agents]
+last_updated: 2026-08-24
+version: "1.1.0"
+status: "Active"
+domain: "Lifecycle"
+mds_categories: [lifecycle, composition, trust]
+---
+
 # Standardized Artifact Storage
 
 > **Status:** Required. All persistent artifacts produced or consumed by
@@ -54,6 +64,13 @@ erDiagram
     SKILLS ||--o{ REGISTRY : "registry/"
     THREADS ||--|| THREADS_DB : "threads.db"
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARTIFACT-001
+verified_date: 2026-08-24
+verified_against: kask/crates/hkask-types/src/agent_paths.rs (resolve_data_dir, resolve_under_data_dir, agent_dir, agent_db, sanitize_name), kask/crates/kask_bridge/src/settings.rs:717-736 (mcp_env), kask/crates/kask_bridge/src/mcp_servers.rs:53 (BUILT_IN_MCP_SERVERS)
+status: VERIFIED
+-->
 
 | Artifact class | Root | Subdir pattern | Naming rule | Programmatic contract |
 |---|---|---|---|---|

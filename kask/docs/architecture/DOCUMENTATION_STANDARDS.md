@@ -1,15 +1,14 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-08-01
-version: "0.38.0"
+last_updated: 2026-08-24
+version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
-
-
+# Documentation Standards
 
 ## 1. Purpose
 

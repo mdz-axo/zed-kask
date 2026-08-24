@@ -1,3 +1,13 @@
+---
+title: ".rules Proposal — KaskInferenceProvidersSettings Default/From Divergence"
+audience: [architects, developers]
+last_updated: 2026-08-24
+version: "0.2.0"
+status: "Draft"
+domain: "Settings"
+mds_categories: [composition, lifecycle]
+---
+
 # `.rules` proposal — `KaskInferenceProvidersSettings` Default/`From` divergence
 
 **Status:** proposal (per `.rules` hygiene: "Don't edit `.rules` inline during

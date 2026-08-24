@@ -391,15 +391,15 @@ pub(crate) fn score_forecast(
         }
     }
 
-    let bs = match brier_score_multi(&probs, &outs) {
-        Ok(bs) => bs,
+    let (bs, interpretation) = match brier_score_multi(&probs, &outs) {
+        Ok(bs) => (Some(bs), forecast::brier_interpretation(bs).to_string()),
         Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.scenarios",
                 %error,
-                "Brier multi-score failed, defaulting to climatology 0.33"
+                "Brier multi-score failed; recording brier_score: null"
             );
-            0.33
+            (None, String::new())
         }
     };
 
@@ -413,7 +413,7 @@ pub(crate) fn score_forecast(
         outcome_date: chrono::Utc::now().date_naive(),
         event_outcomes,
         brier_score: bs,
-        brier_interpretation: forecast::brier_interpretation(bs).to_string(),
+        brier_interpretation: interpretation,
     }
 }
 

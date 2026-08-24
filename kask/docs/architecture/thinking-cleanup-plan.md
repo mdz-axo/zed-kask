@@ -1,3 +1,13 @@
+---
+title: "Thinking Control Cleanup Plan"
+audience: [developers, architects]
+last_updated: 2026-08-24
+version: "0.2.0"
+status: "Draft"
+domain: "Application"
+mds_categories: [composition, lifecycle]
+---
+
 # Thinking Control Cleanup Plan
 
 ## Problem

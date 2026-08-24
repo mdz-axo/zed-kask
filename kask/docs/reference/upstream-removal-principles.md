@@ -1,9 +1,19 @@
+---
+title: "Upstream-Zed Removal Principles for the zed-kask Seam"
+audience: [architects, integrators, agents]
+last_updated: 2026-08-24
+version: "1.1.0"
+status: "Active"
+domain: "Lifecycle"
+mds_categories: [lifecycle, trust, composition]
+---
+
 # Upstream-Zed Removal Principles for the zed-kask Seam
 
 > **Status:** consolidated, testable principle set governing **what to remove
 > from upstream Zed** (everything outside `kask/` and outside the named D1–D28
 > D-seams in `DIVERGENCE.md`) and **why**. Sibling to
-> `kask/docs/upstream-rebase-process.md`.
+> [`upstream-rebase-process.md`](upstream-rebase-process.md).
 >
 > **Meta-constraint (inviolable):** the D-seam discipline is a *boundary on the
 > mechanism*, not a removal *reason*. Never edit upstream files outside the

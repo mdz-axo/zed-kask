@@ -3,7 +3,7 @@ title: "Cybernetic Swarm Plan — Reference Model, Map, and Findings"
 audience: [architects, developers]
 last_updated: 2026-08-20
 version: "1.1.0"
-status: "Partially Deprecated"
+status: "Active"
 domain: "Swarm"
 mds_categories: [composition, trust]
 ---
@@ -195,6 +195,13 @@ flowchart TD
   D2 -.- D2H
   D3 -.- D3H
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PLAN-SWARM-A
+verified_date: 2026-08-24
+verified_against: plans/cybernetic-swarm-plan.md §3 (S1 Appendix A.3 dependency hierarchy), kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs, kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs:131
+status: VERIFIED
+-->
 
 | Desideratum | Primary principles | hKask realization | Status |
 |---|---|---|---|
@@ -624,6 +631,13 @@ flowchart TD
   C8 -.->|independent, parallel| C0
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PLAN-SWARM-B
+verified_date: 2026-08-24
+verified_against: plans/cybernetic-swarm-plan.md §8 (implementation sequencing), kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (delegate trace, executed_skills, tool_calls)
+status: VERIFIED
+-->
+
 **Rationale:**
 1. **C0 is the precondition, not one component among eight.** C1 (signal 2),
    C3, C5, C6, C7 all consume the task-success signal. A loop optimizing `d`
@@ -701,6 +715,13 @@ flowchart TD
   class ALGEDONIC,DESCEND,VERIFY,UPDATE outer
   class DET det
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PLAN-SWARM-C
+verified_date: 2026-08-24
+verified_against: plans/cybernetic-swarm-plan.md §9.1 (complete cybernetic swarm map), .agents/skills/swarm-intelligence/SKILL.md, kask/mcp-servers/hkask-mcp-swarm/src/consent.rs, kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs
+status: VERIFIED
+-->
 
 ### 9.2 The metacognitive record (this plan was produced with the metacognition skill)
 

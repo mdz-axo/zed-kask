@@ -73,6 +73,13 @@ flowchart TD
     G --> E
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PROMPT-001
+verified_date: 2026-08-24
+verified_against: crates/agent/src/templates.rs:36-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context, with_extra_static_context)
+status: VERIFIED
+-->
+
 The overlay path is the load-bearing detail: **all three overlays converge on the
 single `static_context` field**, so a defect in that one field disables all three
 at once. That is exactly what happened (§5.1).

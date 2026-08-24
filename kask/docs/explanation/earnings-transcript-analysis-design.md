@@ -1,3 +1,13 @@
+---
+title: "Earnings-Call Transcript Analysis — Design Exploration"
+audience: [developers, researchers, architects]
+last_updated: 2026-08-24
+version: "0.2.0"
+status: "Active"
+domain: "company-research"
+mds_categories: [domain, composition]
+---
+
 # Earnings-Call Transcript Analysis — Design Exploration
 
 Date: 2026-08-05. Status: design only, no implementation. Two epistemic phases were kept

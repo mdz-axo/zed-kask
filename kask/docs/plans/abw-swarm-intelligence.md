@@ -3,7 +3,7 @@ title: "ABW Swarm Intelligence — Design & Current State"
 audience: [architects, developers]
 last_updated: 2026-08-20
 version: "1.1.0"
-status: "Partially Deprecated"
+status: "Active"
 domain: "Swarm"
 mds_categories: [domain, composition, trust]
 ---

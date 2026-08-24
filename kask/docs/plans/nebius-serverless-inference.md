@@ -1,3 +1,13 @@
+---
+title: "Nebius Serverless AI Inference Backend — Future Plan"
+audience: [architects, developers]
+last_updated: 2026-08-24
+version: "0.2.0"
+status: "Draft"
+domain: "Composition"
+mds_categories: [composition, lifecycle]
+---
+
 # Future Plan: Nebius Serverless AI Inference Backend
 
 ## Status

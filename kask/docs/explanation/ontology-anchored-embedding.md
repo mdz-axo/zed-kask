@@ -133,8 +133,8 @@ ontology-agnostic. The tagging step would need KNN context from these
 4. **One-time cost, multiple benefits** — tag once, all retrieval steps
    benefit; embed once with tags, all KNN lookups are ontology-aware
 
-See [`adr-embedded-yaml-registry.md`](../architecture/adr-embedded-yaml-registry.md) for the
-design decision record on the template registry.
+See [`skills-and-composition.md`](skills-and-composition.md) for the
+skill body-injection model that replaced the build-time template registry.
 
 ## Footnotes
 

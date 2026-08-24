@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-20
-version: "0.38.0"
+last_updated: 2026-08-24
+version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -31,7 +31,6 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`core/MDS.md`](architecture/core/MDS.md)                                               | Minimal Domain Specification (5-category taxonomy).                                                                                                       |
 | [`core/scenarios-companies-bridge.md`](architecture/core/scenarios-companies-bridge.md) | Bridge tool between scenarios and companies MCP servers.                                                                                                  |
 | [`hkask-types-core-domain-split.md`](architecture/hkask-types-core-domain-split.md)     | **ADR (Draft)** — split `hkask-types` into core primitives vs domain types; options, trade-offs, audit gate.                                              |
-| [`adr-embedded-yaml-registry.md`](architecture/adr-embedded-yaml-registry.md)           | **ADR (Active)** — build-time `include_str!` embedding of all YAML/Jinja2 artifacts; dev-scoped evolution vs user-scoped freeze; trust model interaction. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md)                 | Documentation standards (frontmatter, Mermaid-First, Sourced-Ideas, Writing Excellence).                                                                   |
 
 ## Reference
@@ -85,8 +84,8 @@ Build plans for major features. All plans in the active tree have `status: Activ
 | Document                                 | Description                            |
 | ---------------------------------------- | -------------------------------------- |
 | [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry. |
-| [`upstream-rebase-process.md`](upstream-rebase-process.md) | Upstream rebase management process. |
-| [`upstream-removal-principles.md`](upstream-removal-principles.md) | Upstream-Zed removal principles for the seam. |
+| [`upstream-rebase-process.md`](reference/upstream-rebase-process.md) | Upstream rebase management process. |
+| [`upstream-removal-principles.md`](reference/upstream-removal-principles.md) | Upstream-Zed removal principles for the seam. |
 
 ## See also
 

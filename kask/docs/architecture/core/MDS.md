@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-08-20
-version: "0.37.0"
+last_updated: 2026-08-24
+version: "0.38.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -515,6 +515,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
 | `hkask-mcp` | Composition | MCP governance |
+| `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation, training-data generation, and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | `hkask-services-core` | Domain | Foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Kept (genuinely shared by 6 crates). |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
 | 10 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training. |
