@@ -324,8 +324,8 @@ mod tests {
     #[test]
     fn test_api_key_env_var_name_kask_contract() {
         // Cases from settings.json `openai_compatible` / `anthropic_compatible`.
-        // The expected names match the kask `.env.example` template and every
-        // `std::env::var("OPENROUTER_API_KEY")` call in the kask MCP servers.
+        // The expected names match every `std::env::var("OPENROUTER_API_KEY")`
+        // call in the kask MCP servers.
         assert_eq!(api_key_env_var_name_for("OpenRouter"), "OPENROUTER_API_KEY");
         assert_eq!(api_key_env_var_name_for("fal.ai"), "FALAI_API_KEY");
         // Lowercase IDs (used by some kask docs) must also resolve correctly.

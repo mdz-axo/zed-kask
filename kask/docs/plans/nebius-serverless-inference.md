@@ -147,7 +147,7 @@ For Nebius: already fixed by the D29 `eq_ignore_ascii_case` change in `convert.r
 ### 4. Credential bridge — two keychain stores
 The kask credential system stores keys under `kask://credentials/<key>` (for MCP server env injection). Zed's `ApiKeyState` reads from the system keychain keyed by the provider's `api_url`. These are separate stores. **A mirror function is needed** to copy the key from the kask store to the Zed keychain at the `api_url` the provider reads. Without it, a key set via the kask settings UI is invisible to the provider.
 
-For Nebius: if using `openai_compatible` (Option A), the existing `openai_compatible` provider reads from the Zed keychain at the `api_url` — no mirror needed (the user enters the token via the provider's settings UI). If using a dedicated provider (Option B), a mirror function like `mirror_runpod_api_key` would be needed, but the per-endpoint token model complicates this (each model has its own token).
+For Nebius: if using `openai_compatible` (Option A), the existing `openai_compatible` provider reads from the Zed keychain at the `api_url` — no mirror needed (the user enters the token via the provider's settings UI). If using a dedicated provider (Option B), the general `mirror_kask_credentials_to_providers` function handles the mirror automatically (as long as the provider is added to `INFERENCE_PROVIDERS`), but the per-endpoint token model complicates this (each model has its own token).
 
 ### 5. `INFERENCE_PROVIDERS` vs `DATA_SERVICES`
 `INFERENCE_PROVIDERS` mirrors keys to BOTH the Zed keychain (at `api_url`) AND `kask://credentials/<key>`. `DATA_SERVICES` mirrors only to `kask://credentials/<key>`. If a provider needs the key in the Zed keychain (for `ApiKeyState`), it must be in `INFERENCE_PROVIDERS`. If it only needs MCP env injection, `DATA_SERVICES` suffices.
@@ -187,7 +187,7 @@ For Nebius: if using `openai_compatible` (Option A), no `crates/` changes are ne
 | Auto-discovery | Via `/v1/models` (built-in) | Custom (no Nebius discovery API) |
 | Per-endpoint tokens | One `openai_compatible` entry per endpoint | Per-model token field |
 | MCP env injection | Add `INFERENCE_PROVIDERS`/`DATA_SERVICES` entry | Same |
-| Keychain mirror | Not needed (provider UI handles it) | Needed (like `mirror_runpod_api_key`) |
+| Keychain mirror | Not needed (provider UI handles it) | Automatic via `mirror_kask_credentials_to_providers` |
 | Multiple endpoints | Verbose (one entry per endpoint) | Centralized (one provider, multiple models) |
 | DIVERGENCE.md | Not needed (no `crates/` changes) | Required (D-seam entry) |
 

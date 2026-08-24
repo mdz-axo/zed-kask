@@ -31,7 +31,7 @@ pub use hkask_types::agent_paths::resolve_data_dir;
 
 pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
-    mirror_runpod_api_key, provision_agent,
+    provision_agent,
 };
 pub use inference::BridgeEditPredictionPort;
 pub use inference::LanguageModelEmbeddingPort;
@@ -40,7 +40,7 @@ pub use inference::NoModelInferencePort;
 pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
-    credential_urls_for_mcp, mirror_env_keys_to_keychain, resolve_embedding_credentials,
+    credential_urls_for_mcp, mirror_kask_credentials_to_providers, resolve_embedding_credentials,
 };
 pub use inference_socket::{get_inference_socket_path, set_inference_socket_path};
 pub use mcp_servers::{

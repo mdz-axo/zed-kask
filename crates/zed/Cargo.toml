@@ -84,7 +84,6 @@ agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 askpass.workspace = true
-dotenvy.workspace = true
 assets.workspace = true
 audio.workspace = true
 

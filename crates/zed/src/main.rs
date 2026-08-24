@@ -315,22 +315,7 @@ fn main() {
     }
 
     // `zed --printenv` Outputs environment variables as JSON to stdout.
-    // zed-kask: load the `.env` first so `printenv` reflects what the running
-    // app actually sees, not just the shell environment. Without this, `printenv`
-    // is useless for diagnosing `.env`-loading bugs (it would show the keys as
-    // absent even when the app loads them fine).
     if args.printenv {
-        let config_env = paths::config_dir().join(".env");
-        for env_path in [
-            config_env.as_path(),
-            std::path::Path::new(".env"),
-            std::path::Path::new("kask/.env"),
-        ] {
-            if env_path.is_file() {
-                let _ = dotenvy::from_path(env_path);
-                break;
-            }
-        }
         util::shell_env::print_env();
         return;
     }
@@ -338,48 +323,6 @@ fn main() {
     if args.dump_all_actions {
         dump_all_gpui_actions();
         return;
-    }
-
-    // Load kask `.env` file if present. The file contains API keys and
-    // configuration for kask inference providers (OPENROUTER_API_KEY,
-    // etc.) and kask runtime settings (HKASK_*).
-    // Without this, the keys are invisible to the process even though they're
-    // in the file.
-    //
-    // Search order:
-    // 1. `<config_dir>/.env` — the installed-binary location, alongside
-    //    `settings.json`. This is where users put their `.env` after install:
-    //    `~/.config/zed-kask/.env` on Linux,
-    //    `~/Library/Application Support/Zed-Kask/.env` on macOS,
-    //    `%APPDATA%/Zed-Kask/.env` on Windows.
-    // 2. `.env` in CWD — dev convenience (running from the repo root).
-    // 3. `kask/.env` — legacy dev layout (running from a kask project dir).
-    //
-    // dotenvy does NOT override existing env vars — if a key is already in
-    // the process environment (e.g. from the shell), the file value is
-    // ignored. This is the correct behavior: shell env > .env file.
-    //
-    // zed-kask: the log emission is deferred to after `zlog::init()` (below)
-    // because the logger is not yet initialized at this point — emitting
-    // `log::info!`/`log::warn!` here would be silently dropped, leaving
-    // operators with no signal that the `.env` loaded or failed. This is the
-    // "Process-global hooks set at runtime need a startup-failure signal" trap
-    // from `.rules`: a silent `.env` load failure looks identical to "no `.env`
-    // present". We capture the result and log it once the logger is ready.
-    let config_env = paths::config_dir().join(".env");
-    let mut kask_env_load_result: Result<std::path::PathBuf, String> =
-        Err("no .env file found".to_string());
-    for env_path in [
-        config_env.as_path(),
-        std::path::Path::new(".env"),
-        std::path::Path::new("kask/.env"),
-    ] {
-        if env_path.is_file() {
-            kask_env_load_result = dotenvy::from_path(env_path)
-                .map(|()| env_path.to_path_buf())
-                .map_err(|e| format!("{e}"));
-            break;
-        }
     }
 
     // Set custom data directory.
@@ -417,16 +360,11 @@ fn main() {
     }
     ztracing::init();
 
-    // zed-kask: emit the deferred `.env` load result now that the logger is ready.
-    // See the comment near the `.env` loading block above.
-    match &kask_env_load_result {
-        Ok(path) => log::info!("Loaded kask environment from {}", path.display()),
-        Err(reason) => log::warn!(
-            "No kask `.env` loaded: {reason}. API keys for inference providers \
-             (OPENROUTER_API_KEY, etc.) must come from the shell \
-             environment or the keychain, or kask inference routing will not work."
-        ),
-    }
+    // zed-kask: `.env` file loading has been removed. API keys must be
+    // configured via the settings UI (keychain) or shell environment
+    // variables. The keychain is the single source of truth — keys set
+    // via the settings UI are mirrored to each provider's `api_url` so
+    // the `ApiKeyState` keychain read finds them.
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -1438,20 +1376,11 @@ fn main() {
                 });
                 db_passphrase_mirror_task.await;
 
-                // D29: mirror the RunPod API key from the kask credential store
-                // (`kask://credentials/runpod`) to the Zed keychain under the
-                // RunPod provider's `api_url` (`https://api.runpod.io`). The
-                // RunPod `LanguageModelProvider`'s `ApiKeyState` reads from the
-                // Zed keychain, not the kask store — without this mirror, a key
-                // set via the kask settings UI is invisible to the RunPod
-                // provider. Detached (not `.await`ed) because the RunPod provider
-                // re-checks the keychain on each `authenticate`/settings change,
-                // so a brief window before the mirror completes is acceptable.
-                let runpod_key_mirror_task = cx.update(|cx| {
-                    let credentials_provider = zed_credentials_provider::global(cx);
-                    kask_bridge::mirror_runpod_api_key(&credentials_provider, cx)
-                });
-                runpod_key_mirror_task.await;
+                // zed-kask: RunPod key mirroring is now handled by the
+                // general `mirror_kask_credentials_to_providers` call below,
+                // which mirrors all inference providers (including RunPod)
+                // from `kask://credentials/<key>` to each provider's `api_url`.
+                // The former RunPod-only mirror is removed to avoid duplication.
 
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the
@@ -1463,14 +1392,24 @@ fn main() {
                         let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
 
                         // zed-kask: D8 — F14: embedding credentials (deferred task).
-                        // Resolve embedding credentials directly from the bridge's
-                        // `INFERENCE_PROVIDERS` table + env var. Per the .rules trap
-                        // on startup-failure signals: failure warns loudly and
-                        // skips the real memory port (logging mode stays active).
+                        // Resolve embedding credentials by reading the API key
+                        // from the Zed keychain at the provider's `api_url`.
+                        // Per the .rules trap on startup-failure signals:
+                        // failure warns loudly and skips the real memory port
+                        // (logging mode stays active).
                         let embedding_port_result = cx.update(|cx| {
                             let http_client = app_state_for_deferred.client.http_client();
                             let tokio_handle = gpui_tokio::Tokio::handle(cx);
-                            kask_bridge::resolve_embedding_credentials(&embedding_model)
+                            let embedding_model = embedding_model.clone();
+                            let credentials_provider =
+                                zed_credentials_provider::global(cx);
+                            cx.spawn(async move |cx| {
+                                kask_bridge::resolve_embedding_credentials(
+                                    &embedding_model,
+                                    credentials_provider.as_ref(),
+                                    &cx,
+                                )
+                                .await
                                 .map(|(api_url, api_key)| {
                                     kask_bridge::LanguageModelEmbeddingPort::new(
                                         api_url,
@@ -1479,9 +1418,10 @@ fn main() {
                                         tokio_handle,
                                     )
                                 })
+                            })
                         });
 
-                        let Some(embedding_port) = embedding_port_result else {
+                        let Some(embedding_port) = embedding_port_result.await else {
                             return;
                         };
 
@@ -1914,23 +1854,20 @@ fn main() {
                     );
                 }
 
-                // zed-kask: D8/D12 — F13b: mirror inference-provider + data-service env keys to keychain.
-                // Operators who set `OPENROUTER_API_KEY` etc. in `kask/.env`
-                // get a working main process (the env var is read by `EnvVar::new` in the
-                // OpenAI-compatible provider state), but MCP server child processes
-                // (media, corpus) receive their credentials via `build_mcp_server_env`,
-                // which reads from the keychain — not the parent process env. Without
-                // this mirror, MCP servers silently fail with "API key not configured"
-                // even though the main process works.
-                //
-                // Per the `.rules` trap "Process-global hooks set at runtime need a
-                // startup-failure signal": silent no-op when no inference env vars are
-                // set (the `.env`-not-found warn already covers that case), `tracing::info!`
-                // on success, `tracing::warn!` on failure. Runs in the deferred task because
-                // it needs the `CredentialsProvider` (app-global, available post-init).
+                // zed-kask: mirror kask credential store keys to each provider's
+                // `api_url` in the Zed keychain. The kask settings UI writes keys
+                // to `kask://credentials/<key>`, but each `LanguageModelProvider`'s
+                // `ApiKeyState` reads from the provider's `api_url` (e.g.
+                // `https://openrouter.ai/api/v1`). Without this mirror, a key set
+                // via the kask settings UI is invisible to the provider — models
+                // never load. This generalizes the former RunPod-only mirror to
+                // all inference providers, and replaces the removed
+                // `mirror_env_keys_to_keychain` (which mirrored from env vars).
+                // Runs in the deferred task because it needs the
+                // `CredentialsProvider` (app-global, available post-init).
                 let mirror_task = cx.update(|cx| {
                     let credentials_provider = zed_credentials_provider::global(cx);
-                    kask_bridge::mirror_env_keys_to_keychain(&credentials_provider, cx)
+                    kask_bridge::mirror_kask_credentials_to_providers(&credentials_provider, cx)
                 });
                 mirror_task.detach();
 

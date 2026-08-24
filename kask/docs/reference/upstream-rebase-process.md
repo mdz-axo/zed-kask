@@ -150,7 +150,7 @@ noted.
 
 | ID | Lines | Purpose | Force | Defines | Uses | Must-come-after |
 |---|---|---|---|---|---|---|
-| F1 | 339 | `.env` loading via dotenvy (kask API keys before settings init) | Prohibition | (env vars) | — | before `settings::init` |
+| F1 | — | **REMOVED** — `.env` loading via dotenvy has been removed. API keys are configured via the settings UI (keychain) or shell env vars. The keychain is the single source of truth. | — | — | — | — |
 | F2 | 617 | `gpui_tokio` init from kask tokio runtime handle | Prohibition | `kask_runtime_handle` | — | after `app` built, before any `Tokio::spawn` |
 | F3 | 677 | Alert channel: CyberneticsLoop → MetacognitionLoop | Prohibition | `alert_tx`, `alert_rx`, `regulation_ledger`, `event_sink` | `kask_runtime_handle` | F2 |
 | F4 | 700 | Algedonic threshold → `variety_max_deficit` wiring | Guardrail | `set_points`, `cybernetics_loop_inner` | `kask_settings_for_mcp` (F9), `regulation_ledger` (F3) | F3, F9 |
@@ -160,8 +160,8 @@ noted.
 | F8 | 835 | Global `Fs` registration (`<dyn Fs>::global`) | Prohibition | (global set) | `fs` (upstream) | after `fs` defined |
 | F9 | 845 | `kask_settings_for_mcp` + MCP server launch list | Prohibition | `kask_settings_for_mcp` | `KaskSettings::get_global` | after `settings::init` |
 | F10 | 851 | `curator.always_on` gating of tick cycles | Guardrail | (tick spawn conditional) | `kask_settings_for_mcp` (F9), `cybernetics_loop_for_tick` (F6), `metacognition_loop_for_tick` (F6) | F6, F9 |
-| F11 | 884 | `ensure_openai_compatible_entries` | Prohibition | (settings.json mutation) | `kask_settings_for_mcp` (F9) | F9, before `language_models::init` |
-| F12 | 892 | `openai_compatible` re-sync on settings change | Guardrail | (SettingsStore observer) | F11 | F11 |
+| F11 | — | **REMOVED** — `ensure_openai_compatible_entries` has been removed. Providers are registered via zed's native Settings → AI → LLM Providers. | — | — | — | — |
+| F12 | — | **REMOVED** — `openai_compatible` re-sync observer has been removed with `ensure_openai_compatible_entries`. | — | — | — | — |
 | F13 | 1004 | `sync_kask_mcp_servers` (ContextServerStore registration) | Prohibition | (descriptors registered) | `kask_settings_for_mcp` (F9), `resolve_mcp_binary` (F22), `kask_server_env` (F23) | F9, F22, F23 |
 | F14 | 1182 | Embedding credentials resolution (deferred task) | Prohibition | (credentials bound) | `kask_settings` (deferred), `gpui_tokio` (F2) | F2, in deferred task |
 | F15 | 1337 | MCP re-sync (curator server, deferred) | Guardrail | (re-sync call) | F13 | F13, in deferred task |

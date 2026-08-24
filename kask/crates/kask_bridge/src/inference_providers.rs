@@ -8,7 +8,9 @@
 //!   `LanguageModelRegistry`)
 //! - `credential_urls_for_mcp` (builds keychain URLs so MCP server child
 //!   processes receive API keys via `build_mcp_server_env`)
-//! - `mirror_env_keys_to_keychain` (mirrors `.env` values into the keychain)
+//! - `mirror_kask_credentials_to_providers` (mirrors keys from the kask
+//!   credential store to each provider's `api_url` so the
+//!   `LanguageModelProvider`'s `ApiKeyState` finds them)
 //!
 //! API keys are stored in the keychain under the provider's `api_url` (the
 //! same URL zed's OpenAI-compatible provider reads) and mirrored to
@@ -54,10 +56,11 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://openrouter.ai/",
     },
     // RunPod has a dedicated `LanguageModelProvider` (D29), not an
-    // `openai_compatible` entry. It's listed here so `mirror_env_keys_to_keychain`
-    // writes the key to the Zed keychain under `api_url` (where the RunPod
-    // provider's `ApiKeyState` reads it), in addition to the
-    // `kask://credentials/runpod` write handled by `DATA_SERVICES`. Skipped in
+    // `openai_compatible` entry. It's listed here so
+    // `mirror_kask_credentials_to_providers` writes the key to the Zed
+    // keychain under `api_url` (where the RunPod provider's `ApiKeyState`
+    // reads it), in addition to the `kask://credentials/runpod` write
+    // handled by `DATA_SERVICES`. Skipped in
     // `credential_urls_for_mcp`'s `INFERENCE_PROVIDERS` loop (MCP injection
     // is handled by the `DATA_SERVICES` loop via `runpod_enabled`).
     InferenceProviderDescriptor {
@@ -73,7 +76,8 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // signals "no key needed" to `resolve_embedding_credentials`. Listed here
     // so the default embedding model resolves
     // without a warning. Skipped in `credential_urls_for_mcp` (no key to
-    // inject) and `collect_env_keys_for_mirror` (empty env_var filters out).
+    // inject) and in `mirror_kask_credentials_to_providers` (empty env_var
+    // filters out).
     InferenceProviderDescriptor {
         id: "ollama",
         name: "Ollama",
@@ -158,7 +162,8 @@ impl DataServiceDescriptor {
 /// The canonical registry of data service credentials. The single source of
 /// truth consumed by:
 /// - `credential_urls_for_mcp` (builds keychain URLs for MCP env injection)
-/// - `mirror_env_keys_to_keychain` (mirrors `.env` values to the keychain)
+/// - `mirror_kask_credentials_to_providers` (mirrors keys from the kask
+///   credential store to each provider's `api_url`)
 /// - the settings UI (`data_services.rs` renders rows from this registry)
 /// - the coverage governance test (asserts MCP server allowlists align)
 pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
@@ -229,8 +234,8 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     },
     // curator, corpus, training, kata-kanban, research) via
     // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
-    // Not shown in the Data Services UI (no toggle; managed via `.env`
-    // or the hkask keystore chain).
+    // Not shown in the Data Services UI (no toggle; managed via the
+    // hkask keystore chain).
     DataServiceDescriptor {
         env_var: "HKASK_DB_PASSPHRASE",
         credential_key: "hkask_db_passphrase",
@@ -240,11 +245,11 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     },
     // Swarm memory SQLCipher passphrase — read by the swarm server at
     // hkask-mcp-swarm/src/config.rs via `HKASK_SWARM_MEMORY_PASSPHRASE`.
-    // Registered here so the value is mirrored from `.env` and injected from the
-    // keychain by `credential_urls_for_mcp`; without a descriptor the allowlist
+    // Registered here so the value is injected from the keychain by
+    // `credential_urls_for_mcp`; without a descriptor the allowlist
     // entry alone would name a credential that nothing ever sources (RR-0061).
     // Distinct from HKASK_DB_PASSPHRASE: the swarm memory store is a separate DB
-    // with its own key. No UI toggle — managed via `.env` or the keystore chain.
+    // with its own key. No UI toggle — managed via the keystore chain.
     DataServiceDescriptor {
         env_var: "HKASK_SWARM_MEMORY_PASSPHRASE",
         credential_key: "hkask_swarm_memory_passphrase",
@@ -270,8 +275,8 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     },
     // RunPod S3 credentials — not read by any MCP server (no allowlist
     // references them). Not shown in the UI (dead surface); kept in the
-    // registry so the mirror writes them to the keychain if set in `.env`,
-    // preserving the option for a future consumer.
+    // registry so `credential_urls_for_mcp` can inject them if set via
+    // the keychain, preserving the option for a future consumer.
     DataServiceDescriptor {
         env_var: "RUNPOD_S3_ACCESS_KEY",
         credential_key: "runpod_s3_access_key",
@@ -292,7 +297,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     // current injection path; a future refactor could move it to `config_env`
     // and read via `std::env::var` (matching `HKASK_KANBAN_DB`'s pattern).
     // Not shown in the Data Services UI (it's a config value, not a key to
-    // enter; set via `.env` or the training server's config).
+    // enter; set via the training server's config).
     DataServiceDescriptor {
         env_var: "RUNPOD_TEMPLATE_ID",
         credential_key: "runpod_template_id",
@@ -328,10 +333,9 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
     // reference-level fetches. Optional (curated static fallback when absent),
-    // but an operator who sets it in `.env` expects it to reach the server.
+    // but an operator who sets it via the settings UI expects it to reach the server.
     // Shown in the Data Services UI as an always-on row (no enable toggle —
-    // enabled when the key is present, mirroring `hf_token`/`serpapi`); also
-    // autoloaded from `.env` into the keychain by `mirror_env_keys_to_keychain`.
+    // enabled when the key is present, mirroring `hf_token`/`serpapi`).
     DataServiceDescriptor {
         env_var: "HKASK_FRED_API_KEY",
         credential_key: "fred",
@@ -398,23 +402,28 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     urls
 }
 
-/// Resolve `(api_url, api_key)` for an embedding model string directly from
-/// the `INFERENCE_PROVIDERS` table + env var.
+/// Resolve `(api_url, api_key)` for an embedding model string by reading
+/// the API key from the Zed keychain at the provider's `api_url`.
 ///
 /// This is the direct path: parse the provider prefix from the model string
-/// (e.g. `DEFAULT_EMBEDDING_MODEL` → the provider prefix), look up the descriptor in
-/// `INFERENCE_PROVIDERS`, and read the API key from the env var named in the
-/// descriptor (`OPENROUTER_API_KEY`, etc.). No `LanguageModelRegistry` lookup,
-/// no GPUI access, no case-sensitivity traps.
+/// (e.g. `DEFAULT_EMBEDDING_MODEL` → the provider prefix), look up the
+/// descriptor in `INFERENCE_PROVIDERS`, and read the API key from the
+/// keychain at the provider's `api_url` (the same URL the
+/// `LanguageModelProvider`'s `ApiKeyState` reads). No `LanguageModelRegistry`
+/// lookup, no case-sensitivity traps.
 ///
 /// Returns `None` (after logging a warn) if:
 /// - The model string has no recognized provider prefix.
 /// - The provider is not in `INFERENCE_PROVIDERS`.
-/// - The env var is not set (key not loaded).
+/// - The keychain has no key at the provider's `api_url`.
 ///
 /// Providers with an empty `env_var` (e.g. ollama) are local services that
 /// require no API key — the function returns an empty key for them.
-pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, String)> {
+pub async fn resolve_embedding_credentials(
+    embedding_model: &str,
+    credentials_provider: &dyn CredentialsProvider,
+    cx: &gpui::AsyncApp,
+) -> Option<(String, String)> {
     let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
         tracing::warn!(
             "Embedding model '{}' has no recognized provider prefix \
@@ -433,15 +442,48 @@ pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, S
         return Some((provider.api_url.to_string(), String::new()));
     }
 
-    let api_key = std::env::var(provider.env_var).ok().or_else(|| {
-        tracing::warn!(
-            "Embedding provider '{}' — env var {} is not set. \
-             Embedding-based recall will not work until the key is loaded.",
-            provider.id,
-            provider.env_var
-        );
-        None
-    })?;
+    // Read the API key from the Zed keychain at the provider's `api_url`.
+    // This is the same URL the `LanguageModelProvider`'s `ApiKeyState` reads,
+    // so the embedding port uses the same key the provider uses. The
+    // `mirror_kask_credentials_to_providers` call at startup ensures a key
+    // set via the kask settings UI (`kask://credentials/<key>`) is mirrored
+    // to the provider's `api_url`.
+    let api_key = match credentials_provider
+        .read_credentials(provider.api_url, cx)
+        .await
+    {
+        Ok(Some((_, bytes))) => match String::from_utf8(bytes) {
+            Ok(key) if !key.is_empty() => key,
+            _ => {
+                tracing::warn!(
+                    "Embedding provider '{}' — keychain entry at {} is empty or invalid. \
+                     Embedding-based recall will not work until the key is set.",
+                    provider.id,
+                    provider.api_url
+                );
+                return None;
+            }
+        },
+        Ok(None) => {
+            tracing::warn!(
+                "Embedding provider '{}' — no key found in keychain at {}. \
+                 Embedding-based recall will not work until the key is set \
+                 via Settings → Kask → Data Services.",
+                provider.id,
+                provider.api_url
+            );
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Embedding provider '{}' — failed to read key from keychain at {}: {error}. \
+                 Embedding-based recall will not work until the key is set.",
+                provider.id,
+                provider.api_url
+            );
+            return None;
+        }
+    };
 
     Some((provider.api_url.to_string(), api_key))
 }
@@ -462,219 +504,100 @@ fn embedding_provider_descriptor(
     None
 }
 
-/// A credential to mirror from the process environment into the OS keychain.
+/// Mirror inference-provider API keys from the kask credential store
+/// (`kask://credentials/<key>`) to each provider's `api_url` in the Zed
+/// keychain so the `LanguageModelProvider`'s `ApiKeyState` finds them.
 ///
-/// Replaces the former `(env_var, api_url, credential_url, key)` 4-tuple
-/// that used an empty-string `api_url` sentinel to distinguish data services
-/// from inference providers. The enum makes the two-kind distinction
-/// type-level: `InferenceProvider` writes two keychain entries (api_url +
-/// credential_url); `DataService` writes one (credential_url only).
-#[derive(Debug)]
-enum MirrorTarget {
-    InferenceProvider {
-        env_var: String,
-        api_url: String,
-        credential_url: String,
-        key: String,
-    },
-    DataService {
-        env_var: String,
-        credential_url: String,
-        key: String,
-    },
-}
-
-impl MirrorTarget {
-    fn env_var(&self) -> &str {
-        match self {
-            Self::InferenceProvider { env_var, .. } => env_var,
-            Self::DataService { env_var, .. } => env_var,
-        }
-    }
-
-    fn credential_url(&self) -> &str {
-        match self {
-            Self::InferenceProvider { credential_url, .. } => credential_url,
-            Self::DataService { credential_url, .. } => credential_url,
-        }
-    }
-
-    fn key(&self) -> &str {
-        match self {
-            Self::InferenceProvider { key, .. } => key,
-            Self::DataService { key, .. } => key,
-        }
-    }
-
-    /// The settings-UI remediation path for this credential category.
-    fn remediation_path(&self) -> &'static str {
-        match self {
-            Self::InferenceProvider { .. } => "Settings → AI → LLM Providers",
-            Self::DataService { .. } => "Settings → Kask → Data Services",
-        }
-    }
-}
-
-/// Mirror inference-provider API keys from the process environment into zed's
-/// keychain so MCP server child processes (media, corpus, etc.) can read them.
+/// The kask settings UI writes keys to `kask://credentials/<credential_key>`,
+/// but each provider's `ApiKeyState` reads from the provider's `api_url`
+/// (e.g. `https://openrouter.ai/api/v1`). Without this mirror, a key set via
+/// the kask settings UI is invisible to the provider — models never load.
 ///
-/// The main process reads inference keys from `std::env::var` (populated by
-/// the `.env` load at startup or by the shell). MCP servers, however, receive
-/// their credentials via `build_mcp_server_env`, which reads from the
-/// keychain (`kask://credentials/<key>`) — not from the parent process env.
-/// Without this mirror, an operator who sets a provider key (e.g.
-/// `OPENROUTER_API_KEY`) only in `.env` gets a working main process but
-/// MCP servers silently fail with "API key not configured".
-///
-/// For each provider in `INFERENCE_PROVIDERS` whose env var is set and
-/// non-empty, this writes the key to both keychain locations (the provider's
-/// `api_url` and `kask://credentials/<credential_key>`). For each secret entry
-/// in `DATA_SERVICES` whose env var is set and non-empty, this writes the key
-/// only to `kask://credentials/<credential_key>` (data services have no
-/// OpenAI-compatible `api_url`).
-/// `Config` entries in `DATA_SERVICES` are skipped (non-secret, not keychain-backed).
-/// It always writes (overwrites any existing keychain entry with the env
-/// value). The env var takes precedence on the next restart because the
-/// main process reads `std::env::var` first; the keychain write ensures MCP
-/// servers (which read the keychain via `build_mcp_server_env`) see the
-/// key even when the env var is later removed from `.env`. When the env var
-/// is absent, no mirror happens, so a key the operator set via the settings
-/// UI is preserved — matching the main-process precedence rule in
-/// `ApiKeyState::load_if_needed` (shell env > .env file > keychain).
+/// For each provider in `INFERENCE_PROVIDERS` that has a non-empty `env_var`
+/// (i.e. requires a key) and a key present at `kask://credentials/<key>`,
+/// this writes the key to the provider's `api_url` in the Zed keychain —
+/// but only if no key is already present at `api_url` (doesn't clobber a
+/// key entered via the provider's own settings UI).
 ///
 /// Per the `.rules` trap "Process-global hooks set at runtime need a
-/// startup-failure signal":
-/// - No inference env vars set → silent no-op (the `.env`-not-found warn at
-///   `main.rs` already covers the "not configured" case; a second warn here
-///   would be redundant noise).
-/// - Env var present, keychain write succeeds → `tracing::info!` naming the env
-///   var and the credential URL (confirms the mirror ran).
-/// - Env var present, keychain write fails → `tracing::warn!` naming the env
-///   var, the error, and the remediation (the main process will use the env
-///   var, but MCP servers reading from the keychain will not see this key).
-pub fn mirror_env_keys_to_keychain(
+/// startup-failure signal": `tracing::info!` on success, `tracing::warn!`
+/// on failure. Runs in the deferred task because it needs the
+/// `CredentialsProvider` (app-global, available post-init).
+pub fn mirror_kask_credentials_to_providers(
     credentials_provider: &Arc<dyn CredentialsProvider>,
     cx: &mut App,
 ) -> Task<()> {
-    let to_mirror = collect_env_keys_for_mirror();
-    if to_mirror.is_empty() {
-        // Silent no-op: either no `.env` loaded or no inference keys in it.
-        // The `.env`-not-found warn in `main.rs` already covers the first
-        // case; the second case is a legitimate "user configured some
-        // providers via the settings UI only" state.
-        return Task::ready(());
-    }
-
     let credentials_provider = credentials_provider.clone();
     cx.spawn(async move |cx| {
-        for target in to_mirror {
-            // Inference providers write under the api_url (for zed's
-            // OpenAI-compatible provider). Data services have no api_url.
-            if let MirrorTarget::InferenceProvider { api_url, .. } = &target {
-                match credentials_provider
-                    .write_credentials(api_url, "Bearer", target.key().as_bytes(), cx)
-                    .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.kask_bridge",
-                            env_var = %target.env_var(),
-                            api_url = %api_url,
-                            error = %e,
-                            "Failed to mirror env key to keychain at api_url. \
-                             The main process will use the env var, but zed's \
-                             OpenAI-compatible provider (which reads the keychain \
-                             when the env var is absent on a future restart) will \
-                             not see this key. Falling through to the \
-                             credential_url write so MCP servers still receive it."
-                        );
-                        // Do NOT `continue` — the credential_url write is an
-                        // independent keychain entry (different URL) and MCP
-                        // servers read from it, not from api_url. Skipping it
-                        // would suppress the MCP-server key on an unrelated
-                        // OpenAI-compatible-provider write failure.
-                    }
-                }
+        for provider in INFERENCE_PROVIDERS {
+            // Skip providers that don't require a key (e.g. ollama).
+            if provider.env_var.is_empty() {
+                continue;
             }
-            // Write under the kask credential URL (for MCP env injection).
-            // Both inference providers and data services write this entry.
-            let credential_url = target.credential_url();
-            match credentials_provider
-                .write_credentials(credential_url, "kask", target.key().as_bytes(), cx)
-                .await
-            {
-                Ok(()) => {
-                    tracing::info!(
-                        target: "hkask.kask_bridge",
-                        env_var = %target.env_var(),
-                        credential_url = %credential_url,
-                        "Mirrored env key to keychain for MCP server env injection"
-                    );
-                }
-                Err(e) => {
+
+            let kask_url = provider.credential_url();
+
+            // Read the key from the kask credential store.
+            let key = match credentials_provider.read_credentials(&kask_url, cx).await {
+                Ok(Some((_, bytes))) => match String::from_utf8(bytes) {
+                    Ok(key) if !key.is_empty() => key,
+                    _ => continue, // Empty or invalid — skip.
+                },
+                Ok(None) => continue, // No key in the kask store — skip.
+                Err(error) => {
                     tracing::warn!(
                         target: "hkask.kask_bridge",
-                        env_var = %target.env_var(),
-                        credential_url = %credential_url,
-                        error = %e,
-                        "Failed to mirror env key to keychain at credential_url. \
-                         The main process will use the env var, but MCP servers \
-                         that read from the keychain will not see this key. \
-                         Remediation: re-enter the key in {}."
-                        , target.remediation_path()
+                        %error,
+                        credential_url = %kask_url,
+                        provider = %provider.name,
+                        "Failed to read API key from kask credential store for mirror"
                     );
+                    continue;
                 }
+            };
+
+            // Write to the Zed keychain under the provider's api_url, but
+            // only if no key is already present — don't clobber a key entered
+            // via the provider's own settings UI.
+            let api_url = provider.api_url;
+            match credentials_provider.read_credentials(api_url, cx).await {
+                Ok(Some(_)) => {
+                    // Zed keychain already has a key at api_url — preserve it.
+                    continue;
+                }
+                Ok(None) => {} // No key — proceed to write.
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.kask_bridge",
+                        %error,
+                        api_url = %api_url,
+                        provider = %provider.name,
+                        "Failed to check Zed keychain for existing key — skipping mirror to avoid clobbering"
+                    );
+                    continue;
+                }
+            }
+
+            match credentials_provider
+                .write_credentials(api_url, "Bearer", key.as_bytes(), cx)
+                .await
+            {
+                Ok(()) => tracing::info!(
+                    target: "hkask.kask_bridge",
+                    api_url = %api_url,
+                    provider = %provider.name,
+                    "Mirrored API key from kask credential store to Zed keychain"
+                ),
+                Err(error) => tracing::warn!(
+                    target: "hkask.kask_bridge",
+                    %error,
+                    api_url = %api_url,
+                    provider = %provider.name,
+                    "Failed to mirror API key to Zed keychain — \
+                     the provider will not find the key via ApiKeyState. \
+                     Remediation: enter the key in Settings → AI → LLM Providers."
+                ),
             }
         }
     })
-}
-
-/// Collect `MirrorTarget` entries for every inference provider and data
-/// service secret whose env var is set and non-empty. Extracted from
-/// `mirror_env_keys_to_keychain` for testability (the collection logic is
-/// synchronous and doesn't need a GPUI executor).
-///
-/// `Config` entries in `DATA_SERVICES` are skipped — they're non-secret and
-/// not keychain-backed. Without this mirror, operators who set
-/// `RUNPOD_API_KEY` / `HF_TOKEN` / `HKASK_EODHD_API_KEY` etc. only in `.env`
-/// get a working main process (the env var is read directly), but MCP server
-/// child processes that read from the keychain via `build_mcp_server_env`
-/// silently fail with "API key not configured" — the same failure mode the
-/// mirror exists to prevent for inference providers.
-fn collect_env_keys_for_mirror() -> Vec<MirrorTarget> {
-    let mut out: Vec<MirrorTarget> = INFERENCE_PROVIDERS
-        .iter()
-        .filter_map(|provider| {
-            std::env::var(provider.env_var)
-                .ok()
-                .filter(|key| !key.is_empty())
-                .map(|key| MirrorTarget::InferenceProvider {
-                    env_var: provider.env_var.to_string(),
-                    api_url: provider.api_url.to_string(),
-                    credential_url: provider.credential_url(),
-                    key,
-                })
-        })
-        .collect();
-
-    // Data service secrets: no OpenAI-compatible api_url, so only the
-    // credential_url is written. RunPod is skipped here because it's in
-    // `INFERENCE_PROVIDERS` (which writes both `api_url` and
-    // `credential_url`), so the `DataService` duplicate would only re-write
-    // `credential_url`.
-    for desc in DATA_SERVICES {
-        if desc.credential_key == "runpod" {
-            continue;
-        }
-        if let Some(key) = std::env::var(desc.env_var).ok().filter(|k| !k.is_empty()) {
-            out.push(MirrorTarget::DataService {
-                env_var: desc.env_var.to_string(),
-                credential_url: desc.credential_url(),
-                key,
-            });
-        }
-    }
-
-    out
 }

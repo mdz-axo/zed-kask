@@ -544,14 +544,14 @@ impl McpRuntime {
         let mut attempt: u32 = 0;
         let running = loop {
             let mut cmd = Command::new(&binary);
-            //
-            // `Command` inherits the parent env by default, and the parent loads every
-            // provider API key into its own environment (`dotenvy::from_path` in
-            // main.rs) and sets HKASK_SMTP_PASSWORD. Inheriting meant every MCP child
-            // received every secret regardless of its per-server allowlist — a server
-            // allowlisted `Some(&[])` still got the SMTP password and all the API keys,
-            // silently nullifying the credential scoping that `filter_credentials_for_server`
-            // exists to provide.
+            // `Command` inherits the parent env by default, and the parent
+            // process may have API keys in its environment (set via shell
+            // env vars) and sets HKASK_SMTP_PASSWORD. Inheriting meant every
+            // MCP child received every secret regardless of its per-server
+            // allowlist — a server allowlisted `Some(&[])` still got the SMTP
+            // password and all the API keys, silently nullifying the
+            // credential scoping that `filter_credentials_for_server` exists
+            // to provide.
             //
             // `extra_env` is the caller's already-filtered per-server set, so after the
             // clear the child sees exactly that, plus the non-secret process plumbing
@@ -1633,8 +1633,8 @@ mod env_isolation_tests {
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
-    /// A parent environment shaped like the real one: `dotenvy::from_path` has
-    /// loaded the provider keys (main.rs) and login has set the SMTP password.
+    /// A parent environment shaped like the real one: shell env vars
+    /// have set the provider keys and login has set the SMTP password.
     fn parent_with_secrets() -> Vec<(&'static str, &'static str)> {
         vec![
             ("PATH", "/usr/bin:/bin"),

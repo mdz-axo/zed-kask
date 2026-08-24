@@ -96,6 +96,13 @@ impl ApiKeyState {
     }
 
     /// Set or delete the API key in the system keychain.
+    ///
+    /// zed-kask: the env-var lock has been removed. Users can always update
+    /// the key via the settings UI, even if an env var is set. The keychain
+    /// is the single source of truth — a key set via the UI overrides any
+    /// env var on the next `load_if_needed` because the keychain write
+    /// updates `load_status` to `SystemKeychain`, and `load_if_needed`
+    /// early-returns when `load_status` is already `Loaded`.
     pub fn store<Ent: 'static>(
         &mut self,
         url: SharedString,
@@ -104,11 +111,6 @@ impl ApiKeyState {
         provider: Arc<dyn CredentialsProvider>,
         cx: &Context<Ent>,
     ) -> Task<Result<()>> {
-        if self.is_from_env_var() {
-            return Task::ready(Err(anyhow!(
-                "bug: attempted to store API key in system keychain when API key is from env var",
-            )));
-        }
         cx.spawn(async move |ent, cx| {
             if let Some(key) = &key {
                 provider

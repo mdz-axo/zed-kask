@@ -25710,7 +25710,6 @@ dependencies = [
  "debugger_ui",
  "dev_container",
  "diagnostics",
- "dotenvy",
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
