@@ -2,7 +2,7 @@
 title: "Credential Resolution Chain — ctx.credentials to keychain to nudge_mcp_servers"
 audience: [architects, developers, operators]
 last_updated: 2026-08-15
-version: "0.36.0"
+version: "0.38.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition, lifecycle]

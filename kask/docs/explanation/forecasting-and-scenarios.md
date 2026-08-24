@@ -14,7 +14,7 @@ The scenarios and companies MCP servers run as builtin context servers (child
 processes over stdio) inside zed-kask (D1–D3).
 
 **Diataxis type:** Explanation
-**Status:** Active (v0.36.0)
+**Status:** Active (v0.38.0)
 **Related:** `registry/templates/superforecasting/README.md` (skill pipeline), `crates/hkask-forecast/README.md` (library), `mcp-servers/hkask-mcp-scenarios/README.md` (tool reference)
 
 ## Why this document exists

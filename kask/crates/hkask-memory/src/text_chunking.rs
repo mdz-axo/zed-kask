@@ -381,12 +381,13 @@ fn is_boilerplate_page(page: &str) -> bool {
         .filter(|l| {
             let l = l.trim();
             // Short line with multiple comma-separated numbers at the end
-            l.len() < 120
-                && l.matches(',').count() >= 2
-                && {
-                    let nums: Vec<&str> = l.rsplit(',').take(3).collect();
-                    nums.iter().filter(|s| s.trim().parse::<usize>().is_ok()).count() >= 2
-                }
+            l.len() < 120 && l.matches(',').count() >= 2 && {
+                let nums: Vec<&str> = l.rsplit(',').take(3).collect();
+                nums.iter()
+                    .filter(|s| s.trim().parse::<usize>().is_ok())
+                    .count()
+                    >= 2
+            }
         })
         .count();
     if lines.len() > 5 && index_entry_count as f64 / lines.len() as f64 > 0.5 {
@@ -394,9 +395,7 @@ fn is_boilerplate_page(page: &str) -> bool {
     }
 
     // Explicit "Contents" or "Index" header on a short page
-    if (lower.starts_with("contents") || lower.starts_with("index"))
-        && char_count < 2000
-    {
+    if (lower.starts_with("contents") || lower.starts_with("index")) && char_count < 2000 {
         return true;
     }
 

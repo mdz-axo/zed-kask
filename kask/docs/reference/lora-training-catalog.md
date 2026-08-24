@@ -2,7 +2,7 @@
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
 last_updated: 2026-08-04
-version: "0.36.0"
+version: "0.38.0"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, trust]

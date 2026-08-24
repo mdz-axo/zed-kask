@@ -76,13 +76,13 @@ You are the LENS agent — the consistency auditor for an institutional equity r
 {{ kata | tojson }}
 ```
 
-### Calibration Gap (from kata-calibration-measure — metacognition adapter, v0.36.0)
+### Calibration Gap (from kata-calibration-measure — metacognition adapter, v0.38.0)
 ```json
 {{ calibration_gap | tojson }}
 ```
 The `calibration_gap` field ranges 0.0 (calibrated) to 1.0 (maximum gap). A high gap means the analyst's process_confidence does not match the market_calibration Brier score — an overconfidence or under-confidence signal. If absent, Lens 3 (Dunning-Kruger) cannot cross-reference the calibration measurement and must flag the gap.
 
-### Semantic Tags (from intel-semantic-classify — pragmatic-semantics adapter, v0.36.0)
+### Semantic Tags (from intel-semantic-classify — pragmatic-semantics adapter, v0.38.0)
 ```json
 {{ semantic_tags | tojson }}
 ```

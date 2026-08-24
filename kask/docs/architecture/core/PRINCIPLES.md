@@ -2,7 +2,7 @@
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
 last_updated: 2026-08-20
-version: "0.36.1"
+version: "0.38.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -159,7 +159,7 @@ Bridges use the STAR extraction pattern (seed terms + direct logical entailments
 
 The architectural invariant: **hKask never requires knowledge of a full domain ontology.** All interaction with domain ontologies flows through thin bridges. The dual-axis core (PKO + DC+BIBO) provides the minimum viable ontology for any server; domain bridges are opt-in specificity.
 
-**P8.2 — Agent Output Grounding (v0.36.0):** LLM-produced agent output is grounded against a field → tool contract per invocation. The contract declares which output fields must be sourced from successful tool calls vs. inferred by the LLM. Unsourced fields are nulled before the response persists; narrative is scanned for leaked removed values. The six-valued provenance vocabulary (Sourced / Inferred / Derived / UncommissionedInference / Narrative / Unsourced) distinguishes commissioned judgment from uncommissioned inference and platform derivations — do not collapse the latter into Unsourced.
+**P8.2 — Agent Output Grounding (v0.38.0):** LLM-produced agent output is grounded against a field → tool contract per invocation. The contract declares which output fields must be sourced from successful tool calls vs. inferred by the LLM. Unsourced fields are nulled before the response persists; narrative is scanned for leaked removed values. The six-valued provenance vocabulary (Sourced / Inferred / Derived / UncommissionedInference / Narrative / Unsourced) distinguishes commissioned judgment from uncommissioned inference and platform derivations — do not collapse the latter into Unsourced.
 
 #### P9 — Homeostatic Self-Regulation
 The system must remain observable and self-correcting through cybernetic feedback loops.

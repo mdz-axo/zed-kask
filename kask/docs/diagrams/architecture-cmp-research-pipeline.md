@@ -2,7 +2,7 @@
 title: "CMP-First Research Pipeline Architecture"
 audience: [developers, researchers, architects, agents]
 last_updated: 2026-08-07
-version: "0.36.0"
+version: "0.38.0"
 status: "Active"
 domain: "Bayesian-APT research"
 mds_categories: [domain, composition, trust]

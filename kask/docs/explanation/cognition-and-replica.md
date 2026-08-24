@@ -2,7 +2,7 @@
 title: "Cognition and Replica — Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-08-14
-version: "0.36.0"
+version: "0.38.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, lifecycle, curation]
