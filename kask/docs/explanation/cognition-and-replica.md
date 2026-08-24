@@ -122,7 +122,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-002
 verified_date: 2026-08-05
-verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (21 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
+verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (22 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
 status: VERIFIED (v3 — corrected tool count to 21 and directory sketch to the post-split layout per 2026-08-05 audit)
 -->
 
@@ -242,7 +242,7 @@ The ν-event design is the Good Regulator theorem applied to observability: the 
 
 ### Statement
 
-The `hkask-mcp-companies` server provides 44 tools for retrieving company data, calculating valuations, researching claims, maintaining durable forecast feedback, and managing a local investment ledger. It is the operational toolset that connects the scenario forecasting pipeline to real market data — the forecasting pipeline produces probabilities; the companies server provides the financial data that grounds those probabilities in reality.
+The `hkask-mcp-companies` server provides 54 tools for retrieving company data, calculating valuations, researching claims, maintaining durable forecast feedback, and managing a local investment ledger. It is the operational toolset that connects the scenario forecasting pipeline to real market data — the forecasting pipeline produces probabilities; the companies server provides the financial data that grounds those probabilities in reality.
 
 ### Evidence
 

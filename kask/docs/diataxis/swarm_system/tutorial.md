@@ -26,7 +26,7 @@ loop:
    modes: Browse, Author, Compose, Steer. Open it from the status bar
    (`SwarmPanelButton`, `panel_button.rs:13`) or the View menu's `Toggle`
    action (`swarm_panel.rs:328`).
-2. **The swarm MCP server** (`hkask-mcp-swarm`) — 52 tools (27 ABW + 25 local)
+2. **The swarm MCP server** (`hkask-mcp-swarm`) — 61 tools (27 ABW + 34 local)
    that talk to one of two substrates, selected by `kask.swarm.mode`. It is
    launched by two independent paths (`McpRuntime` app-global +
    `ContextServerStore` per-project) — both correct by design.
@@ -35,7 +35,7 @@ loop:
 
 ```mermaid
 flowchart TD
-    Panel[Swarm Panel<br/>crates/swarm_panel] -->|tool calls via shared_tool_invoker| Server[hkask-mcp-swarm<br/>52 tools]
+    Panel[Swarm Panel<br/>crates/swarm_panel] -->|tool calls via shared_tool_invoker| Server[hkask-mcp-swarm<br/>61 tools]
     Server -->|mode: abw| ABW[Agent Bestiary World<br/>REST API]
     Server -->|mode: local| Local[Local runtime<br/>ledger + inference]
     Local --> IPC[zed IPC bridge<br/>inference + tool dispatch + skill exec]
@@ -196,7 +196,7 @@ execute the spend and refund the authorization on transient failure.
 | `steer_system_prompt`        | `crates/swarm_panel/src/swarm_panel.rs:148-326`                         |
 | `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/hire.rs:21-117` / `:123-272`                    |
 | `SwarmServer` struct         | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:122-129`        |
-| `combined_router` (52 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:132-140`       |
+| `combined_router` (61 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:132-140`       |
 | `run` (server entry)         | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:169-352`        |
 | `LocalAgentCard`             | `kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs:18-47`          |
 | `LocalSwarm`                 | `kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs:28-38`            |

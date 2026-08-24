@@ -14,7 +14,7 @@ mds_categories: [domain, lifecycle]
 
 Task-oriented procedures for company valuation, forecasting, and portfolio analysis with the companies MCP server. Each section answers "how do I achieve X?" with direct, imperative instructions. For the complete tool catalog and behavioral boundaries, see the [Companies MCP Server Reference](../reference/mcp-servers/companies.md).
 
-The server exposes **44 tools** (`#[tool]` functions under `kask/mcp-servers/hkask-mcp-companies/src/tools/`), grouped into eight tool modules:
+The server exposes **54 tools** (`#[tool]` functions under `kask/mcp-servers/hkask-mcp-companies/src/tools/`), grouped into eight tool modules:
 
 | Module | Tools | Count |
 |--------|-------|-------|

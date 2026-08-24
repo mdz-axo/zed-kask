@@ -172,7 +172,7 @@ On failure:
 
 ## Adapter Lifecycle via the Training MCP Server
 
-The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `kask/kask/mcp-servers/hkask-mcp-training/src/adapter/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."[^mcp-spec-training]
+The training MCP server (`hkask-mcp-training`) exposes 20 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `kask/kask/mcp-servers/hkask-mcp-training/src/adapter/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."[^mcp-spec-training]
 
 ### Training Tools
 

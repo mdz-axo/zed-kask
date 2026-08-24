@@ -1,8 +1,8 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-08-20
-version: "0.37.0"
+last_updated: 2026-08-24
+version: "0.38.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -350,7 +350,7 @@ zed-kask/
     │                  # kask_bridge (D8)
     ├── mcp-servers/   # the 10 on-disk servers (curator may be unloaded via override; hkask-mcp-*)
     ├── skills/        # the skills registry (60 SKILL.md files in .agents/skills/;
-    │                  # 62 template crates under kask/registry/templates/)
+    │                  # 60 template crates under kask/registry/templates/)
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts
     └── docs/          # ← documentation home (see 14.3)
 ```

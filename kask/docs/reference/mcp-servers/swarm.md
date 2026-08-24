@@ -11,8 +11,8 @@ mds_categories: [composition, trust, lifecycle, curation]
 # Swarm MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-swarm`
-**Tools:** 52 — 27 ABW + 25 local, **both sets always exposed in either mode**
-(pinned by `tool_surface_is_exactly_52_registered_tools`,
+**Tools:** 61 — 27 ABW + 34 local, **both sets always exposed in either mode**
+(pinned by `tool_surface_is_exactly_53_registered_tools`,
 `src/hkask_mcp_swarm.rs:361`)
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
@@ -100,7 +100,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | `swarm_delete_agent` | `DELETE /api/agents/{id}`        | Permanently delete an authored agent (irreversible; removes it from your library and all rosters). A synced local card is NOT touched. |
 | `swarm_delete_swarm` | `DELETE /api/teams/{id}`         | Permanently delete a workspace and its roster (irreversible).                                                                          |
 
-## Tool reference — Local (27 tools)
+## Tool reference — Local (34 tools)
 
 Local-mode tools route to zed-kask's local substrate (`hkask-inference`,
 `hkask-ledger`). They are **always exposed regardless of

@@ -67,7 +67,6 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline.                                                    |
 | [`explanation/training-and-adapters.md`](explanation/training-and-adapters.md)             | RunPod/Unsloth LoRA training path.                                            |
 | [`explanation/runpod-lora-training-guide.md`](explanation/runpod-lora-training-guide.md)   | RunPod LoRA training lessons.                                                 |
-| [`explanation/security-skills-smoke-test.md`](explanation/security-skills-smoke-test.md)   | Manual smoke-test procedure.                                                  |
 
 ## Plans
 

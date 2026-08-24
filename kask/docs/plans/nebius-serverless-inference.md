@@ -1,18 +1,18 @@
 ---
-title: "Nebius Serverless AI Inference Backend — Future Plan"
+title: "Nebius Serverless AI Inference Backend"
 audience: [architects, developers]
 last_updated: 2026-08-24
-version: "0.2.0"
-status: "Draft"
+version: "0.3.0"
+status: "Active"
 domain: "Composition"
 mds_categories: [composition, lifecycle]
 ---
 
-# Future Plan: Nebius Serverless AI Inference Backend
+# Nebius Serverless AI Inference Backend
 
 ## Status
 
-**Deferred.** No current use case. This document captures the knowledge and context gained from wiring up the RunPod backend (D29) so a future implementation is fast and correct.
+**Implemented.** Nebius is wired as a training host (`TrainingHostId::Nebius` in `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:345`) and as an inference provider (`kask/crates/kask_bridge/src/inference_providers.rs:297-312`). The `nebius_enabled` toggle in `KaskSettings` (`kask/crates/kask_bridge/src/settings.rs:181`) controls visibility. Activation requires `NEBIUS_PROJECT_ID` (and `NEBIUS_SUBNET_ID` for training).
 
 ## Why defer
 

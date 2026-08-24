@@ -10,14 +10,10 @@ mds_categories: [domain, composition, trust]
 
 # Agent Bestiary World (ABW) Swarm Intelligence — Design & Current State
 
-> **⚠️ Partially deprecated 2026-08-20.** The ABW substrate, tool surface,
+> **Note (2026-08-24):** The ABW substrate, tool surface,
 > consent gate, and local runtime described here remain current. Declared
 > `capabilities.skills` execute via upstream-Zed body injection
 > (`SkillTool::run` → `render_skill_envelope`).
->
-> Claims below that reference deleted subsystems are historical. The ABW
-> REST client, consent store, spend gate, local agent registry, and
-> `LocalSwarmRuntime` survive.
 
 > Supersedes the original 2026-08-01 integration plan (removed 2026-08-01 as
 > stale in `8f3ebd5a00`). This document is **current-state**: every claim below
@@ -99,11 +95,11 @@ through the global `ToolInvoker` hook → `McpRuntime` (metered + span-emitting;
 capability-match this line originally credited was removed 2026-08-12 as vacuous,
 RR-0056), never ad-hoc HTTP from the UI.
 
-### 3.3 Tool surface (52 tools)
+### 3.3 Tool surface (61 tools)
 
-The swarm server exposes **52 tools** — 27 ABW + 25 local — **both sets always
+The swarm server exposes **61 tools** — 27 ABW + 34 local — **both sets always
 registered in either mode** (`kask.swarm.mode` selects the substrate, not the
-surface; pinned by `tool_surface_is_exactly_52_registered_tools`). The full
+surface; pinned by `tool_surface_is_exactly_53_registered_tools`). The full
 tool-by-tool reference lives in
 [`reference/mcp-servers/swarm.md`](../reference/mcp-servers/swarm.md); the tool
 names are generated at build time from `pub(crate) async fn swarm_*`

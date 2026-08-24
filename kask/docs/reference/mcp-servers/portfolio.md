@@ -51,7 +51,7 @@ one over the guideline; each has a distinct purpose).
 | Module | Role |
 |--------|------|
 | `hkask_mcp_portfolio.rs` | The `PortfolioStore` — ledger, holdings, returns, import/export |
-| `server.rs` | MCP server — 13 tools + schema-compliance tests |
+| `server.rs` | MCP server — 16 tools + schema-compliance tests |
 | `main.rs` | Binary entrypoint |
 
 ## Tool surface

@@ -10,15 +10,11 @@ mds_categories: [composition, trust]
 
 # Cybernetic Swarm Plan — Reference Model, Map, and Findings
 
-> **⚠️ Partially deprecated 2026-08-20.** The cybernetic reference model
-> (six canonical loops, C0–C6) and the swarm-intelligence composition
+> **Note (2026-08-24):** The cybernetic reference model
+> (six canonical loops, C0–C8) and the swarm-intelligence composition
 > remain current. Skill execution is upstream-Zed body injection
 > (`SkillTool::run` → `render_skill_envelope`); PDCA loops are
 > model-coordinated via `lisp_eval` and `render_template`.
->
-> The cybernetic frame, the swarm-intelligence and swarm-steering skills, and
-> the `hkask-mcp-swarm` server survive. Claims that reference deleted
-> subsystems are historical.
 
 > Companion to `abw-swarm-intelligence.md`. That document is the
 > **current-state** substrate (ABW semantics, tool surface, consent gate). This

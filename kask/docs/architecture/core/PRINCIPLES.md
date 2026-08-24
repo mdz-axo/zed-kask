@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-08-20
-version: "0.38.0"
+last_updated: 2026-08-24
+version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -76,7 +76,7 @@ Shared data is **consent-bound** and must pass `require_sovereignty` + `require_
 #### P5 — Essentialism & Minimalism
 Remove before adding. Every module must earn existence by reducing total system action.
 
-**P5.1 — Single Source of Truth for Skills (updated 2026-08-20):** Every skill has exactly one canonical source: its `SKILL.md` file in `.agents/skills/`. Skill execution is **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. The `*.j2` templates under each skill directory are companion resources the model retrieves on demand via the `render_template` tool — they are not a parallel representation of skill semantics. 60 skills ship in `.agents/skills/`. PDCA iteration is model-coordinated: the `SKILL.md` body describes convergence criteria, and the model uses `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding within iterations.
+**P5.1 — Single Source of Truth for Skills (updated 2026-08-24):** Every skill has exactly one canonical source: its `SKILL.md` file in `.agents/skills/`. Skill execution is **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. The `*.j2` templates under each skill directory are companion resources the model retrieves on demand via the `render_template` tool — they are not a parallel representation of skill semantics. 62 skills ship in `.agents/skills/`. PDCA iteration is model-coordinated: the `SKILL.md` body describes convergence criteria, and the model uses `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding within iterations.
 
 **P5.2 — 5W1H Ontological Core (v0.31.0):** Essentialism requires an anchor. The 5W1H framework — **Who, What, When, Where, Why, How** — is hKask's drop-dead-simple ontological core. Every artifact, module, representation, and claim in hKask must answer at least one of these six questions. An artifact that answers none is ontological noise and fails the minimalism test.
 
@@ -117,7 +117,7 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 | **prediction-markets** | PKO | DC+BIBO | FIBO (financial contracts — CMP economic-object mapping) |
 
-> **Note (v0.31.0, in-process pivot; updated 2026-08-20):** The four servers `skill`, `memory`, `communication`, and `filesystem` are absent. Skill lifecycle is driven by **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. 60 skills ship in `.agents/skills/`. Memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (10 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. The condenser library crate (`kask/crates/hkask-condenser`) remains for in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
+> **Note (v0.31.0, in-process pivot; updated 2026-08-24):** The four servers `skill`, `memory`, `communication`, and `filesystem` are absent. Skill lifecycle is driven by **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. 62 skills ship in `.agents/skills/`. Memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (10 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. The condenser library crate (`kask/crates/hkask-condenser`) remains for in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
 
 **Bridge locations (v0.33.0 — single shared crate):**
 - Universal axes (DC+BIBO+CiTO state, PKO process) and all domain supplements (FIBO, ESO, GOLEM, ML-Schema) live in the single shared crate `crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.

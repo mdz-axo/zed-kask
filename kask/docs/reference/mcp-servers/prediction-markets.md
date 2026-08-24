@@ -11,13 +11,12 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 18 — `market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, plus `prediction_markets_status`
+**Tools:** 39 — `market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, plus `prediction_markets_status`
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
-> **Tool count note:** the server registers **16 market tools** plus a
-> `prediction_markets_status` state tool (17 `#[tool]` methods total in
-> `src/hkask_mcp_prediction_markets.rs`). This reference catalogues the 16
-> market tools as the operational surface; the status tool is listed under
+> **Tool count note:** the server registers **39 `#[tool]` methods** in
+> `src/hkask_mcp_prediction_markets.rs` (verified 2026-08-24). The operational
+> surface is the set of market tools; the status tool is listed under
 > Independent.
 
 The prediction-markets server turns Polymarket and Kalshi market prices into
