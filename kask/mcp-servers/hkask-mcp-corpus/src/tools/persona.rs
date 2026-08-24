@@ -112,27 +112,6 @@ struct PersonaCompareResult {
 }
 
 #[derive(Debug, Serialize)]
-struct AuthorInfo {
-    name: String,
-    centroid_ref: String,
-    passage_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct CompareResult {
-    authors: Vec<AuthorInfo>,
-    distances: Vec<AuthorDistance>,
-}
-
-#[derive(Debug, Serialize)]
-struct AuthorDistance {
-    author_a: String,
-    author_b: String,
-    cosine_distance: f64,
-    compatible: bool,
-}
-
-#[derive(Debug, Serialize)]
 struct MashupResult {
     prose: String,
     exemplar_count: usize,
@@ -601,60 +580,10 @@ impl CorpusServer {
                         .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
                 }
 
-                // ── Pairwise author comparison path (backward compat) ─────
-                let centroids = store
-                    .query_by_prefix("style:")
-                    .map_err(|e| map_embedding_error(e, "query centroids"))?;
-
-                let mut author_names: Vec<String> = Vec::new();
-                let mut author_info: Vec<AuthorInfo> = Vec::new();
-
-                for entity_ref in &centroids {
-                    if entity_ref.ends_with(":centroid") {
-                        let parts: Vec<&str> = entity_ref.split(':').collect();
-                        if parts.len() >= 3 {
-                            let name = parts[1].to_string();
-                            if name.contains(':') {
-                                continue;
-                            }
-                            let prefix = format!("style:{}:", name);
-                            let refs = store
-                                .query_by_prefix(&prefix)
-                                .map_err(|e| map_embedding_error(e, "query author passages"))?;
-                            let passage_count =
-                                refs.iter().filter(|r| !r.ends_with(":centroid")).count();
-                            author_names.push(name.clone());
-                            author_info.push(AuthorInfo {
-                                name,
-                                centroid_ref: entity_ref.clone(),
-                                passage_count,
-                            });
-                        }
-                    }
-                }
-
-                let mut distances: Vec<AuthorDistance> = Vec::new();
-                for i in 0..author_names.len() {
-                    for j in (i + 1)..author_names.len() {
-                        let ca = format!("style:{}:centroid", author_names[i]);
-                        let cb = format!("style:{}:centroid", author_names[j]);
-                        if let (Ok(a), Ok(b)) = (store.get(&ca), store.get(&cb)) {
-                            let dist = cosine_distance(&a.vector, &b.vector);
-                            distances.push(AuthorDistance {
-                                author_a: author_names[i].clone(),
-                                author_b: author_names[j].clone(),
-                                cosine_distance: dist,
-                                compatible: dist < 0.30,
-                            });
-                        }
-                    }
-                }
-
-                serde_json::to_value(&CompareResult {
-                    authors: author_info,
-                    distances,
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+                Err(McpToolError::invalid_argument(format!(
+                    "Unknown compare_mode '{}'. Use 'composite' or 'per-dimension'.",
+                    params.compare_mode
+                )))
             },
         )
         .await

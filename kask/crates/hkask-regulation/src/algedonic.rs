@@ -206,15 +206,6 @@ pub(crate) struct AlgedonicManager {
 }
 
 impl AlgedonicManager {
-    #[allow(dead_code)]
-    pub(crate) fn new(threshold: u64, default_expected_variety: u64) -> Self {
-        Self::with_max_alerts(
-            threshold,
-            default_expected_variety,
-            crate::set_points::DEFAULT_MAX_ALERTS,
-        )
-    }
-
     /// Construct with a custom alert-log cap. Used by `with_set_points` to
     /// thread the operator-configured `max_alerts` through.
     pub(crate) fn with_max_alerts(
