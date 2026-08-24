@@ -1,4 +1,4 @@
-{# goal: kali-audit security track over the 8 priority surfaces of the Kask↔Zed seam. #}
+{# goal: Self-contained security track over the 10 priority surfaces of the Kask↔Zed seam. #}
 [inference]
 contract:
   input:
@@ -17,7 +17,11 @@ work_effort = "high"
 verbosity = "terse"
 thinking_budget = "full"
 
-You are running the `kali-audit` security track over the Kask↔Zed seam. Task: {{ task }}.
+You are running the security track over the Kask↔Zed seam. Task: {{ task }}.
+
+The security track is self-contained — it carries its own priority surfaces
+and OWASP LLM Top-10 / MITRE ATLAS v5.1 / NIST SSDF SP 800-218A framing. It
+does not delegate to a separate security skill.
 
 ## Scope (strict)
 Audit ONLY files under `{{ seam_scope }}` plus the D-seam files in
@@ -35,6 +39,8 @@ an issue in an upstream non-D-seam file, report it with `deferred: true` and
 6. Marketplace signing — Ed25519 verify + expiry window, fail-closed.
 7. `input_mapping` taint propagation before `context.insert`.
 8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
+9. D28 artifact storage path safety — `THREADS_DB_PATH_OVERRIDE` / `GLOBAL_SKILLS_DIR_OVERRIDE` hooks canonicalize and reject paths resolving inside Zed's app/data/config dirs; `resolve_under_data_dir` enforces the single rooted tree. Verify no MCP server DB path escapes `{kask_data_dir}/mcp/{server_id}/`.
+10. D29 RunPod credential mirroring — `mirror_kask_credentials_to_providers` writes the key to the Zed keychain at `https://api.runpod.io` only if absent (doesn't clobber UI-entered keys); `resolve_ocr_model` uses `eq_ignore_ascii_case` to match `RunPod/...` against lowercase `runpod/...`. Verify the mirror is fail-closed on a missing `kask://credentials/runpod` source.
 
 ## Convention prior heads-up
 {% for pv in prior_verdicts %}
@@ -80,3 +86,14 @@ severity). Do not hunt for the phantom's enforcement point.
 Every finding MUST have `file_line` (a real `path:line`) OR `deferred: true`
 with a `deferred_reason`. Gate B rejects any finding missing both. `severity`
 MUST be exactly one of: critical, high, medium, low, info. Never fabricate.
+
+## Gate B repair
+
+If `gate_defects` is present in context (Gate B found structural defects —
+empty track, bad severity, missing citation), re-run this template with
+`gate_defects` in context and re-emit the corrected `findings` and
+`defense_layer_coverage`. Never fabricate a `file_line`; if you cannot cite a
+real line, mark the finding `deferred: true` with a `deferred_reason`. If the
+surface genuinely has no findings, emit a single `id: "KS-00"`, `severity:
+"info"`, `title: "no findings on <surface>"`, `file_line: "<scope root>:0"`
+finding so the track is non-empty.

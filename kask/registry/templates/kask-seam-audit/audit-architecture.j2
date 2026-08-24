@@ -30,6 +30,16 @@ Zed files outside `{{ seam_scope }}`.
 3. **folded-service re-exports** — `pub use` modules from a former standalone
    service with zero production callers in the new host.
 
+## Explicit D-seam callouts
+- **D33** — `LocalSwarmRegistry` gained `update_metadata`, `clone_swarm`,
+  `set_cloud_workspace_id`. Verify each new method has production callers
+  (panel + MCP tool paths); a method wired only by a test is helper-test-only.
+- **D28** — the override hooks `THREADS_DB_PATH_OVERRIDE` (in `agent.rs`) and
+  `GLOBAL_SKILLS_DIR_OVERRIDE` (in `agent_skills.rs`) relocate threads/skills
+  under `{kask_data_dir}/`. Verify the override hooks are exercised by
+  production paths, not just the round-trip tests; an override that no
+  production caller sets is dead surface.
+
 ## Method
 For each crate: list `pub trait`/`pub fn`/`pub use` re-exports; grep the
 workspace for production callers (filter trait-impl forwarders + self-calls +
@@ -68,3 +78,14 @@ Every finding MUST have `file_line`. `deletion_test` MUST be exactly one of:
 complexity_reappears, complexity_vanishes, unclear. If you cannot verify a
 caller count, set `deferred: true` with a `deferred_reason` — do NOT fabricate
 counts.
+
+## Gate B repair
+
+If `gate_defects` is present in context (Gate B found structural defects —
+empty track, bad severity, missing citation), re-run this template with
+`gate_defects` in context and re-emit the corrected `findings` and
+`dead_surface_summary`. Never fabricate a `file_line`; if you cannot cite a
+real line, mark the finding `deferred: true` with a `deferred_reason`. If the
+surface genuinely has no findings, emit a single `id: "RA-00"`, `kind:
+"shallowness"`, `severity: "info"`, `file_line: "<scope root>:0"` finding so
+the track is non-empty.

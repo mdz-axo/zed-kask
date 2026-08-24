@@ -257,30 +257,17 @@ pub(crate) fn delete_credential(
 /// keeps its launch-time env (with the stale empty key) until Zed restarts
 /// or an unrelated settings edit fires the observer.
 ///
-/// The nudge performs a no-op `update_settings_file` on the `kask` section:
-/// it re-writes the current `kask.mcp.load_default` value to itself, which
-/// is content-neutral (no setting changes) but still triggers
-/// `SettingsStore::set_user_settings`, which notifies observers. This
-/// mirrors the pattern `set_data_service_enabled` uses (it writes the
-/// toggle value; here we re-write an existing value to itself).
+/// The nudge fires `SettingsStore::notify_observers`, which pushes
+/// `Effect::NotifyGlobalObservers` directly without touching the settings
+/// file. This bypasses D32's no-op-write skip (which would defeat a no-op
+/// `update_settings_file` re-write) while preserving D32's loop-breaker (no
+/// file write → no file-watcher re-fire → no self-sustaining loop).
 ///
 /// Only call this for `kask://credentials/...` URLs — inference-provider
 /// keys are consumed by zed's `LanguageModelRegistry`, not by kask MCP
 /// servers, so a restart would be wasted work.
 pub(crate) fn nudge_mcp_servers(cx: &mut App) {
-    // Read the current `load_default` so we re-write the same value (no-op
-    // content-wise). If the kask section is absent, default to `true` to
-    // match `KaskMcpSettings::default()` — writing `Some(true)` into an empty
-    // section is still a no-op relative to the resolved settings.
-    let current_load_default = raw_kask_settings(cx)
-        .and_then(|c| c.mcp)
-        .and_then(|m| m.load_default)
-        .unwrap_or(true);
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let kask = settings.kask.get_or_insert_default();
-        let mcp = kask.mcp.get_or_insert_default();
-        mcp.load_default = Some(current_load_default);
-    });
+    SettingsStore::notify_observers(cx);
 }
 
 // ---------------------------------------------------------------------------

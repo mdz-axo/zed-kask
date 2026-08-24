@@ -361,7 +361,11 @@ impl RealMemoryPort {
                 let should_fire =
                     match cadence_should_fire(&shared_last_for_timer, now, cadence_dur, false) {
                         Some(fire) => fire,
-                        None => return,
+                        // Poison is unlikely to clear, but `continue` keeps the
+                        // warn firing on each tick as a signal — a permanent
+                        // `return` would silently disable consolidation for the
+                        // process lifetime after one warn.
+                        None => continue,
                     };
                 if !should_fire {
                     continue;

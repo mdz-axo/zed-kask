@@ -8,6 +8,17 @@
 //!
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
+//!
+//! ## Socket cleanup (InferenceIpcServer)
+//!
+//! `InferenceIpcServer::start` spawns a detached tokio task that owns the
+//! `UnixListener`. The struct itself is kept alive for the process lifetime
+//! (the call site binds it to `_ipc_server`). Rust does not drop detached
+//! tasks or process-global statics on exit, so a `Drop` impl would be dead
+//! code — and the `let _ = std::fs::remove_file(...)` it would contain is the
+//! silent-error-swallow trap the `.rules` file warns against. The socket lives
+//! in a per-user private tmpdir (`/tmp/kask-inference-{uid}/kask-inference-{pid}-{nonce}`,
+//! 0600 in a 0700 dir) that the OS reaps on reboot or tmpdir cleanup.
 
 mod condenser_bridge;
 mod context_injector;
@@ -106,17 +117,4 @@ pub fn spawn_test_email(recipient: String, cx: &gpui::App) {
         }
     })
     .detach();
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils {
-    pub use crate::context_injector::BridgeContextInjector;
-
-    /// Expose the pure prompt-length recall gate as a free function for
-    /// proptest. `should_recall` is an associated function on
-    /// `BridgeContextInjector`; a method cannot be re-exported via `pub use`,
-    /// so this thin wrapper forwards to the `pub(crate)` impl.
-    pub fn should_recall(prompt: &str) -> bool {
-        BridgeContextInjector::should_recall(prompt)
-    }
 }

@@ -1988,10 +1988,15 @@ fn main() {
                                     "hKask inference IPC server started at {socket_path} — \
                                      MCP servers will route inference through zed"
                                 );
-                                // Keep the server alive for the lifetime of the process.
-                                // It's stored in a detached task — the socket is cleaned
-                                // up on drop, but we don't drop it until process exit.
-                                std::mem::forget(ipc_server);
+                                // The server stays alive for the process lifetime: `start`
+                                // spawns a detached tokio task that owns the `UnixListener`,
+                                // and the returned `InferenceIpcServer` holds the
+                                // `JoinHandle`s. The socket file is intentionally leaked
+                                // (see the doc on `InferenceIpcServer`) — there is no
+                                // `Drop` impl, so `mem::forget` would be a no-op that
+                                // implied otherwise. Bind to `_` to acknowledge the value
+                                // is kept alive by the task, not by this binding.
+                                let _ipc_server = ipc_server;
                                 // zed-kask: D3/D8 — F19: MCP re-sync (inference socket, deferred).
                                 // Re-sync both MCP server paths so the inference socket path is
                                 // included in the env passed to context server processes:
@@ -2104,7 +2109,10 @@ fn main() {
                                      MCP servers will route through the bridge and receive a \
                                      diagnostic error until a default model is configured"
                                 );
-                                std::mem::forget(ipc_server);
+                                // See the matching binding site above: the server is kept
+                                // alive by its detached task, and the socket is
+                                // intentionally leaked (no `Drop` impl).
+                                let _ipc_server = ipc_server;
                                 sync_kask_mcp_servers(cx);
                                 sync_kask_mcp_runtime_servers(
                                     mcp_runtime_for_deferred.clone(),

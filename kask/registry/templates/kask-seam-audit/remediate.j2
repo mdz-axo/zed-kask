@@ -1,4 +1,4 @@
-{# goal: Apply only mcda top-ranked essentialist-surviving seam-scoped remediations; hard-stop on upstream non-D-seam touches. #}
+{# goal: Apply only mcda top-ranked essentialist-surviving seam-scoped remediations; hard-stop on upstream non-D-seam touches; propose_upstream for upstream-bug-fix D-seams. #}
 [inference]
 contract:
   input:
@@ -8,6 +8,7 @@ contract:
     seam_scope: string
   output:
     applied_remediations: array
+    propose_upstream: array
     hard_stop: object
 visibility: Public
 ---
@@ -35,6 +36,12 @@ You are the remediation executor. Task: {{ task }}.
    proposed D-seam entry (name + surface + the file to be added to
    `DIVERGENCE.md` in the same change). The engagement MUST stop and surface to
    the user.
+5. If a remediation touches a D-seam whose `seam_class` is `upstream-bug-fix`,
+   do NOT hard-stop and do NOT apply the patch in-session. Instead emit a
+   `propose_upstream` entry with the D-seam id, the patch description, the
+   upstream file, and a one-line rationale citing DIVERGENCE.md's "Should be
+   reported upstream to `zed-industries/zed`" note. The hard-stop in rule 4
+   remains for true non-D-seam upstream touches only.
 
 ## divergence_surface (allowed D-seam files)
 {{ divergence_surface }}
@@ -55,6 +62,14 @@ You are the remediation executor. Task: {{ task }}.
       "test_description": "what the test asserts"
     }
   ],
+  "propose_upstream": [
+    {
+      "d_seam": "Dxx",
+      "upstream_file": "crates/...",
+      "patch_description": "what the upstream patch does",
+      "rationale": "why this is an upstream bug fix (cite DIVERGENCE.md)"
+    }
+  ],
   "hard_stop": {
     "triggered": false,
     "reason": "",
@@ -69,3 +84,13 @@ Gate C rejects any `"false"`/missing value as `remediation_missing_test`. If you
 defer a remediation (e.g. needs a workspace compile you cannot verify in-session),
 do NOT list it in `applied_remediations` — record it in the final report as a
 recommended remediation with a test-pinning plan. Do not fabricate applied work.
+
+## Gate C repair
+
+If `gate_defects` is present in context (Gate C found defects — missing test,
+out-of-seam touch, or a prior hard-stop), re-run this template with
+`gate_defects` in context. For `remediation_missing_test`, either add the test
+(and re-emit the remediation with `test_added: true`) or roll the remediation
+back. For `touched_file_outside_seam`, roll the remediation back and emit the
+hard-stop with the offending file and a proposed D-seam entry — do NOT edit the
+file.

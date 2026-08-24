@@ -1,6 +1,6 @@
 ---
 name: kask-seam-audit
-description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D24). Three tracks: kali-audit (security), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
+description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D33, D17/D19 retired). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
 ---
 
 # Kask Seam Audit
@@ -8,17 +8,17 @@ description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERG
 Convergent multi-skill audit-and-refactor engagement over the zed-kask
 Kask↔Zed seam. The implementation lives in the registry:
 
-- **Process manifest**: `kask/registry/manifests/kask-seam-audit.yaml`
 - **Templates**: `kask/registry/templates/kask-seam-audit/*.j2`
 
-This SKILL.md is a discovery-only catalog entry. Invoke the skill via the
-`skill` tool; the agent reads the SKILL.md and calls `lisp_eval`, `render_template`,
-and MCP tools directly as the methodology instructs.
+This skill has no manifest; it runs purely from this SKILL.md body + the
+templates. Invoke the skill via the `skill` tool; the agent reads the SKILL.md
+and calls `lisp_eval`, `render_template`, and MCP tools directly as the
+methodology instructs.
 
 ## When to use
 
 - Reproducible security + architecture + UI audit of the Kask↔Zed seam
-  (D1-D24 in `DIVERGENCE.md`).
+  (D1–D33 in `DIVERGENCE.md`; D17 and D19 are retired).
 - Dead-surface removal + deepening candidates with grep-verified caller
   counts and the essentialist deletion test.
 - GPUI measured-layout + Zed interaction-language gaps (Button/IconButton vs
@@ -53,29 +53,33 @@ Final: report
 
 | Skill | Role | When |
 |-------|------|------|
-| `kali-audit` | executor | security track (step 4) |
-| `refactor-architecture` | executor | architecture track (step 5) |
-| `ui-layout-discipline` | executor | UI track (step 6) |
-| `pragmatic-semantics` | lens | adjudicate (step 9) |
-| `pragmatic-cybernetics` | lens | adjudicate (step 9) |
-| `essentialist` | lens | adjudicate + remediation gate (steps 9, 11) |
-| `mcda` | decision | ranking + sensitivity (step 10) |
+| `refactor-architecture` | executor | architecture track (Do) |
+| `ui-layout-discipline` | executor | UI track (Do) |
+| `pragmatic-semantics` | lens | adjudicate (Check) |
+| `pragmatic-cybernetics` | lens | adjudicate (Check) |
+| `essentialist` | lens | adjudicate (Check) + remediation gate (Act) |
+| `mcda` | decision | ranking + sensitivity (Check) |
+
+The security track is self-contained in `audit-security.j2` (10 priority
+surfaces, OWASP LLM Top-10 / MITRE ATLAS / NIST SSDF framing); it does not
+delegate to a separate skill.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `seam-map.j2` | PLAN — read DIVERGENCE.md D1–D24, grep `crates/` for each convention prior's artifact (live vs phantom), and derive the audit slices. Read-only. |
-| `refine-seam-map.j2` | Repair Gate A structural defects (phantom prior, invalid verdict, no slices). Only runs when Gate A found defects. |
-| `audit-security.j2` | DO — security review of the 8 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, 8-layer defense coverage). Every finding cites file:line. |
+| `seam-map.j2` | PLAN — read DIVERGENCE.md D1–D33 (D17, D19 retired), grep `crates/` for each convention prior's artifact (live vs phantom), classify each D-seam as `kask-owned` or `upstream-bug-fix`, and derive the audit slices. Read-only. |
+| `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
-| `refine-findings.j2` | Re-cite or re-classify findings Gate B flagged (missing file_line, invalid severity, empty track). Never fabricates evidence; marks deferred with a reason. |
 | `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings. |
 | `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria and run a ±20% sensitivity analysis. Each score traces to a finding. |
-| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
-| `remediation-repair.j2` | Repair Gate C defects (missing test, out-of-seam touch) or emit the hard-stop with the offending file and a proposed D-seam entry. |
+| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit; emit `propose_upstream` for `upstream-bug-fix` D-seams. |
 | `final-report.j2` | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. Cite file:line. |
+
+Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the
+parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with
+`gate_defects` in context; there are no separate repair templates.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

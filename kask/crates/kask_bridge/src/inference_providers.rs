@@ -22,8 +22,10 @@ use credentials_provider::CredentialsProvider;
 use gpui::{App, Task};
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
-/// Must match `kask_bridge::KASK_CREDENTIAL_NAMESPACE`.
-const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
+/// Re-exported from the crate root (`crate::KASK_CREDENTIAL_NAMESPACE`) so
+/// there is a single source of truth — the former private duplicate drifted
+/// silently when the crate-root const was updated.
+use crate::KASK_CREDENTIAL_NAMESPACE;
 
 /// A descriptor for an inference provider that exposes an OpenAI-compatible API.
 pub struct InferenceProviderDescriptor {

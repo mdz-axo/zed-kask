@@ -653,6 +653,23 @@ impl SettingsStore {
         })
     }
 
+    /// Fire `SettingsStore` observers without touching the settings file or the
+    /// in-memory store.
+    ///
+    /// zed-kask: D32 — the no-op-write skip in `update_settings_file_inner`
+    /// correctly prevents self-sustaining observer→write→observer loops, but it
+    /// also defeats `nudge_mcp_servers` (which re-writes the same value to fire
+    /// the observer after an out-of-band keychain write). This method provides a
+    /// direct observer-fire path that bypasses the file-write entirely, so the
+    /// nudge can signal credential changes to `sync_kask_mcp_runtime_servers`
+    /// without re-introducing the loop D32 fixed.
+    pub fn notify_observers(cx: &mut App) {
+        // `global_mut` pushes `Effect::NotifyGlobalObservers` unconditionally;
+        // we discard the `&mut SettingsStore` because we don't want to mutate
+        // the in-memory store — only to fire the observer.
+        let _ = cx.global_mut::<SettingsStore>();
+    }
+
     pub fn import_vscode_settings(
         &self,
         fs: Arc<dyn Fs>,
@@ -1956,6 +1973,147 @@ mod tests {
                 ClosePosition::Left
             );
         });
+    }
+
+    // zed-kask: D32 regression test for the `nudge_mcp_servers` wiring.
+    //
+    // `nudge_mcp_servers` (in `settings_ui/src/pages/kask_page.rs`) re-writes
+    // `kask.mcp.load_default` to its current value via
+    // `SettingsStore::update_settings_file` so the `SettingsStore` observer
+    // `sync_kask_mcp_runtime_servers` (wired in `zed/src/main.rs` via
+    // `cx.observe_global::<SettingsStore>`) re-runs after a keychain write.
+    // The keychain is out-of-band storage that does NOT touch `SettingsStore`,
+    // so the nudge is the only bridge from a credential write to the governed
+    // `McpRuntime` restart path.
+    //
+    // D32's no-op skip (`if new_text == old_text { return Ok(()); }` above)
+    // returns BEFORE `cx.update_global::<SettingsStore>` runs. Because the
+    // nudge always produces text identical to the current file (it re-writes
+    // the same value), D32's skip defeats the nudge: the observer never fires
+    // for a pure keychain write, and `sync_kask_mcp_runtime_servers` never
+    // re-runs. This test pins that fact — it is the falsifier for the nudge's
+    // doc claim that it "triggers `SettingsStore::set_user_settings`, which
+    // notifies observers." If a future fix adds an explicit observer-fire
+    // path (e.g. a `notify_observers()` method the nudge calls directly),
+    // this test must be updated to assert the observer DOES fire.
+    #[gpui::test]
+    async fn test_noop_update_settings_file_does_not_fire_settings_store_observer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .expect("settings dir must exist");
+        // Seed the file with a `kask.mcp.load_default: true` section so the
+        // nudge's re-write produces byte-identical text (the exact scenario
+        // `nudge_mcp_servers` creates).
+        fs.insert_file(
+            paths::settings_file(),
+            r#"{ "kask": { "mcp": { "load_default": true } } }"#
+                .as_bytes()
+                .to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        // Observer-fire counter. `observe_global::<SettingsStore>` callbacks
+        // fire when `cx.update_global::<SettingsStore>` runs (which pushes
+        // `NotifyGlobalObservers` via `end_global_lease`). D32's no-op skip
+        // returns before that call, so the counter must stay at 0 for a no-op
+        // write — which is exactly what `nudge_mcp_servers` produces.
+        let observer_fires = Rc::new(RefCell::new(0u32));
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            // No file-watcher callback needed — this test is about the
+            // `SettingsStore` global observer, not the file watcher.
+            store.watch_settings_files(fs.clone(), cx, |_, _, _| {});
+            cx.set_global(store);
+
+            let observer_fires = observer_fires.clone();
+            cx.observe_global::<SettingsStore>(move |_cx| {
+                *observer_fires.borrow_mut() += 1;
+            })
+            .detach();
+        });
+
+        // First, sanity-check the observer wiring with a REAL change: the
+        // counter must increment, proving the harness can detect a fire.
+        let real_change_rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                    // A real change: add a `tabs.close_position` field so
+                    // `new_text` differs from `old_text`.
+                    settings.tabs.get_or_insert_default().close_position =
+                        Some(ClosePosition::Left);
+                })
+        });
+        assert!(
+            real_change_rx
+                .await
+                .expect("real-change write must resolve")
+                .is_ok()
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            *observer_fires.borrow(),
+            1,
+            "harness sanity check: a real content change must fire the \
+             SettingsStore observer exactly once"
+        );
+
+        // Now the no-op write — this is what `nudge_mcp_servers` produces:
+        // re-write `kask.mcp.load_default` to its current value (`true`).
+        // The update closure mutates the in-memory `SettingsContent`, but
+        // `new_text_for_update` serializes it back to the SAME bytes as the
+        // existing file (the field was already `true`), so `new_text == old_text`
+        // and D32's skip returns before `cx.update_global::<SettingsStore>`.
+        let noop_rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                    let kask = settings.kask.get_or_insert_default();
+                    let mcp = kask.mcp.get_or_insert_default();
+                    // Re-write the same value — this is `nudge_mcp_servers`'s
+                    // exact operation (kask_page.rs:279-283).
+                    mcp.load_default = Some(true);
+                })
+        });
+        assert!(noop_rx.await.expect("no-op write must resolve").is_ok());
+        cx.run_until_parked();
+
+        // The falsifier: the observer must NOT have fired for the no-op
+        // write. If this assertion fails (counter > 1), D32's skip was
+        // removed or bypassed and the nudge works as documented. If it
+        // passes (counter == 1), the nudge is defeated — see the test's
+        // top comment for the fix proposal.
+        assert_eq!(
+            *observer_fires.borrow(),
+            1,
+            "D32's no-op skip defeats the nudge: a no-op \
+             `update_settings_file` (which is what `nudge_mcp_servers` \
+             produces) does NOT fire the `SettingsStore` observer, so \
+             `sync_kask_mcp_runtime_servers` never re-runs after a pure \
+             keychain write. The nudge's doc claim that it notifies \
+             observers is false post-D32."
+        );
+
+        // The fix: `SettingsStore::notify_observers` fires the observer
+        // directly via `global_mut` (which pushes `NotifyGlobalObservers`),
+        // bypassing the file-write path entirely. This is what
+        // `nudge_mcp_servers` now calls instead of the no-op
+        // `update_settings_file`. The counter must increment to 2.
+        cx.update(|cx| SettingsStore::notify_observers(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            *observer_fires.borrow(),
+            2,
+            "`SettingsStore::notify_observers` must fire the observer \
+             directly, bypassing D32's no-op skip. This is the fix for the \
+             nudge being defeated: `nudge_mcp_servers` now calls \
+             `notify_observers` instead of a no-op `update_settings_file`."
+        );
     }
 
     #[gpui::test]

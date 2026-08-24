@@ -85,23 +85,60 @@ static WORKTREE_SPAWNER: std::sync::Mutex<Option<Arc<dyn WorktreeSpawner>>> =
 /// when a workspace with an `AgentPanel` opens. Replaces any prior spawner
 /// (e.g. when the user switches workspaces).
 pub fn set_worktree_spawner(spawner: Option<Arc<dyn WorktreeSpawner>>) {
-    *WORKTREE_SPAWNER.lock().expect("WORKTREE_SPAWNER poisoned") = spawner;
+    let mut guard = match WORKTREE_SPAWNER.lock() {
+        Ok(g) => g,
+        // Poisoned by a prior panic — still write the new value so the
+        // dispatch path recovers instead of cascading the panic into every
+        // IPC request.
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.inference",
+                error = %e,
+                "WORKTREE_SPAWNER lock poisoned — recovering with new value"
+            );
+            e.into_inner()
+        }
+    };
+    *guard = spawner;
 }
 
 /// Read the global worktree spawner. Returns `None` when no workspace with an
 /// `AgentPanel` is open. Called only by the GPUI-side IPC task in this crate
 /// (`InferenceIpcServer::start`'s worktree spawn task); not re-exported.
 pub(crate) fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
-    WORKTREE_SPAWNER
-        .lock()
-        .expect("WORKTREE_SPAWNER poisoned")
-        .clone()
+    let guard = match WORKTREE_SPAWNER.lock() {
+        Ok(g) => g,
+        // Poisoned by a prior panic — return the (possibly stale) value
+        // rather than panicking the IPC dispatch path.
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.inference",
+                error = %e,
+                "WORKTREE_SPAWNER lock poisoned — returning stale value"
+            );
+            e.into_inner()
+        }
+    };
+    guard.clone()
 }
 
 /// The zed-side inference IPC server.
 ///
 /// Listens on a Unix socket and dispatches inference requests to the
 /// provided `InferencePort`. Each connection is handled in its own task.
+///
+/// # Socket cleanup
+///
+/// The socket file is intentionally leaked: `start` spawns a detached tokio
+/// task that owns the `UnixListener`, and `main.rs` keeps the returned
+/// `InferenceIpcServer` alive for the process lifetime (the listener task
+/// is never dropped on exit). There is no `Drop` impl because it could
+/// never run — Rust does not drop detached async tasks or process-global
+/// statics on process exit. The socket lives in a per-user private tmpdir
+/// (pid + nonce, 0600 file inside a 0700 dir, see `generate_socket_path` /
+/// `inference_socket_dir`), so the OS reaps it on reboot or tmpdir cleanup.
+/// Adding a `Drop` impl that calls `std::fs::remove_file` would be dead
+/// code and silently swallow the io result (the `let _ =` trap).
 pub struct InferenceIpcServer {
     /// The socket path — passed to MCP server child processes via env var.
     socket_path: PathBuf,
@@ -437,13 +474,6 @@ impl InferenceIpcServer {
     }
 }
 
-impl Drop for InferenceIpcServer {
-    fn drop(&mut self) {
-        // Clean up the socket file.
-        let _ = std::fs::remove_file(&self.socket_path);
-    }
-}
-
 /// Generate a unique Unix socket path inside the per-user private socket
 /// directory (see [`inference_socket_dir`]).
 fn generate_socket_path() -> Result<PathBuf, std::io::Error> {
@@ -595,12 +625,31 @@ async fn dispatch(
         let texts = params.embed_texts.as_deref().unwrap_or(&[]);
         return match emb_port.embed(model, texts).await {
             Ok(embeddings) => InferenceOutcome::Embeddings { embeddings },
-            Err(e) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: e.to_string(),
-                },
-            },
+            Err(e) => {
+                let (code, message) = match e {
+                    hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
+                    hkask_types::EmbeddingGenerationError::Api(status, m) => {
+                        ("Api", format!("status {status}: {m}"))
+                    }
+                    hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m),
+                    hkask_types::EmbeddingGenerationError::EmptyResponse => {
+                        ("Api", "empty response from embedding model".to_string())
+                    }
+                    hkask_types::EmbeddingGenerationError::DimensionMismatch {
+                        expected,
+                        actual,
+                    } => (
+                        "Api",
+                        format!("dimension mismatch: expected {expected}, got {actual}"),
+                    ),
+                };
+                InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: code.to_string(),
+                        message,
+                    },
+                }
+            }
         };
     }
 
@@ -811,11 +860,30 @@ async fn dispatch(
             )
             .await
         }
-        // Already handled above — unreachable.
+        // These variants are handled by early-return blocks above. If this
+        // arm is reached, a future enum variant was added without a matching
+        // early-return — return an error instead of panicking on a
+        // peer-supplied value (DoS vector).
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
-        | InferenceMethod::CreateWorktreeThread => unreachable!(),
+        | InferenceMethod::CreateWorktreeThread => {
+            tracing::error!(
+                target: "reg.inference",
+                method = ?request.method,
+                "dispatch reached the unreachable arm — a new InferenceMethod variant \
+                 likely lacks an early-return block"
+            );
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "NotImplemented".to_string(),
+                    message: format!(
+                        "inference method {:?} not implemented in dispatch",
+                        request.method
+                    ),
+                },
+            };
+        }
     };
 
     match result {
@@ -823,5 +891,642 @@ async fn dispatch(
         Err(error) => InferenceOutcome::Error {
             error: InferenceErrorPayload::from(error),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
+    use hkask_types::inference_ipc::InferenceParams;
+    use hkask_types::{ChatMessage, ChatToolDefinition, InferenceResult, InferenceUsage, LLMParameters};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    // ── Mock InferencePort ──────────────────────────────────────────────
+    //
+    // A canned-response mock for testing `dispatch` without a real LLM.
+    // Returns a fixed `InferenceResult` for every `generate*` call.
+
+    struct CannedInferencePort;
+
+    fn canned_result() -> InferenceResult {
+        InferenceResult {
+            text: "canned response".to_string(),
+            model: "test-model".to_string(),
+            usage: InferenceUsage::default(),
+            finish_reason: "stop".to_string(),
+            tool_calls: Vec::new(),
+            reasoning: None,
+            cost_usd: None,
+        }
+    }
+
+    impl InferencePort for CannedInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(canned_result()) })
+        }
+
+        fn generate_with_messages(
+            &self,
+            _messages: &[ChatMessage],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(canned_result()) })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(canned_result()) })
+        }
+    }
+
+    // ── Mock ToolPort ──────────────────────────────────────────────────
+    //
+    // A canned-response mock for testing the `tool_invoke` dispatch path.
+    // Returns a fixed JSON result for every call.
+
+    struct CannedToolPort;
+
+    impl ToolPort for CannedToolPort {
+        fn invoke<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
+            Box::pin(async move {
+                Ok(serde_json::json!({"result": "ok", "server": server, "tool": tool}))
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+
+        fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+            Box::pin(async { None })
+        }
+    }
+
+    // ── CappedReader tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn capped_reader_reads_normal_line() {
+        let input = b"hello world\n";
+        let mut reader = CappedReader::new(&input[..]);
+        let line = reader.read_line().await.unwrap().unwrap();
+        assert_eq!(line, "hello world");
+    }
+
+    #[tokio::test]
+    async fn capped_reader_returns_none_on_eof() {
+        let input = b"";
+        let mut reader = CappedReader::new(&input[..]);
+        assert!(reader.read_line().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn capped_reader_returns_none_on_eof_after_line() {
+        let input = b"first\n";
+        let mut reader = CappedReader::new(&input[..]);
+        let line = reader.read_line().await.unwrap().unwrap();
+        assert_eq!(line, "first");
+        // No more data — clean EOF.
+        assert!(reader.read_line().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn capped_reader_rejects_oversized_line() {
+        // Construct a line larger than MAX_IPC_LINE_BYTES without a newline.
+        let oversized = vec![b'A'; (MAX_IPC_LINE_BYTES + 1) as usize];
+        let mut reader = CappedReader::new(&oversized[..]);
+        let result = reader.read_line().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn capped_reader_accepts_line_at_exact_boundary() {
+        // A line of exactly MAX_IPC_LINE_BYTES followed by a newline is valid.
+        let mut input = vec![b'B'; MAX_IPC_LINE_BYTES as usize];
+        input.push(b'\n');
+        let mut reader = CappedReader::new(&input[..]);
+        let line = reader.read_line().await.unwrap().unwrap();
+        assert_eq!(line.len(), MAX_IPC_LINE_BYTES as usize);
+    }
+
+    // ─ dispatch: tool_invoke authority boundary tests ──────────────────
+    //
+    // These tests pin the fail-closed `tool_allowlist` enforcement at the
+    // IPC dispatch boundary. The enforcement code is at lines ~682-706 of
+    // this file. A regression that weakens the gate (e.g. removing the
+    // allowlist check, or defaulting to allow-all) would go undetected
+    // without these tests.
+    //
+    // Referenced in DIVERGENCE.md D8 as `dispatch_tool_invoke_rejects_unallowed_tool`
+    // and in D23 as `dispatch_generate_returns_canned_result`.
+
+    fn make_list_models_tx()
+    -> Arc<tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>>
+    {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        Arc::new(tx)
+    }
+
+    fn make_tool_invoke_request(
+        server: &str,
+        tool: &str,
+        allowlist: Option<Vec<String>>,
+    ) -> InferenceRequest {
+        InferenceRequest {
+            id: 1,
+            method: InferenceMethod::ToolInvoke,
+            params: InferenceParams {
+                tool_server: Some(server.to_string()),
+                tool_name: Some(tool.to_string()),
+                tool_args: Some(serde_json::Value::Null),
+                tool_allowlist: allowlist,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_rejects_unallowed_tool() {
+        // The tool is not in the allowlist — dispatch must fail closed
+        // with a "ToolPort" error, never calling the tool port.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = make_tool_invoke_request(
+            "kanban",
+            "kanban_task_create",
+            Some(vec!["swarm/swarm_delegate".to_string()]),
+        );
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(
+                    error
+                        .message
+                        .contains("not in the delegated tool allowlist")
+                );
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_rejects_missing_allowlist() {
+        // A missing allowlist is a protocol violation — fail closed,
+        // never an implicit grant-all.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(error.message.contains("missing tool_allowlist"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_rejects_empty_allowlist() {
+        // An empty allowlist is also a protocol violation — fail closed.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(error.message.contains("missing tool_allowlist"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_allows_listed_tool() {
+        // The tool IS in the allowlist — dispatch must succeed and return
+        // the tool result.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = make_tool_invoke_request(
+            "kanban",
+            "kanban_task_create",
+            Some(vec!["kanban/kanban_task_create".to_string()]),
+        );
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::ToolResult { result } => {
+                assert_eq!(result["result"], "ok");
+                assert_eq!(result["tool"], "kanban_task_create");
+            }
+            other => panic!("expected tool result outcome, got {other:?}"),
+        }
+    }
+
+    // ── dispatch: missing-port error paths ──────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_errors_without_tool_port() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = make_tool_invoke_request(
+            "kanban",
+            "kanban_task_create",
+            Some(vec!["kanban/kanban_task_create".to_string()]),
+        );
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None, // no tool port
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(error.message.contains("tool dispatch not configured"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_embed_errors_without_embedding_port() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::Embed,
+            params: InferenceParams {
+                embed_model: Some("test/model".to_string()),
+                embed_texts: Some(vec!["hello".to_string()]),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None, // no embedding port
+            None,
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(error.message.contains("embedding port not configured"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    // ── dispatch: generate paths ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_generate_returns_canned_result() {
+        // Pins the basic `generate` dispatch path — the InferencePort is
+        // called and the result is returned as `InferenceOutcome::Result`.
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 42,
+            method: InferenceMethod::Generate,
+            params: InferenceParams {
+                prompt: Some("hello".to_string()),
+                parameters: LLMParameters::default(),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+
+        match outcome {
+            InferenceOutcome::Result { result } => {
+                assert_eq!(result.text, "canned response");
+                assert_eq!(result.model, "test-model");
+            }
+            other => panic!("expected result outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_generate_with_messages_returns_canned_result() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::GenerateWithMessages,
+            params: InferenceParams {
+                messages: Some(vec![
+                    ChatMessage::system("You are a test."),
+                    ChatMessage::user("hello"),
+                ]),
+                parameters: LLMParameters::default(),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+
+        match outcome {
+            InferenceOutcome::Result { result } => {
+                assert_eq!(result.text, "canned response");
+            }
+            other => panic!("expected result outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_generate_vision_returns_canned_result() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::GenerateVision,
+            params: InferenceParams {
+                prompt: Some("describe this image".to_string()),
+                images: Some(vec!["base64data".to_string()]),
+                parameters: LLMParameters::default(),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+
+        match outcome {
+            InferenceOutcome::Result { result } => {
+                assert_eq!(result.text, "canned response");
+            }
+            other => panic!("expected result outcome, got {other:?}"),
+        }
+    }
+
+    // ── dispatch: tool_invoke missing fields ────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_errors_without_tool_server() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::ToolInvoke,
+            params: InferenceParams {
+                tool_server: None, // missing
+                tool_name: Some("kanban_task_create".to_string()),
+                tool_allowlist: Some(vec!["kanban/kanban_task_create".to_string()]),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(error.message.contains("missing tool_server"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_errors_without_tool_name() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+        let list_models_tx = make_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::ToolInvoke,
+            params: InferenceParams {
+                tool_server: Some("kanban".to_string()),
+                tool_name: None, // missing
+                tool_allowlist: Some(vec!["kanban/kanban_task_create".to_string()]),
+                ..Default::default()
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            Some(&tool_port),
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(error.message.contains("missing tool_name"));
+            }
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    // ── Socket path / directory tests ──────────────────────────────────
+
+    #[test]
+    fn generate_socket_path_produces_unique_paths() {
+        let path_a = generate_socket_path().unwrap();
+        // A tiny delay ensures the nonce (nanosecond timestamp) differs.
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let path_b = generate_socket_path().unwrap();
+        assert_ne!(path_a, path_b, "socket paths must be unique");
+    }
+
+    #[test]
+    fn generate_socket_path_is_in_private_dir() {
+        let path = generate_socket_path().unwrap();
+        let parent = path.parent().unwrap();
+        // The parent directory must exist (ensure_private_dir created it).
+        assert!(parent.exists(), "socket parent dir must exist");
+        // Verify the directory is owner-only (0700) on unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(parent).unwrap();
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "socket dir must be 0700, got {mode:o}");
+        }
+        // Clean up the directory we created.
+        let _ = std::fs::remove_dir(parent);
+    }
+
+    #[test]
+    fn ensure_private_dir_creates_0700_dir() {
+        let temp = std::env::temp_dir();
+        let test_dir = temp.join(format!("kask-test-ensure-private-{}", std::process::id()));
+        // Clean up any stale dir from a prior run.
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        ensure_private_dir(&test_dir).unwrap();
+
+        assert!(test_dir.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&test_dir).unwrap();
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "dir must be 0700, got {mode:o}");
+        }
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn ensure_private_dir_tightens_existing_dir() {
+        let temp = std::env::temp_dir();
+        let test_dir = temp.join(format!("kask-test-ensure-tighten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        // Create the dir with overly-permissive mode first.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o755)
+                .create(&test_dir)
+                .unwrap();
+        }
+
+        // ensure_private_dir should tighten it to 0700.
+        ensure_private_dir(&test_dir).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&test_dir).unwrap();
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "dir must be tightened to 0700, got {mode:o}");
+        }
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    // ── Embedding error classification test ────────────────────────────
+    //
+    // Pins the fix for the review finding that all embedding errors were
+    // labeled "Connection". The dispatch must now classify
+    // EmbeddingGenerationError variants into meaningful error codes.
+
+    #[test]
+    fn embed_error_classifies_json_as_json_not_connection() {
+        // The classification logic in `dispatch` maps each
+        // EmbeddingGenerationError variant to a distinct error code.
+        // Previously all variants were labeled "Connection", misleading
+        // operators into diagnosing network issues for parse errors.
+        let err = hkask_types::EmbeddingGenerationError::Json("test".to_string());
+        let (code, message) = match err {
+            hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
+            hkask_types::EmbeddingGenerationError::Api(s, m) => ("Api", format!("status {s}: {m}")),
+            hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m),
+            hkask_types::EmbeddingGenerationError::EmptyResponse => {
+                ("Api", "empty response".to_string())
+            }
+            hkask_types::EmbeddingGenerationError::DimensionMismatch { expected, actual } => {
+                ("Api", format!("dim mismatch: {expected} vs {actual}"))
+            }
+        };
+        assert_eq!(code, "Json");
+        assert_eq!(message, "test");
     }
 }

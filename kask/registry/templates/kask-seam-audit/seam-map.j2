@@ -24,7 +24,7 @@ audit. Task: {{ task }}.
 ## Step 1 — Map the seam and verify convention priors
 
 Read `{{ divergence_doc }}` and extract the **divergence surface**: the list of
-D-seam files (D1–D24). Everything under `{{ seam_scope }}` is additive (ours);
+D-seam files (D1–D33; D17 and D19 are retired). Everything under `{{ seam_scope }}` is additive (ours);
 everything else tracks upstream Zed and is touched only via the named D-seams.
 
 ### Convention prior liveness check
@@ -50,15 +50,32 @@ enforces these two classes exclusively — any other string is a defect).
 
 Derive the audit slices. The seam decomposes into three tracks (the skill runs
 them sequentially; the parallel orchestration is an agent choice):
-- slice `security` — kali-audit over the 8 priority surfaces
+- slice `security` — self-contained security track over the 10 priority surfaces
 - slice `architecture` — refactor-architecture dead-surface + deepening
 - slice `ui` — ui-layout-discipline GPUI audit
+
+### D-seam classification
+
+For each D-seam entry, emit a `seam_class` field so the remediation step can
+distinguish kask-owned seams from upstream bug fixes:
+- `kask-owned` — the primary fix lives in `kask/` (or the seam is a kask-only
+  surface). Applies to D1, D2, D6, D7, D8, D9, D12, D13, D14, D15, D16, D18,
+  D20, D21, D22, D23, D24, D26, D28, D29, D33.
+- `upstream-bug-fix` — the primary fix is in `crates/` and the divergence is an
+  upstream bug that benefits all Zed users (DIVERGENCE.md says "Should be
+  reported upstream to `zed-industries/zed`"). Applies to D11, D25, D27, D31,
+  D32.
+
+If a seam's primary fix is mixed, classify by where the *load-bearing* change
+lives (the file that, if reverted, breaks the fix).
 
 ## Output (JSON only)
 
 ```json
 {
-  "divergence_surface": [ "<D-seam file path>", ... ],
+  "divergence_surface": [
+    { "id": "Dxx", "file": "<D-seam file path>", "seam_class": "kask-owned|upstream-bug-fix" }
+  ],
   "prior_verdicts": [ { "prior": "...", "artifact": "...", "verdict": "live|phantom", "evidence": "..." } ],
   "slices": [ { "id": "security" }, { "id": "architecture" }, { "id": "ui" } ]
 }
@@ -67,3 +84,11 @@ them sequentially; the parallel orchestration is an agent choice):
 Do not fabricate. If you cannot open `{{ divergence_doc }}`, emit
 `divergence_surface: []` and a single prior_verdict with `verdict: "phantom"`
 and `evidence: "could not read divergence doc"`.
+
+## Gate A repair
+
+If `gate_defects` is present in context (Gate A found structural defects),
+re-run this template with `gate_defects` in context and emit the corrected
+`divergence_surface` (with `seam_class` on every entry), `prior_verdicts`, and
+`slices`. Do not fabricate evidence; a phantom prior is reported as phantom,
+not repaired to live — the phantom is itself a finding (KS-03 class).

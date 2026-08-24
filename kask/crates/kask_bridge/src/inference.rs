@@ -317,7 +317,16 @@ impl LanguageModelInferencePort {
 
             match stream_result {
                 Err(e) => {
-                    let _ = reply.send(Err(e));
+                    // Send failure means the receiver dropped (caller cancelled
+                    // the stream). No point continuing — return early to stop
+                    // processing events for a dead consumer and avoid wasting
+                    // billed LLM tokens.
+                    if reply.send(Err(e)).is_err() {
+                        tracing::trace!(
+                            target: "hkask.inference",
+                            "streaming inference reply dropped — caller cancelled before first event"
+                        );
+                    }
                 }
                 Ok(mut stream) => {
                     let model_name = model.name().0.to_string();
@@ -325,7 +334,7 @@ impl LanguageModelInferencePort {
                     while let Some(event) = stream.next().await {
                         match event {
                             Ok(LanguageModelCompletionEvent::Text(delta)) => {
-                                let _ = reply.send(Ok(InferenceStreamChunk {
+                                if reply.send(Ok(InferenceStreamChunk {
                                     text_delta: delta,
                                     reasoning_delta: String::new(),
                                     model: model_name.clone(),
@@ -333,12 +342,18 @@ impl LanguageModelInferencePort {
                                     usage: None,
                                     tool_calls: Vec::new(),
                                     cost_usd: None,
-                                }));
+                                })).is_err() {
+                                    tracing::trace!(
+                                        target: "hkask.inference",
+                                        "streaming inference reply dropped — caller cancelled, stopping event processing"
+                                    );
+                                    return;
+                                }
                             }
                             Ok(LanguageModelCompletionEvent::Thinking {
                                 text: thinking, ..
                             }) => {
-                                let _ = reply.send(Ok(InferenceStreamChunk {
+                                if reply.send(Ok(InferenceStreamChunk {
                                     text_delta: String::new(),
                                     reasoning_delta: thinking,
                                     model: model_name.clone(),
@@ -346,7 +361,13 @@ impl LanguageModelInferencePort {
                                     usage: None,
                                     tool_calls: Vec::new(),
                                     cost_usd: None,
-                                }));
+                                })).is_err() {
+                                    tracing::trace!(
+                                        target: "hkask.inference",
+                                        "streaming inference reply dropped — caller cancelled, stopping event processing"
+                                    );
+                                    return;
+                                }
                             }
                             Ok(other) => {
                                 if let Err(e) = acc.process_event(Ok(other)) {
@@ -393,10 +414,10 @@ impl LanguageModelInferencePort {
     ) -> LanguageModelRequest {
         // Images should only be attached to the last user message, not every
         // user message in the conversation. This prevents image duplication in
-        // multi-turn conversations.
-        let last_user_idx = messages
-            .iter()
-            .rposition(|m| m.role.as_str() != "system" && m.role.as_str() != "assistant");
+        // multi-turn conversations. Positive matching on "user" avoids
+        // incorrectly attaching images to "tool" role messages (ChatMessage
+        // supports 4 roles: system, user, assistant, tool).
+        let last_user_idx = messages.iter().rposition(|m| m.role.as_str() == "user");
 
         let req_messages: Vec<LanguageModelRequestMessage> = messages
             .iter()
@@ -1246,6 +1267,7 @@ struct OpenAiEmbeddingData {
 #[cfg(test)]
 mod tests {
     use super::strip_provider_prefix;
+    use hkask_types::ChatMessage;
 
     // Regression for the embedding 404: `DEFAULT_EMBEDDING_MODEL` is
     // `DeepInfra/Qwen/Qwen3-Embedding-0.6B`, but the old hardcoded
@@ -1302,5 +1324,56 @@ mod tests {
             strip_provider_prefix("UnknownProvider/some-model"),
             "UnknownProvider/some-model"
         );
+    }
+
+    // ── build_request_with_images: image attachment targeting ───────────
+    //
+    // Images must attach only to the last "user" role message, never to
+    // "tool" role messages. The old negation matching (`!= "system" &&
+    // != "assistant"`) would match "tool" as a user message and attach
+    // images to it. Positive matching on `== "user"` fixes this.
+    //
+    // We test via `build_request` which delegates to
+    // `build_request_with_images` with an empty images slice. To test the
+    // image-attachment logic directly, we need to verify the `rposition`
+    // predicate. Since `build_request_with_images` is private, we test the
+    // behavioral contract: a message array with a "tool" role message
+    // followed by a "user" message must attach images only to the "user"
+    // message, not the "tool" message.
+
+    #[test]
+    fn rposition_user_predicate_excludes_tool_role() {
+        // This is a pure logic test for the predicate used in
+        // build_request_with_images. The predicate is `m.role == "user"`.
+        // A "tool" message must NOT match.
+        //
+        // The bug scenario: a "tool" message appears AFTER the last "user"
+        // message. The old negation predicate (`!= "system" && != "assistant"`)
+        // would match the "tool" message as the last non-system/non-assistant,
+        // attaching images to it instead of the user message.
+        let messages = [
+            ChatMessage::system("system prompt"),
+            ChatMessage::user("user question"),
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "assistant response".to_string(),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: "tool output".to_string(),
+            },
+        ];
+
+        // The new predicate `m.role == "user"` must find index 1 (the user
+        // message), not index 3 (the "tool" message).
+        let last_user_idx = messages.iter().rposition(|m| m.role.as_str() == "user");
+        assert_eq!(last_user_idx, Some(1));
+
+        // The old predicate `m.role != "system" && m.role != "assistant"`
+        // would find index 3 (the "tool" message) — this is the bug.
+        let old_predicate_idx = messages
+            .iter()
+            .rposition(|m| m.role.as_str() != "system" && m.role.as_str() != "assistant");
+        assert_eq!(old_predicate_idx, Some(3)); // would match "tool" — the bug
     }
 }
