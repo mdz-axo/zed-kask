@@ -28,9 +28,10 @@ use crate::research::{
     FindSimilarResultOutput, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
     MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
     MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
-    RateLimiter, ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest,
-    UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed,
+    ProviderProfileOutput, RateLimiter, RecommendProviderOutput, RecommendProviderRequest,
+    ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput,
+    SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
+    WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, provider_profile,
 };
 
 // ── Constants ──
@@ -150,6 +151,9 @@ impl ResearchServer {
             "web_search" | "web_find_similar" | "web_extract" | "web_browse" => {
                 Some(eso::HAS_EVIDENCE)
             }
+            // Metacognitive-axis: provider recommendation is a self-assessment
+            // of capability — the system observing its own search surface.
+            "web_recommend_provider" => Some(eso::HAS_EVIDENCE),
             // Process-axis search/extract: RSS discovery and fetching are actions.
             "rss_search" | "rss_discover_feeds" | "rss_fetch" => Some(pko::ACTION),
             // Process-axis synthesize: synthesis is a procedure execution.
@@ -197,9 +201,12 @@ impl ResearchServer {
         .await
     }
 
-    #[tool(
-        description = "Search the web with RRF fusion across providers. Strategy selects providers: quick (single keyword), web (all), news (news-capable), deep (all + 2x results + content extraction on top results)"
-    )]
+    #[tool(description = "Search the web with RRF fusion across providers. \
+         Set `provider` to query a single named provider (tavily, brave, exa, \
+         firecrawl, serpapi) — no fusion, no fallback. Use web_recommend_provider \
+         to pick deliberately. When `provider` is None, `strategy` selects: \
+         quick (best-scored single keyword provider), web (all, RRF fusion), \
+         news (news-capable), deep (all + 2x results + content extraction).")]
     pub async fn web_search(&self, Parameters(req): Parameters<SearchRequest>) -> String {
         execute_tool_semantic(
             self,
@@ -242,6 +249,7 @@ impl ResearchServer {
                         "freshness": freshness,
                         "include_domains": req.include_domains,
                         "exclude_domains": req.exclude_domains,
+                        "provider": req.provider,
                     }),
                     &fingerprint,
                 );
@@ -260,11 +268,47 @@ impl ResearchServer {
 
                 let mut compound = self
                     .pool
-                    .search(&search_query, strat)
+                    .search(&search_query, strat, req.provider.as_deref())
                     .await
                     .map_err(McpToolError::from)?;
 
                 compound.results.truncate(num_results as usize);
+
+                // Surface which provider was actually used when a single
+                // provider was selected (explicit override or quick strategy).
+                let selected_provider = if req.provider.is_some() || strat == SearchStrategy::Quick
+                {
+                    compound
+                        .providers_succeeded
+                        .first()
+                        .cloned()
+                        .or_else(|| req.provider.clone())
+                } else {
+                    None
+                };
+
+                // Surface the static profiles of all configured providers so
+                // the model has metacognitive context for its next call.
+                let provider_profiles: Vec<ProviderProfileOutput> = self
+                    .pool
+                    .provider_kinds()
+                    .iter()
+                    .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
+                    .collect();
+
+                let metadata = SearchMetadata::from(&compound);
+                tracing::info!(
+                    target: "hkask.web",
+                    strategy = %metadata.strategy,
+                    selected_provider = ?selected_provider.as_ref(),
+                    providers_queried = ?metadata.providers_queried,
+                    providers_succeeded = ?metadata.providers_succeeded,
+                    providers_failed = ?metadata.providers_failed,
+                    total_before_dedup = metadata.total_before_dedup,
+                    duplicates_removed = metadata.duplicates_removed,
+                    top_rrf_scores = ?metadata.top_rrf_scores,
+                    "Regulation web_search metadata"
+                );
 
                 let search_output = SearchOutput {
                     query: compound.query.clone(),
@@ -278,20 +322,9 @@ impl ResearchServer {
                     related_questions: compound.related_questions.clone(),
                     count: compound.results.len(),
                     providers_failed: compound.providers_failed.clone(),
+                    selected_provider,
+                    provider_profiles,
                 };
-
-                let metadata = SearchMetadata::from(&compound);
-                tracing::info!(
-                    target: "hkask.web",
-                    strategy = %metadata.strategy,
-                    providers_queried = ?metadata.providers_queried,
-                    providers_succeeded = ?metadata.providers_succeeded,
-                    providers_failed = ?metadata.providers_failed,
-                    total_before_dedup = metadata.total_before_dedup,
-                    duplicates_removed = metadata.duplicates_removed,
-                    top_rrf_scores = ?metadata.top_rrf_scores,
-                    "Regulation web_search metadata"
-                );
 
                 let output = serde_json::to_value(&search_output)
                     .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
@@ -299,6 +332,56 @@ impl ResearchServer {
                 self.cache.insert(ckey, output.clone()).await;
 
                 Ok(output)
+            },
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Recommend a web search provider for a query. Scores each \
+         configured provider (tavily, brave, exa, firecrawl, serpapi) against the \
+         query + optional intent (news, academic, semantic, freshness, general, \
+         transcript) using cost, latency, strengths/weaknesses, and capability match. \
+         Returns ranked recommendations with rationale. Call this before web_search \
+         when unsure which provider fits — then set the `provider` field on \
+         web_search to the recommended kind for a deliberate single-provider call."
+    )]
+    pub async fn web_recommend_provider(
+        &self,
+        Parameters(req): Parameters<RecommendProviderRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "web_recommend_provider",
+            Self::ontology_anchor("web_recommend_provider"),
+            async {
+                self.rate_limiter.check("web_recommend_provider")?;
+
+                if req.query.is_empty() {
+                    return Err(McpToolError::invalid_argument("query must not be empty"));
+                }
+                if req.query.len() > MAX_QUERY_LENGTH {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "query exceeds maximum length of {} characters",
+                        MAX_QUERY_LENGTH
+                    )));
+                }
+
+                let recommendations = self.pool.score_providers(&req.query, req.intent.as_deref());
+                let recommended = recommendations
+                    .iter()
+                    .find(|r| r.configured)
+                    .map(|r| r.kind.clone());
+
+                let output = RecommendProviderOutput {
+                    query: req.query,
+                    intent: req.intent,
+                    recommendations,
+                    recommended,
+                };
+
+                Ok(serde_json::to_value(&output)
+                    .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" })))
             },
         )
         .await

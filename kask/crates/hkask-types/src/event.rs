@@ -298,6 +298,11 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.tool.training",
     "reg.tool.wallet",
     "reg.tool.web_search",
+    // ── Web research (per-provider outcome spans — cybernetic feedback for
+    // provider selection. Emitted by ProviderPool::search_compound and
+    // search_single_provider. Read by the curator's MetacognitionLoop and
+    // reg_query to compute rolling success-rate/latency per provider.) ──
+    "reg.web.provider",
     // ── Variety ──
     "reg.variety",
     // ── Wallet ──

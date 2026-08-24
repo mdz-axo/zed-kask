@@ -81,6 +81,47 @@ pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError
         .map_err(|e| WebError::BadArgs(e.message))
 }
 
+/// Pick the best provider from a set of candidates using the static profile
+/// table. Scoring: lower cost and faster latency tier score higher. Ties
+/// break on alphabetical kind for determinism. Returns the first candidate
+/// if none have a profile (free providers only).
+///
+/// Layer 3 will merge live performance data (success rate, p50 latency)
+/// into this score. For now, the static profile drives selection — already
+/// a deliberate choice over blind first-Ok-wins fallback.
+pub(crate) fn pick_best_provider<'a>(
+    candidates: &[&'a (dyn WebSearchProvider + 'a)],
+) -> &'a (dyn WebSearchProvider + 'a) {
+    candidates
+        .iter()
+        .min_by(|a, b| {
+            let sa = score_static((*a).kind());
+            let sb = score_static((*b).kind());
+            sa.partial_cmp(&sb)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| (*a).kind().cmp((*b).kind()))
+        })
+        .copied()
+        .expect("pick_best_provider requires at least one candidate")
+}
+
+/// Static score for a provider kind: lower cost + faster latency = lower
+/// score (we sort ascending). Returns a neutral mid-score for providers
+/// without a profile (free providers like arxiv/semantic_scholar).
+fn score_static(kind: &str) -> f64 {
+    match provider_profile(kind) {
+        Some(p) => {
+            let latency_penalty = match p.latency_tier {
+                LatencyTier::Fast => 0.0,
+                LatencyTier::Medium => 0.5,
+                LatencyTier::Slow => 1.0,
+            };
+            p.cost_per_call_usd + latency_penalty
+        }
+        None => 0.5,
+    }
+}
+
 /// Port trait for web search operations at the application core boundary.
 ///
 /// Tool handlers depend on this trait; `ProviderPool` implements it as the
@@ -92,6 +133,7 @@ pub trait WebSearchPort: Send + Sync {
         &self,
         query: &SearchQuery,
         strategy: SearchStrategy,
+        provider: Option<&str>,
     ) -> Result<CompoundSearchResult, WebError>;
     async fn find_similar(
         &self,
@@ -108,6 +150,12 @@ pub trait WebSearchPort: Send + Sync {
     ) -> Result<BrowseResult, WebError>;
     async fn health_check(&self) -> Vec<ProviderHealthEntry>;
     fn provider_fingerprint(&self) -> String;
+    /// Kinds of all configured search providers (e.g. ["brave", "exa"]).
+    /// Used to surface the static profile table for metacognitive context.
+    fn provider_kinds(&self) -> Vec<String>;
+    /// Score each configured provider against a query + intent hint,
+    /// returning ranked recommendations. See `ProviderPool::score_providers`.
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation>;
 }
 
 #[async_trait]
@@ -172,39 +220,116 @@ impl ProviderPool {
             exa,
         }
     }
-
-    /// Fallback loop: try each search provider, return first Ok results.
-    async fn search_fallback(
-        providers: &[&dyn WebSearchProvider],
-        query: &SearchQuery,
-    ) -> Result<Vec<SearchResult>, WebError> {
-        let mut last_err = WebError::NoProvider;
-        for p in providers {
-            match p.search(query).await {
-                Ok(v) => return Ok(v.results),
-                Err(e) => {
-                    tracing::warn!(provider = p.kind(), error = %e);
-                    last_err = e;
-                }
-            }
-        }
-        Err(last_err)
-    }
 }
 
 impl ProviderPool {
-    pub async fn search_by_capability(
+    /// Query a single named provider. Returns a `CompoundSearchResult` with
+    /// that provider's results ranked (no fusion — one provider, one rank
+    /// list). Used when the caller sets `provider` explicitly or when the
+    /// `quick` strategy picks a single best-scored provider.
+    ///
+    /// Returns `NoProviderConfigured` if the named provider isn't registered
+    /// (missing API key) so the caller can surface a clear error rather than
+    /// silently falling back to another provider.
+    pub async fn search_single_provider(
         &self,
+        kind: &str,
         query: &SearchQuery,
-        required_caps: &[SearchCapability],
-    ) -> Result<Vec<SearchResult>, WebError> {
-        let filtered: Vec<&dyn WebSearchProvider> = self
+    ) -> Result<CompoundSearchResult, WebError> {
+        let provider = self
             .search_providers
             .iter()
-            .filter(|p| required_caps.iter().all(|c| p.capabilities().contains(c)))
-            .map(|p| p.as_ref())
-            .collect();
-        Self::search_fallback(&filtered, query).await
+            .find(|p| p.kind() == kind)
+            .ok_or_else(|| {
+                WebError::NoProviderConfigured(format!(
+                    "Provider '{kind}' is not configured. Set the corresponding API key \
+                     or pick a configured provider via web_recommend_provider."
+                ))
+            })?;
+
+        let start = std::time::Instant::now();
+        let result = provider.search(query).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+        // Emit per-provider outcome span for the cybernetic feedback loop.
+        // Same target as search_compound so the curator's MetacognitionLoop
+        // aggregates single-provider and compound calls together.
+        let outcome = match &result {
+            Ok(_) => "ok",
+            Err(WebError::RateLimited(_)) => "rate_limited",
+            Err(WebError::ProviderUnavailable(_)) => "unavailable",
+            Err(WebError::ProviderError(_)) => "error",
+            Err(_) => "error",
+        };
+        let error_kind = match &result {
+            Ok(_) => None,
+            Err(e) => Some(e.kind()),
+        };
+        tracing::info!(
+            target: "reg.web.provider",
+            kind = %kind,
+            outcome = outcome,
+            latency_ms = latency_ms,
+            error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
+            "REG"
+        );
+        let providers_queried = vec![ProviderInfo {
+            kind: kind.to_string(),
+            capabilities: provider.capabilities(),
+        }];
+        match result {
+            Ok(output) => {
+                let total = output.results.len();
+                let ranked: Vec<RankedResult> = output
+                    .results
+                    .into_iter()
+                    .enumerate()
+                    .map(|(rank, r)| RankedResult {
+                        rrf_score: rrf_score(RRF_K, &[rank]),
+                        provider_count: 1,
+                        providers: vec![kind.to_string()],
+                        best_rank: Some(rank),
+                        extracted_content: None,
+                        content_preview: output
+                            .content_previews
+                            .get(&r.url.to_lowercase())
+                            .cloned(),
+                        semantic_score: output.semantic_scores.get(&r.url.to_lowercase()).copied(),
+                        title: r.title,
+                        url: r.url,
+                        description: r.description,
+                        source: r.source,
+                        published: r.published,
+                    })
+                    .collect();
+                Ok(CompoundSearchResult {
+                    query: query.query.clone(),
+                    strategy: format!("provider:{kind}"),
+                    results: ranked,
+                    answer_box: output.answer_box,
+                    related_questions: output.related_questions,
+                    providers_queried,
+                    providers_succeeded: vec![kind.to_string()],
+                    providers_failed: Vec::new(),
+                    total_before_dedup: total,
+                    duplicates_removed: 0,
+                })
+            }
+            Err(e) => Ok(CompoundSearchResult {
+                query: query.query.clone(),
+                strategy: format!("provider:{kind}"),
+                results: Vec::new(),
+                answer_box: None,
+                related_questions: Vec::new(),
+                providers_queried,
+                providers_succeeded: Vec::new(),
+                providers_failed: vec![ProviderFailureRecord {
+                    kind: kind.to_string(),
+                    error: e.to_string(),
+                }],
+                total_before_dedup: 0,
+                duplicates_removed: 0,
+            }),
+        }
     }
 
     pub async fn search_compound(
@@ -237,27 +362,50 @@ impl ProviderPool {
             .iter()
             .map(|p| async {
                 let kind = p.kind().to_string();
-                match tokio::time::timeout(
+                let start = std::time::Instant::now();
+                let result = match tokio::time::timeout(
                     Duration::from_secs(COMPOUND_PROVIDER_TIMEOUT_SECS),
                     p.search(query),
                 )
                 .await
                 {
-                    Ok(result) => (kind, result),
+                    Ok(result) => result,
                     Err(_) => {
                         tracing::warn!(
                             provider = %kind,
                             timeout_secs = COMPOUND_PROVIDER_TIMEOUT_SECS,
                             "Compound search provider timed out"
                         );
-                        (
-                            kind,
-                            Err(WebError::ProviderUnavailable(format!(
-                                "Provider timed out after {COMPOUND_PROVIDER_TIMEOUT_SECS}s"
-                            ))),
-                        )
+                        Err(WebError::ProviderUnavailable(format!(
+                            "Provider timed out after {COMPOUND_PROVIDER_TIMEOUT_SECS}s"
+                        )))
                     }
-                }
+                };
+                let latency_ms = start.elapsed().as_millis() as u64;
+                // Emit per-provider outcome span for the cybernetic feedback
+                // loop. The curator's MetacognitionLoop and reg_query read
+                // these to compute rolling success-rate/latency per provider,
+                // which feeds back into score_providers (Layer 3 dynamic).
+                let outcome = match &result {
+                    Ok(_) => "ok",
+                    Err(WebError::RateLimited(_)) => "rate_limited",
+                    Err(WebError::ProviderUnavailable(_)) => "unavailable",
+                    Err(WebError::ProviderError(_)) => "error",
+                    Err(_) => "error",
+                };
+                let error_kind = match &result {
+                    Ok(_) => None,
+                    Err(e) => Some(e.kind()),
+                };
+                tracing::info!(
+                    target: "reg.web.provider",
+                    kind = %kind,
+                    outcome = outcome,
+                    latency_ms = latency_ms,
+                    error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
+                    "REG"
+                );
+                (kind, result)
             })
             .collect();
 
@@ -426,11 +574,106 @@ impl ProviderPool {
         validate_provider_url(url).await?;
         if self.browse_providers.is_empty() {
             return Err(WebError::NoProviderConfigured(
-                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY to use web_browse."
+                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY, \
+                 HKASK_TAVILY_API_KEY, or HKASK_EXA_API_KEY to use web_browse."
                     .to_string(),
             ));
         }
         try_fallback!(&self.browse_providers, browse, url, instruction, timeout)
+    }
+
+    /// Score each configured search provider against a query + intent hint,
+    /// returning ranked recommendations. This is the metacognitive surface:
+    /// the model calls `web_recommend_provider` to pick deliberately rather
+    /// than relying on blind fallback.
+    ///
+    /// Scoring (lower is better):
+    /// - Static: `cost_per_call_usd` + latency penalty (Fast=0, Medium=0.5, Slow=1.0)
+    /// - Intent match: -0.5 bonus when the provider's `best_for` includes the intent
+    /// - Capability match: -0.3 bonus when the provider has a capability matching intent
+    ///
+    /// Layer 3 will add live success-rate and p50-latency penalties from
+    /// `reg.web.provider` spans.
+    pub fn score_providers(
+        &self,
+        _query: &str,
+        intent: Option<&str>,
+    ) -> Vec<ProviderRecommendation> {
+        let configured_kinds: std::collections::HashSet<&str> =
+            self.search_providers.iter().map(|p| p.kind()).collect();
+
+        let mut recs: Vec<ProviderRecommendation> = PROVIDER_PROFILES
+            .iter()
+            .map(|profile| {
+                let configured = configured_kinds.contains(profile.kind);
+                let mut score = score_static(profile.kind);
+                let mut rationale_parts: Vec<&str> = Vec::new();
+
+                // Intent match bonus
+                if let Some(intent) = intent {
+                    if profile.best_for.contains(&intent) {
+                        score -= 0.5;
+                        rationale_parts.push("intent match");
+                    }
+                    // Capability match for specific intents
+                    let provider = self
+                        .search_providers
+                        .iter()
+                        .find(|p| p.kind() == profile.kind);
+                    if let Some(p) = provider {
+                        let caps = p.capabilities();
+                        let cap_match = match intent {
+                            "news" => caps.contains(&SearchCapability::News),
+                            "freshness" => caps.contains(&SearchCapability::Freshness),
+                            "semantic" | "academic" | "research" => {
+                                caps.contains(&SearchCapability::Semantic)
+                            }
+                            "transcript" => caps.contains(&SearchCapability::Transcript),
+                            _ => false,
+                        };
+                        if cap_match {
+                            score -= 0.3;
+                            rationale_parts.push("capability match");
+                        }
+                    }
+                }
+
+                // Unconfigured providers get a penalty so they rank below configured ones
+                if !configured {
+                    score += 10.0;
+                    rationale_parts.push("not configured (no API key)");
+                }
+
+                let rationale = if rationale_parts.is_empty() {
+                    format!(
+                        "cost ${:.4}/call + {:?} latency",
+                        profile.cost_per_call_usd, profile.latency_tier
+                    )
+                } else {
+                    format!("{}", rationale_parts.join(", "))
+                };
+
+                ProviderRecommendation {
+                    kind: profile.kind.to_string(),
+                    score,
+                    rationale,
+                    cost_per_call_usd: profile.cost_per_call_usd,
+                    latency_tier: profile.latency_tier,
+                    strengths: profile.strengths.iter().map(|s| s.to_string()).collect(),
+                    weaknesses: profile.weaknesses.iter().map(|s| s.to_string()).collect(),
+                    best_for: profile.best_for.iter().map(|s| s.to_string()).collect(),
+                    configured,
+                }
+            })
+            .collect();
+
+        recs.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.kind.cmp(&b.kind))
+        });
+        recs
     }
 
     pub fn search_provider_kinds(&self) -> Vec<String> {
@@ -480,7 +723,7 @@ impl ProviderPool {
         health_them!(&self.extract_providers);
         health_them!(&self.browse_providers);
         if let Some(ref exa) = self.exa {
-            let r = exa.health().await;
+            let r = WebSearchProvider::health(exa).await;
             entries.push(health_entry("exa-similar".into(), r));
         }
         entries
@@ -503,6 +746,7 @@ impl WebSearchPort for ProviderPool {
         &self,
         query: &SearchQuery,
         strategy: SearchStrategy,
+        provider: Option<&str>,
     ) -> Result<CompoundSearchResult, WebError> {
         // N1: CapabilityContext removed; Tool dispatch is enforced at the
         // membrane (GovernedTool), not at the port.
@@ -516,50 +760,34 @@ impl WebSearchPort for ProviderPool {
             )));
         }
 
-        let mut compound = if strategy == SearchStrategy::Quick {
-            let results = self
-                .search_by_capability(query, &[SearchCapability::Keyword])
-                .await?;
-            let total = results.len();
-            let pname = self
+        let mut compound = if let Some(kind) = provider {
+            // Explicit provider override — single provider, no fusion, no
+            // fallback. The caller picked deliberately (likely via
+            // web_recommend_provider). Returns NoProviderConfigured if the
+            // named provider isn't registered.
+            self.search_single_provider(kind, query).await?
+        } else if strategy == SearchStrategy::Quick {
+            // Quick strategy: pick the single best-scored keyword-capable
+            // provider, not blind first-Ok-wins fallback. Scoring uses the
+            // static profile table (cost, latency tier, best_for match).
+            // Live performance data (success rate, p50 latency) merges in
+            // Layer 3. Falls back to the first keyword provider only if no
+            // profiled provider is configured (free providers only).
+            let candidates: Vec<&dyn WebSearchProvider> = self
                 .search_providers
                 .iter()
-                .find(|p| p.capabilities().contains(&SearchCapability::Keyword))
-                .map(|p| p.kind())
-                .unwrap_or("unknown")
-                .to_string();
-            CompoundSearchResult {
-                query: query.query.clone(),
-                strategy: strategy.to_string(),
-                results: results
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, r)| RankedResult {
-                        rrf_score: rrf_score(RRF_K, &[i]),
-                        provider_count: 1,
-                        providers: vec![pname.clone()],
-                        best_rank: Some(i),
-                        extracted_content: None,
-                        content_preview: None,
-                        semantic_score: None,
-                        title: r.title,
-                        url: r.url,
-                        description: r.description,
-                        source: r.source,
-                        published: r.published,
-                    })
-                    .collect(),
-                providers_queried: vec![ProviderInfo {
-                    kind: pname.clone(),
-                    capabilities: vec![SearchCapability::Keyword],
-                }],
-                providers_succeeded: vec![pname],
-                answer_box: None,
-                related_questions: Vec::new(),
-                providers_failed: Vec::new(),
-                total_before_dedup: total,
-                duplicates_removed: 0,
+                .filter(|p| p.capabilities().contains(&SearchCapability::Keyword))
+                .map(|p| p.as_ref())
+                .collect();
+            if candidates.is_empty() {
+                return Err(WebError::NoProviderConfigured(
+                    "No keyword-capable provider configured. Set an API key \
+                     (HKASK_BRAVE_API_KEY, HKASK_TAVILY_API_KEY, etc.) to use web_search."
+                        .to_string(),
+                ));
             }
+            let picked = pick_best_provider(&candidates);
+            self.search_single_provider(picked.kind(), query).await?
         } else {
             // N4: before dispatching a compound search, verify the strategy's
             // provider filter actually matches at least one configured provider.
@@ -674,5 +902,135 @@ impl WebSearchPort for ProviderPool {
 
     fn provider_fingerprint(&self) -> String {
         ProviderPool::provider_fingerprint(self)
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        self.search_provider_kinds()
+    }
+
+    fn score_providers(&self, query: &str, intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        ProviderPool::score_providers(self, query, intent)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stub provider for testing `pick_best_provider`. Returns a fixed kind
+    /// and keyword capability — enough for the scorer to exercise the
+    /// static profile table.
+    struct StubProvider {
+        kind: &'static str,
+    }
+
+    #[async_trait]
+    impl WebSearchProvider for StubProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        fn capabilities(&self) -> Vec<SearchCapability> {
+            vec![SearchCapability::Keyword]
+        }
+        async fn search(&self, _query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+            Err(WebError::NoProvider)
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// `pick_best_provider` must select the lowest-cost, fastest-latency
+    /// provider from the static profile table — not blind first-Ok-wins.
+    /// This pins the deliberate-selection behavior: `quick` strategy picks
+    /// Brave ($0.002, Fast) over Tavily ($0.003, Fast) over Exa ($0.01, Medium).
+    #[test]
+    fn pick_best_provider_prefers_lower_cost_faster_latency() {
+        let brave = StubProvider { kind: "brave" };
+        let tavily = StubProvider { kind: "tavily" };
+        let exa = StubProvider { kind: "exa" };
+        let candidates: Vec<&dyn WebSearchProvider> = vec![&exa, &tavily, &brave];
+        let picked = pick_best_provider(&candidates);
+        assert_eq!(
+            picked.kind(),
+            "brave",
+            "quick strategy must pick the lowest-cost fastest-latency provider, \
+             not blind first-Ok-wins fallback"
+        );
+    }
+
+    /// When no candidate has a profile (free providers only),
+    /// `pick_best_provider` falls back to the first candidate with a neutral
+    /// score — deterministic via alphabetical tiebreak.
+    #[test]
+    fn pick_best_provider_unprofiled_falls_back_alphabetically() {
+        let arxiv = StubProvider { kind: "arxiv" };
+        let semantic = StubProvider {
+            kind: "semantic_scholar",
+        };
+        let candidates: Vec<&dyn WebSearchProvider> = vec![&arxiv, &semantic];
+        let picked = pick_best_provider(&candidates);
+        assert_eq!(
+            picked.kind(),
+            "arxiv",
+            "unprofiled providers should tie-break alphabetically for determinism"
+        );
+    }
+
+    /// `score_static` must return a lower score for cheaper + faster providers.
+    #[test]
+    fn score_static_lower_is_better() {
+        let brave_score = score_static("brave");
+        let exa_score = score_static("exa");
+        assert!(
+            brave_score < exa_score,
+            "brave (${brave_score}) should score lower than exa (${exa_score}) — \
+             cheaper + same-or-faster latency"
+        );
+    }
+
+    /// `score_providers` must rank configured providers above unconfigured ones,
+    /// and apply the intent-match bonus. This pins the metacognitive surface:
+    /// the model reads ranked recommendations to pick deliberately.
+    #[test]
+    fn score_providers_ranks_configured_above_unconfigured() {
+        // Build a pool with only Brave configured (no API keys for others).
+        let brave = StubProvider { kind: "brave" };
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None);
+        let recs = pool.score_providers("test query", None);
+        // Brave (configured) should rank first; others get the +10 unconfigured penalty.
+        assert_eq!(recs[0].kind, "brave");
+        assert!(recs[0].configured, "top recommendation must be configured");
+        for r in &recs[1..] {
+            assert!(
+                !r.configured,
+                "lower recommendations should be unconfigured"
+            );
+            assert!(
+                r.score > recs[0].score,
+                "unconfigured must score higher (worse)"
+            );
+        }
+    }
+
+    /// `score_providers` must apply the intent-match bonus: a news intent
+    /// should rank Brave (best_for includes "news") above Tavily (doesn't).
+    #[test]
+    fn score_providers_intent_match_ranks_higher() {
+        let brave = StubProvider { kind: "brave" };
+        let tavily = StubProvider { kind: "tavily" };
+        let pool = ProviderPool::new(
+            vec![Box::new(brave), Box::new(tavily)],
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let recs = pool.score_providers("latest AI news", Some("news"));
+        // Brave (best_for includes "news") should rank above Tavily.
+        assert_eq!(recs[0].kind, "brave");
+        assert!(
+            recs[0].score < recs.iter().find(|r| r.kind == "tavily").unwrap().score,
+            "brave should score lower (better) than tavily for news intent"
+        );
     }
 }

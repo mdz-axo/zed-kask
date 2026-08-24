@@ -27,8 +27,8 @@ use hkask_mcp_research::research::rss_types::{
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
-    ExtractedContent, FindSimilarRequest, ProviderHealthEntry, RateLimiter, SearchQuery,
-    SearchRequest, SearchStrategy, WebError,
+    ExtractedContent, FindSimilarRequest, ProviderHealthEntry, ProviderRecommendation, RateLimiter,
+    SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_types::WebID;
 use hkask_types::tool_response::parse_tool_response;
@@ -53,6 +53,7 @@ impl WebSearchPort for NoCredentialsPool {
         &self,
         _query: &SearchQuery,
         _strategy: SearchStrategy,
+        _provider: Option<&str>,
     ) -> Result<CompoundSearchResult, WebError> {
         Err(WebError::NoProviderConfigured(
             "No search provider configured. Set HKASK_BRAVE_API_KEY or HKASK_TAVILY_API_KEY."
@@ -101,6 +102,14 @@ impl WebSearchPort for NoCredentialsPool {
 
     fn provider_fingerprint(&self) -> String {
         "stub-no-credentials".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
     }
 }
 
@@ -200,6 +209,7 @@ async fn web_search_rejects_empty_query() {
             exclude_domains: None,
             freshness: None,
             strategy: None,
+            provider: None,
         }))
         .await;
     let json = parse(&out);
@@ -223,6 +233,7 @@ async fn web_search_rejects_oversized_query() {
             exclude_domains: None,
             freshness: None,
             strategy: None,
+            provider: None,
         }))
         .await;
     let json = parse(&out);
@@ -248,6 +259,7 @@ async fn web_search_rejects_unknown_strategy() {
             exclude_domains: None,
             freshness: None,
             strategy: Some("bogus".to_string()),
+            provider: None,
         }))
         .await;
     let json = parse(&out);
@@ -265,6 +277,7 @@ async fn web_search_rejects_unknown_freshness() {
             exclude_domains: None,
             freshness: Some("bogus".to_string()),
             strategy: None,
+            provider: None,
         }))
         .await;
     let json = parse(&out);
@@ -284,6 +297,7 @@ async fn web_search_surfaces_missing_credentials_as_permission_denied() {
             exclude_domains: None,
             freshness: None,
             strategy: None,
+            provider: None,
         }))
         .await;
     let json = parse(&out);

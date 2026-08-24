@@ -39,6 +39,153 @@ pub(crate) use ranking::{apply_rerank, rrf_score};
 pub use rate_limiter::RateLimiter;
 pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 
+// ── Provider profiles (metacognitive lookup table) ──
+
+/// Latency tier for a provider's typical response time.
+/// Used by the recommendation scorer as a tiebreaker among providers with
+/// similar capability/cost profiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LatencyTier {
+    /// < 1s typical
+    Fast,
+    /// 1-3s typical
+    Medium,
+    /// > 3s typical
+    Slow,
+}
+
+/// Static profile of a web search provider: cost, latency, strengths,
+/// weaknesses, and the query intents it's best for. This is the
+/// metacognitive lookup table — the model reads it (via
+/// `web_recommend_provider` or the `provider_profiles` field on `web_search`)
+/// to pick a provider deliberately rather than relying on blind fallback.
+///
+/// The static table is merged with live performance data (success rate,
+/// p50 latency from `reg.web.provider` spans) at runtime to produce a scored
+/// recommendation. See `ProviderPerformance` and `score_providers`.
+///
+/// Not `Deserialize` — the static table uses `&'static str` slices which
+/// can't be deserialized. `ProviderProfileOutput` is the serializable view.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderProfile {
+    pub kind: &'static str,
+    /// Approximate cost per call in USD. 0.0 for free providers.
+    pub cost_per_call_usd: f64,
+    pub latency_tier: LatencyTier,
+    pub strengths: &'static [&'static str],
+    pub weaknesses: &'static [&'static str],
+    /// Query intents this provider is best for: "news", "academic",
+    /// "semantic", "freshness", "general", "transcript".
+    pub best_for: &'static [&'static str],
+}
+
+/// The canonical provider profile table. Single source of truth consumed by:
+/// - `web_recommend_provider` (scores providers against a query)
+/// - `web_search` output (`provider_profiles` field for metacognitive surfacing)
+/// - `score_providers` (merges static profile with live performance)
+///
+/// Keep entries aligned with the providers registered in `build_provider_pool`.
+/// Free providers (arxiv, semantic_scholar) are intentionally absent — they're
+/// always-on fallbacks, not selectable via the `provider` field.
+pub static PROVIDER_PROFILES: &[ProviderProfile] = &[
+    ProviderProfile {
+        kind: "tavily",
+        cost_per_call_usd: 0.003,
+        latency_tier: LatencyTier::Fast,
+        strengths: &["fast", "answer boxes", "content previews", "cheap"],
+        weaknesses: &["smaller index than Google/Bing", "no content extraction"],
+        best_for: &["general", "semantic"],
+    },
+    ProviderProfile {
+        kind: "brave",
+        cost_per_call_usd: 0.002,
+        latency_tier: LatencyTier::Fast,
+        strengths: &["independent index", "news", "freshness filters", "cheap"],
+        weaknesses: &["no content extraction", "no semantic search"],
+        best_for: &["news", "freshness", "general"],
+    },
+    ProviderProfile {
+        kind: "exa",
+        cost_per_call_usd: 0.01,
+        latency_tier: LatencyTier::Medium,
+        strengths: &["neural/semantic search", "content previews", "find-similar"],
+        weaknesses: &["higher cost", "smaller index for generic queries"],
+        best_for: &["semantic", "academic", "research"],
+    },
+    ProviderProfile {
+        kind: "firecrawl",
+        cost_per_call_usd: 0.005,
+        latency_tier: LatencyTier::Medium,
+        strengths: &[
+            "search + extract + browse",
+            "markdown output",
+            "JS-heavy pages",
+        ],
+        weaknesses: &["smaller search index", "higher latency on browse"],
+        best_for: &["general", "semantic"],
+    },
+    ProviderProfile {
+        kind: "serpapi",
+        cost_per_call_usd: 0.004,
+        latency_tier: LatencyTier::Medium,
+        strengths: &["Google index", "news", "freshness", "YouTube transcripts"],
+        weaknesses: &["no content extraction", "higher cost", "rate limits"],
+        best_for: &["news", "freshness", "transcript"],
+    },
+];
+
+/// Look up a provider's static profile by kind. Returns `None` for unknown
+/// providers (including free providers not in the table).
+pub fn provider_profile(kind: &str) -> Option<&'static ProviderProfile> {
+    PROVIDER_PROFILES.iter().find(|p| p.kind == kind)
+}
+
+// ── Provider recommendation (metacognitive scoring) ──
+
+/// Request for `web_recommend_provider`: score each configured provider
+/// against a query to guide deliberate selection.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecommendProviderRequest {
+    /// The query to score providers against.
+    pub query: String,
+    /// Optional query intent hint: "news", "academic", "semantic",
+    /// "freshness", "general", "transcript". When set, providers whose
+    /// `best_for` includes this intent score higher.
+    pub intent: Option<String>,
+}
+
+/// A single provider's recommendation: score, rationale, and profile.
+/// Lower `score` is better (mirrors `score_static`: cost + latency penalty).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderRecommendation {
+    pub kind: String,
+    /// Composite score: lower is better. Static layer = cost + latency
+    /// penalty + intent-match bonus. Layer 3 will add live success-rate
+    /// and p50-latency penalties.
+    pub score: f64,
+    /// Human-readable rationale for the score (which factors won/lost).
+    pub rationale: String,
+    pub cost_per_call_usd: f64,
+    pub latency_tier: LatencyTier,
+    pub strengths: Vec<String>,
+    pub weaknesses: Vec<String>,
+    pub best_for: Vec<String>,
+    /// Whether this provider is currently configured (has an API key).
+    /// `false` for providers in the static table but not wired in `build_provider_pool`.
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecommendProviderOutput {
+    pub query: String,
+    pub intent: Option<String>,
+    /// Ranked recommendations, lowest score first.
+    pub recommendations: Vec<ProviderRecommendation>,
+    /// The top recommendation's kind, or `None` if no configured providers.
+    pub recommended: Option<String>,
+}
+
 // ── Request types ──
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -49,6 +196,12 @@ pub struct SearchRequest {
     pub exclude_domains: Option<Vec<String>>,
     pub freshness: Option<String>,
     pub strategy: Option<String>,
+    /// Explicit provider override: "tavily", "brave", "exa", "firecrawl",
+    /// "serpapi". When set, only that provider is queried — no fusion, no
+    /// fallback. Use `web_recommend_provider` to pick deliberately. When
+    /// `None`, the `strategy` field selects providers (quick = best-scored
+    /// single keyword provider; web/news/deep = fan out with RRF fusion).
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -379,6 +532,41 @@ pub(crate) struct SearchOutput {
     /// Providers that were queried but failed, so callers can distinguish a
     /// genuine zero-result search from one where every provider errored.
     pub providers_failed: Vec<ProviderFailureRecord>,
+    /// The provider that was actually queried when `provider` was set or
+    /// `quick` strategy selected a single provider. `None` for compound
+    /// strategies (web/news/deep fan out across multiple).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_provider: Option<String>,
+    /// Static profiles of all configured providers, for metacognitive
+    /// surfacing — the model reads this to pick deliberately next time.
+    /// Empty when no profiles are registered (e.g. only free providers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_profiles: Vec<ProviderProfileOutput>,
+}
+
+/// Serializable view of a `ProviderProfile` for tool output. Owned `String`s
+/// because the static table uses `&'static str` (not serializable as owned).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProviderProfileOutput {
+    pub kind: String,
+    pub cost_per_call_usd: f64,
+    pub latency_tier: LatencyTier,
+    pub strengths: Vec<String>,
+    pub weaknesses: Vec<String>,
+    pub best_for: Vec<String>,
+}
+
+impl From<&ProviderProfile> for ProviderProfileOutput {
+    fn from(p: &ProviderProfile) -> Self {
+        Self {
+            kind: p.kind.to_string(),
+            cost_per_call_usd: p.cost_per_call_usd,
+            latency_tier: p.latency_tier,
+            strengths: p.strengths.iter().map(|s| s.to_string()).collect(),
+            weaknesses: p.weaknesses.iter().map(|s| s.to_string()).collect(),
+            best_for: p.best_for.iter().map(|s| s.to_string()).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

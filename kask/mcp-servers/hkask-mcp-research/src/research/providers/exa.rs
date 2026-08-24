@@ -1,7 +1,8 @@
-use super::{ProviderSearchOutput, WebError, WebSearchProvider, truncate_str};
+use super::{ProviderSearchOutput, WebBrowseProvider, WebError, WebSearchProvider, truncate_str};
 use crate::research::types::*;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) struct ExaProvider {
@@ -180,6 +181,93 @@ impl WebSearchProvider for ExaProvider {
         // Lightweight check: send a minimal search request and verify we get
         // a non-5xx response. A 401/403 means the key is invalid (unhealthy);
         // a 429 means the service is alive but rate-limited (healthy).
+        let payload = serde_json::json!({ "query": "test", "numResults": 1 });
+        let resp = self
+            .client
+            .post(format!("{EXA_API_BASE}/search"))
+            .header("x-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Exa health check failed: {e}")))?;
+        let status = resp.status();
+        if status.is_success() || status.as_u16() == 429 {
+            Ok(())
+        } else {
+            Err(WebError::ProviderUnavailable(format!(
+                "Exa health check returned {status}"
+            )))
+        }
+    }
+}
+
+/// Exa's `/contents` endpoint returns page text — a browse substitute for
+/// content-rich pages. Not a headless browser: no JS execution. Wired as a
+/// `WebBrowseProvider` so `web_browse` falls back across Firecrawl → Tavily → Exa.
+#[async_trait]
+impl WebBrowseProvider for ExaProvider {
+    fn kind(&self) -> &str {
+        "exa"
+    }
+
+    async fn browse(
+        &self,
+        url: &str,
+        instruction: &str,
+        timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        // SSRF validation is at the pool boundary (browse_with_fallback).
+        // Exa's /contents endpoint takes URLs and returns their text content.
+        let payload = serde_json::json!({
+            "urls": [url],
+            "contents": { "text": { "maxCharacters": 10000 } },
+        });
+        let resp = self
+            .client
+            .post(format!("{EXA_API_BASE}/contents"))
+            .header("x-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Exa browse failed: {e}")))?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(match status.as_u16() {
+                401 | 403 => WebError::ProviderUnavailable(format!("Exa auth error: {status}")),
+                429 => WebError::RateLimited(format!("Exa rate limited: {status}")),
+                _ => WebError::ProviderError(format!(
+                    "Exa browse error {status}: {}",
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
+                )),
+            });
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+            WebError::ProviderError(format!("Failed to parse Exa browse response: {e}"))
+        })?;
+
+        // Exa /contents returns {"results": [{"url": ..., "text": ...}]}
+        let content = parsed["results"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|item| item["text"].as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Ok(BrowseResult {
+            url: url.to_string(),
+            content,
+            instruction: Some(instruction.to_string()),
+            actions_taken: vec!["extract".to_string()],
+        })
+    }
+
+    async fn health(&self) -> Result<(), WebError> {
         let payload = serde_json::json!({ "query": "test", "numResults": 1 });
         let resp = self
             .client

@@ -16,9 +16,8 @@ pub mod types;
 use std::collections::HashMap;
 
 use providers::{
-    ArxivProvider, BraveProvider, FirecrawlProvider, RawFetchProvider,
-    SemanticScholarProvider, SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider,
-    WebSearchProvider,
+    ArxivProvider, BraveProvider, FirecrawlProvider, RawFetchProvider, SemanticScholarProvider,
+    SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider, WebSearchProvider,
 };
 
 // ── Re-exports ──
@@ -37,8 +36,9 @@ pub(crate) use types::{
     DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
-    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, SearchMetadata, SearchOutput, SearchQuery,
-    SearchRequest, SearchResultOutput, SearchStrategy, WebError,
+    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput, RecommendProviderOutput,
+    RecommendProviderRequest, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
+    SearchResultOutput, SearchStrategy, WebError, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.
@@ -78,13 +78,16 @@ pub(crate) fn build_provider_pool(
         browse_providers.push(Box::new(fc));
     }
     if let Some(ref key) = tavily_api_key {
-        search_providers.push(Box::new(TavilyProvider::new(key.clone())?));
+        let tavily = TavilyProvider::new(key.clone())?;
+        search_providers.push(Box::new(tavily.clone()));
+        browse_providers.push(Box::new(tavily));
     }
     if let Some(ref key) = serpapi_api_key {
         search_providers.push(Box::new(SerapiProvider::new(key.clone())?));
     }
     if let Some(ref exa) = exa_provider {
         search_providers.push(Box::new(exa.clone()));
+        browse_providers.push(Box::new(exa.clone()));
     }
 
     extract_providers.push(Box::new(RawFetchProvider::new()?));

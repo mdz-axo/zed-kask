@@ -2,15 +2,16 @@
 
 Web search, extraction, and feed-based research MCP server.
 
-## Tools (21)
+## Tools (22)
 
 | Tool                     | Description                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `web_ping`               | Liveness and provider health check                                                                                                                       |
-| `web_search`             | Search the web with RRF fusion across providers. Strategy selects providers: quick (single keyword), web (all), news (news-capable), deep (all + rerank) |
+| `web_search`             | Search the web with RRF fusion. Set `provider` for a single-provider call (no fusion). Strategy: quick (best-scored single), web (all), news, deep (all + rerank) |
+| `web_recommend_provider` | Score each configured provider against a query + intent. Returns ranked recommendations with cost, latency, strengths/weaknesses. Call before `web_search` to pick deliberately |
 | `web_find_similar`       | Find pages similar to a given URL using Exa findSimilar                                                                                                  |
 | `web_extract`            | Extract content from a URL into markdown or structured JSON                                                                                              |
-| `web_browse`             | Interactive browsing of JS-heavy pages via headless browser                                                                                              |
+| `web_browse`             | Browse a URL via Firecrawl (JS-heavy), Tavily `/extract`, or Exa `/contents` — fallback across all configured browse providers                           |
 | `rss_subscribe`          | Subscribe to an RSS/Atom feed (Google Reader stream model)                                                                                               |
 | `rss_unsubscribe`        | Unsubscribe from a feed (stream_id e.g. 'feed/http://...')                                                                                               |
 | `rss_list_subscriptions` | List subscriptions, optionally filtered by folder                                                                                                        |
