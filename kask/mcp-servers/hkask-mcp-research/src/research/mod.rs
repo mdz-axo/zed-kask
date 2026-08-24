@@ -7,6 +7,7 @@
 pub mod cache;
 pub mod db;
 pub(crate) mod feed;
+pub(crate) mod performance;
 pub mod providers;
 pub mod rss_types;
 pub(crate) mod strip_html;

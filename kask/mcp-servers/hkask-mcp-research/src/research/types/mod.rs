@@ -161,8 +161,8 @@ pub struct RecommendProviderRequest {
 pub struct ProviderRecommendation {
     pub kind: String,
     /// Composite score: lower is better. Static layer = cost + latency
-    /// penalty + intent-match bonus. Layer 3 will add live success-rate
-    /// and p50-latency penalties.
+    /// penalty + intent-match bonus. Live layer (Layer 3) adds success-rate
+    /// and p50-latency penalties from `reg.web.provider` spans.
     pub score: f64,
     /// Human-readable rationale for the score (which factors won/lost).
     pub rationale: String,
@@ -174,6 +174,19 @@ pub struct ProviderRecommendation {
     /// Whether this provider is currently configured (has an API key).
     /// `false` for providers in the static table but not wired in `build_provider_pool`.
     pub configured: bool,
+    /// Live success rate over the rolling window (0.0-1.0). `None` when
+    /// fewer than `MIN_SAMPLES_FOR_LIVE` observations exist — the static
+    /// profile alone drives selection in that case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_success_rate: Option<f64>,
+    /// Live p50 (median) latency in milliseconds over the rolling window.
+    /// `None` when fewer than `MIN_SAMPLES_FOR_LIVE` observations exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_p50_latency_ms: Option<u64>,
+    /// Number of observations in the rolling window for this provider.
+    /// `None` when fewer than `MIN_SAMPLES_FOR_LIVE` observations exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_sample_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

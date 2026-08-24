@@ -60,9 +60,8 @@ Produce a consolidated report with: (1) a verdict (Pass / Conditional / Fail)
 derived from the defense-layer coverage + whether any blocking finding remains
 unremediated; (2) the count of findings per track and per severity; (3) the
 MCDA top-3 and whether `stable_under_perturbation` held; (4) the applied
-remediations (with test descriptions), any `propose_upstream` entries, and the
-hard-stop decision; (5) the deliverable paths (reports under
-`kask/research/seam-audit/`, templates under
+remediations (with test descriptions) and the hard-stop decision; (5) the
+deliverable paths (reports under `kask/research/seam-audit/`, templates under
 `kask/registry/templates/kask-seam-audit/`); (6) the convergence score and
 iteration count. Cite `file:line` throughout.
 
@@ -78,7 +77,6 @@ iteration count. Cite `file:line` throughout.
     "mcda_top3": [ { "id": "...", "weighted_total": 0.0 } ],
     "mcda_stable_under_perturbation": true,
     "applied_remediations": [ { "id": "...", "test_description": "..." } ],
-    "propose_upstream": [ { "d_seam": "Dxx", "upstream_file": "...", "patch_description": "..." } ],
     "hard_stop_triggered": false,
     "deferred_remediations": [ { "id": "...", "reason": "..." } ],
     "deliverable_paths": {

@@ -68,13 +68,13 @@ delegate to a separate skill.
 
 | Template | Purpose |
 |----------|---------|
-| `seam-map.j2` | PLAN — read DIVERGENCE.md D1–D33 (D17, D19 retired), grep `crates/` for each convention prior's artifact (live vs phantom), classify each D-seam as `kask-owned` or `upstream-bug-fix`, and derive the audit slices. Read-only. |
+| `seam-map.j2` | PLAN — read DIVERGENCE.md D1–D33 (D17, D19 retired), grep `crates/` for each convention prior's artifact (live vs phantom), and derive the audit slices. Read-only. |
 | `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
 | `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings. |
 | `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria and run a ±20% sensitivity analysis. Each score traces to a finding. |
-| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit; emit `propose_upstream` for `upstream-bug-fix` D-seams. |
+| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
 | `final-report.j2` | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. Cite file:line. |
 
 Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the

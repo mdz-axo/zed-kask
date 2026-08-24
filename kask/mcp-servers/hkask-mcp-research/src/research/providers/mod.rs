@@ -183,6 +183,12 @@ pub(crate) struct ProviderPool {
     pub(crate) extract_providers: Vec<Box<dyn WebExtractProvider>>,
     pub(crate) browse_providers: Vec<Box<dyn WebBrowseProvider>>,
     pub(crate) exa: Option<ExaProvider>,
+    /// In-process rolling performance aggregator for the cybernetic feedback
+    /// loop. Updated inline at each `reg.web.provider` span emission site;
+    /// read by `score_providers` to apply live success-rate and p50-latency
+    /// penalties on top of the static `ProviderProfile` table.
+    pub(crate) performance:
+        std::sync::Mutex<crate::research::performance::ProviderPerformanceAggregator>,
 }
 
 /// Try each provider sequentially, returning first Ok or last Err.
@@ -218,6 +224,9 @@ impl ProviderPool {
             extract_providers,
             browse_providers,
             exa,
+            performance: std::sync::Mutex::new(
+                crate::research::performance::ProviderPerformanceAggregator::new(),
+            ),
         }
     }
 }
@@ -272,6 +281,17 @@ impl ProviderPool {
             error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
             "REG"
         );
+        // Record into the in-process aggregator for live score_providers
+        // penalties. Best-effort — a poisoned lock skips the live path.
+        if let Ok(mut agg) = self.performance.lock() {
+            agg.record_outcome(
+                kind,
+                crate::research::performance::ProviderOutcome {
+                    latency_ms,
+                    success: result.is_ok(),
+                },
+            );
+        }
         let providers_queried = vec![ProviderInfo {
             kind: kind.to_string(),
             capabilities: provider.capabilities(),
@@ -360,52 +380,71 @@ impl ProviderPool {
 
         let futures: Vec<_> = filtered
             .iter()
-            .map(|p| async {
-                let kind = p.kind().to_string();
-                let start = std::time::Instant::now();
-                let result = match tokio::time::timeout(
-                    Duration::from_secs(COMPOUND_PROVIDER_TIMEOUT_SECS),
-                    p.search(query),
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
-                        tracing::warn!(
-                            provider = %kind,
-                            timeout_secs = COMPOUND_PROVIDER_TIMEOUT_SECS,
-                            "Compound search provider timed out"
+            .map(|p| {
+                // Capture a reference to the in-process aggregator so each
+                // provider future can record its outcome. The borrow is valid
+                // for the duration of `search_compound` (which holds `&self`).
+                let performance = &self.performance;
+                async move {
+                    let kind = p.kind().to_string();
+                    let start = std::time::Instant::now();
+                    let result = match tokio::time::timeout(
+                        Duration::from_secs(COMPOUND_PROVIDER_TIMEOUT_SECS),
+                        p.search(query),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => {
+                            tracing::warn!(
+                                provider = %kind,
+                                timeout_secs = COMPOUND_PROVIDER_TIMEOUT_SECS,
+                                "Compound search provider timed out"
+                            );
+                            Err(WebError::ProviderUnavailable(format!(
+                                "Provider timed out after {COMPOUND_PROVIDER_TIMEOUT_SECS}s"
+                            )))
+                        }
+                    };
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    let success = result.is_ok();
+                    // Emit per-provider outcome span for the cybernetic feedback
+                    // loop. The curator's MetacognitionLoop and reg_query read
+                    // these to compute rolling success-rate/latency per provider,
+                    // which feeds back into score_providers (Layer 3 dynamic).
+                    let outcome = match &result {
+                        Ok(_) => "ok",
+                        Err(WebError::RateLimited(_)) => "rate_limited",
+                        Err(WebError::ProviderUnavailable(_)) => "unavailable",
+                        Err(WebError::ProviderError(_)) => "error",
+                        Err(_) => "error",
+                    };
+                    let error_kind = match &result {
+                        Ok(_) => None,
+                        Err(e) => Some(e.kind()),
+                    };
+                    tracing::info!(
+                        target: "reg.web.provider",
+                        kind = %kind,
+                        outcome = outcome,
+                        latency_ms = latency_ms,
+                        error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
+                        "REG"
+                    );
+                    // Record into the in-process aggregator for live
+                    // score_providers penalties. Best-effort — a poisoned
+                    // lock skips the live path (static profile still applies).
+                    if let Ok(mut agg) = performance.lock() {
+                        agg.record_outcome(
+                            &kind,
+                            crate::research::performance::ProviderOutcome {
+                                latency_ms,
+                                success,
+                            },
                         );
-                        Err(WebError::ProviderUnavailable(format!(
-                            "Provider timed out after {COMPOUND_PROVIDER_TIMEOUT_SECS}s"
-                        )))
                     }
-                };
-                let latency_ms = start.elapsed().as_millis() as u64;
-                // Emit per-provider outcome span for the cybernetic feedback
-                // loop. The curator's MetacognitionLoop and reg_query read
-                // these to compute rolling success-rate/latency per provider,
-                // which feeds back into score_providers (Layer 3 dynamic).
-                let outcome = match &result {
-                    Ok(_) => "ok",
-                    Err(WebError::RateLimited(_)) => "rate_limited",
-                    Err(WebError::ProviderUnavailable(_)) => "unavailable",
-                    Err(WebError::ProviderError(_)) => "error",
-                    Err(_) => "error",
-                };
-                let error_kind = match &result {
-                    Ok(_) => None,
-                    Err(e) => Some(e.kind()),
-                };
-                tracing::info!(
-                    target: "reg.web.provider",
-                    kind = %kind,
-                    outcome = outcome,
-                    latency_ms = latency_ms,
-                    error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
-                    "REG"
-                );
-                (kind, result)
+                    (kind, result)
+                }
             })
             .collect();
 
@@ -592,8 +631,10 @@ impl ProviderPool {
     /// - Intent match: -0.5 bonus when the provider's `best_for` includes the intent
     /// - Capability match: -0.3 bonus when the provider has a capability matching intent
     ///
-    /// Layer 3 will add live success-rate and p50-latency penalties from
-    /// `reg.web.provider` spans.
+    /// Layer 3 merges live success-rate and p50-latency penalties from the
+    /// in-process `ProviderPerformanceAggregator`, fed by `reg.web.provider`
+    /// spans. Below `MIN_SAMPLES_FOR_LIVE` (3), the static profile alone
+    /// drives selection — the live data is too thin to trust.
     pub fn score_providers(
         &self,
         _query: &str,
@@ -638,6 +679,24 @@ impl ProviderPool {
                     }
                 }
 
+                // Live performance penalty (Layer 3). Merges rolling
+                // success-rate and p50-latency from the in-process aggregator.
+                // No-op below MIN_SAMPLES_FOR_LIVE — static profile alone.
+                let (live_penalty, live_rationale) =
+                    crate::research::performance::live_performance_penalty(
+                        &self.performance,
+                        profile.kind,
+                    );
+                if live_penalty > 0.0 {
+                    score += live_penalty;
+                    rationale_parts.extend(live_rationale.iter());
+                }
+                // Snapshot live stats for surfacing in the recommendation.
+                // `None` below MIN_SAMPLES_FOR_LIVE — the model sees the static
+                // profile alone until enough data accumulates.
+                let live_stats =
+                    crate::research::performance::snapshot_stats(&self.performance, profile.kind);
+
                 // Unconfigured providers get a penalty so they rank below configured ones
                 if !configured {
                     score += 10.0;
@@ -650,7 +709,7 @@ impl ProviderPool {
                         profile.cost_per_call_usd, profile.latency_tier
                     )
                 } else {
-                    format!("{}", rationale_parts.join(", "))
+                    rationale_parts.join(", ")
                 };
 
                 ProviderRecommendation {
@@ -663,6 +722,9 @@ impl ProviderPool {
                     weaknesses: profile.weaknesses.iter().map(|s| s.to_string()).collect(),
                     best_for: profile.best_for.iter().map(|s| s.to_string()).collect(),
                     configured,
+                    live_success_rate: live_stats.as_ref().map(|s| s.success_rate),
+                    live_p50_latency_ms: live_stats.as_ref().map(|s| s.p50_latency_ms),
+                    live_sample_count: live_stats.as_ref().map(|s| s.sample_count),
                 }
             })
             .collect();
@@ -1032,5 +1094,82 @@ mod tests {
             recs[0].score < recs.iter().find(|r| r.kind == "tavily").unwrap().score,
             "brave should score lower (better) than tavily for news intent"
         );
+    }
+
+    /// Live performance data (Layer 3): recording failures for a provider
+    /// must push its score down via the live-penalty path. This pins the
+    /// cybernetic feedback loop — the aggregator feeds back into selection.
+    #[test]
+    fn score_providers_live_penalty_applies_after_failures() {
+        let brave = StubProvider { kind: "brave" };
+        let tavily = StubProvider { kind: "tavily" };
+        let pool = ProviderPool::new(
+            vec![Box::new(brave), Box::new(tavily)],
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        // Baseline: brave scores lower (better) than tavily (cheaper + faster).
+        let baseline = pool.score_providers("test", None);
+        let brave_baseline = baseline.iter().find(|r| r.kind == "brave").unwrap().score;
+        let tavily_baseline = baseline.iter().find(|r| r.kind == "tavily").unwrap().score;
+        assert!(brave_baseline < tavily_baseline);
+
+        // Record 4 failures for brave (success rate 0.0 < 0.5 → +2.0 penalty).
+        {
+            let mut agg = pool.performance.lock().unwrap();
+            for _ in 0..4 {
+                agg.record_outcome(
+                    "brave",
+                    crate::research::performance::ProviderOutcome {
+                        latency_ms: 100,
+                        success: false,
+                    },
+                );
+            }
+        }
+
+        // After failures, brave should score worse than tavily (the live
+        // penalty overcomes the static cost advantage).
+        let after = pool.score_providers("test", None);
+        let brave_after = after.iter().find(|r| r.kind == "brave").unwrap().score;
+        let tavily_after = after.iter().find(|r| r.kind == "tavily").unwrap().score;
+        assert!(
+            brave_after > tavily_after,
+            "brave should score worse than tavily after 4 failures \
+             (brave={brave_after}, tavily={tavily_after}) — live penalty must apply"
+        );
+        // Brave's score should have increased by the penalty.
+        assert!(brave_after > brave_baseline);
+        // Live stats should be surfaced.
+        let brave_rec = after.iter().find(|r| r.kind == "brave").unwrap();
+        assert_eq!(brave_rec.live_sample_count, Some(4));
+        assert_eq!(brave_rec.live_success_rate, Some(0.0));
+    }
+
+    /// Below MIN_SAMPLES_FOR_LIVE (3), live penalties must NOT apply — the
+    /// static profile alone drives selection. This pins the cold-start guard.
+    #[test]
+    fn score_providers_no_live_penalty_below_sample_threshold() {
+        let brave = StubProvider { kind: "brave" };
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None);
+        // Record 2 failures (below the 3-sample threshold).
+        {
+            let mut agg = pool.performance.lock().unwrap();
+            for _ in 0..2 {
+                agg.record_outcome(
+                    "brave",
+                    crate::research::performance::ProviderOutcome {
+                        latency_ms: 100,
+                        success: false,
+                    },
+                );
+            }
+        }
+        let recs = pool.score_providers("test", None);
+        let brave_rec = recs.iter().find(|r| r.kind == "brave").unwrap();
+        // Live stats should be None (below threshold).
+        assert!(brave_rec.live_sample_count.is_none());
+        assert!(brave_rec.live_success_rate.is_none());
     }
 }

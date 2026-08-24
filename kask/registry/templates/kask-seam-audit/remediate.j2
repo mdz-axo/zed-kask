@@ -1,4 +1,4 @@
-{# goal: Apply only mcda top-ranked essentialist-surviving seam-scoped remediations; hard-stop on upstream non-D-seam touches; propose_upstream for upstream-bug-fix D-seams. #}
+{# goal: Apply only mcda top-ranked essentialist-surviving seam-scoped remediations; hard-stop on upstream non-D-seam touches. #}
 [inference]
 contract:
   input:
@@ -8,7 +8,6 @@ contract:
     seam_scope: string
   output:
     applied_remediations: array
-    propose_upstream: array
     hard_stop: object
 visibility: Public
 ---
@@ -36,12 +35,14 @@ You are the remediation executor. Task: {{ task }}.
    proposed D-seam entry (name + surface + the file to be added to
    `DIVERGENCE.md` in the same change). The engagement MUST stop and surface to
    the user.
-5. If a remediation touches a D-seam whose `seam_class` is `upstream-bug-fix`,
-   do NOT hard-stop and do NOT apply the patch in-session. Instead emit a
-   `propose_upstream` entry with the D-seam id, the patch description, the
-   upstream file, and a one-line rationale citing DIVERGENCE.md's "Should be
-   reported upstream to `zed-industries/zed`" note. The hard-stop in rule 4
-   remains for true non-D-seam upstream touches only.
+
+   Note: D-seam files are already members of `divergence_surface`, so rule
+   3's check passes for them — the hard-stop does NOT fire for touches to
+   documented D-seams, regardless of whether the D-seam is a kask-owned
+   surface or an upstream bug fix (D25, D27, D31, D32). An upstream-bug-fix
+   D-seam is already diverged and test-pinned; the audit may remediate it
+   like any other D-seam. The "Should be reported upstream" note in
+   DIVERGENCE.md is documentation, not an action item for the audit skill.
 
 ## divergence_surface (allowed D-seam files)
 {{ divergence_surface }}
@@ -60,14 +61,6 @@ You are the remediation executor. Task: {{ task }}.
       "touched_files": [ { "path": "kask/crates/...", "within_kask": true } ],
       "test_added": true,
       "test_description": "what the test asserts"
-    }
-  ],
-  "propose_upstream": [
-    {
-      "d_seam": "Dxx",
-      "upstream_file": "crates/...",
-      "patch_description": "what the upstream patch does",
-      "rationale": "why this is an upstream bug fix (cite DIVERGENCE.md)"
     }
   ],
   "hard_stop": {
