@@ -2735,7 +2735,6 @@ fn run_multi_workspace_sidebar_visual_tests(
                             profile: None,
                             subagent_context: None,
                             speed: None,
-                            thinking_enabled: false,
                             reasoning_effort: None,
                             ui_scroll_position: None,
                             draft_prompt: None,

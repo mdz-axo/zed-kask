@@ -11089,7 +11089,6 @@ mod tests {
             profile: None,
             subagent_context: None,
             speed: None,
-            thinking_enabled: false,
             reasoning_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,

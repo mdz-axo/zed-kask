@@ -2666,7 +2666,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
-                let enable_thinking = thread.read(cx).thinking_enabled();
+                let enable_thinking = thread.read(cx).reasoning_effort().is_some();
                 let speed = thread.read(cx).speed();
                 settings
                     .agent
@@ -6497,7 +6497,7 @@ mod internal_tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert!(!thread.thinking_enabled(), "thinking defaults to false");
+                assert!(!thread.reasoning_effort().is_some(), "thinking defaults to false");
             });
         });
 
@@ -6512,7 +6512,7 @@ mod internal_tests {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
                 assert!(
-                    thread.thinking_enabled(),
+                    thread.reasoning_effort().is_some(),
                     "select_model should enable thinking when model supports it"
                 );
             });
@@ -6529,7 +6529,7 @@ mod internal_tests {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
                 assert!(
-                    !thread.thinking_enabled(),
+                    !thread.reasoning_effort().is_some(),
                     "select_model should disable thinking when model does not support it"
                 );
             });
@@ -6647,7 +6647,7 @@ mod internal_tests {
         });
         thread.read_with(cx, |thread, _| {
             assert!(
-                thread.thinking_enabled(),
+                thread.reasoning_effort().is_some(),
                 "thinking should be enabled after selecting thinking model"
             );
         });
@@ -6685,7 +6685,7 @@ mod internal_tests {
         });
         reloaded_thread.read_with(cx, |thread, _| {
             assert!(
-                thread.thinking_enabled(),
+                thread.reasoning_effort().is_some(),
                 "thinking_enabled should be preserved when reloading a thread with a thinking model"
             );
         });

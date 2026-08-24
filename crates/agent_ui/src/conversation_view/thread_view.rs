@@ -5153,7 +5153,7 @@ impl ThreadView {
             );
         }
 
-        let thinking = thread.thinking_enabled();
+        let thinking = thread.reasoning_effort().is_some();
 
         let (tooltip_label, icon, color) = if thinking {
             (
@@ -5180,8 +5180,8 @@ impl ThreadView {
             .on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let enable_thinking = !thread.thinking_enabled();
-                        thread.set_thinking_enabled(enable_thinking, cx);
+                        let enable_thinking = thread.reasoning_effort().is_none();
+                        thread.set_reasoning_effort(enable_thinking.then(|| "default".to_string()), cx);
 
                         let favorite_key = thread.model().map(|model| {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
@@ -12105,7 +12105,7 @@ impl ThreadView {
             let Some(model) = thread_ref.model() else {
                 return;
             };
-            if !model.supports_thinking() || !thread_ref.thinking_enabled() {
+            if !model.supports_thinking() || thread_ref.reasoning_effort().is_none() {
                 return;
             }
             let effort_levels = model.supported_effort_levels();
@@ -12305,7 +12305,7 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        thread.set_reasoning_effort(thread.reasoning_effort().is_none().then(|| "default".to_string()), cx);
                     });
                 }
             }))

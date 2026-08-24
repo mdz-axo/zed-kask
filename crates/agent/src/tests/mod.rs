@@ -507,7 +507,7 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
     // With thinking toggled off, a model that can disable thinking honors
     // the toggle...
     thread.update(cx, |thread, cx| {
-        thread.set_thinking_enabled(false, cx);
+        thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
@@ -518,7 +518,7 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
     // no model-capability gate. The provider sends reasoning_effort:
     // none when thinking_allowed is false, regardless of model metadata.
     thread.update(cx, |thread, cx| {
-        thread.set_thinking_enabled(false, cx);
+        thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
@@ -6402,7 +6402,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             subagent_thread.model().map(|model| model.id()),
             Some(subagent_model.id())
         );
-        assert!(subagent_thread.thinking_enabled());
+        assert!(subagent_thread.reasoning_effort().is_some());
         assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
     });
 
@@ -6411,7 +6411,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
     });
     parent_thread.update(cx, |parent_thread, cx| {
         parent_thread.set_model(parent_model.clone(), cx);
-        parent_thread.set_thinking_enabled(false, cx);
+        parent_thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
         parent_thread.set_reasoning_effort(None, cx);
     });
 
@@ -6420,7 +6420,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             subagent_thread.model().map(|model| model.id()),
             Some(subagent_model.id())
         );
-        assert!(subagent_thread.thinking_enabled());
+        assert!(subagent_thread.reasoning_effort().is_some());
         assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
     });
 }
@@ -8855,7 +8855,7 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("profile-a".into()), cx);
-        thread.set_thinking_enabled(false, cx);
+        thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
     });
 
     // Send a message — first iteration starts with model A, profile-a, thinking off.
@@ -8897,7 +8897,7 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("profile-b".into()), cx);
         thread.set_model(fake_model_b.clone() as Arc<dyn LanguageModel>, cx);
-        thread.set_thinking_enabled(true, cx);
+        thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
     });
 
     // Run until parked — processes the echo tool call, loops back, picks up

@@ -2132,8 +2132,6 @@ impl Thread {
             profile: Some(self.profile_id.clone()),
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
-            // Derived from reasoning_effort for backward-compat with old readers.
-            thinking_enabled: self.reasoning_effort.is_some(),
             reasoning_effort: self.reasoning_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
@@ -2387,14 +2385,6 @@ impl Thread {
                 .ok();
         }
         cx.notify()
-    }
-
-    pub fn thinking_enabled(&self) -> bool {
-        self.reasoning_effort.is_some()
-    }
-
-    pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.set_reasoning_effort(enabled.then(|| "default".to_string()), cx);
     }
 
     pub fn reasoning_effort(&self) -> Option<&String> {
@@ -10386,23 +10376,23 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(true, cx);
+                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
                 assert!(
-                    subagent.read(cx).thinking_enabled(),
+                    subagent.read(cx).reasoning_effort().is_some(),
                     "Subagent thinking should be enabled after parent enables it"
                 );
             }
 
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(false, cx);
+                thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
                 assert!(
-                    !subagent.read(cx).thinking_enabled(),
+                    !subagent.read(cx).reasoning_effort().is_some(),
                     "Subagent thinking should be disabled after parent disables it"
                 );
             }
@@ -10448,7 +10438,7 @@ mod tests {
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
                 thread.set_speed(Speed::Fast, cx);
-                thread.set_thinking_enabled(true, cx);
+                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
                 thread.set_reasoning_effort(Some("high".to_string()), cx);
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
             });
@@ -10459,7 +10449,7 @@ mod tests {
         cx.update(|cx| {
             let sub = subagents[0].read(cx);
             assert_eq!(sub.speed(), Some(Speed::Fast));
-            assert!(sub.thinking_enabled());
+            assert!(sub.reasoning_effort().is_some());
             assert_eq!(sub.reasoning_effort().map(|s| s.as_str()), Some("high"));
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
         });
@@ -10519,7 +10509,7 @@ mod tests {
         // Should not panic even though the subagent was dropped
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(true, cx);
+                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
                 thread.set_speed(Speed::Fast, cx);
                 thread.set_reasoning_effort(Some("high".to_string()), cx);
             });
