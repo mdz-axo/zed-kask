@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-20
-version: "0.37.0"
+last_updated: 2026-08-24
+version: "0.39.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # MCP Server Registry
 
 **Diataxis type:** Reference
-**Status:** Active (v0.37.0)
+**Status:** Active (v0.39.0)
 
 > Built-in MCP servers shipped with hKask and launched by zed-kask's `context_server`
 > host as child processes over stdio. Each server is a thin surface over domain crates. The binary
@@ -28,20 +28,20 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-10 on-disk MCP servers, **259 `#[tool]` methods** fleet-wide (verified 2026-08-20 via `grep -r "#\[tool(" kask/mcp-servers/hkask-mcp-*/src/`). The prior `tool_surface_is_exactly_N_registered_tools` pinning tests were deleted with the verification crate; counts below are `#[tool]`-attribute grep counts, not test-pinned.
+10 on-disk MCP servers, **322 `#[tool]` methods** fleet-wide (verified 2026-08-24 via `grep -rE "#\[tool" kask/mcp-servers/hkask-mcp-*/src/ --include="*.rs" | grep -v test`). The swarm server carries a build-script-generated `tool_names.gen.rs` and a `tool_surface_is_exactly_N_registered_tools` pinning test; other servers' counts below are `#[tool]`-attribute grep counts.
 
 | Server | Crate | Purpose | `#[tool]` methods |
 |--------|-------|---------|------------------:|
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 45 |
-| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 28 |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 10 |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 24 |
-| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 |
-| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 23 |
-| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 54 |
-| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 |
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 54 |
+| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 41 |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 11 |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 |
+| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 16 |
+| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 39 |
+| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 25 |
+| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 22 |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 61 |
+| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 20 |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
 > agent, D2). All 10 build clean.
@@ -65,11 +65,11 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 45 `#[tool]` methods, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
-- [Corpus MCP Server Reference](corpus.md) — 28 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
-- [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
-- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 54 `#[tool]` methods (27 ABW + 25 local + 2 knowledge), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Companies MCP Server Reference](companies.md) — 54 `#[tool]` methods, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Corpus MCP Server Reference](corpus.md) — 41 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — 39 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
+- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 22 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
+- [Swarm MCP Server Reference](swarm.md) — 61 `#[tool]` methods (27 ABW cloud + 34 local substrate), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - Companies MCP Code Review — adversarial code review of the companies server
