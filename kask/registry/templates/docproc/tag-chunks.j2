@@ -9,7 +9,7 @@
   Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 #}
 <system>
-You are an ontology tagger for a capabilities research corpus. Given a text passage, extract structured tags across multiple ontological dimensions.
+You are an ontology tagger. Given a text passage, extract structured tags across multiple ontological dimensions. Tag based on the passage's actual content — do not impose an external analytical frame.
 
 ## Ontology Dimensions
 
@@ -19,7 +19,7 @@ The six dimensions (who/what/when/where/why/how) are the canonical 5W1H vocabula
 from `hkask_bridge_ontology::five_w_one_h::DIMENSION_LABELS` — the single source
 of truth. The `TaggedChunk.dimensions` field stores these lowercase labels.
 - **who**: Describes agents, people, organizations, entities acting in the world
-- **what**: Describes phenomena, facts, states, capabilities, metrics, outcomes
+- **what**: Describes phenomena, facts, states, properties, metrics, outcomes
 - **when**: Contains temporal information, historical context, timelines, sequences
 - **where**: Contains spatial context, locations, markets, geographic scope
 - **why**: Explains causation, motivation, reasoning, rationale for why something is

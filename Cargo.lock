@@ -9119,7 +9119,6 @@ dependencies = [
  "proptest",
  "schemars 1.0.4",
  "serde",
- "serde_json",
  "tracing",
 ]
 
@@ -9148,7 +9147,6 @@ dependencies = [
 name = "hkask-event-store"
 version = "0.36.0"
 dependencies = [
- "chrono",
  "hkask-storage",
  "hkask-types",
  "schemars 1.0.4",
@@ -9163,7 +9161,6 @@ version = "0.36.0"
 dependencies = [
  "serde",
  "thiserror 2.0.17",
- "tracing",
 ]
 
 [[package]]
@@ -9299,11 +9296,9 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "calamine",
- "chrono",
  "docx-rs",
  "hkask-bridge-ontology",
  "hkask-inference",
- "hkask-ledger",
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-services-core",
@@ -9630,7 +9625,6 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "base64 0.22.1",
- "blake3",
  "chrono",
  "hex",
  "hkask-keystore",
@@ -9644,7 +9638,6 @@ dependencies = [
  "sqlite-vec",
  "thiserror 2.0.17",
  "tracing",
- "utoipa",
  "uuid",
 ]
 
@@ -10929,7 +10922,6 @@ dependencies = [
  "collections",
  "credentials_provider",
  "edit_prediction",
- "fs",
  "futures 0.3.32",
  "futures-util",
  "gpui",
@@ -22336,31 +22328,6 @@ dependencies = [
  "perf",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "utoipa"
-version = "5.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
-dependencies = [
- "indexmap 2.14.0",
- "serde",
- "serde_json",
- "utoipa-gen",
-]
-
-[[package]]
-name = "utoipa-gen"
-version = "5.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
-dependencies = [
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.117",
- "uuid",
 ]
 
 [[package]]

@@ -12,7 +12,6 @@ path = "src/hkask_forecast.rs"
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [lints]
 workspace = true

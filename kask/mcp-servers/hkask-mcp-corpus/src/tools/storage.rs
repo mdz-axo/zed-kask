@@ -176,7 +176,7 @@ impl CorpusServer {
                         .map(|r| json!({
                             "entity_ref": r.embedding.entity_ref.clone(),
                             "metadata": {"entity_ref": r.embedding.entity_ref.clone(), "model": r.embedding.model.clone()},
-                            "score": 1.0 - r.distance as f32,
+                            "score": (1.0 - r.distance as f32).max(0.0),
                         }))
                         .collect();
                     (results, total)

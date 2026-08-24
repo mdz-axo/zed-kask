@@ -418,7 +418,7 @@ impl PromptBuilderService {
                 let system = if system.is_empty() {
                     // Fallback if template not found
                     format!(
-                        "You are a Capabilities Researcher training data generator. Given a primary passage from capabilities and research literature, generate ONE question-answer pair. Calibrate question depth to the expertise level indicated below.\n\n{}\n\n## Ontological Context\n5W1H: [{}]. QA at {} for {} expertise.\nSource: {}. Tags: {}\n\n## Context Passages\n{}\n\n## Knowledge Graph\n{}",
+                        "You are a training data generator. Given a primary passage, generate ONE question-answer pair grounded in the passage's actual content. Calibrate question depth to the expertise level indicated below.\n\n{}\n\n## Ontological Context\n5W1H: [{}]. QA at {} for {} expertise.\nSource: {}. Tags: {}\n\n## Context Passages\n{}\n\n## Knowledge Graph\n{}",
                         qa_type_instruction(qt),
                         dimensions_str,
                         qt_str,

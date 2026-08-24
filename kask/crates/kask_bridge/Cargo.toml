@@ -37,7 +37,6 @@ agent.workspace = true
 settings.workspace = true
 settings_content.workspace = true
 credentials_provider.workspace = true
-fs.workspace = true
 collections.workspace = true
 schemars = { workspace = true }
 edit_prediction.workspace = true

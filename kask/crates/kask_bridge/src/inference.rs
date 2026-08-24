@@ -963,13 +963,13 @@ impl LanguageModelEmbeddingPort {
 /// causing the default embedding model to reach the DeepInfra API unstripped
 /// and 404 with `model_not_found`.
 fn strip_provider_prefix(model: &str) -> String {
-    // Iterate the bridge's provider table (case-insensitive match).
-    // `INFERENCE_PROVIDERS` is a `static`, so this is still a compile-time-known
-    // set; the per-call allocation is negligible vs. the HTTP round-trip.
     for provider in crate::inference_providers::INFERENCE_PROVIDERS {
-        let prefix = format!("{}/", provider.id);
-        if model.len() >= prefix.len() && model[..prefix.len()].eq_ignore_ascii_case(&prefix) {
-            return model[prefix.len()..].to_string();
+        let prefix = provider.id;
+        if model.len() > prefix.len() + 1
+            && model.as_bytes()[prefix.len()] == b'/'
+            && model[..prefix.len()].eq_ignore_ascii_case(prefix)
+        {
+            return model[prefix.len() + 1..].to_string();
         }
     }
 

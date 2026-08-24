@@ -12,7 +12,6 @@ path = "src/hkask_condenser.rs"
 [dependencies]
 hkask-bridge-ontology.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 schemars.workspace = true
 tracing.workspace = true
 

@@ -33,7 +33,6 @@ pptx-to-md.workspace = true
 # Knowledge pipeline (from doc-knowledge)
 hkask-memory.workspace = true
 hkask-storage.workspace = true
-hkask-ledger.workspace = true
 
 # Protocol + utilities
 
@@ -54,7 +53,6 @@ serde_yaml_neo.workspace = true
 
 # Folded-service dependencies
 uuid.workspace = true
-chrono.workspace = true
 pdf-extract.workspace = true
 anyhow.workspace = true
 

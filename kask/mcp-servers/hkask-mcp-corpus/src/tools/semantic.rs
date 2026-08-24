@@ -544,11 +544,9 @@ impl CorpusServer {
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        // Collect (entity_ref, text, embedding) tuples for in-memory index
-        // population after all batches complete. The in-memory index enables
-        // corpus_query to return passage text (the DB stores only vectors
-        // keyed by entity_ref, not the text itself).
-        let indexed_passages: Arc<Mutex<Vec<(String, String, Vec<f32>)>>> =
+        // Collect (entity_ref, text, embedding) for in-memory index
+        // population after all batches complete.
+        let indexed_passages: Arc<Mutex<Vec<IndexedPassage>>> =
             Arc::new(Mutex::new(Vec::with_capacity(total)));
 
         let mut join_set = tokio::task::JoinSet::new();
@@ -608,9 +606,13 @@ impl CorpusServer {
                         continue;
                     }
                     embedded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    // Collect for in-memory index population after all batches.
+                    // Collect for in-memory index.
                     if let Ok(mut idx) = indexed_passages.lock() {
-                        idx.push((c.0.clone(), c.1.clone(), vector.clone()));
+                        idx.push(IndexedPassage {
+                            text: c.1.clone(),
+                            metadata: json!({"entity_ref": &c.0}),
+                            embedding: vector.clone(),
+                        });
                     }
                 }
             });
@@ -630,27 +632,19 @@ impl CorpusServer {
         let embedded = embedded.load(std::sync::atomic::Ordering::Relaxed);
         let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
 
-        // Populate the in-memory vector index from the collected embeddings
-        // so corpus_query returns passage text (the DB stores only vectors).
-        let passages = indexed_passages
+        // Populate the in-memory vector index.
+        let mut passages = indexed_passages
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let passages = std::mem::take(&mut *passages);
         if !passages.is_empty() {
-            let mut index = self
-                .index
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            for (entity_ref, text, embedding) in passages.iter() {
-                index.push(IndexedPassage {
-                    text: text.clone(),
-                    metadata: json!({"entity_ref": entity_ref}),
-                    embedding: embedding.clone(),
-                });
-            }
+            let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
+            let count = passages.len();
+            index.extend(passages);
             tracing::info!(
                 target: "hkask.mcp.docproc.embed",
                 indexed = index.len(),
-                "In-memory index populated from embeddings"
+                "In-memory index populated with {count} passages"
             );
         }
 

@@ -94,19 +94,15 @@ impl TrainingServer {
             // training DB. Without this override, QA pairs ingested via the
             // corpus pipeline are invisible to the training assembler.
             let h_mems = if let Some(db_path) = db_path.as_deref() {
-                let default_passphrase = std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default();
-                let passphrase = passphrase.as_deref().unwrap_or(&default_passphrase);
+                let passphrase = passphrase
+                    .clone()
+                    .unwrap_or_else(|| std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default());
                 if passphrase.is_empty() {
                     return Err(McpToolError::permission_denied(
-                        "db_path provided but passphrase is empty — set HKASK_DB_PASSPHRASE or pass the passphrase parameter",
+                        "db_path provided but passphrase is empty",
                     ));
                 }
-                let dim = std::env::var("HKASK_EMBEDDING_DIM")
-                    .ok()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .filter(|&n| n > 0)
-                    .unwrap_or(1024);
-                let store = hkask_memory::MemoryStore::open(db_path, &passphrase, dim)
+                let store = hkask_memory::MemoryStore::open(db_path, &passphrase, hkask_storage::embedding_dim())
                     .map_err(|e| McpToolError::internal(format!("Cannot open memory DB '{db_path}': {e}")))?;
                 store.query_by_attribute("training_qa_pair")
                     .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
