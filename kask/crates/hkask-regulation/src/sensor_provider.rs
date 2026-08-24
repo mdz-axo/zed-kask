@@ -103,6 +103,14 @@ impl Sensor for EnergyBudgetSensor {
             .iter()
             .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
             .fold(1.0, f64::min);
+        // Only emit when energy is below the floor — healthy states produce
+        // no signal, matching TestCoverageSensor and ToolReliabilitySensor.
+        // Without this gate the sensor emits AboveSetPoint deviations for
+        // healthy energy levels, which no policy rule matches, leaving the
+        // loop open (gain=0, fidelity=0 every tick).
+        if worst >= self.set_point {
+            return None;
+        }
         Some(Signal::new(
             LoopId::Cybernetics, // placeholder — registry backfills
             SignalMetric::EnergyRemaining,
@@ -135,6 +143,14 @@ impl Sensor for VarietySensor {
     async fn sense(&self) -> Option<Signal> {
         let ledger = self.ledger.read().await;
         let health = ledger.health().await;
+        // Only emit when deficit exceeds the max — healthy states produce no
+        // signal, matching TestCoverageSensor and ToolReliabilitySensor.
+        // Without this gate the sensor emits BelowSetPoint deviations for
+        // healthy variety levels, which no policy rule matches, leaving the
+        // loop open (gain=0, fidelity=0 every tick).
+        if health.overall_deficit as f64 <= self.set_point {
+            return None;
+        }
         Some(Signal::new(
             LoopId::Cybernetics, // placeholder — registry backfills
             SignalMetric::VarietyDeficit,
@@ -429,5 +445,41 @@ impl Sensor for MutationScoreSensor {
             score,
             self.set_point,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::energy::CallCapManager;
+    use crate::runtime::RegulationLedger;
+
+    /// Pins Fix 1: EnergyBudgetSensor must return None when energy is healthy
+    /// (worst remaining ratio >= set_point). Without the gate the sensor
+    /// emits AboveSetPoint deviations for healthy energy levels, which no
+    /// policy rule matches, leaving the regulation loop open
+    /// (gain=0, fidelity=0 every tick).
+    #[tokio::test]
+    async fn energy_budget_sensor_returns_none_when_healthy() {
+        let cap_manager = Arc::new(tokio::sync::RwLock::new(CallCapManager::new()));
+        let sensor = EnergyBudgetSensor::new(cap_manager, 0.2);
+        assert!(
+            sensor.sense().await.is_none(),
+            "healthy energy (no agents -> worst=1.0 >= set_point=0.2) returns None"
+        );
+    }
+
+    /// Pins Fix 1: VarietySensor must return None when variety deficit is
+    /// healthy (deficit <= set_point). Without the gate the sensor emits
+    /// BelowSetPoint deviations for healthy variety levels, which no policy
+    /// rule matches, leaving the regulation loop open.
+    #[tokio::test]
+    async fn variety_sensor_returns_none_when_healthy() {
+        let ledger = Arc::new(tokio::sync::RwLock::new(RegulationLedger::default()));
+        let sensor = VarietySensor::new(ledger, 100.0);
+        assert!(
+            sensor.sense().await.is_none(),
+            "healthy variety (deficit=0 <= set_point=100) returns None"
+        );
     }
 }

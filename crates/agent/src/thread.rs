@@ -1392,7 +1392,6 @@ pub struct Thread {
     pub(crate) templates: Arc<Templates>,
     model: ThreadModel,
     summarization_model: Option<Arc<dyn LanguageModel>>,
-    thinking_enabled: bool,
     reasoning_effort: Option<String>,
     speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
@@ -1572,14 +1571,9 @@ impl Thread {
         let settings = AgentSettings::get_global(cx);
         let (profile_id, profile_downgraded_for_restricted_workspace) =
             Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
-        let enable_thinking = settings
-            .default_model
-            .as_ref()
-            .is_some_and(|model| model.enable_thinking);
-        let reasoning_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
+        let reasoning_effort = settings.default_model.as_ref().and_then(|m| {
+            m.enable_thinking.then(|| m.effort.clone().unwrap_or_else(|| "default".to_string()))
+        });
         let speed = settings
             .default_model
             .as_ref()
@@ -1623,7 +1617,6 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: enable_thinking,
             speed,
             reasoning_effort,
             prompt_capabilities_tx,
@@ -1660,7 +1653,6 @@ impl Thread {
     fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
         let parent = parent_thread.read(cx);
         self.speed = parent.speed;
-        self.thinking_enabled = parent.thinking_enabled;
         self.reasoning_effort = parent.reasoning_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
@@ -1682,8 +1674,8 @@ impl Thread {
             return;
         };
 
-        self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
-        self.reasoning_effort = selection.effort.clone();
+        self.reasoning_effort = (selection.enable_thinking && model.supports_thinking())
+            .then(|| selection.effort.clone().unwrap_or_else(|| "default".to_string()));
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(model.as_ref())))
@@ -2022,8 +2014,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: db_thread.thinking_enabled,
-            reasoning_effort: db_thread.reasoning_effort,
+            reasoning_effort: db_thread.reasoning_effort.clone(),
             speed: db_thread.speed,
             project,
             action_log,
@@ -2141,7 +2132,8 @@ impl Thread {
             profile: Some(self.profile_id.clone()),
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
-            thinking_enabled: self.thinking_enabled,
+            // Derived from reasoning_effort for backward-compat with old readers.
+            thinking_enabled: self.reasoning_effort.is_some(),
             reasoning_effort: self.reasoning_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
@@ -2398,22 +2390,11 @@ impl Thread {
     }
 
     pub fn thinking_enabled(&self) -> bool {
-        self.thinking_enabled
+        self.reasoning_effort.is_some()
     }
 
     pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.thinking_enabled = enabled;
-
-        for subagent in &self.running_subagents {
-            subagent
-                .update(cx, |thread, cx| {
-                    if thread.inherits_parent_model_settings {
-                        thread.set_thinking_enabled(enabled, cx);
-                    }
-                })
-                .ok();
-        }
-        cx.notify();
+        self.set_reasoning_effort(enabled.then(|| "default".to_string()), cx);
     }
 
     pub fn reasoning_effort(&self) -> Option<&String> {
@@ -5000,7 +4981,7 @@ impl Thread {
             // Models that can't run with thinking disabled ignore the
             // toggle state, which may be stale from a previously selected
             // model that could.
-            thinking_allowed: self.thinking_enabled,
+            thinking_allowed: self.reasoning_effort.is_some(),
             reasoning_effort: self.reasoning_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,

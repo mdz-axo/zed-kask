@@ -2651,8 +2651,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
-            thread.set_reasoning_effort(effort.clone(), cx);
-            thread.set_thinking_enabled(enable_thinking, cx);
+            thread.set_reasoning_effort(
+                enable_thinking.then(|| effort.clone().unwrap_or_else(|| "default".to_string())),
+                cx,
+            );
             if let Some(speed) = speed {
                 thread.set_speed(speed, cx);
             }

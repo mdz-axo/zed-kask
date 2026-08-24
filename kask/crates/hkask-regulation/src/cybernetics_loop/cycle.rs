@@ -1167,13 +1167,46 @@ impl super::CyberneticsLoop {
                     ),
                 ))
             }
-            _ => {
-                tracing::debug!(
-                    target: "reg.outcome",
-                    reason = proposed.reason.as_str(),
-                    "Unhandled regulation reason — no action built"
-                );
-                None
+            // -- Observational metrics → Notify (no substitution ladder) --
+            RegulationReason::StorageUsageObserved
+            | RegulationReason::TripleCountObserved
+            | RegulationReason::LowConfidenceCountObserved
+            | RegulationReason::ConsolidationCandidatesObserved
+            | RegulationReason::PendingEscalationsObserved => {
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::reason(proposed.reason.as_str()),
+                    dev.signal.metric.as_str().into(),
+                ))
+            }
+            // -- Meta-regulatory Escalate and domain-specific regulation.
+            //    All have substitution ladders — try_substitute walks the
+            //    ladder when the proposed action is stagnating. Actions
+            //    carry NoData (no typed RegulationData variant for these
+            //    reasons yet) and the metric name for impact verification. --
+            RegulationReason::AlgedonicEventsExceeded
+            | RegulationReason::AlgedonicLogApproachingCap
+            | RegulationReason::GoalsStale
+            | RegulationReason::GoalsExpired
+            | RegulationReason::MetacognitionVarietyDeficit
+            | RegulationReason::MetacognitionCriticalAlerts
+            | RegulationReason::ActionIneffective
+            | RegulationReason::RegulatoryPlateauDetected
+            | RegulationReason::ActionDecisionBlocked
+            | RegulationReason::MemoryLifeLow
+            | RegulationReason::CircuitBreakerOpen
+            | RegulationReason::InferenceUnavailable
+            | RegulationReason::ModelUnavailable => {
+                let at = self
+                    .try_substitute(dev.signal.metric, proposed.action_type)
+                    .await;
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    at,
+                    RegulatoryActionParams::reason(proposed.reason.as_str()),
+                    dev.signal.metric.as_str().into(),
+                ))
             }
         }
     }
@@ -1183,8 +1216,10 @@ impl super::CyberneticsLoop {
 mod tests {
     use crate::CyberneticsLoop;
     use crate::loops::{
-        ActionType, LoopId, RegulationData, RegulatoryAction, RegulatoryActionParams,
+        ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
+        RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
     };
+    use crate::regulation_policy::RegulationPolicy;
     use crate::runtime::RegulationLedger;
     use crate::{RolloutEventError, RolloutEventSource};
     use std::sync::{Arc, Mutex};
@@ -1376,6 +1411,77 @@ mod tests {
                 source.recorded().is_empty(),
                 "no verdict written back on a store error"
             );
+        });
+    }
+
+    /// Pins Fix 2: every RegulationReason that has a policy rule must produce
+    /// Some(action) from build_regulation_action — not None via a catch-all.
+    /// Before the fix, 18 of 30 reasons fell through `_ => None`, silently
+    /// dropping actions and leaving the loop open for those metrics. The
+    /// match is now exhaustive (no `_ =>` arm), so the compiler enforces
+    /// closure at compile time. This test verifies the behavioral side:
+    /// each newly-handled arm actually returns Some(action).
+    #[test]
+    fn build_regulation_action_produces_action_for_all_new_reasons() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
+            let policy = RegulationPolicy::default();
+
+            // (metric, direction, value, set_point) for each newly-handled rule.
+            // AboveSetPoint: value > set_point. BelowSetPoint: value < set_point.
+            use DeviationDirection::*;
+            use SignalMetric::*;
+            let cases: &[(SignalMetric, DeviationDirection, f64, f64)] = &[
+                // Category A: Observational (Notify, AboveSetPoint)
+                (StorageUsage, AboveSetPoint, 1.0, 0.0),
+                (TripleCount, AboveSetPoint, 1.0, 0.0),
+                (LowConfidenceCount, AboveSetPoint, 1.0, 0.0),
+                (ConsolidationCandidates, AboveSetPoint, 1.0, 0.0),
+                (PendingEscalations, AboveSetPoint, 1.0, 0.0),
+                // Category B: Meta-regulatory (Escalate, AboveSetPoint)
+                (AlgedonicEvents, AboveSetPoint, 1.0, 0.0),
+                (AlgedonicLogApproachingCap, AboveSetPoint, 1.0, 0.0),
+                (GoalStaleCount, AboveSetPoint, 1.0, 0.0),
+                (GoalExpiredCount, AboveSetPoint, 1.0, 0.0),
+                (MetacognitionVarietyDeficit, AboveSetPoint, 1.0, 0.0),
+                (MetacognitionCriticalAlerts, AboveSetPoint, 1.0, 0.0),
+                (ActionIneffective, AboveSetPoint, 1.0, 0.0),
+                (RegulatoryPlateau, AboveSetPoint, 1.0, 0.0),
+                (ActionDecisionBlocked, AboveSetPoint, 1.0, 0.0),
+                // Category C: Domain-specific
+                (MemoryLife, BelowSetPoint, 0.0, 1.0),
+                (CircuitBreakerState, AboveSetPoint, 1.0, 0.0),
+                (InferenceAvailable, BelowSetPoint, 0.0, 1.0),
+                (InferenceModelAvailable, BelowSetPoint, 0.0, 1.0),
+            ];
+
+            for &(metric, direction, value, set_point) in cases {
+                let signal = Signal::new(LoopId::Cybernetics, metric, value, set_point);
+                let deviation = Deviation::from_signal(&signal)
+                    .unwrap_or_else(|| panic!("{metric:?} should deviate from set_point"));
+                assert_eq!(
+                    deviation.direction, direction,
+                    "{metric:?} deviation direction mismatch"
+                );
+                let proposed = policy.decide(&deviation);
+                assert!(
+                    !proposed.is_empty(),
+                    "{metric:?} {:?} must have a policy rule",
+                    direction
+                );
+                for p in proposed {
+                    let action = regulation_loop
+                        .build_regulation_action(&deviation, p)
+                        .await;
+                    assert!(
+                        action.is_some(),
+                        "{metric:?} {:?} build_regulation_action returned None for reason {:?}",
+                        direction,
+                        p.reason
+                    );
+                }
+            }
         });
     }
 }
