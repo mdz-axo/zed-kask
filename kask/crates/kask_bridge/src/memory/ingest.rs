@@ -15,7 +15,7 @@ use hkask_storage::HMem;
 use hkask_types::{HMemOntology, MemoryError, TurnRecord, Visibility, WebID};
 use std::sync::RwLock;
 
-use crate::inference::LanguageModelEmbeddingPort;
+use crate::inference_embedding::LanguageModelEmbeddingPort;
 
 use super::curator_stores::{CuratorStore, build_curator_consolidation};
 

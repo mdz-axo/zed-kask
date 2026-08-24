@@ -39,7 +39,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
-use crate::inference::LanguageModelEmbeddingPort;
+use crate::inference_embedding::LanguageModelEmbeddingPort;
 
 /// A request to spawn a worktree-backed agent thread, sent from the tokio
 /// dispatch task to the GPUI-side task via a channel (same pattern as
@@ -899,7 +899,9 @@ mod tests {
     use super::*;
     use hkask_tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
     use hkask_types::inference_ipc::InferenceParams;
-    use hkask_types::{ChatMessage, ChatToolDefinition, InferenceResult, InferenceUsage, LLMParameters};
+    use hkask_types::{
+        ChatMessage, ChatToolDefinition, InferenceResult, InferenceUsage, LLMParameters,
+    };
     use std::future::Future;
     use std::pin::Pin;
 
@@ -1446,10 +1448,9 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         // Create a channel whose receiver is immediately dropped — `send`
         // will return `Err`.
-        let (tx, rx) =
-            tokio::sync::mpsc::unbounded_channel::<(
-                tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
-            )>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
         drop(rx);
         let list_models_tx = Arc::new(tx);
 
@@ -1459,15 +1460,7 @@ mod tests {
             params: InferenceParams::default(),
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None,
-            request,
-        )
-        .await;
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {

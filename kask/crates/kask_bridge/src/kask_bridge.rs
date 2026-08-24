@@ -22,12 +22,16 @@
 
 mod condenser_bridge;
 mod context_injector;
+mod credentials;
 
 mod identity;
-mod inference;
+mod inference_chat;
+mod inference_edit_prediction;
+mod inference_embedding;
 mod inference_ipc_server;
 mod inference_providers;
 mod inference_socket;
+mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
@@ -44,10 +48,9 @@ pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
     provision_agent,
 };
-pub use inference::BridgeEditPredictionPort;
-pub use inference::LanguageModelEmbeddingPort;
-pub use inference::LanguageModelInferencePort;
-pub use inference::NoModelInferencePort;
+pub use inference_chat::{LanguageModelInferencePort, NoModelInferencePort};
+pub use inference_edit_prediction::BridgeEditPredictionPort;
+pub use inference_embedding::LanguageModelEmbeddingPort;
 pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
@@ -87,34 +90,7 @@ pub use rollout_event_bridge::{
     BridgeRolloutEventSource, HarnessRegression, check_harness_regressions,
 };
 
-/// The URL prefix for kask-namespaced credentials in the keychain.
-/// Used by the settings UI to read/write API keys via zed's CredentialsProvider.
-pub const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
-
-/// Send a test email to verify MXroute credentials are working.
-///
-/// Spawns the send on the kask tokio runtime (reqwest needs tokio for I/O).
-/// Returns immediately — the caller (settings UI) can't observe the result
-/// synchronously, but the `reg.email.sent` / `reg.alert` tracing spans surface
-/// success/failure in the logs.
-///
-/// No-op when email is not configured (`send_test_email` returns
-/// `Err(NotConfigured)` which is logged at `warn` level by the spawned task).
-pub fn spawn_test_email(recipient: String, cx: &gpui::App) {
-    gpui_tokio::Tokio::spawn(cx, async move {
-        match hkask_email::send_test_email(&recipient).await {
-            Ok(()) => tracing::info!(
-                target: "reg.email.sent",
-                recipient = %recipient,
-                "Test email sent successfully"
-            ),
-            Err(e) => tracing::warn!(
-                target: "reg.email.sent",
-                error = %e,
-                recipient = %recipient,
-                "Test email failed"
-            ),
-        }
-    })
-    .detach();
-}
+// The credential namespace constant and the test-email helper live in the
+// `credentials` module; re-exported here to preserve the historical public
+// surface (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`, `kask_bridge::spawn_test_email`).
+pub use credentials::{KASK_CREDENTIAL_NAMESPACE, spawn_test_email};

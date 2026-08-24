@@ -22,18 +22,26 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 [lints]
 workspace = true
 
-# NOTE: `tests/reconnect_integration.rs` is not yet written. The fixture
-# binary below exists to support it when it is — gated to `required-features`
-# so a normal build does not produce it. The connection-healing unit tests in
-# `runtime.rs` cover the bookkeeping; the integration test would add the
-# real-child-process proof (SIGKILL the fixture, assert reconnect).
-#
-# A real child process is the thing under test for connection healing, so the
-# reconnect integration test needs a controllable MCP server binary. Gated to
-# `required-features` so a normal build does not produce it.
+[dev-dependencies]
+hkask-types.workspace = true
+hkask-tool-port.workspace = true
+libc.workspace = true
+tempfile.workspace = true
+
+# The fixture binary is gated to `test-fixture` so a normal build does not
+# produce it. The connection-healing paths in `McpRuntime` (reap-on-death,
+# liveness-on-read, reconnect-on-demand, health supervisor) can only be
+# falsified by a transport that genuinely dies, so the reconnect integration
+# test needs a controllable MCP server binary (the fixture) and the
+# `is_connected` accessor (feature-gated to `test-fixture`).
 [[bin]]
 name = "mcp-test-fixture"
 path = "src/bin/mcp_test_fixture.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "reconnect_integration"
+path = "tests/reconnect_integration.rs"
 required-features = ["test-fixture"]
 
 [features]

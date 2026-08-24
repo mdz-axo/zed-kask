@@ -134,7 +134,7 @@ If the caller says no thinking, the model doesn't think.
    Remove `supports_none_reasoning_effort` from this path. **DONE** (committed,
    needs rebuild).
 
-2. `kask_bridge/src/inference.rs`: `build_request` — set
+2. `kask_bridge/src/inference_chat.rs`: `build_request` — set
    `thinking_allowed: !parameters.disable_thinking`. Remove the
    `thinking_effort` setting (redundant — the provider handles it).
    **DONE** (committed, needs rebuild).

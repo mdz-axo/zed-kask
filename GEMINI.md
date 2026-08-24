@@ -547,17 +547,17 @@ falls back to the default model with a `tracing::warn!`. MCP servers
 (condenser, corpus, training) that pass `Some(model)` to `generate_with_model`
 expect the override to be honored — silently dropping it (the pre-fix
 behavior) caused the condenser to use the default model instead of the
-requested one. Tests in `inference.rs` pin the propagation.
+requested one. Tests in `inference_chat.rs` pin the propagation.
 
 **`generate_stream` does not honor `model_override`.** The `generate_stream`
 trait override on `LanguageModelInferencePort` hardcodes `model_override:
 None` in the `StreamInferenceRequest`. The cascade's `call_inference_stream`
-calls `generate_stream` (no override), so this is not triggered today. If a
-future caller invokes `generate_stream_with_model` on this port, the
-default trait impl handles the override by falling back to non-streaming
-`generate_with_model` — which collects the full response before emitting
-any chunk, losing the live thinking trace. Thread `model_override` through
-`generate_stream` when a caller needs streaming + override together.
+calls `generate_stream` (no override), so this is not triggered today.
+`generate_stream_with_model` (added 2026-08) threads `model_override`
+through `StreamInferenceRequest.model_override` to `handle_streaming`,
+which calls `resolve_model` with the override — so streaming + override
+preserves the live trace. (The prior claim that it fell back to
+non-streaming `generate_with_model` was stale.)
 
 ## `LanguageModelProvider` registry subscriptions must filter self-events
 

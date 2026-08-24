@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::inference::LanguageModelEmbeddingPort;
+use crate::inference_embedding::LanguageModelEmbeddingPort;
 
 // ── Curator store infrastructure — extracted to `memory/curator_stores.rs` ─
 // Deep-module split (bridge-audit BD-04): the curator's sovereign `curator.db`

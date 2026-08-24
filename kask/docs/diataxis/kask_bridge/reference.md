@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-20
+last_updated: 2026-08-24
 version: "1.1.0"
 status: "Active"
 domain: "Integration"
@@ -32,9 +32,9 @@ loops the SKILL.md bodies describe.
 
 | Symbol | Location |
 |--------|----------|
-| Crate root + re-exports | `kask/crates/kask_bridge/src/kask_bridge.rs:1-117` |
-| `KASK_CREDENTIAL_NAMESPACE` | `kask/crates/kask_bridge/src/kask_bridge.rs:74-76` |
-| `spawn_test_email` | `kask/crates/kask_bridge/src/kask_bridge.rs:87-104` |
+| Crate root + re-exports | `kask/crates/kask_bridge/src/kask_bridge.rs` |
+| `KASK_CREDENTIAL_NAMESPACE` | `kask/crates/kask_bridge/src/credentials.rs` |
+| `spawn_test_email` | `kask/crates/kask_bridge/src/credentials.rs` |
 | `KaskSettings` | `kask/crates/kask_bridge/src/settings.rs:36-102` |
 | `KaskMcpSettings` | `kask/crates/kask_bridge/src/settings.rs:110-118` |
 | `KaskDataServiceSettings` | `kask/crates/kask_bridge/src/settings.rs:130-152` |
@@ -56,7 +56,7 @@ loops the SKILL.md bodies describe.
 | `KaskModelsSettings` | `kask/crates/kask_bridge/src/settings.rs:606-621` |
 | `KaskModelsSettings::effective_default_model` | `kask/crates/kask_bridge/src/settings.rs:636-642` |
 | `KaskToolRouterSettings` | `kask/crates/kask_bridge/src/settings.rs:666-675` |
-| `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:717-1046` |
+| `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs` (method) + `kask/crates/kask_bridge/src/mcp_env.rs` (17 `emit_*` translators) |
 | `BuiltinMcpServer` | `kask/crates/kask_bridge/src/mcp_servers.rs:24-48` |
 | `BUILT_IN_MCP_SERVERS` (10 servers) | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
 | `BUILT_IN_MCP_SERVERS_IDS` | `kask/crates/kask_bridge/src/mcp_servers.rs:398-412` |
@@ -77,12 +77,12 @@ loops the SKILL.md bodies describe.
 | `CuratorStore` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:52-161` |
 | `open_curator_regulation_archive` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:37-41` |
 | `BridgeAlertEscalationSink` | `kask/crates/kask_bridge/src/memory/alert_escalation.rs` |
-| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:179-182` |
-| `LanguageModelInferencePort::new` | `kask/crates/kask_bridge/src/inference.rs:189-216` |
-| `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:459-654` |
-| `LanguageModelEmbeddingPort` | `kask/crates/kask_bridge/src/inference.rs:691-693` |
-| `BridgeEditPredictionPort` | `kask/crates/kask_bridge/src/inference.rs:942-944` |
-| `NoModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:1132` |
+| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference_chat.rs` |
+| `LanguageModelInferencePort::new` | `kask/crates/kask_bridge/src/inference_chat.rs` |
+| `InferencePort` impl | `kask/crates/kask_bridge/src/inference_chat.rs` |
+| `LanguageModelEmbeddingPort` | `kask/crates/kask_bridge/src/inference_embedding.rs` |
+| `BridgeEditPredictionPort` | `kask/crates/kask_bridge/src/inference_edit_prediction.rs` |
+| `NoModelInferencePort` | `kask/crates/kask_bridge/src/inference_chat.rs` |
 | `InferenceIpcServer` | `kask/crates/kask_bridge/src/inference_ipc_server.rs` |
 | `INFERENCE_PROVIDERS` | `kask/crates/kask_bridge/src/inference_providers.rs:44-69` |
 | `DATA_SERVICES` | `kask/crates/kask_bridge/src/inference_providers.rs` |
@@ -396,14 +396,14 @@ The result is a `ProvisionedAgent` (`identity.rs:187-194`) carrying
 
 | Port | Backed by | Use |
 |------|-----------|-----|
-| `LanguageModelInferencePort` (`inference.rs:179-182`) | zed `LanguageModel` | Full inference for MCP servers and the skill cascade |
-| `LanguageModelEmbeddingPort` (`inference.rs:691-693`) | zed `LanguageModel` (OpenAI-compatible `/embeddings`) | Prompt embedding for memory recall |
-| `BridgeEditPredictionPort` (`inference.rs:942-944`) | zed `LanguageModel` (OpenAI-compatible `/completions`) | Edit prediction via `KaskCompletionPort` |
-| `NoModelInferencePort` (`inference.rs:1132`) | None | Pre-login stub; returns `NotConfigured` |
+| `LanguageModelInferencePort` (`inference_chat.rs`) | zed `LanguageModel` | Full inference for MCP servers and the skill cascade |
+| `LanguageModelEmbeddingPort` (`inference_embedding.rs`) | zed `LanguageModel` (OpenAI-compatible `/embeddings`) | Prompt embedding for memory recall |
+| `BridgeEditPredictionPort` (`inference_edit_prediction.rs`) | zed `LanguageModel` (OpenAI-compatible `/completions`) | Edit prediction via `KaskCompletionPort` |
+| `NoModelInferencePort` (`inference_chat.rs`) | None | Pre-login stub; returns `NotConfigured` |
 
 The `LanguageModelInferencePort` adapter holds only channel senders
 (`Send + Sync`); the actual inference call happens on the GPUI foreground
-executor via a spawned task that owns the `AsyncApp` (`inference.rs:189-216`).
+executor via a spawned task that owns the `AsyncApp` (`inference_chat.rs`).
 This split is forced by GPUI: `AsyncApp` is not `Send`.
 
 ## Skill execution (D1 — body injection)
@@ -449,13 +449,13 @@ skips recall for prompts shorter than 20 chars or 3 words. The
 
 ## Re-exports
 
-The crate root (`kask_bridge.rs:25-72`) re-exports the public surface:
+The crate root (`kask_bridge.rs`) re-exports the public surface:
 `BridgeThreadCondenser`, `BridgeContextInjector`, `resolve_data_dir`,
 identity types, inference ports, the IPC server, inference provider
 descriptors, the MCP server registry and helpers, memory ports and
 curator-store openers, `resolve_model_names`, all `Kask*Settings` structs,
 and `BridgeMetacognitionProvider` / `BridgeCuratorDirectiveSink`. The
-`KASK_CREDENTIAL_NAMESPACE` constant (`kask_bridge.rs:74-76`) is the URL
+`KASK_CREDENTIAL_NAMESPACE` constant (`credentials.rs`) is the URL
 prefix for kask-namespaced keychain credentials. Skill-execution types are
 **not** re-exported here — they live in the `agent` crate (see "Skill
 execution" above).

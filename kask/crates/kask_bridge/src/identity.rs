@@ -183,7 +183,7 @@ pub fn mirror_provisioned_db_passphrase(
     cx.spawn(async move |cx| {
         // Write to zed's CredentialsProvider so `build_mcp_server_env` finds
         // the passphrase via the primary `ctx.credentials` tier.
-        let url = format!("{}/hkask_db_passphrase", crate::KASK_CREDENTIAL_NAMESPACE);
+        let url = format!("{}/hkask_db_passphrase", crate::credentials::KASK_CREDENTIAL_NAMESPACE);
         match credentials_provider
             .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
             .await
