@@ -51,38 +51,10 @@ let credentials = vec![
 ];
 ```
 
-Resolution order: preloaded `.env` → `resolve_credential` (keychain → env var)
-(`transport.rs:105-126`). For `HKASK_DB_PASSPHRASE` specifically, the resolver
+Resolution order: `resolve_credential` (keychain → env var)
+(`transport.rs`). For `HKASK_DB_PASSPHRASE` specifically, the resolver
 routes through `hkask_keystore::keychain::resolve_db_passphrase_string`
-(`credentials.rs:59`).
-
-## How-to: Inject preloaded `.env` credentials without mutating the process env
-
-Use `run_server_with_preloaded` when you have already parsed a `.env` file (or
-any other source) and want to inject values without `unsafe set_var`. Preloaded
-values take precedence over `resolve_credential()` results
-(`transport.rs:60-79`).
-
-```rust
-use hkask_mcp_server::run_server_with_preloaded;
-use std::collections::HashMap;
-
-let mut preloaded = HashMap::new();
-preloaded.insert("HKASK_GITHUB_TOKEN".to_string(), "ghp_...".to_string());
-
-run_server_with_preloaded(
-    "hkask-mcp-issues",
-    env!("CARGO_PKG_VERSION"),
-    |ctx| Ok(IssuesServer::new(ctx.webid)),
-    credentials,
-    preloaded,
-).await?;
-```
-
-`load_dotenv` walks up from cwd looking for the nearest `.env` file and returns
-its key-value pairs without touching the process environment
-(`credentials.rs:20-44`). It is retained as a fallback for servers that have
-not migrated to keychain-based resolution (`credentials.rs:6-9`).
+(`credentials.rs`).
 
 ## How-to: Open a database from the ServerContext
 
@@ -252,10 +224,8 @@ rather than leaving the anchor unset.
 | Claim | File:line |
 |-------|-----------|
 | `CredentialRequirement::required` / `optional` | `kask/crates/hkask-mcp-server/src/server/context.rs:32-53` |
-| Bootstrap credential resolution loop | `kask/crates/hkask-mcp-server/src/server/transport.rs:105-131` |
-| `resolve_credential` DB passphrase routing | `kask/crates/hkask-mcp-server/src/server/credentials.rs:56-86` |
-| `run_server_with_preloaded` precedence | `kask/crates/hkask-mcp-server/src/server/transport.rs:60-79` |
-| `load_dotenv` walk-up behavior | `kask/crates/hkask-mcp-server/src/server/credentials.rs:20-44` |
+| Bootstrap credential resolution loop | `kask/crates/hkask-mcp-server/src/server/transport.rs` |
+| `resolve_credential` DB passphrase routing | `kask/crates/hkask-mcp-server/src/server/credentials.rs` |
 | `ServerContext::open_database` | `kask/crates/hkask-mcp-server/src/server/context.rs:151-160` |
 | `open_database_with_extensions` | `kask/crates/hkask-mcp-server/src/server/context.rs:168-183` |
 | `resolve_db_credential` fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:139-143` |

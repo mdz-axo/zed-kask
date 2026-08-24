@@ -1,49 +1,8 @@
-//! Credential resolution — keychain-first credential lookup with .env fallback.
+//! Credential resolution — keychain-first credential lookup.
 
 use std::collections::HashMap;
 
 use super::error::McpToolError;
-
-/// Parse .env files and return key-value pairs without mutating the process environment.
-///
-/// Third tier of credential resolution: keychain → env → .env file. Called by
-/// `run_stdio_server` to preload .env values without `unsafe set_var`. Retained
-/// because some deployments use .env files for non-secret configuration (e.g.
-/// `HKASK_WEB_CACHE_TTL_SECS`) that isn't appropriate for the keychain.
-///
-/// Walks up the directory tree from the current working directory, searching for
-/// a `.env` file at each level. Returns the first `.env` found (closest to cwd).
-///
-/// post: returns HashMap of env vars from the nearest .env file
-/// post: returns empty map if no .env found up to the filesystem root
-#[must_use]
-pub fn load_dotenv() -> HashMap<String, String> {
-    let mut current = std::env::current_dir().unwrap_or_default();
-    loop {
-        let path = current.join(".env");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let mut map = HashMap::new();
-            for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = line.split_once('=') {
-                    let (key, value) = (key.trim(), value.trim());
-                    if !key.is_empty() && !value.is_empty() && std::env::var(key).is_err() {
-                        map.insert(key.into(), value.into());
-                    }
-                }
-            }
-            return map;
-        }
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => break,
-        }
-    }
-    HashMap::new()
-}
 
 /// Routes known credential names through the proper hkask keystore resolvers.
 ///

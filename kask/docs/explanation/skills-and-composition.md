@@ -346,7 +346,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-dotenvy = { workspace = true }
 ```
 
 ### Step 1: Define the Server Struct

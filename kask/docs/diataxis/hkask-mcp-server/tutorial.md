@@ -62,10 +62,10 @@ serde_json = "1"
 
 Credentials are declared, not ambient. A server lists the env vars it needs
 via `CredentialRequirement`, and the bootstrap resolves them through the
-hkask keystore chain (`.env` → keychain → env var) before the server struct
+hkask keystore chain (keychain → env var) before the server struct
 is constructed. The factory pattern ensures server constructors that need
 credentials only run AFTER credential availability is confirmed
-(`transport.rs:19-22`).
+(`transport.rs`).
 
 ```rust
 use hkask_mcp_server::CredentialRequirement;
@@ -213,8 +213,7 @@ an anonymous identity and logs a warning (`transport.rs:150,163`).
 
 | Claim | File:line |
 |-------|-----------|
-| `run_server` delegates to `run_stdio_server` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:43-55` |
-| `run_server_with_preloaded` variant | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:59-72` |
+| `run_server` delegates to `run_stdio_server` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs` |
 | Canonical registry lives in `kask_bridge` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:13-17` |
 | `mcp_server!` macro expansion | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:132-184` |
 | `validate_field!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:88-94` |

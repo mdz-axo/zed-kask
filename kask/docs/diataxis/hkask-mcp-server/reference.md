@@ -21,7 +21,6 @@ citations were re-derived from disk via `grep -n`.
 classDiagram
     class hkask_mcp_server {
         +run_server()
-        +run_server_with_preloaded()
         +validate_field!()
         +impl_tool_context!()
         +mcp_server!()
@@ -96,8 +95,8 @@ lib root because the `tool_schema::` path had no external users.
 | `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `server/context.rs` |
 | `McpError`, `McpToolError` | `server/error.rs` |
 | `ToolContext`, `ToolSpanGuard`, `execute_tool`, `execute_tool_semantic` | `server/tool_span.rs` |
-| `run_stdio_server`, `run_stdio_server_with_preloaded` | `server/transport.rs` |
-| `load_dotenv`, `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `server/credentials.rs` |
+| `run_stdio_server` | `server/transport.rs` |
+| `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `server/credentials.rs` |
 | `classify_http_error` | `server/http_helpers.rs` |
 | `MAX_READ_BYTES`, `resolve_max_read_bytes`, `contain_for_read`, `contain_for_write`, `read_capped` | `server/validation.rs` |
 | `map_infra_error`, `map_io_error`, `map_join_error`, `map_memory_store_error` | `server/validation.rs` |
@@ -131,12 +130,6 @@ where
 ```
 
 Canonical entry point. Delegates to `run_stdio_server`. `#[must_use]`.
-
-### `run_server_with_preloaded` — `hkask_mcp_server.rs:59`
-
-Like `run_server` but accepts a `HashMap<String, String>` of pre-resolved
-`.env` credentials. Preloaded values take precedence over `resolve_credential`
-(`transport.rs:60-79`).
 
 ## Server context
 
@@ -394,13 +387,7 @@ The canonical 2-tier `HKASK_DB_PASSPHRASE` resolution helper:
 MCP servers must use this helper, not inline re-implementations
 (`credentials.rs:92-114`).
 
-### `load_dotenv` — `credentials.rs:20`
-
-Walks up from cwd looking for the nearest `.env` file, returns its
-key-value pairs without mutating the process environment. Deprecated in
-favor of the OS keychain (`credentials.rs:20-44`).
-
-### `parse_env_warn` — `credentials.rs:152`
+### `parse_env_warn` — `credentials.rs`
 
 Reads a numeric env var, falling back to `default` with a `warn!` naming the
 malformed value on parse failure (`credentials.rs:152`).

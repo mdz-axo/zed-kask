@@ -31,11 +31,11 @@ mod validation;
 
 pub use crate::security::{validate_tool_url_permissive, validate_tool_url_with_dns};
 pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
-pub use credentials::{load_dotenv, parse_env_warn, resolve_credential, resolve_db_passphrase};
+pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::classify_http_error;
 pub use tool_span::{ToolContext, execute_tool, execute_tool_semantic};
-pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
+pub use transport::run_stdio_server;
 pub use validation::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped, resolve_max_read_bytes,
 };

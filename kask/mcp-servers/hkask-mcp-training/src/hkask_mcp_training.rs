@@ -366,7 +366,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // This tries the IPC bridge to zed first, falling back to a MediaRouter.
     let inference_port = hkask_inference::resolve_inference_port().await;
 
-    hkask_mcp_server::run_server_with_preloaded(
+    hkask_mcp_server::run_server(
         "hkask-mcp-training",
         env!("CARGO_PKG_VERSION"),
         move |ctx: hkask_mcp_server::ServerContext| {
@@ -520,7 +520,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 "Passphrase for the training database (resolved via credentials or keystore; in-memory if unavailable)",
             ),
         ],
-        std::collections::HashMap::new(),
     )
     .await
 }

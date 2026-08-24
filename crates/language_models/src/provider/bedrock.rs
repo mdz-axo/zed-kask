@@ -2704,15 +2704,7 @@ impl Render for ConfigurationView {
                 | Some(BedrockAuthMethod::SingleSignOn)
         );
 
-        let tooltip_label = if env_var_set {
-            Some(format!(
-                "To reset your credentials, unset the {}, {}, and {} or {} environment variables.",
-                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                ZED_BEDROCK_SESSION_TOKEN_VAR.name,
-                ZED_BEDROCK_BEARER_TOKEN_VAR.name
-            ))
-        } else if is_settings_derived {
+        let tooltip_label = if is_settings_derived {
             Some(
                 "Authentication method is configured in settings. Edit settings.json to change."
                     .to_string(),
@@ -2723,7 +2715,7 @@ impl Render for ConfigurationView {
 
         let credentials_control = if self.state.read(cx).is_authenticated() {
             ConfiguredApiCard::new("bedrock-reset", configured_label)
-                .disabled(env_var_set || is_settings_derived)
+                .disabled(is_settings_derived)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
                 .when_some(tooltip_label, |this, label| this.tooltip_label(label))
                 .into_any_element()

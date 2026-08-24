@@ -18,9 +18,8 @@ pub mod server;
 
 pub use server::{
     CapabilityTier, CredentialRequirement, McpError, ServerContext, ToolContext, execute_tool,
-    load_dotenv, parse_env_warn, resolve_credential, resolve_db_passphrase, run_stdio_server,
-    run_stdio_server_with_preloaded, validate_identifier, validate_path,
-    validate_tool_url_permissive, validate_tool_url_with_dns,
+    parse_env_warn, resolve_credential, resolve_db_passphrase, run_stdio_server,
+    validate_identifier, validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, map_infra_error, map_io_error,
@@ -52,23 +51,6 @@ where
     F: FnOnce(ServerContext) -> Result<S, McpError>,
 {
     run_stdio_server(name, version, factory, credentials).await
-}
-
-/// Run an MCP server with preloaded .env credentials.
-#[must_use = "result must be used"]
-pub async fn run_server_with_preloaded<S, F>(
-    name: &str,
-    version: &str,
-    factory: F,
-    credentials: Vec<CredentialRequirement>,
-    preloaded: std::collections::HashMap<String, String>,
-) -> Result<(), McpError>
-where
-    S: rmcp::ServiceExt<rmcp::RoleServer>,
-    S: rmcp::Service<rmcp::RoleServer>,
-    F: FnOnce(ServerContext) -> Result<S, McpError>,
-{
-    run_stdio_server_with_preloaded(name, version, factory, credentials, preloaded).await
 }
 
 /// Macro to validate an identifier field and return early on error.

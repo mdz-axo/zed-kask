@@ -232,12 +232,6 @@ fn render_api_key_providers_item(
         let card = ConfiguredApiCard::new(button_id, configured_label)
             .button_label("Reset Key")
             .button_tab_index(0)
-            .disabled(is_from_env_var)
-            .when(is_from_env_var, |this| {
-                this.tooltip_label(format!(
-                    "To reset your API key, unset the {env_var_name} environment variable."
-                ))
-            })
             .on_click({
                 let provider = provider.clone();
                 move |_, _, cx| {

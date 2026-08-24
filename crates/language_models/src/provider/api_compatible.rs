@@ -6,7 +6,7 @@ use credentials_provider::CredentialsProvider;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, TaskExt, Window};
 use language_model::{ApiKeyState, AuthenticateError, EnvVar};
 use settings::SettingsStore;
-use ui::{ElevationIndex, Tooltip, prelude::*};
+use ui::{ElevationIndex, prelude::*};
 use ui_input::InputField;
 
 pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
@@ -259,15 +259,13 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                         .min_w_0()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(
-                            div().w_full().overflow_x_hidden().text_ellipsis().child(Label::new(
-                                if env_var_set {
-                                    format!("API key set in {env_var_name} environment variable")
-                                } else {
-                                    format!("API key configured for {}", state.settings.api_url())
-                                },
-                            )),
-                        ),
+                        .child(div().w_full().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(if env_var_set {
+                                format!("API key set in {env_var_name} environment variable")
+                            } else {
+                                format!("API key configured for {}", state.settings.api_url())
+                            }),
+                        )),
                 )
                 .child(
                     h_flex().flex_shrink_0().child(
@@ -275,14 +273,9 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                             .label_size(LabelSize::Small)
                             .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                             .layer(ElevationIndex::ModalSurface)
-                            .when(env_var_set, |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "To reset your API key, unset the {env_var_name} environment variable.",
-                                )))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.reset_api_key(window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)),
+                            ),
                     ),
                 )
                 .into_any()
