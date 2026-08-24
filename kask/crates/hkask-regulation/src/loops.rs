@@ -1,11 +1,9 @@
 //! hKask 6-Loop Architecture — loop type system and channel types.
 //!
 //! The loop type system (LoopId, Signal, Deviation, RegulatoryAction, etc.)
-//! lives here alongside the channel types. The types were previously in
-//! `hkask-types::loops` to break a circular dependency that has since been
-//! resolved by deleting the Regulation subcrates (storage guard, SLO, seam
-//! watcher); they have no Regulation-internal dependencies and their sole
-//! consumer is `hkask-regulation`.
+//! lives here alongside the channel types. These types have no
+//! Regulation-internal dependencies; their sole consumer is
+//! `hkask-regulation`.
 //!
 //! Channel types (`CurationInput`, `ToolConsumptionEvent`, etc.) remain here
 //! because they depend on `RuntimeAlert` (Regulation-internal).

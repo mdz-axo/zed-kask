@@ -77,10 +77,10 @@ All inputs are parameterized. None are hardcoded.
 | `multi_tier` | boolean | no | true | Whether to use multi-tier chunking (coarse + medium + fine) |
 | `embedding_model` | string | no | from config or `DEFAULT_EMBEDDING_MODEL` | Embedding model for vectorization |
 | `batch_size` | integer | no | 25 | Embedding batch size |
-| `tag_batch_size` | integer | no | 200 | Number of chunks per tagging batch. The `corpus_tag_chunks` tool makes LLM calls per chunk and will time out on large inputs. Split the chunks JSONL into batches of this size and call the tool per batch. |
+| `tag_batch_size` | integer | no | 1 | Number of chunks per tagging LLM call. MUST be 1 — the classifier model returns a single JSON object, not a JSON array, so batch_size > 1 results in only the first chunk getting real tags (10% success rate). With batch_size=1, success rate is 75-100%. Do NOT set this higher than 1. |
 | `bloom_levels` | list | no | ["remember","understand","apply","analyze","evaluate","create"] | Bloom levels for QA difficulty distribution |
-| `prompts_per_chunk` | integer | no | 3 | QA prompts generated per chunk |
-| `max_prompts` | integer | no | 500 | Maximum total QA prompts |
+| `prompts_per_chunk` | integer | no | 2 | QA prompts generated per chunk. With Bloom expansion across 5 levels (factual/conceptual/analyze/evaluate/create), each chunk can produce up to 5 QA pairs. Default 2 balances dataset size against generation cost. |
+| `max_prompts` | integer | no | tagged_count × prompts_per_chunk | Maximum total QA prompts. MUST be set to at least `tagged_count × prompts_per_chunk` to avoid capping output below the target. For a 33K-chunk corpus at 2 prompts/chunk, this is 67,646. Setting max_prompts to 500 or 600 produces a toy dataset — do NOT do this. |
 | `context_k` | integer | no | 5 | KNN context scaffold chunks per QA prompt |
 | `train_split` | float | no | 0.9 | Fraction of QA pairs for training split |
 | `dataset_name` | string | no | derived from `entity_ref_prefix` | Dataset name for training assembly |
@@ -161,7 +161,53 @@ straight to `max_concurrency` and triggering provider throttles.
 | `grill-me` | Verification (Stage 10) | Socratic interrogation of pipeline output across escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis) |
 | `idiomatic-lisp` | Deterministic invariant checks | Use `lisp_eval` for structural invariants between stages (chunk counts, embedding completeness, QA pair counts). Full idiomatic-lisp design principles not needed for sequential pipeline. |
 
-## Quality Gate Discipline
+## Process Awareness Scaffolding
+
+### The anti-degradation principle (STRONGER than per-stage gates)
+
+The per-stage quality gates below check individual stage output. But the
+meta-failure is declaring the PIPELINE complete when the final output is
+below target. The rule:
+
+**The pipeline is NOT complete until `train_examples ≥ target_condition.min_qa_pairs`.
+A pipeline producing 542 examples when the target is 40,000 is FAILING at
+98.6%, not 'complete' or 'improved' or 'a good start'.**
+
+Do NOT compare output to zero (542 > 0 = success). Compare output to the
+target (542/40,000 = 1.4% = failure).
+
+### Semantic quality verification (not just structural)
+
+Structural checks (no duplicates, correct format, non-empty answers) are
+NECESSARY but NOT SUFFICIENT. After assembling the training dataset, run
+these semantic checks:
+
+1. **Boilerplate contamination**: grep for repeated analytical phrases
+   across answers. If >10% of answers contain the same multi-word phrase
+   not from the source text, the prompt template is leaking.
+2. **Grounding rate**: sample 10 random QA pairs, extract 4-word sequences
+   from answers, search for them in source chunks. Target: ≥60% of
+   sequences found in source text. Below 30% = answers are synthesized,
+   not grounded.
+3. **Bloom distribution**: verify even distribution across Bloom levels.
+   Heavy skew toward one level means the prompt cycling is broken.
+4. **Subject diversity**: verify QA pairs cover the corpus's actual subject
+   matter, not a single imposed frame. If 70%+ of answers mention the same
+   concept, the prompt template is forcing an external lens.
+
+### Stage 4 tagging constraint
+
+The `corpus_tag_chunks` tool's `tag_batch_size` parameter MUST be 1. The
+classifier model (glm-5.2) returns a single JSON object, not a JSON array.
+With batch_size > 1, only the first chunk per LLM call receives real
+ontology tags — the rest get fallback tags (`{sumo: [entity]}`). This was
+the root cause of the 90% tagging failure rate observed across multiple
+sessions. With batch_size=1, the success rate is 75-100%.
+
+Throughput with batch_size=1: each 20-chunk file at concurrency=10 takes
+~5 seconds. For 33,823 chunks in 677 batch files of 50, split each into
+2-3 calls of 20 chunks, totaling ~1,700 calls × 5s = ~2.4 hours.
+
 
 Every stage has a **quality gate** — a deterministic check that the stage's
 output meets expected parameters. Quality gates are NOT soft warnings. If a

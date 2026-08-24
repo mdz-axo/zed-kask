@@ -517,8 +517,7 @@ impl CorpusServer {
 // ── Tag chunks request (ontology annotation) ───────────────────────────────
 
 /// Default number of chunks to send in a single LLM call. Batching amortizes
-/// the ~2K-token system prompt across multiple chunks, cutting API calls by
-/// 10x and reducing total wall time proportionally.
+/// the system prompt across multiple chunks, cutting API calls by ~10x.
 const DEFAULT_TAG_BATCH_SIZE: usize = 10;
 
 fn default_tag_batch_size() -> usize {
@@ -534,7 +533,7 @@ pub(crate) struct TagChunksRequest {
     /// Max concurrent LLM tagging calls (each call tags `tag_batch_size` chunks).
     #[serde(default = "default_tag_concurrency")]
     pub concurrency: usize,
-    /// Number of chunks to tag in a single LLM call. Higher values amortize
+    /// Number of chunks to tag in a single LMM call. Higher values amortize
     /// the system prompt but may exceed the model's context window for long
     /// chunks. Default 10.
     #[serde(default = "default_tag_batch_size")]
@@ -545,5 +544,5 @@ pub(crate) struct TagChunksRequest {
 }
 
 fn default_tag_concurrency() -> usize {
-    128
+    32
 }

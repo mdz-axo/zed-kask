@@ -18,9 +18,11 @@
 //! (P5.4 dual-axis anchoring): the intended flow is chat stream → chunks →
 //! each chunk tagged with both the best-fit state axis (Dublin Core) and the
 //! best-fit process axis (PKO). The consolidator selects episodic candidates
-//! by the ontology blob (`pko_procedure IS NOT NULL`), not by the deprecated
-//! `perspective` field. The `perspective` field is retained as provenance
-//! (who wrote the memory) but is no longer the episodic/semantic discriminator.
+//! by the ontology blob (`pko_procedure IS NOT NULL`), not by the
+//! `perspective` field. The `perspective` field scopes recall by who wrote
+//! the memory (see `query_by_perspective`, `consolidation_candidates`). It is
+//! NOT the episodic/semantic discriminator — that role moved to the ontology
+//! blob. Both uses are live; they are independent.
 //!
 //! Renamed from `ConsolidationService` to `MemoryConsolidator` to avoid the
 //! name collision with `hkask_mcp_corpus::services::consolidation::ConsolidationService`

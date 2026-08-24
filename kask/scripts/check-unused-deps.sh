@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Check for unused crate dependencies in kask crates using the nightly
-# `unused_crate_dependencies` lint. `cargo machete` (the CI `deps` job)
-# cannot detect crate-level unused deps — it only finds unused Cargo.toml
-# entries, not deps that are declared but never imported in the lib target.
+# `unused_crate_dependencies` lint. `cargo machete` finds unused Cargo.toml
+# entries (deps declared but never imported in any target), while this
+# script catches deps declared but never imported in the lib target specifically.
+# Run both: `cargo machete` + `bash kask/scripts/check-unused-deps.sh`.
 #
 # This script catches the class that `cargo machete` misses: a dep in
 # `[dependencies]` that the lib target never `use`s (e.g. `tokio` declared

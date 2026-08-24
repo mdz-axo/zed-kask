@@ -6,13 +6,13 @@ use super::error::McpToolError;
 
 /// Parse .env files and return key-value pairs without mutating the process environment.
 ///
-/// Deprecated: prefer the OS keychain via `kask keystore load`. This function
-/// is retained as a fallback for MCP servers that haven't migrated to
-/// keychain-based credential resolution.
+/// Third tier of credential resolution: keychain → env → .env file. Called by
+/// `run_stdio_server` to preload .env values without `unsafe set_var`. Retained
+/// because some deployments use .env files for non-secret configuration (e.g.
+/// `HKASK_WEB_CACHE_TTL_SECS`) that isn't appropriate for the keychain.
 ///
 /// Walks up the directory tree from the current working directory, searching for
 /// a `.env` file at each level. Returns the first `.env` found (closest to cwd).
-/// This matches the legacy `dotenvy::dotenv()` search strategy without the `unsafe set_var`.
 ///
 /// post: returns HashMap of env vars from the nearest .env file
 /// post: returns empty map if no .env found up to the filesystem root

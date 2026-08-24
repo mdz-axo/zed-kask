@@ -2,9 +2,7 @@
 //!
 //! Extracted from `RealMemoryPort::ingest_turn` (deep-module split, bridge-audit
 //! BD-04 continuation). The port impl now holds only the ingestion semaphore and
-//! delegates the actual writes here. This gives the write path a named home so
-//! understanding "how a completed turn becomes a curator-accessible semantic
-//! h_mem" no longer requires scrolling across the 2700-line `memory.rs`.
+//! delegates the actual writes here. This gives the write path a named home.
 //!
 //! The write path is a pure transformation of `(store handles, TurnRecord)` into
 //! side effects — no new trait, no new ownership. `write_turn` borrows the port's

@@ -737,3 +737,103 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod smoke {
+    use super::*;
+    use crate::ocr::ThresholdConfig;
+    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
+    use hkask_types::template::LLMParameters;
+    use hkask_types::WebID;
+    use rmcp::handler::server::wrapper::Parameters;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+
+    /// No-op inference port for smoke tests — every call returns an error.
+    /// Smoke tests only exercise tools that don't call inference.
+    struct NoopInferencePort;
+
+    impl InferencePort for NoopInferencePort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop inference port — not configured for smoke tests".into(),
+            ))
+            })
+        }
+    }
+
+    fn make_server() -> CorpusServer {
+        let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
+        let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
+            &inference_port,
+        )));
+        let pipeline_executor =
+            Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
+        CorpusServer::new(
+            WebID::new(),
+            None,
+            inference_port,
+            ThresholdConfig::default(),
+            Mutex::new(Vec::new()),
+            Mutex::new(Vec::new()),
+            llm_ocr,
+            pipeline_executor,
+        )
+    }
+
+    /// Extract the MCP tool-result envelope: `{"content": <value>}`.
+    fn unwrap_content(output: &str) -> serde_json::Value {
+        let parsed: serde_json::Value = serde_json::from_str(output)
+            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
+        parsed
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
+    }
+
+    #[tokio::test]
+    async fn corpus_clear_index_returns_valid_json() {
+        let server = make_server();
+        let output = server
+            .corpus_clear_index(Parameters(crate::tools::storage::ClearIndexRequest {}))
+            .await;
+        let content = unwrap_content(&output);
+        assert!(
+            content.get("cleared").is_some(),
+            "corpus_clear_index must return 'cleared' count, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn corpus_query_without_inference_surfaces_structured_error() {
+        let server = make_server();
+        let output = server
+            .corpus_query(Parameters(crate::tools::storage::QueryRequest {
+                query: "test".into(),
+                top_k: Some(5),
+                generate_answer: None,
+                db_path: None,
+                passphrase: None,
+            }))
+            .await;
+        // Without inference, corpus_query must surface a structured error
+        // (not panic). The error envelope has 'error' and 'kind' keys.
+        let parsed: serde_json::Value = serde_json::from_str(&output)
+            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
+        assert!(
+            parsed.get("error").is_some(),
+            "corpus_query without inference must return an error, got: {parsed}"
+        );
+        assert_eq!(
+            parsed["kind"], "unavailable",
+            "error kind must be 'unavailable' when inference is not configured, got: {parsed}"
+        );
+    }
+}

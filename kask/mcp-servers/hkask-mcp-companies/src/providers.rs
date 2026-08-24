@@ -69,7 +69,7 @@ impl CompanyProfile {
     }
 
     /// `marketCap` (FMP stable) — the market capitalization.
-    /// Also checks `mktCap` (legacy FMP v3 field name) for EODHD compatibility.
+    /// Also checks `mktCap` (EODHD field name) for EODHD compatibility.
     pub fn market_cap(&self) -> Option<f64> {
         self.first()?
             .get("marketCap")
@@ -161,7 +161,7 @@ impl KeyMetrics {
 /// `/eod`).
 ///
 /// FMP stable returns a flat array of daily OHLCV bars `[{symbol, date, close, ...}]`.
-/// EODHD (normalized) returns the legacy envelope `{symbol, historical: [...]}`.
+/// EODHD (normalized) returns the `{symbol, historical: [...]}` envelope.
 /// Both shapes are handled — `historical()` returns the bar array from either.
 pub(crate) struct HistoricalPriceView {
     raw: Value,
@@ -175,13 +175,13 @@ impl HistoricalPriceView {
 
     /// The array of daily OHLCV bars (newest-first per FMP), or an empty slice
     /// if the payload has no bars. Handles both the FMP stable flat array and
-    /// the legacy `{symbol, historical: [...]}` envelope.
+    /// the EODHD `{symbol, historical: [...]}` envelope.
     pub fn historical(&self) -> &[Value] {
         // FMP stable: flat array of bar objects.
         if let Some(arr) = self.raw.as_array() {
             return arr;
         }
-        // Legacy envelope / EODHD normalized: {symbol, historical: [...]}.
+        // EODHD normalized: {symbol, historical: [...]}.
         self.raw
             .get("historical")
             .and_then(|v| v.as_array())
@@ -430,33 +430,6 @@ pub async fn companies_get(
     }
 }
 
-/// Fetch a company profile as a typed `CompanyProfile` view over the
-/// retained raw payload. The view concentrates field-name knowledge
-/// (`companyName`, `mktCap`, `price` …) so tool handlers read typed accessors
-/// instead of `v.get("companyName").and_then(|v| v.as_str())`. A missing
-/// field is `None`, not a silent zero — the algedonic `tracing::warn!`
-/// pattern from `parse_financial_field` extends to the accessors.
-#[allow(dead_code)]
-pub async fn fetch_company_profile(
-    client: &reqwest::Client,
-    symbol: &str,
-    fmp_api_key: &str,
-    eodhd_api_key: &str,
-    learning: Option<&super::LearningState>,
-) -> Result<CompanyProfile, McpToolError> {
-    let raw = companies_get(
-        client,
-        "company_profile",
-        symbol,
-        fmp_api_key,
-        eodhd_api_key,
-        &[],
-        learning,
-    )
-    .await?;
-    Ok(CompanyProfile::from_raw(raw.value))
-}
-
 /// Fetch key metrics as a typed `KeyMetrics` view over the retained raw array.
 ///
 /// FMP's stable API split the old key-metrics response across three endpoints:
@@ -502,7 +475,7 @@ pub async fn fetch_key_metrics(
 /// Fetch historical prices as a typed `HistoricalPriceView`.
 ///
 /// FMP stable returns a flat array of daily bars; EODHD (normalized) returns
-/// the legacy `{symbol, historical: [...]}` envelope. `HistoricalPriceView`
+/// the EODHD `{symbol, historical: [...]}` envelope. `HistoricalPriceView`
 /// handles both shapes.
 #[allow(dead_code)]
 pub async fn fetch_historical_price(
@@ -1333,7 +1306,7 @@ fn compute_revenue_growth(
 /// Normalize EODHD /eod/{symbol} historical prices → FMP-compatible format.
 ///
 /// EODHD returns an array of {date, open, high, low, close, adjusted_close, volume}.
-/// We wrap in the legacy {symbol, historical: [...]} envelope (HistoricalPriceView
+/// We wrap in the {symbol, historical: [...]} envelope (HistoricalPriceView
 /// handles both envelope and flat array) and map adjusted_close → adjClose
 /// so HistoricalPriceView::latest_close() fallback works.
 fn normalize_eodhd_historical(eod_value: &Value, symbol: &str) -> Value {

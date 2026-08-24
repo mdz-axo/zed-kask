@@ -1,17 +1,12 @@
-//! JSON extraction from LLM responses — brace-balanced parsing.
+//! JSON extraction from LLM responses — brace/bracket-balanced parsing.
 //!
 //! Shared security-critical primitive for parsing JSON from LLM output.
 //! Prevents injected JSON blocks in reasoning preambles from hijacking the
 //! model's real answer (OWASP LLM02:2025, CWE-1336).
 //!
-//! Originally extracted from `hkask-mcp-corpus/src/json_extract.rs` (RR-0017)
-//! so all LLM-output parsers use the same secure primitive instead of
-//! duplicating the vulnerable `find('{')`…`rfind('}')` pattern.
-//!
-//! Contract: extraction returns the FIRST balanced top-level object — which,
-//! in an injection attempt, may be the injected one. Callers must
-//! schema-validate the result; this primitive guarantees single-object
-//! extraction, not that the object is the intended one.
+//! Contract: extraction returns the FIRST balanced top-level JSON value
+//! (object or array). Callers must schema-validate the result; this primitive
+//! guarantees single-value extraction, not that the value is the intended one.
 
 /// Strip markdown code fences from LLM JSON responses.
 ///
@@ -20,10 +15,8 @@
 pub(crate) fn strip_json_fences(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.starts_with("```") {
-        // Find the first newline after the opening fence
         if let Some(after_fence) = trimmed.find('\n') {
             let content = &trimmed[after_fence + 1..];
-            // Strip closing fence
             if let Some(close_pos) = content.rfind("```") {
                 content[..close_pos].trim().to_string()
             } else {
@@ -37,47 +30,40 @@ pub(crate) fn strip_json_fences(text: &str) -> String {
     }
 }
 
-/// Extract a single JSON object from an LLM response that may contain
-/// thinking-mode reasoning.
+/// Extract a single JSON value (object or array) from an LLM response that
+/// may contain thinking-mode reasoning.
 ///
-/// Models like GLM-5.2 and Qwen3.6 produce reasoning text before the JSON
-/// payload. This function strips code fences, then scans for the first `{`
-/// and uses brace balancing to find its matching `}` — discarding any
-/// reasoning preamble or trailing text.
+/// Strips code fences, then scans for the first JSON container (`{` or `[`)
+/// and uses balanced delimiter tracking to find its matching close —
+/// discarding any reasoning preamble or trailing text.
 ///
-/// Security: brace-balanced extraction defeats the first-`{`-to-last-`}`
-/// substring grab attack, where a poisoned chunk embeds a JSON-looking block
-/// in its text and the LLM echoes it in its reasoning preamble. The old
-/// `find('{')` ... `rfind('}')` approach would silently merge the injected
-/// block with the model's real answer. Brace balancing ensures we extract
-/// exactly one top-level object.
+/// Security: balanced extraction defeats the first-`{`-to-last-`}` substring
+/// grab attack, where a poisoned chunk embeds a JSON-looking block in its
+/// text and the LLM echoes it in its reasoning preamble. Balanced tracking
+/// ensures we extract exactly one top-level JSON value.
 ///
-/// Returns the matched object substring, or the de-fenced text if no balanced
-/// object is found (callers fall back to error handling on parse failure).
-///
-/// Proven against GLM-5.2 (~640-830 reasoning tokens) and Qwen3-235B-A22B-Instruct.
+/// Returns the matched value substring, or the de-fenced text if no balanced
+/// value is found.
 pub fn extract_json_from_response(text: &str) -> String {
     let de_fenced = strip_json_fences(text);
-    match find_balanced_json_object(&de_fenced) {
+    match find_balanced_json(&de_fenced) {
         Some(slice) => slice.to_string(),
         None => de_fenced,
     }
 }
 
-/// Find the first balanced top-level JSON object in `text`.
+/// Find the first balanced top-level JSON value (object or array) in `text`.
 ///
-/// Scans from the first `{`, tracking nesting depth and respecting string
-/// literals (so braces inside strings don't affect the count). Returns the
-/// slice from the opening `{` to its matching `}` inclusive, or `None` if
-/// no balanced object exists.
+/// Scans from the first `{` or `[`, tracking a single combined depth counter
+/// across both delimiter types. This is correct for valid JSON because objects
+/// and arrays nest but never cross — `{]` and `[}` are not well-formed JSON.
+/// When depth returns to 0, the outermost container is complete.
 ///
-/// This is the security-critical primitive: it prevents an attacker from
-/// injecting a JSON-looking block in chunk text that the LLM echoes in its
-/// reasoning preamble, which the old `find('{')` ... `rfind('}')` approach
-/// would silently merge with the model's real answer.
-pub(crate) fn find_balanced_json_object(text: &str) -> Option<&str> {
+/// Respects string literals so braces/brackets inside strings don't affect
+/// the count.
+pub(crate) fn find_balanced_json(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
-    let start = bytes.iter().position(|&b| b == b'{')?;
+    let start = bytes.iter().position(|&b| b == b'{' || b == b'[')?;
     let mut depth: i32 = 0;
     let mut in_string = false;
     let mut escape = false;
@@ -94,19 +80,100 @@ pub(crate) fn find_balanced_json_object(text: &str) -> Option<&str> {
             }
         } else if b == b'"' {
             in_string = true;
-        } else if b == b'{' {
+        } else if b == b'{' || b == b'[' {
             depth += 1;
-        } else if b == b'}' {
+        } else if b == b'}' || b == b']' {
             depth -= 1;
             if depth == 0 {
                 return Some(&text[start..=i]);
             }
             if depth < 0 {
-                // Unbalanced — more closing than opening. No valid object.
                 return None;
             }
         }
         i += 1;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_single_object() {
+        let input = r#"{"key": "value"}"#;
+        assert_eq!(extract_json_from_response(input), input);
+    }
+
+    #[test]
+    fn extracts_array_of_objects() {
+        let input = r#"[{"a": 1}, {"b": 2}, {"c": 3}]"#;
+        let result = extract_json_from_response(input);
+        assert_eq!(
+            result, input,
+            "must return the full array, not just the first object inside it"
+        );
+    }
+
+    #[test]
+    fn extracts_object_from_reasoning_preamble() {
+        let input = "Here are the tags:\n\n{\"dimensions\": [\"what\"], \"ontology_tags\": {}}";
+        let result = extract_json_from_response(input);
+        assert!(result.starts_with('{'));
+        assert!(result.ends_with('}'));
+    }
+
+    #[test]
+    fn extracts_array_from_reasoning_preamble() {
+        let input = "Here are the tags:\n\n```json\n[{\"a\": 1}, {\"b\": 2}]\n```";
+        let result = extract_json_from_response(input);
+        assert!(
+            result.starts_with('['),
+            "must extract the array, not the first object inside it"
+        );
+        assert!(result.ends_with(']'));
+    }
+
+    #[test]
+    fn strips_code_fences() {
+        let input = "```json\n{\"key\": \"value\"}\n```";
+        assert_eq!(extract_json_from_response(input), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn handles_nested_objects_in_array() {
+        let input = r#"[{"outer": {"inner": 1}}, {"x": 2}]"#;
+        let result = extract_json_from_response(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn handles_braces_inside_strings() {
+        let input = r#"[{"text": "a } b { c"}, {"text": "normal"}]"#;
+        let result = extract_json_from_response(input);
+        assert_eq!(
+            result, input,
+            "braces inside string literals must not affect depth tracking"
+        );
+    }
+
+    #[test]
+    fn returns_de_fenced_text_when_no_json_found() {
+        let input = "no json here";
+        assert_eq!(extract_json_from_response(input), "no json here");
+    }
+
+    #[test]
+    fn handles_empty_array() {
+        assert_eq!(extract_json_from_response("[]"), "[]");
+    }
+
+    #[test]
+    fn handles_array_with_reasoning_and_no_fences() {
+        let input = "Thinking about this...\n[{\"a\": 1}, {\"b\": 2}]\nDone.";
+        let result = extract_json_from_response(input);
+        assert!(result.starts_with('['));
+        assert!(result.ends_with(']'));
+    }
 }

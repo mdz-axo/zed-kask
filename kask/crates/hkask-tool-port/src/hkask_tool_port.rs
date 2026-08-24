@@ -4,11 +4,9 @@
 //!
 //! # No per-call capability gate
 //!
-//! This crate previously minted `DelegationToken`s that `McpRuntime::invoke`
-//! checked against the invoked tool. That gate was removed: every production
-//! mint site derived the token's `resource_id` from the same tool name it then
-//! passed to `invoke`, so the check compared a value against itself and denied
-//! nothing while adding work to every tool call.
+//! `invoke` performs **no** per-call capability check. Every production mint
+//! site derives the resource from the same tool name it passes to `invoke`,
+//! so a check would compare a value against itself and deny nothing.
 //!
 //! Capability *separation* is still enforced, at the boundaries that hold a list
 //! the caller cannot choose: the per-request `tool_allowlist` on the inference

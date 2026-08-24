@@ -1,10 +1,7 @@
 //! OCR pipeline executor — `PipelineExecutor` (Tesseract + LLM backends).
 //!
-//! The `CorpusServer` OCR helper methods that previously lived here
-//! (`resolve_ocr_model`, `do_ocr`, `persist_pipeline_outcome`,
-//! `accumulate_and_check_drift`) moved to `services::convert::ConvertService`,
-//! which now owns the OCR + index domain. `corpus_convert` and `corpus_ocr` in
-//! `tools/document.rs` construct a `ConvertService` and delegate to it.
+//! `corpus_convert` and `corpus_ocr` in `tools/document.rs` construct a
+//! `ConvertService` and delegate to it.
 
 use crate::Arc;
 use crate::ocr::llm_ocr::LlmOcrExecutor;

@@ -424,3 +424,123 @@ fn default_db_paths_follow_standardized_layout() {
         "swarm consent path must follow mcp/swarm/consent.db"
     );
 }
+
+// Inline (not a `tests/` file) so the tests can reach `pub(crate)` tool
+// methods and field types. They build a `SwarmServer` with throwaway paths and
+// the in-memory consent store, then drive the simplest read-only tools
+// end-to-end through `execute_tool_semantic` to confirm the server wires up
+// and its tools return the canonical `{"content": …}` success envelope as
+// valid JSON. No ABW API key, no network, no on-disk ledger/events/memory —
+// the lazy stores are never initialized by these read-only tools.
+#[cfg(test)]
+mod smoke_tests {
+    use std::sync::Arc;
+
+    use rmcp::handler::server::wrapper::Parameters;
+    use serde_json::Value;
+
+    use super::SwarmServer;
+    use crate::abw_client::SwarmClient;
+    use crate::config::SwarmConfig;
+    use crate::consent::ConsentStore;
+    use crate::local_knowledge::LazyLocalMemory;
+    use crate::local_registry::LocalAgentRegistry;
+    use crate::local_runtime::{LazyEventStore, LazyLocalSwarmRuntime};
+    use crate::local_swarms::LocalSwarmRegistry;
+    use crate::request_types::{A2aCardRequest, ListLocalSwarmsRequest};
+    use hkask_types::WebID;
+
+    /// Build a `SwarmServer` backed by throwaway paths under the test scratch
+    /// dir and the session-local in-memory consent store. The registry dirs
+    /// need not exist — a missing dir yields zero entries (not an error) — and
+    /// the ledger/events/memory stores are lazy, so they are never opened by
+    /// the read-only tools exercised here. No ABW key, no network.
+    fn make_server() -> SwarmServer {
+        // `CARGO_TARGET_TMPDIR` is a per-test-binary scratch path cargo
+        // provides; fall back to the OS temp dir if unset (e.g. under a bare
+        // `rustc` invocation).
+        let base = std::env::var("CARGO_TARGET_TMPDIR")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+        let scratch = std::path::Path::new(&base).join("hkask_mcp_swarm_smoke");
+        let agents_dir = scratch.join("agents").to_string_lossy().to_string();
+        let swarms_dir = scratch.join("swarms").to_string_lossy().to_string();
+        let ledger_path = scratch.join("ledger.db").to_string_lossy().to_string();
+        let events_path = scratch.join("events.db").to_string_lossy().to_string();
+        let memory_path = scratch.join("memory.db").to_string_lossy().to_string();
+
+        let client = Arc::new(SwarmClient::new(reqwest::Client::new(), SwarmConfig::default()));
+        let consent = Arc::new(ConsentStore::default());
+        let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+        let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
+        let local_memory = Arc::new(LazyLocalMemory::lazy(
+            memory_path,
+            "allostery".to_string(),
+            1024,
+        ));
+        let event_store = Arc::new(LazyEventStore::lazy(events_path));
+
+        SwarmServer::new(
+            WebID::new(),
+            client,
+            consent,
+            local_registry,
+            local_runtime,
+            local_swarms,
+            local_memory,
+            event_store,
+        )
+    }
+
+    /// `swarm_list_local_swarms` reads only the local swarms directory — no
+    /// ABW, no network, no ledger. With an empty (missing) dir it must return
+    /// the success envelope `{"content": {"count": 0, "swarms": []}}`.
+    #[tokio::test]
+    async fn list_local_swarms_returns_valid_json_envelope() {
+        let server = make_server();
+        let output = server
+            .swarm_list_local_swarms(Parameters(ListLocalSwarmsRequest {}))
+            .await;
+
+        let parsed: Value =
+            serde_json::from_str(&output).expect("tool output must be valid JSON");
+        let content = parsed
+            .get("content")
+            .expect("success envelope must carry a \"content\" field");
+        assert_eq!(
+            content["count"].as_u64(),
+            Some(0),
+            "empty swarms dir yields count 0"
+        );
+        assert!(
+            content["swarms"].is_array(),
+            "swarms must be a JSON array"
+        );
+    }
+
+    /// `swarm_a2a_card` with no `agent_name` lists every local agent card.
+    /// With an empty registry it must return the success envelope
+    /// `{"content": {"count": 0, "agent_cards": []}}`.
+    #[tokio::test]
+    async fn a2a_card_lists_all_local_agents_as_valid_json() {
+        let server = make_server();
+        let output = server
+            .swarm_a2a_card(Parameters(A2aCardRequest { agent_name: None }))
+            .await;
+
+        let parsed: Value =
+            serde_json::from_str(&output).expect("tool output must be valid JSON");
+        let content = parsed
+            .get("content")
+            .expect("success envelope must carry a \"content\" field");
+        assert_eq!(
+            content["count"].as_u64(),
+            Some(0),
+            "empty registry yields count 0"
+        );
+        assert!(
+            content["agent_cards"].is_array(),
+            "agent_cards must be a JSON array"
+        );
+    }
+}

@@ -537,3 +537,178 @@ fn default_db_path_follows_standardized_layout() {
         "training default DB path must follow mcp/training/training.db"
     );
 }
+
+// ── Smoke tests ──────────────────────────────────────────────────────────
+//
+// Inline (not a `tests/` dir) so the server's `pub(crate)` types are visible.
+// Verifies the server constructs against in-memory backends and that its
+// simplest tool (`training_validate_config` — pure static math-contract
+// gates, no network/host/inference) returns the MCP `{"content": ...}`
+// success envelope. A second test pins the `{"error": ..., "kind": ...}`
+// error envelope through the null-host → `Unavailable` → `unavailable` path.
+// Mirrors the `hkask-mcp-corpus` `mod smoke` precedent.
+#[cfg(test)]
+mod smoke {
+    use crate::TrainingServer;
+    use crate::adapter::AdapterStore;
+    use crate::dataset::DatasetPipeline;
+    use crate::providers::types::PodStatus;
+    use crate::providers::{
+        HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostId, TrainingJob,
+        TrainingParams,
+    };
+    use crate::types::{TrainCancelRequest, TrainValidateConfigRequest};
+    use hkask_storage::database::driver::DatabaseDriver;
+    use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
+    use hkask_types::template::LLMParameters;
+    use hkask_types::{ChatToolDefinition, WebID};
+    use rmcp::handler::server::wrapper::Parameters;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+
+    /// No-op inference port — every call errors. Smoke tests only exercise
+    /// tools that never call inference; this just satisfies the struct field.
+    struct NoopInferencePort;
+
+    impl InferencePort for NoopInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<
+            Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop inference port — not configured for smoke tests".into(),
+                ))
+            })
+        }
+    }
+
+    /// Null training host — every call returns `Unavailable`. The validate
+    /// tool never calls the host; this only satisfies the struct field and
+    /// gives the error-path test a deterministic failure.
+    struct NullTrainingHost;
+
+    #[async_trait::async_trait]
+    impl TrainingHost for NullTrainingHost {
+        async fn submit(&self, _job: &TrainingJob) -> Result<String, HostProviderError> {
+            Err(HostProviderError::Unavailable(
+                "null training host — not configured for smoke tests".into(),
+            ))
+        }
+
+        async fn status(&self, _job_id: &str) -> Result<PodStatus, HostProviderError> {
+            Err(HostProviderError::Unavailable(
+                "null training host — not configured for smoke tests".into(),
+            ))
+        }
+
+        async fn cancel(&self, _job_id: &str) -> Result<(), HostProviderError> {
+            Err(HostProviderError::Unavailable(
+                "null training host — not configured for smoke tests".into(),
+            ))
+        }
+    }
+
+    /// Build a `TrainingServer` backed by an in-memory SQLite adapter store
+    /// and null ports — no credentials, no network, no on-disk state.
+    fn make_server() -> TrainingServer {
+        let pool = SqliteDriver::in_memory_pool()
+            .expect("in-memory sqlite pool must construct for smoke tests");
+        let driver: Arc<dyn DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
+        let adapter_store = Arc::new(
+            AdapterStore::from_driver(driver).expect(
+                "AdapterStore::from_driver must succeed against a fresh in-memory pool",
+            ),
+        );
+        let pipeline = Mutex::new(DatasetPipeline::new(
+            std::env::temp_dir().join("hkask-mcp-training-smoke-cache"),
+        ));
+        let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
+        TrainingServer::new(
+            WebID::new(),
+            // store: no MemoryStore — validate_config never reads it.
+            None,
+            Box::new(NullTrainingHost),
+            TrainingHostId::Runpod,
+            TrainingHarnessId::Axolotl,
+            pipeline,
+            adapter_store,
+            // job_store: no persistent job table — validate_config never reads it.
+            None,
+            inference_port,
+        )
+    }
+
+    /// Pull the `{"content": <value>}` success envelope out of a tool's
+    /// `String` output, panicking with the raw output on any shape mismatch.
+    fn unwrap_content(output: &str) -> serde_json::Value {
+        let parsed: serde_json::Value = serde_json::from_str(output).unwrap_or_else(|error| {
+            panic!("tool output must be valid JSON, got: {output} ({error})")
+        });
+        parsed.get("content").cloned().unwrap_or_else(|| {
+            panic!("tool output must have a 'content' key, got: {parsed}")
+        })
+    }
+
+    #[tokio::test]
+    async fn validate_config_returns_valid_json_envelope() {
+        let server = make_server();
+        // validate_config runs only the static math-contract gates when
+        // dataset_path/base_model are absent — no host, inference, or disk.
+        let output = server
+            .training_validate_config(Parameters(TrainValidateConfigRequest {
+                params: TrainingParams::default(),
+                dataset_path: None,
+                base_model: None,
+            }))
+            .await;
+        let content = unwrap_content(&output);
+
+        let finding_count = content.get("finding_count").and_then(serde_json::Value::as_u64);
+        assert!(
+            finding_count.is_some(),
+            "training_validate_config must report an integer 'finding_count', got: {content}"
+        );
+
+        let verdict = content.get("verdict").and_then(serde_json::Value::as_str);
+        assert!(
+            matches!(verdict, Some("pass") | Some("conditional") | Some("fail")),
+            "training_validate_config must return a recognized 'verdict', got: {content}"
+        );
+
+        assert!(
+            content
+                .get("gates_evaluated")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|gates| !gates.is_empty()),
+            "training_validate_config must evaluate at least one gate, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_surfaces_structured_error_envelope() {
+        let server = make_server();
+        let output = server
+            .training_cancel(Parameters(TrainCancelRequest {
+                job_id: "smoke-nonexistent".into(),
+            }))
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap_or_else(|error| {
+            panic!("tool output must be valid JSON, got: {output} ({error})")
+        });
+        // Null host → Unavailable → McpToolError::unavailable → kind="unavailable".
+        assert!(
+            parsed.get("error").is_some(),
+            "training_cancel against the null host must return an error envelope, got: {parsed}"
+        );
+        assert_eq!(
+            parsed["kind"], "unavailable",
+            "error kind must be 'unavailable' when the host is not configured, got: {parsed}"
+        );
+    }
+}

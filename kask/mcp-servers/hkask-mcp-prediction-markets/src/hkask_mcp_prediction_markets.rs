@@ -1641,3 +1641,145 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     )
     .await
 }
+
+// ── Smoke tests ─────────────────────────────────────────────────────────────
+//
+// Inline (not `tests/`) because some internal types are `pub(crate)`. Verifies
+// the server constructs with minimal/test backends and that the simplest tools
+// return the `{"content": <value>}` MCP envelope with the expected payload.
+// Mirrors the `hkask-mcp-corpus` smoke-test pattern.
+
+#[cfg(test)]
+mod smoke {
+    use super::*;
+    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
+    use hkask_types::template::LLMParameters;
+    use hkask_types::WebID;
+    use rmcp::handler::server::wrapper::Parameters;
+    use std::collections::HashSet;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+
+    /// No-op inference port for smoke tests — every call returns an error.
+    /// Smoke tests only exercise tools that don't call inference, so this never
+    /// runs; it exists solely to satisfy the `inference_port` field.
+    struct NoopInferencePort;
+
+    impl InferencePort for NoopInferencePort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop inference port — not configured for smoke tests".into(),
+                ))
+            })
+        }
+    }
+
+    /// Construct a server with minimal/test backends: a no-op inference port, an
+    /// empty calibration store, no FRED key, and a portfolio DB isolated in a
+    /// unique temp subdir so parallel runs never collide and no real data dir is
+    /// touched.
+    fn make_server() -> PredictionMarketsServer {
+        let cache_ttl_secs: u64 = DEFAULT_CACHE_TTL_SECS;
+        let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
+        let portfolio_dir = std::env::temp_dir()
+            .join(format!("hkask-pm-smoke-{}", uuid::Uuid::new_v4()));
+        let portfolio_store = hkask_mcp_portfolio::PortfolioStore::with_dir(portfolio_dir);
+        PredictionMarketsServer::new(
+            WebID::new(),
+            reqwest::Client::new(),
+            cache_ttl_secs,
+            Arc::new(Mutex::new(calibration::CalibrationStore::new())),
+            cache::TtlCache::new(cache_ttl_secs),
+            None,
+            Vec::new(),
+            Mutex::new(HashSet::new()),
+            portfolio_store,
+            None,
+            inference_port,
+        )
+    }
+
+    /// Extract the MCP tool-result envelope: `{"content": <value>}`.
+    /// Panics with the raw output on any shape violation so failures are actionable.
+    fn unwrap_content(output: &str) -> serde_json::Value {
+        let parsed: serde_json::Value = serde_json::from_str(output)
+            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
+        parsed
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
+    }
+
+    #[tokio::test]
+    async fn prediction_markets_status_returns_valid_json() {
+        let server = make_server();
+        let output = server
+            .prediction_markets_status(Parameters(StatusRequest {}))
+            .await;
+        let content = unwrap_content(&output);
+        assert_eq!(
+            content["server"], "hkask-mcp-prediction-markets",
+            "status must identify the server, got: {content}"
+        );
+        assert_eq!(
+            content["cache_ttl_secs"].as_u64(),
+            Some(DEFAULT_CACHE_TTL_SECS),
+            "status must echo the configured cache TTL, got: {content}"
+        );
+        assert!(
+            content.get("ontology_mapping_version").is_some(),
+            "status must report the ontology mapping version, got: {content}"
+        );
+        // `called_tools` starts empty; status records its own invocation first,
+        // so it must appear in the reported set.
+        let called = content["called_tools"]
+            .as_array()
+            .expect("called_tools must be an array");
+        assert!(
+            called.iter().any(|tool| tool == "prediction_markets_status"),
+            "status must record its own invocation, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn market_volatility_returns_valid_json() {
+        // Pure-computation tool: no network, no credentials. Mid-price inputs
+        // satisfy the DR-AS validity guards (price in [0,1], τ > 0, horizon > 0)
+        // so the forecast succeeds rather than returning `invalid_argument`.
+        let server = make_server();
+        let output = server
+            .market_volatility(Parameters(MarketVolatilityRequest {
+                price: 0.5,
+                hours_to_resolution: 24.0,
+                spread: Some(0.01),
+                volume: 1000.0,
+                horizon_hours: 1.0,
+                k: None,
+                activity_proxy: None,
+            }))
+            .await;
+        let content = unwrap_content(&output);
+        assert_eq!(
+            content["model"],
+            "DR-AS (Xi, Moallemi, Pai & Wang, arXiv:2607.08199)",
+            "volatility must label its model, got: {content}"
+        );
+        assert!(
+            content.get("conditional_volatility").is_some()
+                && content.get("conditional_variance").is_some(),
+            "volatility must report variance and volatility, got: {content}"
+        );
+        let interval = &content["interval_95"];
+        assert!(
+            interval.get("lower").is_some() && interval.get("upper").is_some(),
+            "volatility must report a 95% interval, got: {content}"
+        );
+    }
+}
