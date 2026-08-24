@@ -447,7 +447,7 @@ pub fn into_anthropic(
         output_config: if request.thinking_allowed
             && matches!(mode, AnthropicModelMode::AdaptiveThinking)
         {
-            request.thinking_effort.as_deref().and_then(|effort| {
+            request.reasoning_effort.as_deref().and_then(|effort| {
                 let effort = match effort {
                     "low" => Some(crate::Effort::Low),
                     "medium" => Some(crate::Effort::Medium),
@@ -900,7 +900,7 @@ mod tests {
             )],
             tool_choice: None,
             thinking_allowed: true,
-            thinking_effort: None,
+            reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
             max_tokens: None,
@@ -1009,7 +1009,7 @@ mod tests {
             )],
             tool_choice: None,
             thinking_allowed: true,
-            thinking_effort: None,
+            reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
             max_tokens: None,
@@ -1070,7 +1070,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
-            thinking_effort: Some("xhigh".into()),
+            reasoning_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
             max_tokens: None,
@@ -1122,7 +1122,7 @@ mod tests {
                 tools: vec![],
                 tool_choice: None,
                 thinking_allowed: false,
-                thinking_effort: None,
+                reasoning_effort: None,
                 speed: None,
                 compact_at_tokens: None,
                 max_tokens: None,
@@ -1189,7 +1189,7 @@ mod tests {
             )],
             tool_choice: None,
             thinking_allowed: true,
-            thinking_effort: None,
+            reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
             max_tokens: None,
@@ -1222,7 +1222,7 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
-            thinking_effort: None,
+            reasoning_effort: None,
             thread_id: None,
             prompt_id: None,
             intent: None,

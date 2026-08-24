@@ -189,7 +189,7 @@ pub enum ModelMode {
         budget_tokens: Option<u64>,
     },
     AdaptiveThinking {
-        effort: bedrock::BedrockAdaptiveThinkingEffort,
+        effort: bedrock::BedrockAdaptiveReasoningEffort,
     },
 }
 
@@ -1048,7 +1048,7 @@ fn mantle_selected_reasoning_effort(
 
     if request.thinking_allowed {
         request
-            .thinking_effort
+            .reasoning_effort
             .as_deref()
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
             .filter(|effort| *effort != ReasoningEffort::None)
@@ -2278,14 +2278,14 @@ pub fn into_bedrock(
                 effort: default_effort,
             } => {
                 let effort = request
-                    .thinking_effort
+                    .reasoning_effort
                     .as_deref()
                     .and_then(|e| match e {
-                        "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
-                        "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
-                        "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
-                        "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
-                        "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                        "low" => Some(bedrock::BedrockAdaptiveReasoningEffort::Low),
+                        "medium" => Some(bedrock::BedrockAdaptiveReasoningEffort::Medium),
+                        "high" => Some(bedrock::BedrockAdaptiveReasoningEffort::High),
+                        "xhigh" => Some(bedrock::BedrockAdaptiveReasoningEffort::XHigh),
+                        "max" => Some(bedrock::BedrockAdaptiveReasoningEffort::Max),
                         _ => None,
                     })
                     .unwrap_or(default_effort);
@@ -2937,7 +2937,7 @@ mod tests {
                 1.0,
                 128_000,
                 BedrockModelMode::AdaptiveThinking {
-                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                    effort: bedrock::BedrockAdaptiveReasoningEffort::High,
                 },
                 true,
                 true,
@@ -3695,7 +3695,7 @@ mod tests {
         assert_eq!(
             mantle_selected_reasoning_effort(
                 &LanguageModelRequest {
-                    thinking_effort: Some("high".to_string()),
+                    reasoning_effort: Some("high".to_string()),
                     ..Default::default()
                 },
                 &model,
@@ -3734,7 +3734,7 @@ mod tests {
                 mantle_selected_reasoning_effort(
                     &LanguageModelRequest {
                         thinking_allowed: true,
-                        thinking_effort: Some(effort.to_string()),
+                        reasoning_effort: Some(effort.to_string()),
                         ..Default::default()
                     },
                     &MantleModel::Gpt5_5,
@@ -3748,7 +3748,7 @@ mod tests {
             mantle_selected_reasoning_effort(
                 &LanguageModelRequest {
                     thinking_allowed: true,
-                    thinking_effort: Some("none".to_string()),
+                    reasoning_effort: Some("none".to_string()),
                     ..Default::default()
                 },
                 &MantleModel::Gpt5_5,

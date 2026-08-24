@@ -468,7 +468,7 @@ pub fn into_deepseek(
         },
         thinking,
         reasoning_effort: if thinking_enabled {
-            into_deepseek_reasoning_effort(request.thinking_effort.as_deref())
+            into_deepseek_reasoning_effort(request.reasoning_effort.as_deref())
         } else {
             None
         },

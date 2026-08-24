@@ -173,7 +173,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             let request_limiter = self.request_limiter.clone();
             let future = cx.spawn(async move |cx| {
                 let effort = request
-                    .thinking_effort
+                    .reasoning_effort
                     .as_ref()
                     .and_then(|e| anthropic::Effort::from_str(e).ok());
 
@@ -1063,7 +1063,7 @@ fn into_copilot_responses(
         stop: _,
         temperature,
         thinking_allowed,
-        thinking_effort,
+        reasoning_effort,
         speed: _,
         compact_at_tokens: _,
         max_tokens: _,
@@ -1248,7 +1248,7 @@ fn into_copilot_responses(
         tools: converted_tools,
         tool_choice: mapped_tool_choice,
         reasoning: if thinking_allowed {
-            let effort = thinking_effort
+            let effort = reasoning_effort
                 .as_deref()
                 .and_then(|e| e.parse::<copilot_responses::ReasoningEffort>().ok())
                 .unwrap_or(copilot_responses::ReasoningEffort::Medium);

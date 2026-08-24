@@ -689,7 +689,7 @@ impl LanguageModel for OpenCodeLanguageModel {
             ApiProtocol::OpenAiChat => {
                 let reasoning_effort = if request.thinking_allowed {
                     request
-                        .thinking_effort
+                        .reasoning_effort
                         .as_deref()
                         .and_then(normalize_reasoning_effort)
                 } else {

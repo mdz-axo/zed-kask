@@ -622,7 +622,7 @@ pub struct ThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub reasoning_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
@@ -1035,7 +1035,7 @@ impl ThreadView {
             in_flight_prompt: None,
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
-            thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            reasoning_effort_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
@@ -5145,7 +5145,7 @@ impl ThreadView {
             return Some(
                 self.render_effort_selector(
                     effort_levels,
-                    thread.thinking_effort().cloned(),
+                    thread.reasoning_effort().cloned(),
                     true,
                     cx,
                 )
@@ -5216,7 +5216,7 @@ impl ThreadView {
         let left_btn = thinking_toggle;
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
-            thread.thinking_effort().cloned(),
+            thread.reasoning_effort().cloned(),
             false,
             cx,
         );
@@ -5254,7 +5254,7 @@ impl ThreadView {
             .or(default_effort_level)
             .map_or("Select Effort".into(), |effort| effort.name);
 
-        let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
+        let (label_color, icon) = if self.reasoning_effort_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
             (Color::Muted, IconName::ChevronDown)
@@ -5271,7 +5271,7 @@ impl ThreadView {
                         .justify_between()
                         .child(Label::new("Change Thinking Effort"))
                         .child(KeyBinding::for_action_in(
-                            &ToggleThinkingEffortMenu,
+                            &ToggleReasoningEffortMenu,
                             &focus_handle,
                             cx,
                         )),
@@ -5287,7 +5287,7 @@ impl ThreadView {
                             .border_color(cx.theme().colors().border_variant)
                             .child(Label::new("Cycle Thinking Effort"))
                             .child(KeyBinding::for_action_in(
-                                &CycleThinkingEffort,
+                                &CycleReasoningEffort,
                                 &focus_handle,
                                 cx,
                             )),
@@ -5341,7 +5341,7 @@ impl ThreadView {
                                     .update(cx, |this, cx| {
                                         if let Some(thread) = this.as_native_thread(cx) {
                                             thread.update(cx, |thread, cx| {
-                                                thread.set_thinking_effort(
+                                                thread.set_reasoning_effort(
                                                     Some(effort.to_string()),
                                                     cx,
                                                 );
@@ -5386,7 +5386,7 @@ impl ThreadView {
                     menu
                 }))
             })
-            .with_handle(self.thinking_effort_menu_handle.clone())
+            .with_handle(self.reasoning_effort_menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -12095,7 +12095,7 @@ impl ThreadView {
         });
     }
 
-    fn cycle_native_agent_thinking_effort(&mut self, cx: &mut Context<Self>) {
+    fn cycle_native_agent_reasoning_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
@@ -12112,7 +12112,7 @@ impl ThreadView {
             if effort_levels.is_empty() {
                 return;
             }
-            let current_effort = thread_ref.thinking_effort().cloned();
+            let current_effort = thread_ref.reasoning_effort().cloned();
             (effort_levels, current_effort)
         };
 
@@ -12128,7 +12128,7 @@ impl ThreadView {
         let next_effort = effort_levels[next_index].value.to_string();
 
         thread.update(cx, |thread, cx| {
-            thread.set_thinking_effort(Some(next_effort.clone()), cx);
+            thread.set_reasoning_effort(Some(next_effort.clone()), cx);
 
             let favorite_key = thread
                 .model()
@@ -12309,7 +12309,7 @@ impl Render for ThreadView {
                     });
                 }
             }))
-            .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+            .on_action(cx.listener(|this, _: &CycleReasoningEffort, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
@@ -12325,10 +12325,10 @@ impl Render for ThreadView {
                         return;
                     }
                 }
-                this.cycle_native_agent_thinking_effort(cx);
+                this.cycle_native_agent_reasoning_effort(cx);
             }))
             .on_action(
-                cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
+                cx.listener(|this, _: &ToggleReasoningEffortMenu, window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
@@ -12344,7 +12344,7 @@ impl Render for ThreadView {
                             return;
                         }
                     }
-                    let menu_handle = this.thinking_effort_menu_handle.clone();
+                    let menu_handle = this.reasoning_effort_menu_handle.clone();
                     window.defer(cx, move |window, cx| {
                         menu_handle.toggle(window, cx);
                     });

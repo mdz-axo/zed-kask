@@ -1393,7 +1393,7 @@ pub struct Thread {
     model: ThreadModel,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
-    thinking_effort: Option<String>,
+    reasoning_effort: Option<String>,
     speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
@@ -1576,7 +1576,7 @@ impl Thread {
             .default_model
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
+        let reasoning_effort = settings
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
@@ -1625,7 +1625,7 @@ impl Thread {
             summarization_model: None,
             thinking_enabled: enable_thinking,
             speed,
-            thinking_effort,
+            reasoning_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1661,7 +1661,7 @@ impl Thread {
         let parent = parent_thread.read(cx);
         self.speed = parent.speed;
         self.thinking_enabled = parent.thinking_enabled;
-        self.thinking_effort = parent.thinking_effort.clone();
+        self.reasoning_effort = parent.reasoning_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
         self.profile_downgraded_for_restricted_workspace =
@@ -1683,7 +1683,7 @@ impl Thread {
         };
 
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
-        self.thinking_effort = selection.effort.clone();
+        self.reasoning_effort = selection.effort.clone();
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(model.as_ref())))
@@ -2023,7 +2023,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: db_thread.thinking_enabled,
-            thinking_effort: db_thread.thinking_effort,
+            reasoning_effort: db_thread.reasoning_effort,
             speed: db_thread.speed,
             project,
             action_log,
@@ -2142,7 +2142,7 @@ impl Thread {
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
-            thinking_effort: self.thinking_effort.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
                 crate::db::SerializedScrollPosition {
@@ -2416,18 +2416,18 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn thinking_effort(&self) -> Option<&String> {
-        self.thinking_effort.as_ref()
+    pub fn reasoning_effort(&self) -> Option<&String> {
+        self.reasoning_effort.as_ref()
     }
 
-    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
-        self.thinking_effort = effort.clone();
+    pub fn set_reasoning_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.reasoning_effort = effort.clone();
 
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
                     if thread.inherits_parent_model_settings {
-                        thread.set_thinking_effort(effort.clone(), cx)
+                        thread.set_reasoning_effort(effort.clone(), cx)
                     }
                 })
                 .ok();
@@ -5001,7 +5001,7 @@ impl Thread {
             // toggle state, which may be stale from a previously selected
             // model that could.
             thinking_allowed: self.thinking_enabled,
-            thinking_effort: self.thinking_effort.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
             max_tokens: None,
@@ -5429,7 +5429,7 @@ impl Thread {
             prompt_id: self.prompt_id.to_string(),
             model: model.telemetry_id(),
             compaction_model: compaction_model.telemetry_id(),
-            thinking_effort: self.thinking_effort.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
             max_tokens,
             tokens_before,
             auto_compact_enabled: auto_compact.enabled,
@@ -5934,7 +5934,7 @@ struct CompactionTelemetry {
     prompt_id: String,
     model: String,
     compaction_model: String,
-    thinking_effort: Option<String>,
+    reasoning_effort: Option<String>,
     max_tokens: u64,
     /// Tokens in the context window immediately before compaction.
     tokens_before: Option<u64>,
@@ -5958,7 +5958,7 @@ impl CompactionTelemetry {
             prompt_id = self.prompt_id,
             model = self.model,
             compaction_model = self.compaction_model,
-            thinking_effort = self.thinking_effort,
+            reasoning_effort = self.reasoning_effort,
             max_tokens = self.max_tokens,
             tokens_before = self.tokens_before,
             tokens_after = tokens_after,
@@ -10429,30 +10429,30 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
+    async fn test_set_reasoning_effort_propagates_to_subagents(cx: &mut TestAppContext) {
         let (parent, _event_stream) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_reasoning_effort(Some("high".to_string()), cx);
             });
 
             for subagent in &subagents {
                 assert_eq!(
-                    subagent.read(cx).thinking_effort().map(|s| s.as_str()),
+                    subagent.read(cx).reasoning_effort().map(|s| s.as_str()),
                     Some("high"),
                     "Subagent thinking effort should match parent"
                 );
             }
 
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_effort(None, cx);
+                thread.set_reasoning_effort(None, cx);
             });
 
             for subagent in &subagents {
                 assert_eq!(
-                    subagent.read(cx).thinking_effort(),
+                    subagent.read(cx).reasoning_effort(),
                     None,
                     "Subagent thinking effort should be None after parent clears it"
                 );
@@ -10468,7 +10468,7 @@ mod tests {
             parent.update(cx, |thread, cx| {
                 thread.set_speed(Speed::Fast, cx);
                 thread.set_thinking_enabled(true, cx);
-                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_reasoning_effort(Some("high".to_string()), cx);
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
             });
         });
@@ -10479,7 +10479,7 @@ mod tests {
             let sub = subagents[0].read(cx);
             assert_eq!(sub.speed(), Some(Speed::Fast));
             assert!(sub.thinking_enabled());
-            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.reasoning_effort().map(|s| s.as_str()), Some("high"));
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
         });
     }
@@ -10540,7 +10540,7 @@ mod tests {
             parent.update(cx, |thread, cx| {
                 thread.set_thinking_enabled(true, cx);
                 thread.set_speed(Speed::Fast, cx);
-                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_reasoning_effort(Some("high".to_string()), cx);
             });
         });
     }

@@ -188,7 +188,7 @@ pub enum Thinking {
         budget_tokens: Option<u64>,
     },
     Adaptive {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
     },
     /// Explicitly turns thinking off. Required by Claude Opus 5, where
     /// adaptive thinking runs by default when the `thinking` field is
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_adaptive_thinking_serializes_effort_in_output_config() {
         let fields = thinking_request_fields(&Thinking::Adaptive {
-            effort: BedrockAdaptiveThinkingEffort::XHigh,
+            effort: BedrockAdaptiveReasoningEffort::XHigh,
         });
 
         let thinking = fields.get("thinking").expect("thinking field");

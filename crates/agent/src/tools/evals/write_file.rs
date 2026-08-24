@@ -72,7 +72,7 @@ struct WriteToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
     model: Arc<dyn LanguageModel>,
-    model_thinking_effort: Option<String>,
+    model_reasoning_effort: Option<String>,
 }
 
 impl WriteToolTest {
@@ -131,7 +131,7 @@ impl WriteToolTest {
             })
             .await;
 
-        let model_thinking_effort = model
+        let model_reasoning_effort = model
             .default_effort_level()
             .map(|effort_level| effort_level.value.to_string());
 
@@ -139,7 +139,7 @@ impl WriteToolTest {
             fs,
             project,
             model,
-            model_thinking_effort,
+            model_reasoning_effort,
         }
     }
 
@@ -225,7 +225,7 @@ impl WriteToolTest {
             messages,
             tools,
             thinking_allowed: true,
-            thinking_effort: self.model_thinking_effort.clone(),
+            reasoning_effort: self.model_reasoning_effort.clone(),
             ..Default::default()
         };
 

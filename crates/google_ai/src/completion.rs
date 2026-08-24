@@ -215,7 +215,7 @@ fn thinking_config_for_request(
     if request.thinking_allowed {
         config.include_thoughts = Some(true);
         config.thinking_level = request
-            .thinking_effort
+            .reasoning_effort
             .as_deref()
             .and_then(ThinkingLevel::from_effort);
 
@@ -504,7 +504,7 @@ mod tests {
     fn into_google_requests_thought_summaries_and_thinking_level() {
         let mut request = text_request();
         request.thinking_allowed = true;
-        request.thinking_effort = Some("low".to_string());
+        request.reasoning_effort = Some("low".to_string());
 
         let request = into_google(
             request,

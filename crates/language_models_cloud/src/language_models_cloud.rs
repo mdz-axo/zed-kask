@@ -701,7 +701,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
                 let effort = request
-                    .thinking_effort
+                    .reasoning_effort
                     .as_ref()
                     .and_then(|effort| anthropic::Effort::from_str(effort).ok());
 
@@ -779,7 +779,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let effort = request
-                    .thinking_effort
+                    .reasoning_effort
                     .as_ref()
                     .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
                     .filter(|effort| *effort != open_ai::ReasoningEffort::None);

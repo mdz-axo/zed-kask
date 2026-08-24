@@ -3699,7 +3699,7 @@ impl GitPanel {
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
-                    thinking_effort: None,
+                    reasoning_effort: None,
                     speed: None,
                     compact_at_tokens: None,
                     max_tokens: None,

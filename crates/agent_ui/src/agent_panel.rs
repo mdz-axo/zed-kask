@@ -11090,7 +11090,7 @@ mod tests {
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
-            thinking_effort: None,
+            reasoning_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,

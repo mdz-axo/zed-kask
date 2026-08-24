@@ -430,7 +430,7 @@ fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::
         .filter(|effort| *effort != open_ai::ReasoningEffort::None)
 }
 
-fn supported_thinking_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
+fn supported_reasoning_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
     let Some(default_effort) = default_thinking_reasoning_effort(model) else {
         return Vec::new();
     };
@@ -449,7 +449,7 @@ fn selected_thinking_reasoning_effort(
     request: &LanguageModelRequest,
 ) -> Option<open_ai::ReasoningEffort> {
     request
-        .thinking_effort
+        .reasoning_effort
         .as_deref()
         .and_then(|effort| effort.parse::<open_ai::ReasoningEffort>().ok())
         .filter(|effort| *effort != open_ai::ReasoningEffort::None)
@@ -491,7 +491,7 @@ fn disable_response_thinking_for_none_effort(
 ) {
     if model.reasoning_effort == Some(open_ai::ReasoningEffort::None) {
         request.thinking_allowed = false;
-        request.thinking_effort = None;
+        request.reasoning_effort = None;
     }
 }
 
@@ -546,7 +546,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        supported_thinking_effort_levels(&self.model)
+        supported_reasoning_effort_levels(&self.model)
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -690,8 +690,8 @@ mod tests {
     }
 
     #[test]
-    fn supported_thinking_effort_levels_use_configured_effort_as_default() {
-        let effort_levels = supported_thinking_effort_levels(&available_model(Some(
+    fn supported_reasoning_effort_levels_use_configured_effort_as_default() {
+        let effort_levels = supported_reasoning_effort_levels(&available_model(Some(
             open_ai::ReasoningEffort::High,
         )));
         let values = effort_levels
@@ -710,10 +710,10 @@ mod tests {
     }
 
     #[test]
-    fn supported_thinking_effort_levels_hide_missing_or_none_effort() {
-        assert!(supported_thinking_effort_levels(&available_model(None)).is_empty());
+    fn supported_reasoning_effort_levels_hide_missing_or_none_effort() {
+        assert!(supported_reasoning_effort_levels(&available_model(None)).is_empty());
         assert!(
-            supported_thinking_effort_levels(&available_model(Some(
+            supported_reasoning_effort_levels(&available_model(Some(
                 open_ai::ReasoningEffort::None
             )))
             .is_empty()
@@ -733,13 +733,13 @@ mod tests {
             Some(open_ai::ReasoningEffort::Medium)
         );
 
-        request.thinking_effort = Some("high".to_string());
+        request.reasoning_effort = Some("high".to_string());
         assert_eq!(
             chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::High)
         );
 
-        request.thinking_effort = Some("not-supported".to_string());
+        request.reasoning_effort = Some("not-supported".to_string());
         assert_eq!(
             chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::Medium)
@@ -768,7 +768,7 @@ mod tests {
         let model = available_model(Some(open_ai::ReasoningEffort::None));
         let request = LanguageModelRequest {
             thinking_allowed: true,
-            thinking_effort: Some("high".to_string()),
+            reasoning_effort: Some("high".to_string()),
             ..Default::default()
         };
 
@@ -861,7 +861,7 @@ mod tests {
         model.capabilities.chat_completions = true;
         let request = LanguageModelRequest {
             thinking_allowed: true,
-            thinking_effort: Some("high".to_string()),
+            reasoning_effort: Some("high".to_string()),
             ..Default::default()
         };
         let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
@@ -894,16 +894,16 @@ mod tests {
     }
 
     #[test]
-    fn response_thinking_effort_preserves_explicit_none() {
+    fn response_reasoning_effort_preserves_explicit_none() {
         let model = available_model(Some(open_ai::ReasoningEffort::None));
         let mut request = LanguageModelRequest {
             thinking_allowed: true,
-            thinking_effort: Some("high".to_string()),
+            reasoning_effort: Some("high".to_string()),
             ..Default::default()
         };
 
         disable_response_thinking_for_none_effort(&mut request, &model);
         assert!(!request.thinking_allowed);
-        assert_eq!(request.thinking_effort, None);
+        assert_eq!(request.reasoning_effort, None);
     }
 }

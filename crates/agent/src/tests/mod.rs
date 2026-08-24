@@ -6403,7 +6403,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             Some(subagent_model.id())
         );
         assert!(subagent_thread.thinking_enabled());
-        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+        assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
     });
 
     parent_thread.update(cx, |parent_thread, _cx| {
@@ -6412,7 +6412,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
     parent_thread.update(cx, |parent_thread, cx| {
         parent_thread.set_model(parent_model.clone(), cx);
         parent_thread.set_thinking_enabled(false, cx);
-        parent_thread.set_thinking_effort(None, cx);
+        parent_thread.set_reasoning_effort(None, cx);
     });
 
     subagent_thread.read_with(cx, |subagent_thread, _cx| {
@@ -6421,7 +6421,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             Some(subagent_model.id())
         );
         assert!(subagent_thread.thinking_enabled());
-        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+        assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
     });
 }
 

@@ -258,12 +258,12 @@ fn open_ai_reasoning_effort_is_supported(effort: open_ai::ReasoningEffort) -> bo
     effort != open_ai::ReasoningEffort::None
 }
 
-fn normalize_open_ai_response_thinking_effort(
+fn normalize_open_ai_response_reasoning_effort(
     request: &mut LanguageModelRequest,
     model: &open_ai::Model,
 ) {
     let selected_effort_is_supported = request
-        .thinking_effort
+        .reasoning_effort
         .as_deref()
         .and_then(|effort| effort.parse::<open_ai::ReasoningEffort>().ok())
         .is_some_and(|effort| {
@@ -272,11 +272,11 @@ fn normalize_open_ai_response_thinking_effort(
         });
 
     if !selected_effort_is_supported {
-        request.thinking_effort = None;
+        request.reasoning_effort = None;
     }
 }
 
-fn supports_selectable_thinking_effort(model: &open_ai::Model) -> bool {
+fn supports_selectable_reasoning_effort(model: &open_ai::Model) -> bool {
     model.uses_responses_api()
         && model
             .supported_reasoning_efforts()
@@ -284,8 +284,8 @@ fn supports_selectable_thinking_effort(model: &open_ai::Model) -> bool {
             .any(|effort| open_ai_reasoning_effort_is_supported(*effort))
 }
 
-fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
-    if !supports_selectable_thinking_effort(model) {
+fn supported_reasoning_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
+    if !supports_selectable_reasoning_effort(model) {
         return Vec::new();
     }
 
@@ -313,8 +313,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_thinking_effort_levels_hide_none() {
-        let effort_levels = supported_thinking_effort_levels(&open_ai::Model::FivePointTwo);
+    fn supported_reasoning_effort_levels_hide_none() {
+        let effort_levels = supported_reasoning_effort_levels(&open_ai::Model::FivePointTwo);
         let values = effort_levels
             .iter()
             .map(|level| level.value.as_ref())
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn models_supporting_only_none_have_no_selectable_thinking_effort() {
+    fn models_supporting_only_none_have_no_selectable_reasoning_effort() {
         let model = open_ai::Model::Custom {
             name: "custom-model".to_string(),
             display_name: None,
@@ -343,8 +343,8 @@ mod tests {
             supports_images: true,
         };
 
-        assert!(!supports_selectable_thinking_effort(&model));
-        assert!(supported_thinking_effort_levels(&model).is_empty());
+        assert!(!supports_selectable_reasoning_effort(&model));
+        assert!(supported_reasoning_effort_levels(&model).is_empty());
         assert!(
             model
                 .supported_reasoning_efforts()
@@ -530,7 +530,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        supports_selectable_thinking_effort(&self.model)
+        supports_selectable_reasoning_effort(&self.model)
     }
 
     fn supports_fast_mode(&self) -> bool {
@@ -559,7 +559,7 @@ impl LanguageModel for OpenAiLanguageModel {
             .boxed();
         }
 
-        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+        normalize_open_ai_response_reasoning_effort(&mut request, &self.model);
         let request = match into_open_ai_response(
             request,
             self.model.id(),
@@ -589,7 +589,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        supported_thinking_effort_levels(&self.model)
+        supported_reasoning_effort_levels(&self.model)
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -626,7 +626,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request.speed = None;
         }
         if self.model.uses_responses_api() {
-            normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+            normalize_open_ai_response_reasoning_effort(&mut request, &self.model);
             let request = match into_open_ai_response(
                 request,
                 self.model.id(),

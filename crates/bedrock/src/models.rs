@@ -3,7 +3,7 @@ use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub enum BedrockAdaptiveThinkingEffort {
+pub enum BedrockAdaptiveReasoningEffort {
     Low,
     Medium,
     #[default]
@@ -12,7 +12,7 @@ pub enum BedrockAdaptiveThinkingEffort {
     Max,
 }
 
-impl BedrockAdaptiveThinkingEffort {
+impl BedrockAdaptiveReasoningEffort {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Low => "low",
@@ -33,7 +33,7 @@ pub enum BedrockModelMode {
         budget_tokens: Option<u64>,
     },
     AdaptiveThinking {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
     },
 }
 
@@ -656,7 +656,7 @@ impl ConverseModel {
     pub fn thinking_mode(&self) -> BedrockModelMode {
         if self.supports_adaptive_thinking() {
             BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::default(),
+                effort: BedrockAdaptiveReasoningEffort::default(),
             }
         } else if self.supports_thinking() {
             BedrockModelMode::Thinking {
@@ -1490,7 +1490,7 @@ mod tests {
         assert!(ConverseModel::ClaudeOpus5.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
-        assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
+        assert_eq!(BedrockAdaptiveReasoningEffort::XHigh.as_str(), "xhigh");
 
         assert_eq!(
             ConverseModel::ClaudeSonnet4.thinking_mode(),
@@ -1501,7 +1501,7 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus4_6.thinking_mode(),
             BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::High
+                effort: BedrockAdaptiveReasoningEffort::High
             }
         );
         assert_eq!(

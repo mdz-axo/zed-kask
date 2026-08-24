@@ -74,7 +74,7 @@ pub struct DbThread {
     #[serde(default)]
     pub thinking_enabled: bool,
     #[serde(default)]
-    pub thinking_effort: Option<String>,
+    pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub draft_prompt: Option<Vec<acp::ContentBlock>>,
     #[serde(default)]
@@ -164,7 +164,7 @@ impl SharedThread {
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
-            thinking_effort: None,
+            reasoning_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -350,7 +350,7 @@ impl DbThread {
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
-            thinking_effort: None,
+            reasoning_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -827,7 +827,7 @@ mod tests {
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
-            thinking_effort: None,
+            reasoning_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,

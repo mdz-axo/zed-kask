@@ -150,7 +150,7 @@ impl Display for EvalOutput {
 
 struct TerminalToolTest {
     model: Arc<dyn LanguageModel>,
-    model_thinking_effort: Option<String>,
+    model_reasoning_effort: Option<String>,
 }
 
 impl TerminalToolTest {
@@ -196,13 +196,13 @@ impl TerminalToolTest {
             })
             .await;
 
-        let model_thinking_effort = model
+        let model_reasoning_effort = model
             .default_effort_level()
             .map(|effort_level| effort_level.value.to_string());
 
         Self {
             model,
-            model_thinking_effort,
+            model_reasoning_effort,
         }
     }
 
@@ -261,7 +261,7 @@ impl TerminalToolTest {
             messages,
             tools,
             thinking_allowed: true,
-            thinking_effort: self.model_thinking_effort.clone(),
+            reasoning_effort: self.model_reasoning_effort.clone(),
             ..Default::default()
         };
 

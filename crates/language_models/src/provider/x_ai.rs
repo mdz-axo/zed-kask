@@ -291,7 +291,7 @@ fn reasoning_effort_for_request(
 
     if request.thinking_allowed {
         request
-            .thinking_effort
+            .reasoning_effort
             .as_deref()
             .and_then(|effort| effort.parse::<open_ai::ReasoningEffort>().ok())
             .filter(|effort| supported_efforts.contains(effort))
@@ -304,7 +304,7 @@ fn reasoning_effort_for_request(
     }
 }
 
-fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
+fn supported_reasoning_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
     let default_effort = default_thinking_reasoning_effort(model);
     x_ai_reasoning_efforts(model)
         .iter()
@@ -371,7 +371,7 @@ impl LanguageModel for XAiLanguageModel {
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        supported_thinking_effort_levels(&self.model)
+        supported_reasoning_effort_levels(&self.model)
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -440,8 +440,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grok_43_supports_selectable_thinking_effort_levels() {
-        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok43);
+    fn grok_43_supports_selectable_reasoning_effort_levels() {
+        let effort_levels = supported_reasoning_effort_levels(&x_ai::Model::Grok43);
         let values = effort_levels
             .iter()
             .map(|level| level.value.as_ref())
@@ -461,7 +461,7 @@ mod tests {
     fn grok_43_request_uses_selected_reasoning_effort() {
         let request = LanguageModelRequest {
             thinking_allowed: true,
-            thinking_effort: Some("high".to_string()),
+            reasoning_effort: Some("high".to_string()),
             ..Default::default()
         };
 
