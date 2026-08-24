@@ -5,12 +5,75 @@
 //! `chunk_text` / `strip_gutenberg_headers` as associated functions that
 //! delegate to these, so existing call sites keep their shape.
 
+/// Threshold: if control characters exceed 0.5% of total characters, the
+/// PDF font encoding is corrupted and the text should be re-extracted via
+/// OCR rather than used as-is.
+const CORRUPTED_FONT_ENCODING_THRESHOLD: f64 = 0.005;
+
+/// Detect whether extracted text has corrupted font encoding.
+///
+/// PDFs with custom `ToUnicode` CMaps can cause `pdftotext` to emit C0
+/// control characters (\x01-\x08, \x0e-\x1f) where normal ASCII letters
+/// and digits should be. This makes the text unreadable by LLM taggers.
+///
+/// Returns true if control characters (excluding \t, \n, \r) exceed
+/// 0.5% of total characters — a signal that the font encoding is broken
+/// and OCR should be used instead.
+pub fn has_corrupted_font_encoding(text: &str) -> bool {
+    let total = text.len();
+    if total == 0 {
+        return false;
+    }
+    let control_count = text
+        .chars()
+        .filter(|ch| {
+            let o = *ch as u32;
+            o < 0x20 && o != 0x09 && o != 0x0a && o != 0x0d
+        })
+        .count();
+    (control_count as f64 / total as f64) > CORRUPTED_FONT_ENCODING_THRESHOLD
+}
+
+/// Replace C0 control characters with spaces.
+///
+/// PDF extraction (pdftotext) maps mathematical symbols (turnstile ⊢,
+/// sequent separators, etc.) to raw C0 control bytes (\x01-\x08, \x0e-\x1f)
+/// when the PDF uses custom font encodings. These bytes are valid UTF-8 but
+/// meaningless as text — they cause LLM taggers to see garbage and return
+/// "empty passage" fallback tags.
+///
+/// Preserves \t (\x09), \n (\x0a), \r (\x0d) — structural whitespace.
+/// Collapses runs of resulting spaces into one.
+pub fn sanitize_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_was_space = false;
+    for ch in text.chars() {
+        let o = ch as u32;
+        if o < 0x20 && o != 0x09 && o != 0x0a && o != 0x0d {
+            if !prev_was_space {
+                out.push(' ');
+                prev_was_space = true;
+            }
+        } else if ch == ' ' {
+            if !prev_was_space {
+                out.push(' ');
+                prev_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_was_space = false;
+        }
+    }
+    out
+}
+
 /// Chunk text into passages for embedding.
 ///
-/// Splits on structural boundaries (markdown headings, horizontal rules,
-/// then paragraph breaks), applies min/max word count constraints, and
-/// splits long paragraphs at the nearest sentence boundary. Short
-/// paragraphs are concatenated until min_words is reached.
+/// Sanitizes control characters, then splits on structural boundaries
+/// (markdown headings, horizontal rules, then paragraph breaks), applies
+/// min/max word count constraints, and splits long paragraphs at the nearest
+/// sentence boundary. Short paragraphs are concatenated until min_words is
+/// reached.
 ///
 /// Returns (entity_ref, text) pairs with entity_ref formatted as
 /// `{entity_ref_prefix}:{chunk_index}`.
@@ -22,6 +85,7 @@
 /// pre:  min_words > 0, max_words >= min_words
 /// post: returns Vec of (entity_ref, text) chunks
 /// post: each chunk has word count between min_words and max_words (best-effort)
+/// post: no chunk contains C0 control characters except \t \n \r
 pub fn chunk_text(
     text: &str,
     entity_ref_prefix: &str,
@@ -29,10 +93,11 @@ pub fn chunk_text(
     max_words: usize,
     sentence_boundary: &str,
 ) -> Vec<(String, String)> {
+    let text = sanitize_text(text);
     // Structural splitting: headings/rules become their own paragraph units so
     // chunks don't straddle unrelated sections (improves concept coherence, which
     // the salience graph depends on).
-    let paragraphs = split_structural(text);
+    let paragraphs = split_structural(&text);
 
     let mut passages = Vec::new();
     let mut buffer = String::new();
@@ -223,4 +288,258 @@ pub fn strip_gutenberg_headers(text: &str) -> String {
     let end = text.find(end_marker).unwrap_or(text.len());
 
     text[start..end].trim().to_string()
+}
+
+/// The form-feed character `pdftotext` uses to separate pages.
+const FORM_FEED: char = '\u{000c}';
+
+/// Filter out title pages, tables of contents, and index pages from
+/// extracted text before chunking.
+///
+/// `pdftotext` separates pages with form-feed (`\x0c`). This function
+/// splits on form-feed, classifies each page, and drops boilerplate pages.
+/// Pages are classified by content patterns:
+///
+/// - **Title pages**: short text (< 100 chars), mostly whitespace, often
+///   containing only the book title, author, publisher.
+/// - **Table of contents**: lines matching `\d+\.\s+` followed by page
+///   numbers, or repeated lines of `..... ` dot leaders.
+/// - **Index pages**: lines that are single-word or short phrases followed
+///   by page number lists (e.g. "concept, 42, 87, 103"), or lines with
+///   many comma-separated numbers.
+/// - **Copyright pages**: contain "copyright", "all rights reserved",
+///   "isbn", "printed in".
+/// - **Blank pages**: empty or whitespace-only.
+///
+/// Returns the text with boilerplate pages removed, rejoined with
+/// form-feed so downstream chunking sees only content pages.
+pub fn filter_boilerplate_pages(text: &str) -> String {
+    let pages: Vec<&str> = text.split(FORM_FEED).collect();
+    let kept: Vec<String> = pages
+        .iter()
+        .filter(|page| !is_boilerplate_page(page))
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    kept.join("\n")
+}
+
+/// Classify a single page as boilerplate (title, TOC, index, copyright, blank)
+/// or content. Returns true if the page should be dropped.
+fn is_boilerplate_page(page: &str) -> bool {
+    let trimmed = page.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let char_count = trimmed.chars().count();
+    let lower = trimmed.to_lowercase();
+
+    // Blank or near-blank pages (title pages are often mostly whitespace)
+    if char_count < 50 {
+        return true;
+    }
+
+    // Copyright / publisher pages
+    if lower.contains("all rights reserved")
+        || lower.contains("copyright")
+        || lower.contains("printed in")
+        || lower.contains("isbn")
+    {
+        return true;
+    }
+
+    // Table of contents: dot leaders (.... ) or repeated "N. Title    page" patterns
+    let lines: Vec<&str> = trimmed.lines().collect();
+    let dot_leader_count = lines
+        .iter()
+        .filter(|l| l.contains("...") || l.matches('.').count() > 5)
+        .count();
+    if lines.len() > 3 && dot_leader_count as f64 / lines.len() as f64 > 0.4 {
+        return true;
+    }
+
+    // Table of contents: lines matching "N.  Title   page_num" pattern
+    let toc_line_count = lines
+        .iter()
+        .filter(|l| {
+            let l = l.trim();
+            // "1. Introduction    3" or "1.1 Background  15"
+            l.len() < 100
+                && (l.starts_with(|c: char| c.is_ascii_digit()) || l.starts_with("Chapter"))
+                && l.chars().filter(|c| c.is_ascii_digit()).count() > 0
+                && (l.contains('.') && l.split_whitespace().count() < 12)
+        })
+        .count();
+    if lines.len() > 5 && toc_line_count as f64 / lines.len() as f64 > 0.6 {
+        return true;
+    }
+
+    // Index pages: entries are short phrases followed by comma-separated page numbers
+    // e.g. "algorithm, 42, 87, 103" or "lambda calculus, 15, 22"
+    let index_entry_count = lines
+        .iter()
+        .filter(|l| {
+            let l = l.trim();
+            // Short line with multiple comma-separated numbers at the end
+            l.len() < 120
+                && l.matches(',').count() >= 2
+                && {
+                    let nums: Vec<&str> = l.rsplit(',').take(3).collect();
+                    nums.iter().filter(|s| s.trim().parse::<usize>().is_ok()).count() >= 2
+                }
+        })
+        .count();
+    if lines.len() > 5 && index_entry_count as f64 / lines.len() as f64 > 0.5 {
+        return true;
+    }
+
+    // Explicit "Contents" or "Index" header on a short page
+    if (lower.starts_with("contents") || lower.starts_with("index"))
+        && char_count < 2000
+    {
+        return true;
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_replaces_control_chars_with_space() {
+        let input = "hello\x01world\x06test\x0eend";
+        assert_eq!(sanitize_text(input), "hello world test end");
+    }
+
+    #[test]
+    fn sanitize_preserves_newlines_tabs() {
+        let input = "line1\nline2\tindented\r\nwindows";
+        assert_eq!(sanitize_text(input), "line1\nline2\tindented\r\nwindows");
+    }
+
+    #[test]
+    fn sanitize_collapses_consecutive_spaces() {
+        let input = "a\x01\x06\x03b";
+        assert_eq!(sanitize_text(input), "a b");
+    }
+
+    #[test]
+    fn sanitize_preserves_normal_text() {
+        let input = "Normal text with unicode: ⊢ Γ ⊥ λμ";
+        assert_eq!(sanitize_text(input), input);
+    }
+
+    #[test]
+    fn sanitize_handles_all_c0_control_chars() {
+        // Every C0 control char except \t (0x09), \n (0x0a), \r (0x0d)
+        let bad: Vec<char> = (0u8..=0x1f)
+            .filter(|&b| b != 0x09 && b != 0x0a && b != 0x0d)
+            .map(|b| b as char)
+            .collect();
+        for ch in &bad {
+            let input = format!("x{}y", ch);
+            let result = sanitize_text(&input);
+            assert!(
+                !result.contains(*ch),
+                "control char {:02x} not removed",
+                *ch as u8
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_handles_empty_string() {
+        assert_eq!(sanitize_text(""), "");
+    }
+
+    #[test]
+    fn sanitize_handles_only_control_chars() {
+        assert_eq!(sanitize_text("\x01\x02\x03"), " ");
+    }
+
+    #[test]
+    fn chunk_text_produces_no_control_chars() {
+        let input = "Hello \x01 world \x06 this is \x0e a test passage with enough words to form a chunk for testing purposes here.";
+        let chunks = chunk_text(input, "test", 5, 50, ".!?");
+        for (_, text) in &chunks {
+            for ch in text.chars() {
+                let o = ch as u32;
+                assert!(
+                    o >= 0x20 || o == 0x09 || o == 0x0a || o == 0x0d,
+                    "control char {:02x} found in chunk output",
+                    o
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn detects_corrupted_font_encoding() {
+        // 6.3% of chunks in the John Brooks corpus had this pattern
+        let corrupted = "th\x0e quick brown fox jumps over th\x0e lazy dog";
+        assert!(has_corrupted_font_encoding(corrupted));
+    }
+
+    #[test]
+    fn does_not_flag_clean_text_as_corrupted() {
+        let clean = "The quick brown fox jumps over the lazy dog. This is a normal passage with no control characters whatsoever.";
+        assert!(!has_corrupted_font_encoding(clean));
+    }
+
+    #[test]
+    fn does_not_flag_math_symbols_as_corrupted() {
+        // Unicode math symbols (⊢, ⊥, λ, Γ) are NOT control chars
+        let math = "Given Γ ⊢ A ⊥ λ, the proof term is constructed as follows.";
+        assert!(!has_corrupted_font_encoding(math));
+    }
+
+    #[test]
+    fn filter_drops_blank_pages() {
+        let text = "\x0c\x0cReal content here with enough words to be a real page.\x0c\x0c";
+        let result = filter_boilerplate_pages(text);
+        assert!(result.contains("Real content"));
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn filter_drops_copyright_pages() {
+        let text = "Copyright © 2011 by Imperial College Press\nAll rights reserved.\nISBN-13 978-1-84816-456-7\n\x0cChapter 1: Introduction\n\nThis is real content that should be kept because it is the actual body text of the book and contains substantive material.";
+        let result = filter_boilerplate_pages(text);
+        assert!(!result.contains("Copyright"));
+        assert!(!result.contains("ISBN"));
+        assert!(result.contains("Chapter 1"));
+        assert!(result.contains("real content"));
+    }
+
+    #[test]
+    fn filter_drops_toc_pages() {
+        let toc = "Contents\n\n1. Introduction          3\n2. Background             15\n3. Methods               27\n4. Results               42\n5. Discussion            58\n6. Conclusion            71";
+        assert!(is_boilerplate_page(toc));
+    }
+
+    #[test]
+    fn filter_drops_dot_leader_toc() {
+        let toc = "1. Introduction........... 3\n2. Background.............. 15\n3. Methods................. 27\n4. Results................. 42";
+        assert!(is_boilerplate_page(toc));
+    }
+
+    #[test]
+    fn filter_drops_index_pages() {
+        let index = "Index\n\nalgorithm, 42, 87, 103\nlambda calculus, 15, 22\ntype theory, 8, 34, 56\nsequent, 12, 45, 78\nturnstile, 3, 19";
+        assert!(is_boilerplate_page(index));
+    }
+
+    #[test]
+    fn filter_keeps_content_pages() {
+        let content = "This is a substantial paragraph of real academic content that discusses important concepts in formal logic and their application to natural language semantics. The author argues that ludics provides a framework for understanding meaning through interaction.";
+        assert!(!is_boilerplate_page(content));
+    }
+
+    #[test]
+    fn filter_drops_title_pages() {
+        let title = "Meaning, Logic and Ludics\n\nAlain Lecomte";
+        assert!(is_boilerplate_page(title));
+    }
 }

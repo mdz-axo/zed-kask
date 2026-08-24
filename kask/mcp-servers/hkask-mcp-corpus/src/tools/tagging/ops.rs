@@ -92,9 +92,17 @@ struct OntologyTags {
 fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
     // Use the streaming reader to avoid the 32 MiB read cap on large
     // chunks.jsonl files (the pipeline manifest notes ~71.8 MB).
-    let chunks = read_jsonl_stream::<InputChunk>(path, "chunks_jsonl")?;
+    let mut chunks = read_jsonl_stream::<InputChunk>(path, "chunks_jsonl")?;
     if chunks.is_empty() {
         return Err(McpToolError::invalid_argument("chunks_jsonl is empty"));
+    }
+    // Sanitize control characters from PDF extraction. pdftotext maps
+    // mathematical symbols to raw C0 control bytes when PDFs use custom
+    // font encodings. These bytes cause the tagger LLM to see garbage and
+    // return "empty passage" fallback tags. This handles pre-existing chunk
+    // files that were created before sanitize_text was added to chunk_text.
+    for chunk in &mut chunks {
+        chunk.text = hkask_memory::text_chunking::sanitize_text(&chunk.text);
     }
     Ok(chunks)
 }

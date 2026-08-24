@@ -4,7 +4,6 @@
 * `corpus_build_prompts` `max_prompts` must be set to `tagged_count × prompts_per_chunk`, NOT a small default. Setting it to 500 or 600 on a 33K-chunk corpus produces a toy dataset. The default of 500 is a footgun — always override it.
 * `corpus_query` in-memory index is only populated by `corpus_convert`/`corpus_chunk` and (after fix) `corpus_embed`. On server restart, the index is empty even though the DB has all vectors. The DB fallback returns entity_ref only, not passage text — run `corpus_embed` to repopulate the in-memory index with full text.
 * `training_assemble_dataset` queries the training server's DB by default, but `corpus_ingest_qa` stores to the corpus DB. Pass `db_path` + `passphrase` to `training_assemble_dataset` to bridge this gap. Without it, the assembler sees zero QA pairs.
-
 * QA quality verification must check SEMANTICS, not just structure. No-duplicates + correct-format + non-empty ≠ quality. Check: (1) boilerplate contamination (repeated phrases across answers), (2) grounding rate (4-word sequences from answers found in source chunks, target ≥60%), (3) Bloom distribution evenness, (4) subject diversity (not one imposed frame).
 
 # Rust coding guidelines

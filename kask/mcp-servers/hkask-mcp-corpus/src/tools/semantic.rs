@@ -479,6 +479,7 @@ impl CorpusServer {
                 );
                 continue;
             }
+            let text = hkask_memory::text_chunking::sanitize_text(&text);
             chunks.push((entity_ref, text));
         }
 

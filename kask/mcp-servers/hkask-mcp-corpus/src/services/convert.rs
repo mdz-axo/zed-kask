@@ -40,6 +40,7 @@ use crate::{
     default_embedding_model, extract_text, filter_outcome_to_pages, ocr_concurrency,
     sanitize_links,
 };
+use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
 
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
 ///
@@ -503,12 +504,34 @@ impl<'a> ConvertService<'a> {
                 ..
             } = quick_result
                 && word_count >= OCR_FALLBACK_WORD_THRESHOLD
+                && !has_corrupted_font_encoding(text)
             {
                 let result = serde_json::json!({
                     "format": format, "path": path,
                     "method": "text_extraction", "text": text, "word_count": word_count,
                 });
                 return Ok(result);
+            }
+
+            // Quality-based OCR fallback: pdftotext succeeded by word count,
+            // but the text has control characters from broken font encoding
+            // (PDFs with custom ToUnicode CMaps that map character codes to
+            // wrong glyphs). Log and fall through to OCR instead of accepting garbage.
+            if let ExtractOutcome::Success {
+                ref text,
+                word_count,
+                ..
+            } = quick_result
+                && word_count >= OCR_FALLBACK_WORD_THRESHOLD
+                && has_corrupted_font_encoding(text)
+            {
+                tracing::warn!(
+                    target: "hkask.docproc",
+                    path = %path,
+                    word_count,
+                    "pdftotext output has corrupted font encoding — falling through to OCR",
+                );
+                // Fall through to the OCR paths below by NOT returning early.
             }
 
             // Per-page triage found a mix of text-native + OCR-needing pages.
@@ -872,6 +895,7 @@ impl<'a> ConvertService<'a> {
             let processed = sanitize_links(&processed);
             let processed = decode_html_entities(&processed);
             let processed = strip_html_comments(&processed);
+            let processed = filter_boilerplate_pages(&processed);
 
             let passages = chunk_text(&processed, &source_prefix, min_words, max_words, ".!? ");
 
