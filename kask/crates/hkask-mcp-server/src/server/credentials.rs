@@ -6,8 +6,14 @@ use super::error::McpToolError;
 
 /// Routes known credential names through the proper hkask keystore resolvers.
 ///
-/// For unrecognized credential names, falls back to keychain lookup by env var name
-/// and then environment variable lookup.
+/// Resolution order: env var → keychain. The env var is checked first because
+/// the governed MCP runtime (`McpRuntime::start_server_with_env`) injects
+/// credentials as env vars via `build_mcp_server_env` after `cmd.env_clear()`.
+/// The keychain read is the fallback for ungoverned (direct-launch) servers.
+/// Checking env first avoids a blocking keychain read in child processes
+/// where D-Bus env vars (`DBUS_SESSION_BUS_ADDRESS`) were cleared by
+/// `env_clear()` — the `keyring` crate's Secret Service backend blocks
+/// indefinitely without them.
 ///
 /// pre:  env_var is non-empty
 /// post: returns credential value from the appropriate resolution chain
@@ -15,33 +21,40 @@ use super::error::McpToolError;
 pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::KeystoreError> {
     match env_var {
         "HKASK_DB_PASSPHRASE" => {
+            // DB passphrase has a dedicated keystore resolver (env → keychain
+            // `hkask-db-passphrase`) that handles its own env-var-first chain.
             let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
             Ok(passphrase.to_string())
         }
 
         _ => {
-            // Unrecognized credential — try keychain, then env var.
-            // `retrieve_by_key` returns `Zeroizing<String>` (RR-0063). This
-            // function's contract is a plain `String` (the MCP `ServerContext`
-            // credential map is not zeroizing), so the wipe guarantee ends here;
-            // the keychain read itself no longer leaves a copy behind.
+            // Check env var first — the governed MCP runtime injects
+            // credentials as env vars via `build_mcp_server_env`. This avoids
+            // a blocking keychain read in child processes where D-Bus env vars
+            // were cleared by `env_clear()`.
+            if let Ok(val) = std::env::var(env_var)
+                && !val.is_empty()
+            {
+                tracing::debug!(
+                    credential = env_var,
+                    "Credential resolved from environment variable"
+                );
+                return Ok(val);
+            }
+            // Fall back to keychain for ungoverned (direct-launch) servers.
             let val = hkask_keystore::Keychain::default()
                 .retrieve_by_key(env_var)
                 .map(|secret| secret.to_string())
-                .or_else(|_| std::env::var(env_var))
                 .map_err(|_| {
                     hkask_keystore::KeystoreError::NotFound(hkask_types::NotFound {
                         entity_type: "credential".to_string(),
                         id: format!(
-                            "Credential '{}' not found in keychain or environment",
+                            "Credential '{}' not found in environment or keychain",
                             env_var
                         ),
                     })
                 })?;
-            tracing::debug!(
-                credential = env_var,
-                "Credential resolved via keychain or environment"
-            );
+            tracing::debug!(credential = env_var, "Credential resolved via keychain");
             Ok(val)
         }
     }

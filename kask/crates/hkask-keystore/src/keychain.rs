@@ -137,13 +137,33 @@ impl Keychain {
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
+    ///
+    /// Wraps the keychain access in `catch_unwind` to guard against
+    /// concurrent D-Bus panics (libdbus can SIGABRT when multiple processes
+    /// hit the OS keyring simultaneously). A panic here would kill the MCP
+    /// server process; the guard converts it to an `Err` so the caller can
+    /// fall back to env var resolution.
     pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
-        let entry = Entry::new(&self.service_name, key)
-            .map_err(|e| KeychainError::Platform(e.to_string()))?;
-
-        let result = entry.get_password().map_err(KeychainError::from)?;
-        info!(target: "reg.keystore", operation = "retrieve_by_key", "REG");
-        Ok(Zeroizing::new(result))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let entry = Entry::new(&self.service_name, key)
+                .map_err(|e| KeychainError::Platform(e.to_string()))?;
+            let secret = entry.get_password().map_err(KeychainError::from)?;
+            info!(target: "reg.keystore", operation = "retrieve_by_key", "REG");
+            Ok::<_, KeychainError>(Zeroizing::new(secret))
+        }));
+        match result {
+            Ok(inner) => inner,
+            Err(_) => {
+                tracing::warn!(
+                    target: "reg.keystore",
+                    key = %key,
+                    "Keychain access panicked (likely concurrent D-Bus access) — returning NotFound"
+                );
+                Err(KeychainError::Platform(
+                    "Keychain access panicked — concurrent D-Bus access may have triggered C-level abort".into(),
+                ))
+            }
+        }
     }
 
     /// Delete a secret from the OS keychain by arbitrary key name.

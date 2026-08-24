@@ -166,6 +166,12 @@ pub(crate) fn write_credential(
     let url = url.to_string();
     let value = value.to_string();
     let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
+    // Extract the credential key from the URL (e.g. `kask://credentials/openrouter` → `openrouter`).
+    let credential_key = url
+        .strip_prefix(KASK_CREDENTIAL_NAMESPACE)
+        .and_then(|s| s.strip_prefix('/'))
+        .unwrap_or("")
+        .to_string();
     // Mark as written immediately so the UI shows "Configured" on next render.
     // The keychain write is async; the session cache bridges the gap.
     // `refresh_windows` triggers a re-render so the "Configured" card appears.
@@ -176,6 +182,20 @@ pub(crate) fn write_credential(
             .write_credentials(&url, "kask", value.as_bytes(), cx)
             .await
             .log_err();
+        // Mirror the key to the inference provider's `api_url` in the Zed
+        // keychain so the `LanguageModelProvider`'s `ApiKeyState` finds it.
+        // This is essential for OpenRouter, RunPod, DeepInfra, etc. — without
+        // it, the key is at `kask://credentials/<key>` but the provider reads
+        // from `https://openrouter.ai/api/v1` (or similar) and never sees it.
+        let mirror_value = value.clone();
+        let _ = kask_bridge::mirror_credential_to_provider(
+            &provider,
+            &credential_key,
+            Some(&mirror_value),
+            &cx,
+        )
+        .await
+        .log_err();
         // After the keychain write lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain via
         // `build_mcp_server_env` and restarts any governed MCP server whose
@@ -202,11 +222,22 @@ pub(crate) fn delete_credential(
     let provider = provider.clone();
     let url = url.to_string();
     let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
+    // Extract the credential key from the URL (e.g. `kask://credentials/openrouter` → `openrouter`).
+    let credential_key = url
+        .strip_prefix(KASK_CREDENTIAL_NAMESPACE)
+        .and_then(|s| s.strip_prefix('/'))
+        .unwrap_or("")
+        .to_string();
     // Remove from session cache so the UI shows the input field again.
     unmark_recently_written(&url);
     cx.refresh_windows();
     cx.spawn(async move |cx| {
         let _ = provider.delete_credentials(&url, cx).await.log_err();
+        // Mirror the deletion to the inference provider's `api_url` so the
+        // `LanguageModelProvider`'s `ApiKeyState` sees the key as removed.
+        let _ = kask_bridge::mirror_credential_to_provider(&provider, &credential_key, None, &cx)
+            .await
+            .log_err();
         // After the keychain delete lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain and
         // restarts any governed MCP server that no longer has a key (rather

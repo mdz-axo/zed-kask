@@ -40,7 +40,8 @@ pub use inference::NoModelInferencePort;
 pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
-    credential_urls_for_mcp, mirror_kask_credentials_to_providers, resolve_embedding_credentials,
+    credential_urls_for_mcp, mirror_credential_to_provider, mirror_kask_credentials_to_providers,
+    resolve_embedding_credentials,
 };
 pub use inference_socket::{get_inference_socket_path, set_inference_socket_path};
 pub use mcp_servers::{

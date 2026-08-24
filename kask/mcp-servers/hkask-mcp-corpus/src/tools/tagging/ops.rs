@@ -293,16 +293,28 @@ impl CorpusServer {
                     // The template handles the system prompt, passage formatting,
                     // and output contract — keeping the prompt versioned and
                     // maintainable rather than inlined as a string literal.
-                    let passages: Vec<std::collections::HashMap<&str, String>> =
-                        batch_chunks.iter().map(|chunk| {
-                            let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-                            vars.insert("text", chunk.text.clone());
-                            vars.insert("source", chunk.source.clone());
-                            vars.insert("chunk_id", chunk.entity_ref.clone());
-                            vars
-                        }).collect();
-                    let mut template_vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-                    template_vars.insert("passages", serde_json::to_string(&passages).unwrap_or_default());
+                    //
+                    // Pre-render the passages block as a plain string because
+                    // render_docproc_template accepts HashMap<&str, String> —
+                    // passing a JSON-serialized array would make the template's
+                    // {% for %} loop iterate over characters, not elements.
+                    let passages_block: String = batch_chunks
+                        .iter()
+                        .enumerate()
+                        .map(|(i, chunk)| {
+                            format!(
+                                "--- Passage {} (chunk {}, source: {}) ---\n{}\n",
+                                i + 1,
+                                chunk.entity_ref,
+                                chunk.source,
+                                chunk.text
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let mut template_vars: std::collections::HashMap<&str, String> =
+                        std::collections::HashMap::new();
+                    template_vars.insert("passages_block", passages_block);
                     template_vars.insert("batch_count", batch_len.to_string());
                     let prompt = render_docproc_template("tag-chunks-batch", &template_vars);
                     let prompt = if prompt.is_empty() {

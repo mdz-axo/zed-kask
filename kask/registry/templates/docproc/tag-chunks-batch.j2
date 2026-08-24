@@ -50,11 +50,7 @@ What level of expertise does each passage support questions at?
 <task>
 Tag each passage below. Respond with a JSON array of {{ batch_count }} objects (one per passage, in order).
 
-{% for passage in passages %}
---- Passage {{ loop.index }} (chunk {{ passage.chunk_id }}, source: {{ passage.source }}) ---
-{{ passage.text }}
-
-{% endfor %}
+{{ passages_block }}
 --- End of passages ---
 </task>
 

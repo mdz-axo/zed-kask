@@ -601,3 +601,65 @@ pub fn mirror_kask_credentials_to_providers(
         }
     })
 }
+
+/// Mirror a single credential from `kask://credentials/<credential_key>` to
+/// the corresponding inference provider's `api_url` in the Zed keychain.
+/// Called by the settings UI after a user writes or deletes a key, so the
+/// `LanguageModelProvider`'s `ApiKeyState` sees the change without requiring
+/// a restart.
+///
+/// When `api_key` is `Some`, writes the key to the provider's `api_url`
+/// (overwriting any existing key — the user explicitly set it via the UI).
+/// When `api_key` is `None`, deletes the key at the provider's `api_url`.
+///
+/// Returns `Ok(true)` if a provider was found and the mirror ran, `Ok(false)`
+/// if no inference provider matches the `credential_key` (e.g. it's a data
+/// service key, not an inference provider key), or `Err` on keychain failure.
+pub async fn mirror_credential_to_provider(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    credential_key: &str,
+    api_key: Option<&str>,
+    cx: &gpui::AsyncApp,
+) -> anyhow::Result<bool> {
+    let Some(provider) = INFERENCE_PROVIDERS
+        .iter()
+        .find(|p| p.credential_key == credential_key && !p.env_var.is_empty())
+    else {
+        return Ok(false);
+    };
+
+    let api_url = provider.api_url;
+    match api_key {
+        Some(key) if !key.is_empty() => {
+            credentials_provider
+                .write_credentials(api_url, "Bearer", key.as_bytes(), cx)
+                .await?;
+            tracing::info!(
+                target: "hkask.kask_bridge",
+                api_url = %api_url,
+                provider = %provider.name,
+                "Mirrored API key from settings UI to Zed keychain"
+            );
+        }
+        _ => {
+            // None or empty — delete the key at api_url so the provider
+            // sees it as removed.
+            match credentials_provider.delete_credentials(api_url, cx).await {
+                Ok(()) => tracing::info!(
+                    target: "hkask.kask_bridge",
+                    api_url = %api_url,
+                    provider = %provider.name,
+                    "Deleted API key from Zed keychain (settings UI reset)"
+                ),
+                Err(e) => tracing::warn!(
+                    target: "hkask.kask_bridge",
+                    error = %e,
+                    api_url = %api_url,
+                    provider = %provider.name,
+                    "Failed to delete API key from Zed keychain — may be stale"
+                ),
+            }
+        }
+    }
+    Ok(true)
+}

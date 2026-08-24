@@ -281,6 +281,15 @@ pub(crate) const PASSTHROUGH_ENV_VARS: &[&str] = &[
     "TZ",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    // D-Bus session bus address — required by the `keyring` crate's Secret
+    // Service backend on Linux. Without it, `Keychain::retrieve_by_key`
+    // blocks indefinitely in child processes after `env_clear()`. The governed
+    // MCP runtime injects credentials as env vars (checked first by
+    // `resolve_credential`), but the keychain fallback path needs D-Bus to
+    // avoid a hang when the env var is absent.
+    "DBUS_SESSION_BUS_ADDRESS",
+    // X11 display — required by some keychain backends (e.g. kwallet) on Linux.
+    "DISPLAY",
 ];
 
 /// Error type for MCP server startup.
