@@ -64,8 +64,8 @@ pub(crate) struct ClassifierDef {
     #[serde(default = "default_fallback")]
     pub fallback_category: String,
     /// Disable the model's thinking/reasoning mode for this classifier.
-    #[serde(default = "default_disable_thinking")]
-    pub disable_thinking: bool,
+    #[serde(default = "default_thinking_allowed")]
+    pub thinking_allowed: bool,
 }
 
 impl Default for ClassifierDef {
@@ -76,7 +76,7 @@ impl Default for ClassifierDef {
             system_prompt: String::new(),
             temperature: 0.0,
             fallback_category: "Statement".to_string(),
-            disable_thinking: true,
+            thinking_allowed: false,
         }
     }
 }
@@ -84,7 +84,7 @@ impl Default for ClassifierDef {
 fn default_fallback() -> String {
     "Statement".to_string()
 }
-fn default_disable_thinking() -> bool {
+fn default_thinking_allowed() -> bool {
     true
 }
 
@@ -132,7 +132,7 @@ pub struct ClassifierConfig {
     pub concurrency: usize,
     pub temperature: f64,
     pub fallback_category: String,
-    pub disable_thinking: bool,
+    pub thinking_allowed: bool,
 }
 
 impl ClassifierConfig {
@@ -155,7 +155,7 @@ impl ClassifierConfig {
             concurrency: def.concurrency,
             temperature: def.temperature,
             fallback_category: def.fallback_category.clone(),
-            disable_thinking: def.disable_thinking,
+            thinking_allowed: def.thinking_allowed,
         }
     }
 }
@@ -171,7 +171,7 @@ async fn classify_one(
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),
-        disable_thinking: config.disable_thinking,
+        thinking_allowed: config.thinking_allowed,
         ..Default::default()
     };
 
@@ -328,7 +328,7 @@ async fn extract_passage_one(
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),
-        disable_thinking: config.disable_thinking,
+        thinking_allowed: config.thinking_allowed,
         ..Default::default()
     };
 

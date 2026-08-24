@@ -290,7 +290,7 @@ pub async fn score_rationale(
         min_p: 0.0,
         typical_p: 0.0,
         seed: None,
-        disable_thinking: false,
+        thinking_allowed: true,
         adapter: None,
         system_prompt: None,
     };

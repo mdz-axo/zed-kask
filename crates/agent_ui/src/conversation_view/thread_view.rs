@@ -5137,7 +5137,7 @@ impl ThreadView {
 
         // A toggle would be dishonest for models that always think: only
         // offer the effort selector.
-        if !model.supports_disabling_thinking() {
+        if !model.supports_thinking() {
             let effort_levels = model.supported_effort_levels();
             if effort_levels.is_empty() {
                 return None;
@@ -12305,12 +12305,7 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let model_allows_disabling = thread
-                            .model()
-                            .is_none_or(|model| model.supports_disabling_thinking());
-                        if model_allows_disabling {
-                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
-                        }
+                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
                     });
                 }
             }))

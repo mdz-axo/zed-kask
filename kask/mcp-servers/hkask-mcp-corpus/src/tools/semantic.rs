@@ -107,7 +107,7 @@ impl CorpusServer {
                 top_k: 0,
                 min_p: 0.0,
                 typical_p: 0.0,
-                disable_thinking: true,
+                thinking_allowed: false,
                 ..Default::default()
             };
 
@@ -256,7 +256,7 @@ impl CorpusServer {
                         top_k: 0,
                         min_p: 0.0,
                         typical_p: 0.0,
-                        disable_thinking: true,
+                        thinking_allowed: false,
                         ..Default::default()
                     };
 

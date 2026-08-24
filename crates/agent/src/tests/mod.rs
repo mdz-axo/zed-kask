@@ -514,13 +514,15 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
         assert!(!request.thinking_allowed);
     });
 
-    // ...but a model that always thinks ignores the stale toggle state.
-    fake_model.set_supports_disabling_thinking(false);
+    // The thinking toggle now directly controls thinking_allowed —
+    // no model-capability gate. The provider sends reasoning_effort:
+    // none when thinking_allowed is false, regardless of model metadata.
     thread.update(cx, |thread, cx| {
+        thread.set_thinking_enabled(false, cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
-        assert!(request.thinking_allowed);
+        assert!(!request.thinking_allowed);
     });
 }
 

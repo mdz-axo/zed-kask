@@ -49,12 +49,12 @@ pub struct LLMParameters {
     /// Random seed (None for random, Some for reproducibility)
     pub seed: Option<u64>,
 
-    /// Disable thinking/reasoning mode for models that support it (e.g., qwen3).
-    /// When true, the model is instructed to skip internal reasoning and produce
-    /// output directly. Essential for summarization/condensation tasks where
-    /// output tokens are needed, not reasoning tokens.
+    /// Whether the model is allowed to think (reason internally) before
+    /// responding. When false, the provider sends `reasoning_effort: "none"`
+    /// to the API. Essential for tagging, summarization, and other tasks
+    /// where output tokens are needed, not reasoning tokens.
     #[serde(default)]
-    pub disable_thinking: bool,
+    pub thinking_allowed: bool,
 
     /// LoRA adapter to apply at inference time (for multi-LoRA serving).
     /// When set, this COMPLETELY OVERRIDES the model — it is the full model
@@ -91,7 +91,7 @@ impl LLMParameters {
             frequency_penalty: 0.4,
             presence_penalty: 0.4,
             seed: None,
-            disable_thinking: false,
+            thinking_allowed: false,
             adapter: None,
             system_prompt: None,
         }

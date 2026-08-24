@@ -438,7 +438,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         let client = self.client.clone();
         let temperature = parameters.temperature;
         let top_p = parameters.top_p;
-        let disable_thinking = parameters.disable_thinking;
+        let thinking_allowed = parameters.thinking_allowed;
         let prompt = prompt.to_string();
 
         Box::pin(async move {
@@ -449,7 +449,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 "temperature": temperature,
                 "top_p": top_p,
             });
-            if disable_thinking {
+            if !thinking_allowed {
                 body["reasoning"] = serde_json::json!({"effort": "none"});
             }
 

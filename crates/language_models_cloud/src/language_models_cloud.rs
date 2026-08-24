@@ -565,10 +565,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.supports_thinking
     }
 
-    fn supports_disabling_thinking(&self) -> bool {
-        self.model.supports_disabling_thinking
-    }
-
     fn supports_fast_mode(&self) -> bool {
         self.model.supports_fast_mode
     }
@@ -1747,7 +1743,6 @@ mod tests {
                 supports_tools: true,
                 supports_images: true,
                 supports_thinking: true,
-                supports_disabling_thinking: true,
                 supports_fast_mode: true,
                 supports_server_side_compaction: true,
                 supported_effort_levels: Vec::new(),
@@ -1779,7 +1774,6 @@ mod tests {
                 supports_tools: true,
                 supports_images: true,
                 supports_thinking: true,
-                supports_disabling_thinking: true,
                 supports_fast_mode: true,
                 supports_server_side_compaction: true,
                 supported_effort_levels: Vec::new(),

@@ -371,7 +371,7 @@ impl ComposeService {
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
             seed: None,
-            disable_thinking: false,
+            thinking_allowed: true,
             adapter: None,
             system_prompt: None,
         };
