@@ -390,7 +390,6 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 | `HKASK_BRAVE_API_KEY` | Brave Search |
 | `HKASK_SERPAPI_API_KEY` | SerpAPI |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl |
-| `HKASK_BROWSERBASE_API_KEY` | Browserbase |
 | `RUNPOD_API_KEY` | RunPod |
 | `RUNPOD_S3_ACCESS_KEY` | RunPod S3 |
 | `RUNPOD_S3_SECRET` | RunPod S3 |

@@ -8,7 +8,6 @@ use hkask_mcp_server::server::validate_tool_url_with_dns;
 
 mod arxiv;
 mod brave;
-mod browserbase;
 mod exa;
 mod firecrawl;
 mod raw_fetch;
@@ -18,7 +17,6 @@ mod tavily;
 
 pub(crate) use arxiv::ArxivProvider;
 pub(crate) use brave::BraveProvider;
-pub(crate) use browserbase::BrowserbaseProvider;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use raw_fetch::{RawFetchProvider, truncate_str};
@@ -428,7 +426,7 @@ impl ProviderPool {
         validate_provider_url(url).await?;
         if self.browse_providers.is_empty() {
             return Err(WebError::NoProviderConfigured(
-                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY or HKASK_BROWSERBASE_API_KEY to use web_browse."
+                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY to use web_browse."
                     .to_string(),
             ));
         }

@@ -282,8 +282,8 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
             "nebius_project_id" | "nebius_subnet_id" => {
                 data_services.nebius_enabled = Some(enabled);
             }
-            // Key-only services (serpapi, firecrawl, browserbase, hf_token,
-            // fred) have no settings toggle — the UI renders them without a
+            // Key-only services (serpapi, firecrawl, hf_token, fred) have no
+            // settings toggle — the UI renders them without a
             // SwitchField, so this function is never called with those keys.
             _ => {}
         }

@@ -452,10 +452,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .get("RUNPOD_API_KEY")
                         .cloned()
                         .unwrap_or_default(),
-                    runpod_template_id: ctx
-                        .credentials
-                        .get("RUNPOD_TEMPLATE_ID")
-                        .cloned()
+                    // RUNPOD_TEMPLATE_ID is a non-secret config value (a RunPod
+                    // template ID), not a credential. Read from the env var so
+                    // it travels the `config_env` allowlist path alongside the
+                    // other RunPod operator overrides (RUNPOD_GPU_TYPE_ID,
+                    // RUNPOD_DOCKER_IMAGE, etc.). The runpod provider has a
+                    // real fallback when this is empty: it uses
+                    // DEFAULT_RUNPOD_DOCKER_IMAGE directly (runpod.rs:805-843).
+                    runpod_template_id: std::env::var("RUNPOD_TEMPLATE_ID")
                         .unwrap_or_default(),
                     runpod_gpu_type_id: std::env::var("RUNPOD_GPU_TYPE_ID")
                         .unwrap_or_default(),
@@ -511,10 +515,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 "NEBIUS_SUBNET_ID",
                 "Nebius subnet ID (required when using Nebius host)",
             ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "RUNPOD_TEMPLATE_ID",
-                "RunPod template ID; defaults to the canonical Axolotl template when unset",
-            ),
+            // RUNPOD_TEMPLATE_ID is now read via std::env::var (config_env
+            // path), not ctx.credentials. It has a real fallback: when empty,
+            // the runpod provider uses DEFAULT_RUNPOD_DOCKER_IMAGE directly.
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PASSPHRASE",
                 "Passphrase for the training database (resolved via credentials or keystore; in-memory if unavailable)",

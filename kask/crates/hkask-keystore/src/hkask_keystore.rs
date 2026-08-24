@@ -27,5 +27,8 @@ pub mod passphrase;
 
 pub use encryption::derive_key;
 pub use error::KeystoreError;
-pub use keychain::{Keychain, KeychainError, resolve};
+pub use keychain::{
+    Keychain, KeychainError, resolve, resolve_db_passphrase_string,
+    resolve_swarm_memory_passphrase_string,
+};
 pub use passphrase::generate_random_passphrase;

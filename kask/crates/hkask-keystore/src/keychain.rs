@@ -1,6 +1,6 @@
 //! OS keychain integration
 
-use crate::keychain_keys::KEY_DB_PASSPHRASE;
+use crate::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::secret::SecretRef;
@@ -215,6 +215,22 @@ pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError
     // the failure path leaves nothing behind.
     let passphrase = std::str::from_utf8(&bytes)
         .map_err(|e| KeychainError::Platform(format!("DB passphrase is not valid UTF-8: {e}")))?;
+    Ok(Zeroizing::new(passphrase.to_string()))
+}
+
+/// Resolve the swarm memory SQLCipher passphrase as text.
+///
+/// Chain: env var `HKASK_SWARM_MEMORY_PASSPHRASE` → OS keychain
+/// `hkask-swarm-memory-passphrase`. Mirrors [`resolve_db_passphrase_string`]
+/// but for the swarm memory store (a separate SQLCipher DB). Used by the
+/// provisioning path (`provision_swarm_memory_passphrase`) to read an existing
+/// passphrase before deciding to generate one.
+pub fn resolve_swarm_memory_passphrase_string() -> Result<Zeroizing<String>, KeychainError> {
+    let bytes = resolve(&SecretRef::env("HKASK_SWARM_MEMORY_PASSPHRASE"))
+        .or_else(|_| resolve(&SecretRef::keychain(KEY_SWARM_MEMORY_PASSPHRASE)))?;
+    let passphrase = std::str::from_utf8(&bytes).map_err(|e| {
+        KeychainError::Platform(format!("swarm memory passphrase is not valid UTF-8: {e}"))
+    })?;
     Ok(Zeroizing::new(passphrase.to_string()))
 }
 

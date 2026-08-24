@@ -1376,6 +1376,36 @@ fn main() {
                 });
                 db_passphrase_mirror_task.await;
 
+                // zed-kask: provision the swarm memory SQLCipher passphrase and
+                // mirror it into zed's CredentialsProvider. Without this, the
+                // swarm server falls back to the compiled-in pre-release default
+                // "allostery" (a constant that ships in the source tree) — the
+                // RR-0061 allowlist fix let the operator override it, but
+                // nothing generated an override on first run, so
+                // `build_mcp_server_env` warned on every launch. Provisioning
+                // generates a random English word on first run (matching the DB
+                // passphrase pattern) and mirrors it into
+                // `kask://credentials/hkask_swarm_memory_passphrase` so the
+                // primary `ctx.credentials` tier works at launch. Both must
+                // `.await` before governed MCP server launch below.
+                let swarm_passphrase_provision_task = cx.background_spawn(async move {
+                    kask_bridge::provision_swarm_memory_passphrase()
+                });
+                if let Err(error) = swarm_passphrase_provision_task.await {
+                    log::warn!(
+                        "Failed to provision swarm memory passphrase: {error}. \
+                         The swarm server will fall back to the compiled-in default 'allostery'."
+                    );
+                }
+                let swarm_passphrase_mirror_task = cx.update(|cx| {
+                    let credentials_provider = zed_credentials_provider::global(cx);
+                    kask_bridge::mirror_provisioned_swarm_memory_passphrase(
+                        &credentials_provider,
+                        cx,
+                    )
+                });
+                swarm_passphrase_mirror_task.await;
+
                 // zed-kask: mirror kask credential store keys to each provider's
                 // `api_url` in the Zed keychain. The kask settings UI writes keys
                 // to `kask://credentials/<key>`, but each `LanguageModelProvider`'s

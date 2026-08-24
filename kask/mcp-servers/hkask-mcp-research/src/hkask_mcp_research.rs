@@ -1739,7 +1739,6 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
         opt("HKASK_TAVILY_API_KEY", "Tavily API key"),
         opt("HKASK_SERPAPI_API_KEY", "SerpAPI key"),
         opt("HKASK_EXA_API_KEY", "Exa API key"),
-        opt("HKASK_BROWSERBASE_API_KEY", "Browserbase API key"),
         opt(
             "HKASK_DB_PASSPHRASE",
             "Passphrase for SQLCipher encryption (required if HKASK_RSS_DB is set)",

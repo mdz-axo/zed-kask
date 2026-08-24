@@ -27,7 +27,7 @@ use std::sync::Arc;
 use credentials_provider::CredentialsProvider;
 use gpui::{App, Task};
 use hkask_keystore::Keychain;
-use hkask_keystore::keychain_keys::KEY_DB_PASSPHRASE;
+use hkask_keystore::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
 /// Error type for agent provisioning (directory creation + keychain access).
@@ -183,7 +183,10 @@ pub fn mirror_provisioned_db_passphrase(
     cx.spawn(async move |cx| {
         // Write to zed's CredentialsProvider so `build_mcp_server_env` finds
         // the passphrase via the primary `ctx.credentials` tier.
-        let url = format!("{}/hkask_db_passphrase", crate::credentials::KASK_CREDENTIAL_NAMESPACE);
+        let url = format!(
+            "{}/hkask_db_passphrase",
+            crate::credentials::KASK_CREDENTIAL_NAMESPACE
+        );
         match credentials_provider
             .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
             .await
@@ -229,4 +232,127 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
         }
         Err(e) => Err(ProvisionError::KeychainRead(e.to_string())),
     }
+}
+
+/// Provision the swarm memory SQLCipher passphrase.
+///
+/// Mirrors the resolve-or-create half of [`provision_agent`] but for the
+/// swarm memory store (`swarm_memory.db`), which is a separate SQLCipher DB
+/// shared across all swarms and agents. Without this, the swarm server falls
+/// back to the compiled-in pre-release default `"allostery"`
+/// (`SwarmConfig::default().memory_passphrase`) — a constant that ships in
+/// the source tree, which the `mcp_servers.rs` RR-0061 comment explicitly
+/// flags as the bug the allowlist was supposed to fix. The allowlist fix let
+/// the operator override it, but nothing generated an override on first
+/// run, so `build_mcp_server_env` warned on every launch.
+///
+/// Resolution order:
+/// 1. `HKASK_SWARM_MEMORY_PASSPHRASE` env var (user override).
+/// 2. Existing keychain entry `hkask-swarm-memory-passphrase` (returning user).
+/// 3. Generate a random English word and store it (first run).
+///
+/// Returns the resolved passphrase so the caller can mirror it into zed's
+/// `CredentialsProvider` (see [`mirror_provisioned_swarm_memory_passphrase`]).
+///
+/// # Errors
+///
+/// Returns `ProvisionError::KeychainStore` if the generated passphrase cannot
+/// be stored, or `ProvisionError::KeychainRead` if the keychain read fails
+/// for a reason other than "not found."
+pub fn provision_swarm_memory_passphrase() -> Result<String, ProvisionError> {
+    // 1. Env var override.
+    if let Ok(p) = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE") {
+        if !p.trim().is_empty() {
+            return Ok(p);
+        }
+    }
+
+    // 2. Existing keychain entry.
+    match hkask_keystore::keychain::resolve_swarm_memory_passphrase_string() {
+        Ok(passphrase) => Ok(passphrase.to_string()),
+        Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
+            // 3. First run — generate a random English word and store it.
+            let word = hkask_keystore::generate_random_passphrase();
+            let keychain = Keychain::default();
+            keychain
+                .store_by_key(KEY_SWARM_MEMORY_PASSPHRASE, &word)
+                .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
+            tracing::info!(
+                "Generated swarm memory passphrase (random English word) and stored \
+                 in keychain. The user can change it via the keychain or \
+                 HKASK_SWARM_MEMORY_PASSPHRASE env var."
+            );
+            Ok(word)
+        }
+        Err(e) => Err(ProvisionError::KeychainRead(e.to_string())),
+    }
+}
+
+/// Mirror the provisioned swarm memory passphrase from the hkask-keystore
+/// keychain (`hkask-swarm-memory-passphrase`, written by
+/// [`provision_swarm_memory_passphrase`]) into zed's `CredentialsProvider`
+/// under `kask://credentials/hkask_swarm_memory_passphrase`.
+///
+/// Mirrors [`mirror_provisioned_db_passphrase`] for the swarm memory store.
+/// `build_mcp_server_env` reads the passphrase via the primary
+/// `ctx.credentials` tier, which looks up this URL. Without the mirror, the
+/// swarm server reaches the passphrase only via the fallback tier
+/// (`resolve_credential` → `hkask-swarm-memory-passphrase`), and
+/// `nudge_mcp_servers` never fires because the provisioning bypasses
+/// `write_credential`.
+///
+/// Must be `.await`ed in the deferred post-login task before governed MCP
+/// server launch, alongside `mirror_provisioned_db_passphrase`, so the
+/// swarm server picks up the mirrored credential at launch via
+/// `build_mcp_server_env`.
+///
+/// Failure modes (per the `.rules` trap on startup-failure signals):
+/// - Passphrase read fails → `tracing::warn!` naming the error; the swarm
+///   server falls back to the keystore tier of `resolve_credential`.
+/// - CredentialsProvider write fails → `tracing::warn!` naming the URL and
+///   error; same fallback applies.
+pub fn mirror_provisioned_swarm_memory_passphrase(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    cx: &mut App,
+) -> Task<()> {
+    let passphrase = match hkask_keystore::keychain::resolve_swarm_memory_passphrase_string() {
+        Ok(passphrase) => passphrase,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.identity",
+                %error,
+                "Could not read provisioned swarm memory passphrase for mirror — \
+                 the swarm server will rely on the fallback tier of resolve_credential \
+                 or the compiled-in default 'allostery'"
+            );
+            return Task::ready(());
+        }
+    };
+
+    let credentials_provider = credentials_provider.clone();
+    cx.spawn(async move |cx| {
+        let url = format!(
+            "{}/hkask_swarm_memory_passphrase",
+            crate::credentials::KASK_CREDENTIAL_NAMESPACE
+        );
+        match credentials_provider
+            .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
+            .await
+        {
+            Ok(()) => tracing::info!(
+                target: "hkask.identity",
+                credential_url = %url,
+                "Mirrored provisioned swarm memory passphrase to CredentialsProvider \
+                 so build_mcp_server_env picks it up via the primary ctx.credentials tier"
+            ),
+            Err(error) => tracing::warn!(
+                target: "hkask.identity",
+                %error,
+                credential_url = %url,
+                "Failed to mirror provisioned swarm memory passphrase to \
+                 CredentialsProvider — the swarm server will rely on the fallback \
+                 tier of resolve_credential or the compiled-in default 'allostery'"
+            ),
+        }
+    })
 }

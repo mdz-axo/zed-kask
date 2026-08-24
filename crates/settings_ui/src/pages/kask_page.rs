@@ -496,7 +496,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             search_aliases: &[
                 "api key",
                 "brave",
-                "browserbase",
                 "data service",
                 "eodhd",
                 "exa",

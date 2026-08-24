@@ -292,12 +292,24 @@ impl LanguageModelInferencePort {
             // stalls the request indefinitely without this — the cybernetics
             // variety check flagged this as a critical gap (D2: provider
             // timeout, no response). `Duration::ZERO` disables (legacy).
+            //
+            // Uses `BackgroundExecutor::timer` (not `tokio::time::timeout`)
+            // because this future runs on the GPUI foreground executor, not
+            // the tokio runtime. `tokio::time::timeout` creates a
+            // `tokio::time::Sleep` that registers with the tokio reactor's
+            // timer wheel at poll time — if no tokio reactor is entered on
+            // the current thread (which is the case on the GPUI foreground
+            // executor), it panics with "there is no reactor running."
+            // `BackgroundExecutor::timer` uses the GPUI scheduler's clock,
+            // which is the same executor that polls this future.
             let stream_result = if inference_timeout.is_zero() {
                 stream_future.await
             } else {
-                match tokio::time::timeout(inference_timeout, stream_future).await {
-                    Ok(result) => result,
-                    Err(_elapsed) => {
+                let timer = cx.background_executor().timer(inference_timeout);
+                futures_util::pin_mut!(stream_future);
+                futures_util::pin_mut!(timer);
+                match futures_util::future::select(timer, stream_future).await {
+                    futures_util::future::Either::Left(_) => {
                         tracing::warn!(
                             target: "hkask.inference",
                             timeout_secs = inference_timeout.as_secs(),
@@ -308,6 +320,7 @@ impl LanguageModelInferencePort {
                             inference_timeout.as_secs()
                         )))
                     }
+                    futures_util::future::Either::Right((result, _)) => result,
                 }
             };
 
@@ -354,13 +367,18 @@ impl LanguageModelInferencePort {
 
             // Apply the wall-clock timeout if non-zero. Same rationale as
             // `handle_non_streaming` — a hung provider stalls the stream
-            // indefinitely without this.
+            // indefinitely without this. Uses `BackgroundExecutor::timer`
+            // (not `tokio::time::timeout`) because this future runs on the
+            // GPUI foreground executor — see `handle_non_streaming` for
+            // the full explanation.
             let stream_result = if inference_timeout.is_zero() {
                 stream_future.await
             } else {
-                match tokio::time::timeout(inference_timeout, stream_future).await {
-                    Ok(result) => result,
-                    Err(_elapsed) => {
+                let timer = cx.background_executor().timer(inference_timeout);
+                futures_util::pin_mut!(stream_future);
+                futures_util::pin_mut!(timer);
+                match futures_util::future::select(timer, stream_future).await {
+                    futures_util::future::Either::Left(_) => {
                         tracing::warn!(
                             target: "hkask.inference",
                             timeout_secs = inference_timeout.as_secs(),
@@ -371,6 +389,7 @@ impl LanguageModelInferencePort {
                             inference_timeout.as_secs()
                         )))
                     }
+                    futures_util::future::Either::Right((result, _)) => result,
                 }
             };
 

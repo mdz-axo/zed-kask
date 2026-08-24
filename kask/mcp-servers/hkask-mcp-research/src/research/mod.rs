@@ -16,7 +16,7 @@ pub mod types;
 use std::collections::HashMap;
 
 use providers::{
-    ArxivProvider, BraveProvider, BrowserbaseProvider, FirecrawlProvider, RawFetchProvider,
+    ArxivProvider, BraveProvider, FirecrawlProvider, RawFetchProvider,
     SemanticScholarProvider, SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider,
     WebSearchProvider,
 };
@@ -54,7 +54,6 @@ pub(crate) fn build_provider_pool(
     let tavily_api_key = credentials.get("HKASK_TAVILY_API_KEY").cloned();
     let serpapi_api_key = credentials.get("HKASK_SERPAPI_API_KEY").cloned();
     let exa_api_key = credentials.get("HKASK_EXA_API_KEY").cloned();
-    let browserbase_api_key = credentials.get("HKASK_BROWSERBASE_API_KEY").cloned();
 
     let mut search_providers: Vec<Box<dyn WebSearchProvider>> = Vec::new();
     let mut extract_providers: Vec<Box<dyn WebExtractProvider>> = Vec::new();
@@ -86,9 +85,6 @@ pub(crate) fn build_provider_pool(
     }
     if let Some(ref exa) = exa_provider {
         search_providers.push(Box::new(exa.clone()));
-    }
-    if let Some(ref key) = browserbase_api_key {
-        browse_providers.push(Box::new(BrowserbaseProvider::new(key.clone())?));
     }
 
     extract_providers.push(Box::new(RawFetchProvider::new()?));

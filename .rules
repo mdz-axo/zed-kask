@@ -32,6 +32,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Don't busy-spin or use timers to wait for deferred tool results in `end_turn` — let the turn end; results drain on the next iteration.
 * `AsyncApp` is not `Send` — background tokio tasks must use `tokio::sync::mpsc` channels with a foreground drainer, not capture `AsyncApp`.
 * `cx.background_spawn` panics on tokio-dependent futures (reqwest, tokio::time, etc.) — use `gpui_tokio::Tokio::spawn(&*cx, ...)` instead.
+* `tokio::time::timeout` / `tokio::time::sleep` panic inside `cx.spawn` (foreground) tasks — `tokio::time::Sleep` registers with the tokio reactor's timer wheel at poll time, and no tokio reactor is entered on the GPUI foreground thread. Use `cx.background_executor().timer(duration)` + `futures_util::future::select` to race a GPUI-native timer against the future instead. `tokio::select!` + `mpsc::recv()` works because mpsc receivers are executor-agnostic, but `tokio::time::Sleep` is not.
 * Center-pane `Item` Toggle must use `Toggle` action (not `ToggleFocus`). After `add_item_to_active_pane`, explicitly call `page.focus_handle(cx).focus(window, cx)` if focus delegates to a child entity.
 
 # Pull request hygiene

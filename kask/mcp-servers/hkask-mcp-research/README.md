@@ -37,7 +37,6 @@ Web search, extraction, and feed-based research MCP server.
 | `HKASK_BRAVE_API_KEY`         | Brave search API key                              |
 | `HKASK_SERPAPI_API_KEY`       | SerpAPI key (YouTube transcript search)           |
 | `HKASK_FIRECRAWL_API_KEY`     | Firecrawl extraction API key                      |
-| `HKASK_BROWSERBASE_API_KEY`   | Browserbase headless browser API key              |
 | `HKASK_RSS_DB`                | RSS SQLite DB path (required for RSS tools)       |
 | `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS tools) |
 | `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |

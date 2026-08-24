@@ -26,6 +26,13 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
             let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
             Ok(passphrase.to_string())
         }
+        "HKASK_SWARM_MEMORY_PASSPHRASE" => {
+            // Swarm memory passphrase has a dedicated keystore resolver
+            // (env → keychain `hkask-swarm-memory-passphrase`) that handles
+            // its own env-var-first chain. Mirrors the DB passphrase branch.
+            let passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
+            Ok(passphrase.to_string())
+        }
 
         _ => {
             // Check env var first — the governed MCP runtime injects

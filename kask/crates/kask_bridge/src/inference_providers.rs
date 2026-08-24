@@ -147,15 +147,15 @@ impl DataServiceDescriptor {
 
     /// Whether this service has a functional enable/disable toggle backed by a
     /// `KaskDataServiceSettings` field. Key-only services (SerpAPI, Firecrawl,
-    /// Browserbase, HF Token, FRED) have `ui_toggle: Some(...)` so they appear
-    /// in the UI for API key entry, but they have no settings.json toggle —
-    /// they're enabled unconditionally when the key is present. The UI renders
-    /// these without a SwitchField, always showing the key input.
+    /// HF Token, FRED) have `ui_toggle: Some(...)` so they appear in the UI for
+    /// API key entry, but they have no settings.json toggle — they're enabled
+    /// unconditionally when the key is present. The UI renders these without a
+    /// SwitchField, always showing the key input.
     pub fn has_toggle(&self) -> bool {
         self.ui_toggle.is_some()
             && !matches!(
                 self.credential_key,
-                "serpapi" | "firecrawl" | "browserbase" | "hf_token" | "fred"
+                "serpapi" | "firecrawl" | "hf_token" | "fred"
             )
     }
 }
@@ -216,13 +216,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         label: "Firecrawl (web scraping)",
         dashboard_url: "https://firecrawl.dev/",
         ui_toggle: Some("firecrawl"),
-    },
-    DataServiceDescriptor {
-        env_var: "HKASK_BROWSERBASE_API_KEY",
-        credential_key: "browserbase",
-        label: "Browserbase (headless browser)",
-        dashboard_url: "https://browserbase.com/",
-        ui_toggle: Some("browserbase"),
     },
     // ABW API key — not shown in the Data Services UI (no toggle, managed
     // via the keychain by the swarm server's governed launch path).
@@ -292,20 +285,15 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://runpod.io/",
         ui_toggle: None,
     },
-    // RunPod template ID — architecturally a non-secret config value, but
-    // currently read by the training server via `ctx.credentials.get` (the
-    // keychain injection path). Classified as `Secret` to preserve the
-    // current injection path; a future refactor could move it to `config_env`
-    // and read via `std::env::var` (matching `HKASK_KANBAN_DB`'s pattern).
-    // Not shown in the Data Services UI (it's a config value, not a key to
-    // enter; set via the training server's config).
-    DataServiceDescriptor {
-        env_var: "RUNPOD_TEMPLATE_ID",
-        credential_key: "runpod_template_id",
-        label: "RunPod Template ID",
-        dashboard_url: "https://runpod.io/",
-        ui_toggle: None,
-    },
+    // RUNPOD_TEMPLATE_ID was here as a Secret, but it is architecturally a
+    // non-secret config value (a RunPod template ID). It has been moved to
+    // the training server's `config_env` allowlist and is read via
+    // `std::env::var` in hkask_mcp_training.rs. The runpod provider has a
+    // real fallback when empty (DEFAULT_RUNPOD_DOCKER_IMAGE). Keeping it in
+    // DATA_SERVICES caused a spurious "not set or empty" warning on every
+    // launch because `build_mcp_server_env` looked for a keychain entry
+    // that was never written — the child had a working default path the
+    // bridge couldn't see.
     // Nebius project ID — same note as RUNPOD_TEMPLATE_ID above. Shown in
     // the UI because the old UI listed it (operator convenience for the
     // training host config).
@@ -357,12 +345,14 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // Data services — inject secrets (keychain-backed). Services with a
     // settings toggle (`*_enabled` on `KaskDataServiceSettings`) are gated on
     // the toggle; services without a toggle (ABW, DB passphrase, SMTP, RunPod
-    // S3/template, FRED, and the no-field services like SerpAPI/Firecrawl/
+    // S3, FRED, and the no-field services like SerpAPI/Firecrawl/
     // Browserbase/HF token) are injected unconditionally when the keychain
     // entry exists — they have no enable/disable control. The per-MCP-server
     // `credentials` allowlist is the final filter, so listing a key here does
     // not reach a server that doesn't declare it. `build_mcp_server_env`
     // also skips env vars already set in the process environment.
+    // (RUNPOD_TEMPLATE_ID was removed from this list — it's a non-secret
+    // config value now traveling the config_env path.)
     for desc in DATA_SERVICES {
         let enabled = match desc.credential_key {
             "eodhd" => settings.data_services.eodhd_enabled,

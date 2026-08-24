@@ -197,7 +197,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_BRAVE_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
-            "HKASK_BROWSERBASE_API_KEY",
             // DB encryption passphrase — read by resolve_db_credential() for
             // the RSS SQLite DB. Without this, RSS tools are silently
             // unavailable under governed launch.
@@ -288,7 +287,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Training — LoRA training configuration and audit",
         credentials: Some(&[
             "RUNPOD_API_KEY",
-            "RUNPOD_TEMPLATE_ID",
             "NEBIUS_PROJECT_ID",
             "NEBIUS_SUBNET_ID",
             "HF_TOKEN",
@@ -311,6 +309,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Training DB path — read by the server, falls back to default.
             "HKASK_TRAINING_DB",
             // RunPod operator overrides — read by runpod.rs, fall back to defaults.
+            // RUNPOD_TEMPLATE_ID moved here from `credentials`: it is a non-secret
+            // config value (a template ID), not a key. The training server reads
+            // it via std::env::var (hkask_mcp_training.rs), and the runpod provider
+            // has a real fallback when empty (DEFAULT_RUNPOD_DOCKER_IMAGE). The
+            // prior classification as a Secret was a smell — the comment at
+            // inference_providers.rs admitted it. Reclassifying silences the
+            // spurious "not set or empty" warning at launch while preserving the
+            // operator override path.
+            "RUNPOD_TEMPLATE_ID",
             "RUNPOD_GPU_TYPE_ID",
             "RUNPOD_CONTAINER_DISK_GB",
             "RUNPOD_DOCKER_IMAGE",
@@ -853,8 +860,8 @@ mod tests {
     #[test]
     fn research_allowlist_matches_actual_reads() {
         let s = server_by_id("research");
-        // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL,
-        // BROWSERBASE. HKASK_DB_PASSPHRASE is read for the RSS store.
+        // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL.
+        // HKASK_DB_PASSPHRASE is read for the RSS store.
         let creds = s.credentials.unwrap();
         for key in [
             "HKASK_EXA_API_KEY",
@@ -862,7 +869,6 @@ mod tests {
             "HKASK_BRAVE_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
-            "HKASK_BROWSERBASE_API_KEY",
         ] {
             assert!(
                 creds.contains(&key),
@@ -897,9 +903,9 @@ mod tests {
     fn training_allowlist_matches_actual_reads() {
         let s = server_by_id("training");
         // Read sites include HF_TOKEN, NEBIUS_PROJECT_ID,
-        // NEBIUS_SUBNET_ID, RUNPOD_* and HKASK_DB_PASSPHRASE. This is the largest
-        // secret grant in the registry, so pin that every granted secret has a
-        // read site.
+        // NEBIUS_SUBNET_ID, RUNPOD_API_KEY and HKASK_DB_PASSPHRASE. This is the
+        // largest secret grant in the registry, so pin that every granted secret
+        // has a read site.
         let creds = s.credentials.unwrap();
         assert!(
             creds.contains(&"HF_TOKEN"),
@@ -910,6 +916,21 @@ mod tests {
         assert!(
             !creds.contains(&"HKASK_SMTP_PASSWORD"),
             "training must not receive the SMTP password — no read site exists"
+        );
+        // RUNPOD_TEMPLATE_ID was reclassified from a credential to a config
+        // env var (it's a non-secret template ID, not a key). Pin that it's
+        // no longer in the credentials allowlist and is now in config_env,
+        // read via std::env::var in hkask_mcp_training.rs.
+        assert!(
+            !creds.contains(&"RUNPOD_TEMPLATE_ID"),
+            "RUNPOD_TEMPLATE_ID is a non-secret config value, not a credential — \
+             it must not be in the credentials allowlist"
+        );
+        assert!(
+            s.config_env.unwrap().contains(&"RUNPOD_TEMPLATE_ID"),
+            "RUNPOD_TEMPLATE_ID was moved from credentials to config_env — \
+             it must be in the config_env allowlist so the operator override \
+             survives the governed launch's env_clear"
         );
         assert!(
             !s.config_env.unwrap().is_empty(),

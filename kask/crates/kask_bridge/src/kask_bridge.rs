@@ -46,7 +46,7 @@ pub use hkask_types::agent_paths::resolve_data_dir;
 
 pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
-    provision_agent,
+    mirror_provisioned_swarm_memory_passphrase, provision_agent, provision_swarm_memory_passphrase,
 };
 pub use inference_chat::{LanguageModelInferencePort, NoModelInferencePort};
 pub use inference_edit_prediction::BridgeEditPredictionPort;
