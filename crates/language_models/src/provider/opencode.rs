@@ -717,10 +717,6 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::OpenAiResponses => {
-                let supports_none_reasoning_effort = self
-                    .model
-                    .supported_reasoning_effort_levels()
-                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
                 let response_request = match into_open_ai_response(
                     request,
                     self.model.id(),
@@ -728,7 +724,6 @@ impl LanguageModel for OpenCodeLanguageModel {
                     false,
                     self.model.max_output_tokens(self.subscription),
                     None,
-                    supports_none_reasoning_effort,
                     &PROVIDER_ID,
                 ) {
                     Ok(request) => request,

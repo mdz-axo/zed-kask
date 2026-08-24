@@ -567,9 +567,6 @@ impl LanguageModel for OpenAiLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             default_thinking_reasoning_effort(&self.model),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
@@ -634,9 +631,6 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
                 default_thinking_reasoning_effort(&self.model),
-                self.model
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
                 &OPEN_AI_PROVIDER_ID,
             ) {
                 Ok(request) => request,

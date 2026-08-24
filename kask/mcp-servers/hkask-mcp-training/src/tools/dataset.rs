@@ -82,17 +82,42 @@ impl TrainingServer {
             train_split,
             max_examples,
             system_prompt,
+            db_path,
+            passphrase,
         }): Parameters<AssembleDatasetRequest>,
     ) -> String {
         execute_tool_semantic(self, "training_assemble_dataset", Self::ontology_anchor("training_assemble_dataset"), async {
-            let Some(store) = &self.store else {
-                return Err(McpToolError::permission_denied(
-                    "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE",
-                ));
-            };
-            let h_mems = match store.query_by_attribute("training_qa_pair") {
-                Ok(t) => t,
-                Err(e) => return Err(map_memory_store_error(e, "semantic memory query")),
+            // When db_path is provided, open that DB instead of using the
+            // training server's default store. This bridges the corpus→training
+            // gap: corpus_ingest_qa stores to the corpus DB (via its db_path
+            // parameter), while training_assemble_dataset defaults to the
+            // training DB. Without this override, QA pairs ingested via the
+            // corpus pipeline are invisible to the training assembler.
+            let h_mems = if let Some(db_path) = db_path.as_deref() {
+                let default_passphrase = std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default();
+                let passphrase = passphrase.as_deref().unwrap_or(&default_passphrase);
+                if passphrase.is_empty() {
+                    return Err(McpToolError::permission_denied(
+                        "db_path provided but passphrase is empty — set HKASK_DB_PASSPHRASE or pass the passphrase parameter",
+                    ));
+                }
+                let dim = std::env::var("HKASK_EMBEDDING_DIM")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|&n| n > 0)
+                    .unwrap_or(1024);
+                let store = hkask_memory::MemoryStore::open(db_path, &passphrase, dim)
+                    .map_err(|e| McpToolError::internal(format!("Cannot open memory DB '{db_path}': {e}")))?;
+                store.query_by_attribute("training_qa_pair")
+                    .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
+            } else {
+                let Some(store) = &self.store else {
+                    return Err(McpToolError::permission_denied(
+                        "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE, or provide db_path",
+                    ));
+                };
+                store.query_by_attribute("training_qa_pair")
+                    .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
             };
             if h_mems.is_empty() {
                 return Err(McpToolError::invalid_argument("No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa."));

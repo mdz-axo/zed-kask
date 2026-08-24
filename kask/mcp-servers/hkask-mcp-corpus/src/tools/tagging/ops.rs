@@ -321,14 +321,27 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    let response: Option<_> = retry_with_backoff(
+                    let response: Option<_> = match retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
                         &format!("batch {batch_idx} of {batch_len}"),
                         || router.generate_with_model(&prompt, &params, Some(&model_override), None),
                     )
                     .await
-                    .ok();
+                    {
+                        Ok(resp) => Some(resp),
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.tag_chunks",
+                                batch = batch_idx,
+                                chunks = batch_len,
+                                error = %e,
+                                "LLM call failed after retries — all {} chunks will get fallback tags",
+                                batch_len,
+                            );
+                            None
+                        }
+                    };
 
                     // Parse the JSON array response.
                     let parsed_tags: Vec<OntologyTags> = response
@@ -339,13 +352,36 @@ impl CorpusServer {
                             // a single object for a 1-chunk batch).
                             // The `coerce_string_or_array` deserializer on
                             // `ontology_tags` handles string-or-array values.
-                            serde_json::from_str::<Vec<OntologyTags>>(&cleaned)
+                            let result = serde_json::from_str::<Vec<OntologyTags>>(&cleaned)
                                 .ok()
                                 .or_else(|| {
                                     serde_json::from_str::<OntologyTags>(&cleaned)
                                         .ok()
                                         .map(|t| vec![t])
-                                })
+                                });
+                            if result.is_none() {
+                                tracing::warn!(
+                                    target: "hkask.mcp.docproc.tag_chunks",
+                                    batch = batch_idx,
+                                    chunks = batch_len,
+                                    response_len = resp.text.len(),
+                                    response_preview = %&resp.text[..resp.text.len().min(500)],
+                                    "JSON parse failed — chunks will get fallback tags",
+                                );
+                            } else if let Some(ref tags) = result {
+                                if tags.len() < batch_len {
+                                    tracing::warn!(
+                                        target: "hkask.mcp.docproc.tag_chunks",
+                                        batch = batch_idx,
+                                        expected = batch_len,
+                                        parsed = tags.len(),
+                                        "Partial parse — {} of {} chunks tagged, rest get fallback",
+                                        tags.len(),
+                                        batch_len,
+                                    );
+                                }
+                            }
+                            result
                         })
                         .unwrap_or_default();
 

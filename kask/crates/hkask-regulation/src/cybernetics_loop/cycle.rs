@@ -183,23 +183,62 @@ impl super::CyberneticsLoop {
                 .any(|a| a.action_type == t && a.target == target)
         };
 
-        // Throttle + CircuitBreak on same target — contradictory (slow down vs stop).
-        if (has(Throttle) && has(CircuitBreak))
-            || (has(AdjustEnergyBudget) && has(OverrideEnergyBudget))
-        {
+        let mut conflicts: Vec<String> = Vec::new();
+
+        // Throttle + CircuitBreak — contradictory (slow down vs stop).
+        // When both target Inference, use the more specific message instead
+        // of the generic one to avoid double-alerting for the same conflict.
+        if has(Throttle) && has(CircuitBreak) {
+            if has_target(Throttle, LoopId::Inference) && has_target(CircuitBreak, LoopId::Inference) {
+                tracing::warn!(
+                    target: "reg.outcome.coherence",
+                    "Throttle + CircuitBreak both targeting Inference loop — consider consolidating"
+                );
+                conflicts.push("contradictory_actions: Throttle+CircuitBreak on Inference".into());
+            } else {
+                tracing::warn!(
+                    target: "reg.outcome.coherence",
+                    action_count = actions.len(),
+                    "Potentially contradictory Throttle + CircuitBreak in same tick"
+                );
+                conflicts.push("contradictory_actions: Throttle+CircuitBreak".into());
+            }
+        }
+
+        // AdjustEnergyBudget + OverrideEnergyBudget — contradictory (manual vs forced).
+        if has(AdjustEnergyBudget) && has(OverrideEnergyBudget) {
             tracing::warn!(
                 target: "reg.outcome.coherence",
                 action_count = actions.len(),
-                "Potentially contradictory actions in same tick"
+                "Potentially contradictory AdjustEnergyBudget + OverrideEnergyBudget in same tick"
             );
+            conflicts.push("contradictory_actions: AdjustEnergyBudget+OverrideEnergyBudget".into());
         }
 
-        // Both Throttle and CircuitBreak on Inference loop.
-        if has_target(Throttle, LoopId::Inference) && has_target(CircuitBreak, LoopId::Inference) {
-            tracing::warn!(
-                target: "reg.outcome.coherence",
-                "Throttle + CircuitBreak both targeting Inference loop — consider consolidating"
-            );
+        // Persist coherence conflicts to the escalation queue so the Curator
+        // can see them — not just a log warning that may be missed. Before
+        // this fix, check_coherence was advisory-only: it detected conflicts
+        // but neither suppressed the conflicting actions nor alerted the
+        // Curator. The coherence check was a sensor with no actuator (B4).
+        for conflict in &conflicts {
+            let alert = RuntimeAlert {
+                domain: format!("reg.coherence:{conflict}"),
+                deficit: 1,
+                threshold: 1,
+                severity: AlertSeverity::Warning,
+                escalated: true,
+                timestamp: chrono::Utc::now(),
+                message: format!(
+                    "Regulation coherence conflict detected: {conflict} ({} actions this tick)",
+                    actions.len()
+                ),
+            };
+            self.persist_alert_to_queue(&alert, None);
+            if let Some(ref tx) = self.alerts_tx {
+                if tx.send(CurationInput::Alert(alert)).is_err() {
+                    tracing::warn!(target: "reg.alert", "Coherence alert send failed — channel closed");
+                }
+            }
         }
     }
 
@@ -267,12 +306,13 @@ impl super::CyberneticsLoop {
                     trend = pred.trend,
                     "Predictive: metric approaching set-point"
                 );
-                // Emit a predictive notification to Curation.
-                actions.push(RegulatoryAction::new(
-                    LoopId::Curation,
-                    ActionType::Notify,
-                    RegulatoryActionParams::reason("predictive_threshold_approach"),
-                ));
+                // Notify actions are observational — they signal "approaching
+                // threshold" but carry no efferent action. Logging them here
+                // makes the observation visible without inflating the action
+                // count (which would make gain > 1.0, breaking the documented
+                // 0.0–1.0 contract). route_action_as_alert skips Notify
+                // actions, so adding them to `actions` would also be a silent
+                // drop (F8).
             }
         }
 
@@ -282,7 +322,21 @@ impl super::CyberneticsLoop {
             for proposed in policy.decide(dev) {
                 let action = self.build_regulation_action(dev, proposed).await;
                 if let Some(a) = action {
-                    actions.push(a);
+                    if a.action_type == ActionType::Notify {
+                        // Observational actions (Notify) are logged here, not
+                        // added to `actions`. They signal "metric observed"
+                        // but carry no efferent action — route_action_as_alert
+                        // would skip them (F8), and counting them would inflate
+                        // gain beyond 1.0 (B1). Logging preserves observability.
+                        tracing::info!(
+                            target: "reg.cybernetics",
+                            metric = a.metric_name.as_deref().unwrap_or("unknown"),
+                            reason = %a.parameters.reason,
+                            "Notify action — observational, not routed as alert"
+                        );
+                    } else {
+                        actions.push(a);
+                    }
                 }
             }
         }
@@ -686,7 +740,24 @@ impl super::CyberneticsLoop {
                     RegulationData::VarietyDeficitExceeded { deficit, .. } => {
                         (*deficit, SignalMetric::VarietyDeficit)
                     }
-                    _ => continue,
+                    _ => {
+                        // Actions with NoData (the 18 meta-regulatory and
+                        // observational arms) can't be verified via the
+                        // struct-walk because NoData carries no before-value.
+                        // Warn so the skip is visible — a silent continue would
+                        // make "no verification ran" indistinguishable from
+                        // "verification ran and passed" (the .rules
+                        // broken-feedback-loop trap). Full impact verification
+                        // for these actions requires carrying the before-value
+                        // in a typed RegulationData variant (follow-up).
+                        tracing::warn!(
+                            target: "reg.cybernetics",
+                            metric = action.metric_name.as_deref().unwrap_or("unknown"),
+                            reason = %action.parameters.reason,
+                            "verify_impact: action carries NoData — no before-value to verify against, skipping"
+                        );
+                        continue;
+                    }
                 };
                 before_val = fallback_before;
                 metric = fallback_metric;
@@ -921,7 +992,7 @@ impl super::CyberneticsLoop {
                 };
                 let remaining_ratio = dev.signal.value;
                 let projected_minutes = (remaining_ratio * 60.0) as u64;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
                     RegulatoryActionParams::with_data(
@@ -948,6 +1019,7 @@ impl super::CyberneticsLoop {
                             fallback: "gentle_throttle".into(),
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             RegulationReason::EnergyDepletionAutoAdjust => {
@@ -960,7 +1032,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(EnergyRemaining, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -970,6 +1042,7 @@ impl super::CyberneticsLoop {
                             set_point: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- VarietyDeficit AboveSetPoint -------------------------------
@@ -977,7 +1050,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(VarietyDeficit, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -987,12 +1060,13 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- ErrorRate AboveSetPoint ------------------------------------
             RegulationReason::ErrorRateExceeded => {
                 let at = self.try_substitute(ErrorRate, proposed.action_type).await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -1002,6 +1076,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- ConnectorLatency AboveSetPoint -----------------------------
@@ -1009,7 +1084,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(ConnectorLatency, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -1019,6 +1094,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- CommunicationQueueDepth AboveSetPoint ----------------------
@@ -1032,7 +1108,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(CommunicationQueueDepth, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -1042,6 +1118,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- WalletBalanceRatio BelowSetPoint ---------------------------
@@ -1060,7 +1137,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(WalletBalanceRatio, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -1071,6 +1148,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- WalletKeyHealth AboveSetPoint ------------------------------
@@ -1079,7 +1157,7 @@ impl super::CyberneticsLoop {
                     target: "reg.wallet",
                     "API key health alert — exhausted or expired"
                 );
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
                     RegulatoryActionParams::with_data(
@@ -1089,6 +1167,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- SeamCoverage BelowSetPoint ---------------------------------
@@ -1107,7 +1186,7 @@ impl super::CyberneticsLoop {
                     severity = severity,
                     "Public seam coverage degraded — seam watcher alert"
                 );
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
                     RegulatoryActionParams::with_data(
@@ -1119,6 +1198,7 @@ impl super::CyberneticsLoop {
                             severity: severity.to_string(),
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- SeamCoverage AboveSetPoint ---------------------------------
@@ -1131,7 +1211,7 @@ impl super::CyberneticsLoop {
                     improvement = improvement,
                     "Public seam coverage improved — seam watcher positive signal"
                 );
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
                     RegulatoryActionParams::with_data(
@@ -1142,6 +1222,7 @@ impl super::CyberneticsLoop {
                             improvement,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- ToolReliability BelowSetPoint ------------------------------
@@ -1155,7 +1236,7 @@ impl super::CyberneticsLoop {
                 let at = self
                     .try_substitute(ToolReliability, proposed.action_type)
                     .await;
-                Some(RegulatoryAction::new(
+                Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
@@ -1165,6 +1246,7 @@ impl super::CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                    dev.signal.metric.as_str().into(),
                 ))
             }
             // -- Observational metrics → Notify (no substitution ladder) --
@@ -1483,5 +1565,71 @@ mod tests {
                 }
             }
         });
+    }
+
+    /// Pins F8 + B1: compute() must NOT include Notify actions in the
+    /// returned vector. Notify actions are observational — they signal
+    /// "metric observed" but carry no efferent action. Including them
+    /// would inflate gain beyond 1.0 (B1) and they'd be silently dropped
+    /// by route_action_as_alert (F8). The fix logs them in compute() and
+    /// excludes them from the actions vector.
+    #[test]
+    fn compute_excludes_notify_actions() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
+            // StorageUsage AboveSetPoint triggers a Notify rule.
+            let signal = Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::StorageUsage,
+                1.0,
+                0.0,
+            );
+            let deviation = Deviation::from_signal(&signal)
+                .expect("StorageUsage 1.0 vs set_point 0.0 should deviate");
+            let actions = regulation_loop.compute(&[deviation]).await;
+            assert!(
+                actions.iter().all(|a| a.action_type != ActionType::Notify),
+                "compute() must not return Notify actions — they are observational, not regulatory"
+            );
+        });
+    }
+
+    /// Pins B2: fidelity matching must use metric_name only, not string
+    /// fallback on reason. An action without metric_name but with a reason
+    /// that would have matched under the old fallback (e.g., "low" matching
+    /// "energy_budget_low") must NOT count as a match. Before the fix, the
+    /// string fallback produced false positives by conflating direction
+    /// semantics ("low" matched both "energy_budget_low" and
+    /// "low_confidence_count").
+    #[test]
+    fn from_cycle_fidelity_no_string_fallback() {
+        use crate::loops::core::{TriggerOrigin, LoopMetrics};
+        let signal = Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::EnergyRemaining,
+            0.1,
+            0.2,
+        );
+        let deviation = Deviation::from_signal(&signal).unwrap();
+        // An action with no metric_name but a reason that contains "low" —
+        // under the old fallback this would have matched EnergyRemaining
+        // BelowSetPoint via reason.contains("low").
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("some_unrelated_low_thing"),
+        );
+        let metrics = LoopMetrics::from_cycle(
+            0,
+            &[deviation],
+            &[action],
+            &[],
+            TriggerOrigin::Scheduled,
+        );
+        assert_eq!(
+            metrics.fidelity_score, 0.0,
+            "action without metric_name must not match via string fallback"
+        );
     }
 }

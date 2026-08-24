@@ -1905,7 +1905,6 @@ impl LanguageModel for BedrockMantleModel {
                     false,
                     max_output_tokens,
                     mantle_default_reasoning_effort(&self.model),
-                    self.model.supports_thinking(),
                     &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
@@ -3716,7 +3715,6 @@ mod tests {
             false,
             Some(MantleModel::Grok4_3.max_output_tokens()),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            MantleModel::Grok4_3.supports_thinking(),
             &PROVIDER_ID,
         )
         .unwrap();
@@ -3769,7 +3767,6 @@ mod tests {
             false,
             Some(128_000),
             Some(ReasoningEffort::Medium),
-            false,
             &PROVIDER_ID,
         )
         .unwrap();

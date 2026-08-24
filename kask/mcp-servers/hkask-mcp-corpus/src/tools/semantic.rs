@@ -17,9 +17,9 @@ use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
-    Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_embedding_model,
-    default_owner, execute_tool_semantic, extract_json_from_response, json, read_jsonl,
-    render_docproc_template, tool, tool_router,
+    Arc, CorpusServer, IndexedPassage, LLMParameters, McpToolError, Mutex, Parameters,
+    default_embedding_model, default_owner, execute_tool_semantic, extract_json_from_response,
+    json, read_jsonl, render_docproc_template, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
@@ -544,6 +544,13 @@ impl CorpusServer {
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+        // Collect (entity_ref, text, embedding) tuples for in-memory index
+        // population after all batches complete. The in-memory index enables
+        // corpus_query to return passage text (the DB stores only vectors
+        // keyed by entity_ref, not the text itself).
+        let indexed_passages: Arc<Mutex<Vec<(String, String, Vec<f32>)>>> =
+            Arc::new(Mutex::new(Vec::with_capacity(total)));
+
         let mut join_set = tokio::task::JoinSet::new();
 
         for (batch_idx, chunk_batch) in batches.into_iter().enumerate() {
@@ -553,6 +560,7 @@ impl CorpusServer {
             let model_name = Arc::clone(&model_name);
             let embedded = Arc::clone(&embedded);
             let failed = Arc::clone(&failed);
+            let indexed_passages = Arc::clone(&indexed_passages);
             let batch_len = chunk_batch.len();
 
             join_set.spawn(async move {
@@ -600,6 +608,10 @@ impl CorpusServer {
                         continue;
                     }
                     embedded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Collect for in-memory index population after all batches.
+                    if let Ok(mut idx) = indexed_passages.lock() {
+                        idx.push((c.0.clone(), c.1.clone(), vector.clone()));
+                    }
                 }
             });
         }
@@ -617,6 +629,30 @@ impl CorpusServer {
 
         let embedded = embedded.load(std::sync::atomic::Ordering::Relaxed);
         let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Populate the in-memory vector index from the collected embeddings
+        // so corpus_query returns passage text (the DB stores only vectors).
+        let passages = indexed_passages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !passages.is_empty() {
+            let mut index = self
+                .index
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for (entity_ref, text, embedding) in passages.iter() {
+                index.push(IndexedPassage {
+                    text: text.clone(),
+                    metadata: json!({"entity_ref": entity_ref}),
+                    embedding: embedding.clone(),
+                });
+            }
+            tracing::info!(
+                target: "hkask.mcp.docproc.embed",
+                indexed = index.len(),
+                "In-memory index populated from embeddings"
+            );
+        }
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",

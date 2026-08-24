@@ -65,7 +65,20 @@ impl MovingAverageExtrapolator {
             };
         }
 
-        let values = obs.unwrap();
+        // Safe: n >= 3 was checked above, and n = obs.map(|v| v.len()).unwrap_or(0),
+        // so obs must be Some. But use a safe pattern instead of .unwrap() to
+        // satisfy the .rules "No unwrap()" rule and avoid a panic if the
+        // early-return logic above is ever changed.
+        let values = match obs {
+            Some(v) => v,
+            None => {
+                return MetricPrediction {
+                    trend: 0.0,
+                    reliable: false,
+                    ticks_to_threshold: None,
+                }
+            }
+        };
         let last_n = if values.len() > self.window {
             &values[values.len() - self.window..]
         } else {

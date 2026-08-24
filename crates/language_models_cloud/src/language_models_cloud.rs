@@ -408,11 +408,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
         let app_version = self.app_version.clone();
         let model_provider = self.model.provider;
         let provider_name = provider_name(&self.model.provider);
-        let supports_none_reasoning_effort =
-            self.model.supported_effort_levels.iter().any(|effort| {
-                open_ai::ReasoningEffort::from_str(&effort.value)
-                    .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-            });
         // Cloud proxies to OpenAI's own infrastructure, so the resulting
         // compaction state is owned by (and interchangeable with) OpenAI
         // proper, not by the cloud transport.
@@ -423,7 +418,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             true,
             None,
             None,
-            supports_none_reasoning_effort,
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
@@ -783,12 +777,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .as_ref()
                     .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
                     .filter(|effort| *effort != open_ai::ReasoningEffort::None);
-                let supports_none_reasoning_effort =
-                    self.model.supported_effort_levels.iter().any(|effort| {
-                        open_ai::ReasoningEffort::from_str(&effort.value)
-                            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-                    });
-
                 let mut request = match into_open_ai_response(
                     request,
                     &self.model.id.0,
@@ -796,7 +784,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     true,
                     None,
                     None,
-                    supports_none_reasoning_effort,
                     &OPEN_AI_PROVIDER_ID,
                 ) {
                     Ok(request) => request,

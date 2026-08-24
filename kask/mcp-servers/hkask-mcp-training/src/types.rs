@@ -117,6 +117,15 @@ pub(crate) struct AssembleDatasetRequest {
     /// Sets agent persona/context for fine-tuning (e.g., "You are an hKask agent trained in constraint classification.").
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Path to a memory DB to query for QA pairs. When provided, opens that DB
+    /// instead of using the training server's default DB. Use this when QA
+    /// pairs were ingested via `corpus_ingest_qa` (which stores to the corpus
+    /// DB, not the training DB).
+    #[serde(default)]
+    pub db_path: Option<String>,
+    /// Passphrase for the memory DB. Defaults to `HKASK_DB_PASSPHRASE`.
+    #[serde(default)]
+    pub passphrase: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

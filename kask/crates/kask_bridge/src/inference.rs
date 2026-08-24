@@ -952,19 +952,23 @@ impl LanguageModelEmbeddingPort {
 /// Strip the provider prefix from a model string, case-insensitive.
 ///
 /// Accepts long-form prefixes (`OpenRouter/`,
-/// `RunPod/`, `ollama/`).
+/// `RunPod/`, `ollama/`, `DeepInfra/`).
 /// Returns the bare model id. If no prefix is recognized, returns the
 /// string unchanged (the API will reject it, which surfaces a clear error).
+///
+/// The recognized prefixes are driven by the bridge's `INFERENCE_PROVIDERS`
+/// table — adding a provider there automatically extends stripping here.
+/// This is the single source of truth: a previous hardcoded `LONG_FORM`
+/// table diverged from `INFERENCE_PROVIDERS` and omitted `DeepInfra/`,
+/// causing the default embedding model to reach the DeepInfra API unstripped
+/// and 404 with `model_not_found`.
 fn strip_provider_prefix(model: &str) -> String {
-    // Long-form prefixes (case-insensitive). Order matters only for
-    // overlapping prefixes; none overlap here.
-    const LONG_FORM: &[&str] = &["RunPod/", "OpenRouter/", "ollama/"];
-    for prefix in LONG_FORM {
-        if let Some(rest) = model.strip_prefix(prefix) {
-            return rest.to_string();
-        }
-        // Case-insensitive match (e.g. "openrouter/..." or "OPENROUTER/...").
-        if model.len() >= prefix.len() && model[..prefix.len()].eq_ignore_ascii_case(prefix) {
+    // Iterate the bridge's provider table (case-insensitive match).
+    // `INFERENCE_PROVIDERS` is a `static`, so this is still a compile-time-known
+    // set; the per-call allocation is negligible vs. the HTTP round-trip.
+    for provider in crate::inference_providers::INFERENCE_PROVIDERS {
+        let prefix = format!("{}/", provider.id);
+        if model.len() >= prefix.len() && model[..prefix.len()].eq_ignore_ascii_case(&prefix) {
             return model[prefix.len()..].to_string();
         }
     }
@@ -1237,4 +1241,66 @@ impl InferencePort for NoModelInferencePort {
 #[derive(Debug, Deserialize)]
 struct OpenAiEmbeddingData {
     embedding: Vec<f32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_provider_prefix;
+
+    // Regression for the embedding 404: `DEFAULT_EMBEDDING_MODEL` is
+    // `DeepInfra/Qwen/Qwen3-Embedding-0.6B`, but the old hardcoded
+    // `LONG_FORM` table omitted `DeepInfra/`, so the full prefixed string
+    // reached the DeepInfra `/embeddings` endpoint and 404'd with
+    // `model_not_found`. The fix drives the prefix set from
+    // `INFERENCE_PROVIDERS`, which registers `DeepInfra`.
+    #[test]
+    fn strip_provider_prefix_handles_deepinfra() {
+        assert_eq!(
+            strip_provider_prefix("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+    }
+
+    // Case-insensitivity is load-bearing: operators may write `deepinfra/...`
+    // or `OPENROUTER/...` in settings. The `eq_ignore_ascii_case` match
+    // must cover all casings.
+    #[test]
+    fn strip_provider_prefix_is_case_insensitive() {
+        assert_eq!(
+            strip_provider_prefix("deepinfra/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(
+            strip_provider_prefix("OPENROUTER/z-ai/glm-5.2"),
+            "z-ai/glm-5.2"
+        );
+    }
+
+    // Every provider registered in `INFERENCE_PROVIDERS` must be strippable.
+    // This is the single-source-of-truth contract: if a provider is added to
+    // the table, stripping comes for free. If this test breaks, either the
+    // table or the stripper diverged.
+    #[test]
+    fn strip_provider_prefix_handles_every_registered_provider() {
+        for provider in crate::inference_providers::INFERENCE_PROVIDERS {
+            let prefixed = format!("{}/some-model", provider.id);
+            assert_eq!(
+                strip_provider_prefix(&prefixed),
+                "some-model",
+                "provider {} not strippable",
+                provider.id
+            );
+        }
+    }
+
+    // Unrecognized prefixes pass through unchanged — the API rejects them
+    // with a clear error. This is the documented fallback behavior.
+    #[test]
+    fn strip_provider_prefix_passes_through_unknown_prefix() {
+        assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
+        assert_eq!(
+            strip_provider_prefix("UnknownProvider/some-model"),
+            "UnknownProvider/some-model"
+        );
+    }
 }

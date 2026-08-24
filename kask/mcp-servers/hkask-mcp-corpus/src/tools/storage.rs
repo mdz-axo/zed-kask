@@ -100,6 +100,8 @@ impl CorpusServer {
             query,
             top_k,
             generate_answer,
+            db_path,
+            passphrase,
         }): Parameters<QueryRequest>,
     ) -> String {
         execute_tool_semantic(self, "corpus_query", Self::ontology_anchor("corpus_query"), async {
@@ -147,36 +149,61 @@ impl CorpusServer {
                     }
                 };
                 if index.is_empty() {
-                    return Ok(json!({
-                        "query": query,
-                        "results": [],
-                        "total_indexed": 0,
-                        "note": "No passages indexed. Run corpus_chunk with index=true first.",
-                    }));
-                }
+                    let Some(db_path) = db_path.as_deref() else {
+                        return Ok(json!({
+                            "query": query,
+                            "results": [],
+                            "total_indexed": 0,
+                            "note": "Index empty after restart. Provide db_path to search the memory DB.",
+                        }));
+                    };
+                    let passphrase = passphrase
+                        .unwrap_or_else(|| crate::tools::semantic::default_corpus_passphrase());
+                    let store = crate::helpers::open_memory_store(db_path, &passphrase)?;
+                    let total = store.embedding_count().unwrap_or(0);
+                    if total == 0 {
+                        return Ok(json!({
+                            "query": query,
+                            "results": [],
+                            "total_indexed": 0,
+                        }));
+                    }
+                    let db_results = store
+                        .search_similar(&query_embedding, k)
+                        .map_err(|e| McpToolError::internal(format!("DB search failed: {e}")))?;
+                    let results: Vec<serde_json::Value> = db_results
+                        .iter()
+                        .map(|r| json!({
+                            "entity_ref": r.embedding.entity_ref.clone(),
+                            "metadata": {"entity_ref": r.embedding.entity_ref.clone(), "model": r.embedding.model.clone()},
+                            "score": 1.0 - r.distance as f32,
+                        }))
+                        .collect();
+                    (results, total)
+                } else {
+                    let mut scored: Vec<(f32, &IndexedPassage)> = index
+                        .iter()
+                        .map(|p| (cosine_similarity(&query_embedding, &p.embedding), p))
+                        .collect();
 
-                let mut scored: Vec<(f32, &IndexedPassage)> = index
-                    .iter()
-                    .map(|p| (cosine_similarity(&query_embedding, &p.embedding), p))
-                    .collect();
+                    scored.sort_by(|a, b| {
+                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    scored.truncate(k);
 
-                scored.sort_by(|a, b| {
-                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                scored.truncate(k);
-
-                let results: Vec<serde_json::Value> = scored
-                    .iter()
-                    .map(|(score, p)| {
-                        json!({
-                            "text": p.text.clone(),
-                            "metadata": p.metadata.clone(),
-                            "score": score,
+                    let results: Vec<serde_json::Value> = scored
+                        .iter()
+                        .map(|(score, p)| {
+                            json!({
+                                "text": p.text.clone(),
+                                "metadata": p.metadata.clone(),
+                                "score": score,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                (results, index.len())
+                    (results, index.len())
+                }
             }; // guard dropped here
 
             let mut result = json!({
@@ -349,6 +376,13 @@ pub(crate) struct QueryRequest {
     /// If true, generate an LLM-augmented answer from retrieved passages.
     #[serde(default)]
     pub generate_answer: Option<bool>,
+    /// Path to the memory DB for vector search when the in-memory index is empty
+    /// (e.g. after server restart). The in-memory index is populated by `corpus_embed`.
+    #[serde(default)]
+    pub db_path: Option<String>,
+    /// Passphrase for the memory DB. Defaults to `HKASK_DB_PASSPHRASE`.
+    #[serde(default)]
+    pub passphrase: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

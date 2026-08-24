@@ -3,7 +3,7 @@
 //! The Loop trait uses async-trait for object safety.
 
 use super::actions::{ActionType, RegulatoryAction};
-use super::signals::{Deviation, DeviationDirection, SignalMetric};
+use super::signals::{Deviation, SignalMetric};
 
 /// Loop identifiers for the 5-loop model.
 ///
@@ -183,23 +183,22 @@ pub struct LoopMetrics {
     /// Milliseconds between sense start and act completion (loop latency).
     pub delay_ms: u64,
     /// Ratio of actions produced to deviations detected (responsiveness).
-    /// 1.0 = every deviation produced an action. 0.0 = no actions produced.
+    /// 1.0 = every deviation produced an action (or no deviations detected —
+    /// trivially responsive). 0.0 = deviations detected but no actions produced.
     pub gain: f64,
     /// How well actions match deviations (0.0–1.0).
-    /// 1.0 = every deviation had a corresponding action.
+    /// 1.0 = every deviation had a corresponding action (or no deviations
+    /// detected — trivially matched). 0.0 = deviations detected but none matched.
     /// Computed as: matched_deviations / total_deviations.
     pub fidelity_score: f64,
     /// Ratio of actions that actually improved their target metric (0.0–1.0).
     ///
     /// Fermi impact-gate pattern: 1.0 = every verified action moved its
-    /// metric toward the set-point. 0.0 = no action had measurable impact.
-    /// Only computed when `verify_impact` returns reports; defaults to 1.0
-    /// for loops that don't implement verification.
+    /// metric toward the set-point. 0.0 = either no verification ran (no
+    /// impact reports) or no action had measurable impact. An operator seeing
+    /// 0.0 must check whether verification was skipped (no data) or actions
+    /// genuinely failed — the score does not conflate "unverified" with "success."
     pub effectiveness_score: f64,
-    /// Confidence in the fidelity_score computation (0.0–1.0).
-    /// 1.0 = all deviation-to-action matches used `metric_name` directly.
-    /// 0.6 = one or more matches fell back to string heuristics on `reason`.
-    pub fidelity_confidence: f64,
     /// What triggered this tick.
     pub trigger: TriggerOrigin,
 }
@@ -208,10 +207,9 @@ impl Default for LoopMetrics {
     fn default() -> Self {
         Self {
             delay_ms: 0,
-            gain: 0.0,
-            fidelity_score: 0.0,
-            fidelity_confidence: 1.0,
-            effectiveness_score: 1.0,
+            gain: 1.0,
+            fidelity_score: 1.0,
+            effectiveness_score: 0.0,
             trigger: TriggerOrigin::Scheduled,
         }
     }
@@ -224,13 +222,14 @@ impl LoopMetrics {
     /// \[P9\] Homeostatic Self-Regulation — loop quality enables Regulation self-observation
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle
-    /// post: returns LoopMetrics with gain, fidelity_score, effectiveness_score, and
-    ///       fidelity_confidence computed from cycle data
+    /// post: returns LoopMetrics with gain, fidelity_score, and
+    ///       effectiveness_score computed from cycle data
     ///
     /// - `elapsed_ms`: wall-clock time from sense start to act end
     /// - `deviations`: deviations detected during compare
     /// - `actions`: actions produced during compute
-    /// - `impact_reports`: results from `verify_impact` (empty → effectiveness = 1.0)
+    /// - `impact_reports`: results from `verify_impact` (empty → effectiveness = 0.0,
+    ///   signaling "unverified" — not "all actions effective")
     /// - `trigger`: what triggered this tick
     pub fn from_cycle(
         elapsed_ms: u64,
@@ -239,56 +238,42 @@ impl LoopMetrics {
         impact_reports: &[ImpactReport],
         trigger: TriggerOrigin,
     ) -> Self {
+        // Gain: responsiveness. When no deviations exist, the loop is
+        // trivially responsive (it responded to all zero deviations) — 1.0,
+        // not 0.0. Reporting 0.0 when healthy makes "broken" and "healthy"
+        // indistinguishable to the operator.
         let gain = if deviations.is_empty() {
-            0.0
+            1.0
         } else {
             actions.len() as f64 / deviations.len() as f64
         };
 
-        // Fidelity: count how many deviations had a matching action.
-        // Prefer matching via `metric_name` (type-safe). Only fall back
-        // to string-matching on `reason` when no action carries a metric_name.
-        let mut fidelity_fallback_used = false;
+        // Fidelity: count how many deviations had a matching action by metric_name.
         let matched = deviations
             .iter()
             .filter(|d| {
                 let metric_str = d.signal.metric.as_str();
-                // Primary: match by metric_name if any action carries it.
-                if actions
+                actions
                     .iter()
                     .any(|a| a.metric_name.as_deref() == Some(metric_str))
-                {
-                    return true;
-                }
-                // Fallback: string-match on reason (less reliable).
-                let fallback_match = actions.iter().any(|a| {
-                    let reason = &a.parameters.reason;
-                    reason.contains(metric_str)
-                        || match d.direction {
-                            DeviationDirection::AboveSetPoint => reason.contains("exceeded"),
-                            DeviationDirection::BelowSetPoint => {
-                                reason.contains("low") || reason.contains("depletion")
-                            }
-                        }
-                });
-                if fallback_match {
-                    fidelity_fallback_used = true;
-                }
-                fallback_match
             })
             .count() as f64;
         let fidelity_score = if deviations.is_empty() {
-            0.0
+            1.0
         } else {
             matched / deviations.len() as f64
         };
-        let fidelity_confidence = if fidelity_fallback_used { 0.6 } else { 1.0 };
+        // All matches use metric_name directly.
 
         // Effectiveness: percentage of verified actions that were Accepted
         // (i.e., either improved or within noise tolerance). Staged/Blocked
-        // actions reduce the score.
+        // actions reduce the score. When no impact reports exist, no
+        // verification ran — report 0.0 ("unverified"), NOT 1.0 ("all
+        // effective"). Reporting 1.0 when unverified conflates "no data" with
+        // "success" — the operator cannot distinguish a working loop from one
+        // that never checks its own impact.
         let effectiveness_score = if impact_reports.is_empty() {
-            1.0
+            0.0
         } else {
             let accepted = impact_reports
                 .iter()
@@ -301,9 +286,101 @@ impl LoopMetrics {
             delay_ms: elapsed_ms,
             gain,
             fidelity_score,
-            fidelity_confidence,
             effectiveness_score,
             trigger,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::actions::RegulatoryActionParams;
+    use super::super::signals::Signal;
+
+    /// Pins F1 + F2 + F3: when no deviations and no impact reports exist
+    /// (the healthy steady-state), gain=1.0 (trivially responsive),
+    /// fidelity=1.0 (trivially matched), and effectiveness=0.0 (unverified —
+    /// NOT 1.0, which would conflate "no data" with "all effective").
+    ///
+    /// Before the fix, all three reported 0.0 / 0.0 / 1.0 — the operator
+    /// could not distinguish "loop broken" (gain=0) from "system healthy"
+    /// (gain=0), nor "all actions effective" (effectiveness=1) from "no
+    /// verification ran" (effectiveness=1).
+    #[test]
+    fn from_cycle_healthy_reports_trivially_correct_metrics() {
+        let metrics = LoopMetrics::from_cycle(
+            0,
+            &[], // no deviations — healthy
+            &[], // no actions
+            &[], // no impact reports — unverified
+            TriggerOrigin::Scheduled,
+        );
+        assert_eq!(metrics.gain, 1.0, "gain=1.0 when healthy (trivially responsive)");
+        assert_eq!(metrics.fidelity_score, 1.0, "fidelity=1.0 when healthy (trivially matched)");
+        assert_eq!(metrics.effectiveness_score, 0.0, "effectiveness=0.0 when unverified (not 1.0)");
+    }
+
+    /// Pins F1: gain = actions / deviations when deviations exist. Two
+    /// deviations, one action → gain = 0.5.
+    #[test]
+    fn from_cycle_gain_is_actions_over_deviations() {
+        let signal_a = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
+        let signal_b = Signal::new(LoopId::Cybernetics, SignalMetric::VarietyDeficit, 200.0, 100.0);
+        let deviations = [
+            Deviation::from_signal(&signal_a).unwrap(),
+            Deviation::from_signal(&signal_b).unwrap(),
+        ];
+        let action = RegulatoryAction::with_metric(
+            LoopId::Inference,
+            ActionType::Throttle,
+            RegulatoryActionParams::reason("energy_budget_low"),
+            "energy_remaining".into(),
+        );
+        let metrics = LoopMetrics::from_cycle(
+            0,
+            &deviations,
+            &[action],
+            &[],
+            TriggerOrigin::Scheduled,
+        );
+        assert_eq!(metrics.gain, 0.5, "1 action / 2 deviations = 0.5");
+        assert_eq!(metrics.fidelity_score, 0.5, "1 matched / 2 deviations = 0.5");
+        assert_eq!(metrics.effectiveness_score, 0.0, "no impact reports → unverified → 0.0");
+    }
+
+    /// Pins F3: effectiveness = accepted / total when impact reports exist.
+    /// Two reports, one Accept, one Block → effectiveness = 0.5.
+    #[test]
+    fn from_cycle_effectiveness_is_accepted_over_verified() {
+        let report_accept = ImpactReport::new(
+            ActionType::Throttle,
+            SignalMetric::EnergyRemaining,
+            0.1,
+            0.3, // improved (delta > 0 for EnergyRemaining)
+            ActionDecision::Accept,
+        );
+        let report_block = ImpactReport::new(
+            ActionType::CircuitBreak,
+            SignalMetric::ErrorRate,
+            0.3,
+            0.5, // worsened
+            ActionDecision::Block,
+        );
+        let metrics = LoopMetrics::from_cycle(
+            0,
+            &[],
+            &[],
+            &[report_accept, report_block],
+            TriggerOrigin::Scheduled,
+        );
+        assert_eq!(
+            metrics.effectiveness_score,
+            0.5,
+            "1 accepted / 2 verified = 0.5"
+        );
+        // gain and fidelity are 1.0 because no deviations (healthy state).
+        assert_eq!(metrics.gain, 1.0);
+        assert_eq!(metrics.fidelity_score, 1.0);
     }
 }

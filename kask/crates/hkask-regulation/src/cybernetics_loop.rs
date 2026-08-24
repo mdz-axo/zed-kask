@@ -257,6 +257,72 @@ impl CyberneticsLoop {
             Arc::new(registry)
         };
 
+        // F5: Warn about metrics that have policy rules but no sensor.
+        // The policy has 30 rules covering 29 SignalMetric variants, but only
+        // 5 sensors are registered (EnergyRemaining, VarietyDeficit,
+        // TestCoverage, MutationScore, ToolReliability) plus one inline check
+        // (AlgedonicLogApproachingCap). The remaining 23 metrics are blind —
+        // their policy rules can never fire because no signal is ever
+        // produced for them. This is a variety deficit on the sensing side
+        // (Ashby's Law: the regulator's sensing variety must match the
+        // system's disturbance variety). Adding sensors for these metrics
+        // is a follow-up; the warn makes the gap visible at startup.
+        {
+            use crate::loops::SignalMetric;
+            const SENSED: &[SignalMetric] = &[
+                SignalMetric::EnergyRemaining,
+                SignalMetric::VarietyDeficit,
+                SignalMetric::TestCoverage,
+                SignalMetric::MutationScore,
+                SignalMetric::ToolReliability,
+                SignalMetric::AlgedonicLogApproachingCap,
+            ];
+            const ALL_METRICS: &[SignalMetric] = &[
+                SignalMetric::EnergyRemaining,
+                SignalMetric::VarietyDeficit,
+                SignalMetric::ErrorRate,
+                SignalMetric::ConnectorLatency,
+                SignalMetric::CommunicationQueueDepth,
+                SignalMetric::StorageUsage,
+                SignalMetric::MemoryLife,
+                SignalMetric::TripleCount,
+                SignalMetric::LowConfidenceCount,
+                SignalMetric::CircuitBreakerState,
+                SignalMetric::InferenceAvailable,
+                SignalMetric::InferenceModelAvailable,
+                SignalMetric::AlgedonicEvents,
+                SignalMetric::AlgedonicLogApproachingCap,
+                SignalMetric::PendingEscalations,
+                SignalMetric::ConsolidationCandidates,
+                SignalMetric::GoalStaleCount,
+                SignalMetric::GoalExpiredCount,
+                SignalMetric::MetacognitionVarietyDeficit,
+                SignalMetric::MetacognitionCriticalAlerts,
+                SignalMetric::WalletBalanceRatio,
+                SignalMetric::WalletKeyHealth,
+                SignalMetric::SeamCoverage,
+                SignalMetric::ActionIneffective,
+                SignalMetric::RegulatoryPlateau,
+                SignalMetric::ActionDecisionBlocked,
+                SignalMetric::ToolReliability,
+                SignalMetric::TestCoverage,
+                SignalMetric::MutationScore,
+            ];
+            let unsensed: Vec<&str> = ALL_METRICS
+                .iter()
+                .filter(|m| !SENSED.contains(m))
+                .map(|m| m.as_str())
+                .collect();
+            if !unsensed.is_empty() {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    unsensed_count = unsensed.len(),
+                    unsensed = ?unsensed,
+                    "Metrics with policy rules but no sensor — these rules can never fire in production (Ashby's Law variety deficit on the sensing side)"
+                );
+            }
+        }
+
         Self {
             ledger,
             call_cap_manager,
@@ -641,7 +707,6 @@ impl CyberneticsLoop {
                 "gain": quality.gain,
                 "fidelity_score": quality.fidelity_score,
                 "effectiveness_score": quality.effectiveness_score,
-                "fidelity_confidence": quality.fidelity_confidence,
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "actions": actions.len(),

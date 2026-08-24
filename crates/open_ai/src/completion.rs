@@ -253,7 +253,6 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
-    supports_none_reasoning_effort: bool,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
@@ -343,10 +342,8 @@ pub fn into_open_ai_response(
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
             .filter(|effort| *effort != ReasoningEffort::None)
             .or(default_reasoning_effort)
-    } else if supports_none_reasoning_effort {
-        Some(ReasoningEffort::None)
     } else {
-        None
+        Some(ReasoningEffort::None)
     };
 
     let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
@@ -2071,7 +2068,6 @@ mod tests {
             true,
             Some(2048),
             Some(ReasoningEffort::Low),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2258,7 +2254,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2280,6 +2275,7 @@ mod tests {
                         "output": "ok"
                     }
                 ],
+                "reasoning": {"effort": "none"},
                 "store": false,
                 "stream": true,
                 "parallel_tool_calls": false,
@@ -2360,7 +2356,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Low),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2399,7 +2394,10 @@ mod tests {
             serialized["include"],
             json!(["reasoning.encrypted_content"])
         );
-        assert_eq!(serialized.get("reasoning"), None);
+        assert_eq!(
+            serialized["reasoning"],
+            json!({"effort": "none"})
+        );
     }
 
     #[test]
@@ -2446,7 +2444,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2481,45 +2478,6 @@ mod tests {
                 }
             ])
         );
-    }
-
-    #[test]
-    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled_and_none_is_unsupported() {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: Vec::new(),
-            tool_choice: None,
-            stop: Vec::new(),
-            temperature: None,
-            thinking_allowed: false,
-            reasoning_effort: Some("high".into()),
-            speed: None,
-            compact_at_tokens: None,
-            max_tokens: None,
-        };
-
-        let response = into_open_ai_response(
-            request,
-            "gpt-5",
-            true,
-            true,
-            None,
-            Some(ReasoningEffort::Medium),
-            false,
-            &OPEN_AI_PROVIDER_ID,
-        )
-        .unwrap();
-
-        let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(serialized.get("reasoning"), None);
     }
 
     /// `Speed::Fast` should translate to `service_tier: "priority"` on the
@@ -2560,8 +2518,7 @@ mod tests {
                 true,
                 None,
                 None,
-                true,
-                &OPEN_AI_PROVIDER_ID,
+                                &OPEN_AI_PROVIDER_ID,
             )
             .unwrap();
 
@@ -2699,8 +2656,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
-            &OPEN_AI_PROVIDER_ID,
+                        &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2741,8 +2697,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
-            &OPEN_AI_PROVIDER_ID,
+                        &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2795,7 +2750,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2888,7 +2842,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2979,7 +2932,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4520,7 +4472,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4570,7 +4521,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4616,7 +4566,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4646,7 +4595,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4690,7 +4638,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4747,7 +4694,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4826,7 +4772,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4877,7 +4822,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap_err();
@@ -4941,8 +4885,7 @@ mod tests {
             true,
             None,
             None,
-            false,
-            &LanguageModelProviderId::new("my-compatible-endpoint"),
+                        &LanguageModelProviderId::new("my-compatible-endpoint"),
         )
         .unwrap();
 

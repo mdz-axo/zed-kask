@@ -465,10 +465,6 @@ fn chat_completion_max_tokens_parameter(
     }
 }
 
-fn supports_none_reasoning_effort(model: &AvailableModel) -> bool {
-    model.reasoning_effort.is_some()
-}
-
 fn chat_completion_reasoning_effort(
     request: &LanguageModelRequest,
     model: &AvailableModel,
@@ -627,7 +623,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 default_thinking_reasoning_effort(&self.model),
-                supports_none_reasoning_effort(&self.model),
                 &self.provider_id,
             ) {
                 Ok(request) => request,
@@ -814,7 +809,6 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -845,7 +839,6 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -880,17 +873,6 @@ mod tests {
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized["reasoning_effort"], json!("high"));
-    }
-
-    #[test]
-    fn configured_reasoning_effort_supports_none_reasoning_effort() {
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::Medium
-        ))));
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::None
-        ))));
-        assert!(!supports_none_reasoning_effort(&available_model(None)));
     }
 
     #[test]
