@@ -98,7 +98,7 @@ use crate::{
     ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
     ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
     ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
-    ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleReasoningEffortMenu,
+    ToggleProfileSelector, ToggleReasoningEffortMenu, ToggleSteerFirstQueuedMessage,
     ToggleThinkingMode, UndoLastReject,
 };
 

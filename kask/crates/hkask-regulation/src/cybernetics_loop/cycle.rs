@@ -189,7 +189,9 @@ impl super::CyberneticsLoop {
         // When both target Inference, use the more specific message instead
         // of the generic one to avoid double-alerting for the same conflict.
         if has(Throttle) && has(CircuitBreak) {
-            if has_target(Throttle, LoopId::Inference) && has_target(CircuitBreak, LoopId::Inference) {
+            if has_target(Throttle, LoopId::Inference)
+                && has_target(CircuitBreak, LoopId::Inference)
+            {
                 tracing::warn!(
                     target: "reg.outcome.coherence",
                     "Throttle + CircuitBreak both targeting Inference loop — consider consolidating"
@@ -1254,14 +1256,12 @@ impl super::CyberneticsLoop {
             | RegulationReason::TripleCountObserved
             | RegulationReason::LowConfidenceCountObserved
             | RegulationReason::ConsolidationCandidatesObserved
-            | RegulationReason::PendingEscalationsObserved => {
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::reason(proposed.reason.as_str()),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
+            | RegulationReason::PendingEscalationsObserved => Some(RegulatoryAction::with_metric(
+                proposed.target,
+                proposed.action_type,
+                RegulatoryActionParams::reason(proposed.reason.as_str()),
+                dev.signal.metric.as_str().into(),
+            )),
             // -- Meta-regulatory Escalate and domain-specific regulation.
             //    All have substitution ladders — try_substitute walks the
             //    ladder when the proposed action is stagnating. Actions
@@ -1298,8 +1298,8 @@ impl super::CyberneticsLoop {
 mod tests {
     use crate::CyberneticsLoop;
     use crate::loops::{
-        ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
-        RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
+        ActionType, Deviation, DeviationDirection, LoopId, RegulationData, RegulatoryAction,
+        RegulatoryActionParams, Signal, SignalMetric,
     };
     use crate::regulation_policy::RegulationPolicy;
     use crate::runtime::RegulationLedger;
@@ -1553,9 +1553,7 @@ mod tests {
                     direction
                 );
                 for p in proposed {
-                    let action = regulation_loop
-                        .build_regulation_action(&deviation, p)
-                        .await;
+                    let action = regulation_loop.build_regulation_action(&deviation, p).await;
                     assert!(
                         action.is_some(),
                         "{metric:?} {:?} build_regulation_action returned None for reason {:?}",
@@ -1579,12 +1577,7 @@ mod tests {
         runtime.block_on(async {
             let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
             // StorageUsage AboveSetPoint triggers a Notify rule.
-            let signal = Signal::new(
-                LoopId::Cybernetics,
-                SignalMetric::StorageUsage,
-                1.0,
-                0.0,
-            );
+            let signal = Signal::new(LoopId::Cybernetics, SignalMetric::StorageUsage, 1.0, 0.0);
             let deviation = Deviation::from_signal(&signal)
                 .expect("StorageUsage 1.0 vs set_point 0.0 should deviate");
             let actions = regulation_loop.compute(&[deviation]).await;
@@ -1604,13 +1597,8 @@ mod tests {
     /// "low_confidence_count").
     #[test]
     fn from_cycle_fidelity_no_string_fallback() {
-        use crate::loops::core::{TriggerOrigin, LoopMetrics};
-        let signal = Signal::new(
-            LoopId::Cybernetics,
-            SignalMetric::EnergyRemaining,
-            0.1,
-            0.2,
-        );
+        use crate::loops::core::{LoopMetrics, TriggerOrigin};
+        let signal = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
         let deviation = Deviation::from_signal(&signal).unwrap();
         // An action with no metric_name but a reason that contains "low" —
         // under the old fallback this would have matched EnergyRemaining
@@ -1620,13 +1608,8 @@ mod tests {
             ActionType::Escalate,
             RegulatoryActionParams::reason("some_unrelated_low_thing"),
         );
-        let metrics = LoopMetrics::from_cycle(
-            0,
-            &[deviation],
-            &[action],
-            &[],
-            TriggerOrigin::Scheduled,
-        );
+        let metrics =
+            LoopMetrics::from_cycle(0, &[deviation], &[action], &[], TriggerOrigin::Scheduled);
         assert_eq!(
             metrics.fidelity_score, 0.0,
             "action without metric_name must not match via string fallback"

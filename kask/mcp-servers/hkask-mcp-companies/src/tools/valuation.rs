@@ -3,8 +3,8 @@ use super::portfolio::run_portfolio;
 use crate::{
     CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
-    portfolio::PersistedForecast, projected_terminal_multiple, providers, scenarios, superforecast, types,
-    validate_symbol,
+    portfolio::PersistedForecast, projected_terminal_multiple, providers, scenarios, superforecast,
+    types, validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
@@ -307,12 +307,8 @@ impl CompaniesServer {
             serde_json::json!(["exchange", "=", "US"]),
         ];
 
-        let rows = providers::fetch_eodhd_screener(
-            &self.client,
-            &self.eodhd_api_key,
-            &filters,
-        )
-        .await?;
+        let rows =
+            providers::fetch_eodhd_screener(&self.client, &self.eodhd_api_key, &filters).await?;
 
         // Rank by market-cap proximity to target (closest first)
         let mut candidates: Vec<(String, f64)> = rows

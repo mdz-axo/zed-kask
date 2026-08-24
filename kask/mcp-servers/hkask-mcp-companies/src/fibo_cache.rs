@@ -40,9 +40,7 @@ const TTL_DEFAULT: u64 = 60 * 60; // 1h
 
 fn ttl_for_endpoint(endpoint: &str) -> u64 {
     match endpoint {
-        "income_statement" | "balance_sheet" | "cash_flow_statement" => {
-            TTL_FINANCIAL_STATEMENT
-        }
+        "income_statement" | "balance_sheet" | "cash_flow_statement" => TTL_FINANCIAL_STATEMENT,
         "key_metrics" => TTL_KEY_METRICS,
         "company_profile" => TTL_COMPANY_PROFILE,
         "historical_price" => TTL_HISTORICAL_PRICE,
@@ -115,8 +113,8 @@ impl FiboDataCache {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("failed to create fibo-cache directory: {e}"))?;
         }
-        let conn = Connection::open(db_path)
-            .map_err(|e| format!("failed to open fibo-cache DB: {e}"))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| format!("failed to open fibo-cache DB: {e}"))?;
         conn.execute_batch(SCHEMA_DDL)
             .map_err(|e| format!("failed to initialize fibo-cache schema: {e}"))?;
         Ok(Self {
@@ -135,10 +133,12 @@ impl FiboDataCache {
                 "SELECT raw_response, fetched_at FROM fibo_raw_cache \
                  WHERE symbol = ?1 AND endpoint = ?2 AND params_hash = ?3",
                 params![symbol, endpoint, params_hash],
-                |row| Ok(RawCacheEntry {
-                    raw_response: row.get(0)?,
-                    fetched_at: row.get(1)?,
-                }),
+                |row| {
+                    Ok(RawCacheEntry {
+                        raw_response: row.get(0)?,
+                        fetched_at: row.get(1)?,
+                    })
+                },
             )
             .ok()?;
 
@@ -248,11 +248,7 @@ impl FiboDataCache {
     /// Query the concept store for a specific FIBO concept and symbol.
     /// Returns the most recent value, or `None` if not found.
     #[allow(dead_code)]
-    pub fn get_concept(
-        &self,
-        symbol: &str,
-        fibo_concept: FiboConcept,
-    ) -> Option<(f64, String)> {
+    pub fn get_concept(&self, symbol: &str, fibo_concept: FiboConcept) -> Option<(f64, String)> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
             "SELECT value, period FROM fibo_concept_store \
@@ -389,15 +385,16 @@ fn extract_period(obj: &Value) -> Option<String> {
 /// Check if a cached entry's timestamp is within the TTL. Compares against
 /// the current UTC time.
 fn is_fresh(fetched_at: &str, ttl_seconds: u64) -> bool {
-    let parsed = chrono::DateTime::parse_from_rfc3339(fetched_at)
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(fetched_at, "%Y-%m-%d %H:%M:%S").map(|dt| {
+    let parsed = chrono::DateTime::parse_from_rfc3339(fetched_at).or_else(|_| {
+        chrono::NaiveDateTime::parse_from_str(fetched_at, "%Y-%m-%d %H:%M:%S").map(|dt| {
             chrono::DateTime::parse_from_rfc3339(&dt.format("%Y-%m-%dT%H:%M:%S+00:00").to_string())
                 .unwrap_or_else(|_| {
                     chrono::DateTime::from_timestamp(0, 0)
                         .expect("epoch is valid")
                         .fixed_offset()
                 })
-        }));
+        })
+    });
     let parsed = match parsed {
         Ok(dt) => dt,
         Err(_) => return false,
@@ -454,10 +451,7 @@ mod tests {
     use serde_json::json;
 
     fn temp_cache() -> FiboDataCache {
-        let dir = std::env::temp_dir().join(format!(
-            "fibo-cache-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("fibo-cache-test-{}", uuid::Uuid::new_v4()));
         FiboDataCache::open(&dir.join("test.db")).expect("open temp cache")
     }
 
@@ -467,9 +461,7 @@ mod tests {
         let response = json!([{"symbol": "AAPL", "revenue": 100000}]);
 
         // Miss before store
-        assert!(cache
-            .get_raw("AAPL", "income_statement", "none")
-            .is_none());
+        assert!(cache.get_raw("AAPL", "income_statement", "none").is_none());
 
         // Store and hit
         cache.store_raw("AAPL", "income_statement", "none", &response, "FMP");
@@ -524,10 +516,7 @@ mod tests {
 
         let series = cache.get_concept_series("MSFT", fibo::REVENUE_GROWTH_RATE);
         assert_eq!(series.len(), 3, "should have 3 periods");
-        assert!(
-            (series[0].0 - 0.12).abs() < 0.001,
-            "newest period first"
-        );
+        assert!((series[0].0 - 0.12).abs() < 0.001, "newest period first");
     }
 
     #[test]

@@ -346,7 +346,9 @@ impl ToolRouter for LazyToolRouter {
         let exact_name_matches: std::collections::HashSet<SharedString> = context
             .candidates
             .iter()
-            .filter(|candidate| message_lower.contains(candidate.name.as_ref().to_lowercase().as_str()))
+            .filter(|candidate| {
+                message_lower.contains(candidate.name.as_ref().to_lowercase().as_str())
+            })
             .map(|candidate| candidate.name.clone())
             .collect();
 

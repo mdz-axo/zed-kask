@@ -127,7 +127,7 @@ pub(crate) fn normalize_scenario_tree_json(json: &str) -> Result<String, serde_j
                     if let Some(event) = node_obj.remove("event") {
                         if let Some(event_obj) = event.as_object() {
                             for (key, value) in event_obj {
-                            // Only insert if not already present at top level
+                                // Only insert if not already present at top level
                                 node_obj.entry(key.clone()).or_insert(value.clone());
                             }
                         }

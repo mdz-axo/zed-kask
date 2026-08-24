@@ -454,7 +454,9 @@ mod tests {
     fn update_metadata_rejects_empty_name() {
         let registry = tmp_registry();
         let swarm = registry.create("Gamma", "m", vec![]).unwrap();
-        let err = registry.update_metadata(&swarm.swarm_id, "   ", "m").unwrap_err();
+        let err = registry
+            .update_metadata(&swarm.swarm_id, "   ", "m")
+            .unwrap_err();
         assert!(matches!(err, LocalSwarmError::InvalidInput(_)));
     }
 

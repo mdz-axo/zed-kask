@@ -22,7 +22,9 @@ static INFERENCE_SOCKET_PATH: Mutex<String> = Mutex::new(String::new());
 /// succeeds. Unlike `OnceLock::set`, this can be called multiple times — the
 /// latest value wins.
 pub fn set_inference_socket_path(path: &str) {
-    let mut guard = INFERENCE_SOCKET_PATH.lock().expect("INFERENCE_SOCKET_PATH mutex poisoned");
+    let mut guard = INFERENCE_SOCKET_PATH
+        .lock()
+        .expect("INFERENCE_SOCKET_PATH mutex poisoned");
     if !guard.is_empty() && *guard != path {
         tracing::info!(
             target: "hkask.inference_socket",
@@ -40,7 +42,9 @@ pub fn set_inference_socket_path(path: &str) {
 /// `main.rs` when building the env map for MCP server child processes.
 #[must_use]
 pub fn get_inference_socket_path() -> Option<String> {
-    let guard = INFERENCE_SOCKET_PATH.lock().expect("INFERENCE_SOCKET_PATH mutex poisoned");
+    let guard = INFERENCE_SOCKET_PATH
+        .lock()
+        .expect("INFERENCE_SOCKET_PATH mutex poisoned");
     if guard.is_empty() {
         None
     } else {

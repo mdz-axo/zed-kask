@@ -110,24 +110,16 @@ impl SwarmPanel {
             // inset comes from the column's px_4 — px here would double it vs
             // Browse.
             .py_4()
-            .child(
-                Headline::new("Compose a Swarm")
-                    .size(HeadlineSize::Small),
-            )
+            .child(Headline::new("Compose a Swarm").size(HeadlineSize::Small))
             // When editing an existing swarm, show the swarm id as
             // context. Using .when(is_editing) so the label is only
             // rendered when editing — the editing_swarm_id string is
             // dynamic (comes from the loaded swarm), so it survives LTO.
             .when(is_editing, |this| {
                 this.child(
-                    Label::new(
-                        self.compose
-                            .editing_swarm_id
-                            .as_deref()
-                            .unwrap_or(""),
-                    )
-                    .size(LabelSize::XSmall)
-                    .color(Color::Accent),
+                    Label::new(self.compose.editing_swarm_id.as_deref().unwrap_or(""))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Accent),
                 )
             })
             // Cloud/Local target toggle — a per-form choice, not a global

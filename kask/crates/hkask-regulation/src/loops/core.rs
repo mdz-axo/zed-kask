@@ -294,9 +294,9 @@ impl LoopMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::actions::RegulatoryActionParams;
     use super::super::signals::Signal;
+    use super::*;
 
     /// Pins F1 + F2 + F3: when no deviations and no impact reports exist
     /// (the healthy steady-state), gain=1.0 (trivially responsive),
@@ -316,9 +316,18 @@ mod tests {
             &[], // no impact reports — unverified
             TriggerOrigin::Scheduled,
         );
-        assert_eq!(metrics.gain, 1.0, "gain=1.0 when healthy (trivially responsive)");
-        assert_eq!(metrics.fidelity_score, 1.0, "fidelity=1.0 when healthy (trivially matched)");
-        assert_eq!(metrics.effectiveness_score, 0.0, "effectiveness=0.0 when unverified (not 1.0)");
+        assert_eq!(
+            metrics.gain, 1.0,
+            "gain=1.0 when healthy (trivially responsive)"
+        );
+        assert_eq!(
+            metrics.fidelity_score, 1.0,
+            "fidelity=1.0 when healthy (trivially matched)"
+        );
+        assert_eq!(
+            metrics.effectiveness_score, 0.0,
+            "effectiveness=0.0 when unverified (not 1.0)"
+        );
     }
 
     /// Pins F1: gain = actions / deviations when deviations exist. Two
@@ -326,7 +335,12 @@ mod tests {
     #[test]
     fn from_cycle_gain_is_actions_over_deviations() {
         let signal_a = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
-        let signal_b = Signal::new(LoopId::Cybernetics, SignalMetric::VarietyDeficit, 200.0, 100.0);
+        let signal_b = Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::VarietyDeficit,
+            200.0,
+            100.0,
+        );
         let deviations = [
             Deviation::from_signal(&signal_a).unwrap(),
             Deviation::from_signal(&signal_b).unwrap(),
@@ -337,16 +351,17 @@ mod tests {
             RegulatoryActionParams::reason("energy_budget_low"),
             "energy_remaining".into(),
         );
-        let metrics = LoopMetrics::from_cycle(
-            0,
-            &deviations,
-            &[action],
-            &[],
-            TriggerOrigin::Scheduled,
-        );
+        let metrics =
+            LoopMetrics::from_cycle(0, &deviations, &[action], &[], TriggerOrigin::Scheduled);
         assert_eq!(metrics.gain, 0.5, "1 action / 2 deviations = 0.5");
-        assert_eq!(metrics.fidelity_score, 0.5, "1 matched / 2 deviations = 0.5");
-        assert_eq!(metrics.effectiveness_score, 0.0, "no impact reports → unverified → 0.0");
+        assert_eq!(
+            metrics.fidelity_score, 0.5,
+            "1 matched / 2 deviations = 0.5"
+        );
+        assert_eq!(
+            metrics.effectiveness_score, 0.0,
+            "no impact reports → unverified → 0.0"
+        );
     }
 
     /// Pins F3: effectiveness = accepted / total when impact reports exist.
@@ -375,8 +390,7 @@ mod tests {
             TriggerOrigin::Scheduled,
         );
         assert_eq!(
-            metrics.effectiveness_score,
-            0.5,
+            metrics.effectiveness_score, 0.5,
             "1 accepted / 2 verified = 0.5"
         );
         // gain and fidelity are 1.0 because no deviations (healthy state).

@@ -5181,7 +5181,10 @@ impl ThreadView {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = thread.reasoning_effort().is_none();
-                        thread.set_reasoning_effort(enable_thinking.then(|| "default".to_string()), cx);
+                        thread.set_reasoning_effort(
+                            enable_thinking.then(|| "default".to_string()),
+                            cx,
+                        );
 
                         let favorite_key = thread.model().map(|model| {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
@@ -12305,7 +12308,13 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        thread.set_reasoning_effort(thread.reasoning_effort().is_none().then(|| "default".to_string()), cx);
+                        thread.set_reasoning_effort(
+                            thread
+                                .reasoning_effort()
+                                .is_none()
+                                .then(|| "default".to_string()),
+                            cx,
+                        );
                     });
                 }
             }))

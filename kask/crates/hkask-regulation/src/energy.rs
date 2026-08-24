@@ -95,8 +95,6 @@ impl CallCap {
             self.remaining = ceiling;
         }
     }
-
-
 }
 
 /// Read-only status snapshot for sensors and status queries.

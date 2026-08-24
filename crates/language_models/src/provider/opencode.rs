@@ -575,7 +575,6 @@ impl LanguageModel for OpenCodeLanguageModel {
             .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
-
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_reasoning_effort_levels()

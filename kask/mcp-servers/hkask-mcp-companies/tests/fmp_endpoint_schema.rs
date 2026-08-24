@@ -14,7 +14,11 @@ fn api_key() -> Option<String> {
     env::var("HKASK_FMP_API_KEY").ok().filter(|s| !s.is_empty())
 }
 
-async fn fetch_endpoint(client: &reqwest::Client, path: &str, params: &[(&str, &str)]) -> Option<Value> {
+async fn fetch_endpoint(
+    client: &reqwest::Client,
+    path: &str,
+    params: &[(&str, &str)],
+) -> Option<Value> {
     let key = api_key()?;
     let url = format!("https://financialmodelingprep.com/stable{path}");
     let mut query: Vec<(&str, &str)> = params.to_vec();
@@ -66,17 +70,22 @@ mod tests {
     async fn profile_has_expected_fields() {
         let _key = skip_if_no_key();
         let client = client();
-        let data = fetch_endpoint(
-            &client,
-            "/profile",
-            &[("symbol", "AAPL")],
-        )
-        .await;
+        let data = fetch_endpoint(&client, "/profile", &[("symbol", "AAPL")]).await;
         let Some(data) = data else {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        let missing = missing_fields(&data, &["symbol", "companyName", "marketCap", "sector", "industry", "price"]);
+        let missing = missing_fields(
+            &data,
+            &[
+                "symbol",
+                "companyName",
+                "marketCap",
+                "sector",
+                "industry",
+                "price",
+            ],
+        );
         assert!(missing.is_empty(), "profile missing fields: {missing:?}");
     }
 
@@ -89,7 +98,10 @@ mod tests {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        assert!(has_field(&data, "marketCap"), "profile should have 'marketCap' field");
+        assert!(
+            has_field(&data, "marketCap"),
+            "profile should have 'marketCap' field"
+        );
     }
 
     #[tokio::test]
@@ -136,7 +148,10 @@ mod tests {
                 "weightedAverageShsOutDil",
             ],
         );
-        assert!(missing.is_empty(), "income-statement missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "income-statement missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -167,7 +182,10 @@ mod tests {
                 "totalCurrentLiabilities",
             ],
         );
-        assert!(missing.is_empty(), "balance-sheet missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "balance-sheet missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -227,7 +245,10 @@ mod tests {
                 "marketCap",
             ],
         );
-        assert!(missing.is_empty(), "key-metrics missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "key-metrics missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -247,7 +268,16 @@ mod tests {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        let moved = ["peRatio", "priceToBookRatio", "priceToSalesRatio", "dividendYield", "grossProfitMargin", "revenueGrowth", "roic", "evToEbitda"];
+        let moved = [
+            "peRatio",
+            "priceToBookRatio",
+            "priceToSalesRatio",
+            "dividendYield",
+            "grossProfitMargin",
+            "revenueGrowth",
+            "roic",
+            "evToEbitda",
+        ];
         for field in &moved {
             assert!(
                 !has_field(&data, field),
@@ -260,12 +290,7 @@ mod tests {
     async fn ratios_has_moved_fields() {
         let _key = skip_if_no_key();
         let client = client();
-        let data = fetch_endpoint(
-            &client,
-            "/ratios",
-            &[("symbol", "AAPL"), ("limit", "1")],
-        )
-        .await;
+        let data = fetch_endpoint(&client, "/ratios", &[("symbol", "AAPL"), ("limit", "1")]).await;
         let Some(data) = data else {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
@@ -299,7 +324,10 @@ mod tests {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        assert!(has_field(&data, "revenueGrowth"), "financial-growth should have 'revenueGrowth'");
+        assert!(
+            has_field(&data, "revenueGrowth"),
+            "financial-growth should have 'revenueGrowth'"
+        );
     }
 
     #[tokio::test]
@@ -309,7 +337,11 @@ mod tests {
         let data = fetch_endpoint(
             &client,
             "/historical-price-eod/full",
-            &[("symbol", "AAPL"), ("from", "2025-01-01"), ("to", "2025-06-01")],
+            &[
+                ("symbol", "AAPL"),
+                ("from", "2025-01-01"),
+                ("to", "2025-06-01"),
+            ],
         )
         .await;
         let Some(data) = data else {
@@ -317,9 +349,15 @@ mod tests {
             return;
         };
         // FMP stable returns a flat array, not the old {symbol, historical: [...]} envelope.
-        assert!(data.is_array(), "historical-price-eod/full should return an array");
+        assert!(
+            data.is_array(),
+            "historical-price-eod/full should return an array"
+        );
         let missing = missing_fields(&data, &["symbol", "date", "close", "volume"]);
-        assert!(missing.is_empty(), "historical-price-eod/full missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "historical-price-eod/full missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -338,7 +376,10 @@ mod tests {
         };
         assert!(data.is_array(), "company-screener should return an array");
         let missing = missing_fields(&data, &["symbol", "companyName", "marketCap", "sector"]);
-        assert!(missing.is_empty(), "company-screener missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "company-screener missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -348,28 +389,60 @@ mod tests {
         let _key = skip_if_no_key();
         let client = client();
 
-        let km = fetch_endpoint(&client, "/key-metrics", &[("symbol", "AAPL"), ("limit", "2")]).await;
-        let ratios = fetch_endpoint(&client, "/ratios", &[("symbol", "AAPL"), ("limit", "2")]).await;
-        let growth = fetch_endpoint(&client, "/financial-growth", &[("symbol", "AAPL"), ("limit", "2")]).await;
+        let km = fetch_endpoint(
+            &client,
+            "/key-metrics",
+            &[("symbol", "AAPL"), ("limit", "2")],
+        )
+        .await;
+        let ratios =
+            fetch_endpoint(&client, "/ratios", &[("symbol", "AAPL"), ("limit", "2")]).await;
+        let growth = fetch_endpoint(
+            &client,
+            "/financial-growth",
+            &[("symbol", "AAPL"), ("limit", "2")],
+        )
+        .await;
 
         let (Some(km), Some(ratios), Some(growth)) = (km, ratios, growth) else {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
 
-        let km_dates: Vec<String> = km.as_array()
-            .map(|arr| arr.iter().filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from)).collect())
+        let km_dates: Vec<String> = km
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let ratio_dates: Vec<String> = ratios.as_array()
-            .map(|arr| arr.iter().filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from)).collect())
+        let ratio_dates: Vec<String> = ratios
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let growth_dates: Vec<String> = growth.as_array()
-            .map(|arr| arr.iter().filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from)).collect())
+        let growth_dates: Vec<String> = growth
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         assert!(!km_dates.is_empty(), "key-metrics should return dates");
-        assert_eq!(km_dates, ratio_dates, "key-metrics and ratios dates should align");
-        assert_eq!(km_dates, growth_dates, "key-metrics and financial-growth dates should align");
+        assert_eq!(
+            km_dates, ratio_dates,
+            "key-metrics and ratios dates should align"
+        );
+        assert_eq!(
+            km_dates, growth_dates,
+            "key-metrics and financial-growth dates should align"
+        );
     }
 
     #[tokio::test]
@@ -388,7 +461,10 @@ mod tests {
         };
         assert!(data.is_array(), "search-name should return an array");
         let missing = missing_fields(&data, &["symbol", "name", "exchange"]);
-        assert!(missing.is_empty(), "search-name missing fields: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "search-name missing fields: {missing:?}"
+        );
     }
 
     #[tokio::test]
@@ -407,7 +483,10 @@ mod tests {
         };
         // Transcript may or may not exist for this quarter — just verify the
         // endpoint is reachable and returns an array.
-        assert!(data.is_array(), "earning-call-transcript should return an array");
+        assert!(
+            data.is_array(),
+            "earning-call-transcript should return an array"
+        );
     }
 
     #[tokio::test]
@@ -426,8 +505,14 @@ mod tests {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        assert!(has_field(&data, "weightedAverageShsOutDil"), "income-statement should have 'weightedAverageShsOutDil'");
-        assert!(has_field(&data, "weightedAverageShsOut"), "income-statement should have 'weightedAverageShsOut'");
+        assert!(
+            has_field(&data, "weightedAverageShsOutDil"),
+            "income-statement should have 'weightedAverageShsOutDil'"
+        );
+        assert!(
+            has_field(&data, "weightedAverageShsOut"),
+            "income-statement should have 'weightedAverageShsOut'"
+        );
     }
 
     #[tokio::test]
@@ -439,18 +524,33 @@ mod tests {
         let client = client();
 
         for (path, params) in [
-            ("/income-statement", &[("symbol", "AAPL"), ("limit", "1")][..]),
-            ("/balance-sheet-statement", &[("symbol", "AAPL"), ("limit", "1")][..]),
-            ("/cash-flow-statement", &[("symbol", "AAPL"), ("limit", "1")][..]),
+            (
+                "/income-statement",
+                &[("symbol", "AAPL"), ("limit", "1")][..],
+            ),
+            (
+                "/balance-sheet-statement",
+                &[("symbol", "AAPL"), ("limit", "1")][..],
+            ),
+            (
+                "/cash-flow-statement",
+                &[("symbol", "AAPL"), ("limit", "1")][..],
+            ),
         ] {
             let data = fetch_endpoint(&client, path, params).await;
             let Some(data) = data else {
                 eprintln!("SKIP: no API key or endpoint unreachable");
                 return;
             };
-            assert!(has_field(&data, "fiscalYear"), "{path} should have 'fiscalYear'");
+            assert!(
+                has_field(&data, "fiscalYear"),
+                "{path} should have 'fiscalYear'"
+            );
             assert!(has_field(&data, "date"), "{path} should have 'date'");
-            assert!(!has_field(&data, "calendarYear"), "{path} should NOT have 'calendarYear' (removed in stable API)");
+            assert!(
+                !has_field(&data, "calendarYear"),
+                "{path} should NOT have 'calendarYear' (removed in stable API)"
+            );
         }
     }
 
@@ -470,8 +570,14 @@ mod tests {
             eprintln!("SKIP: no API key or endpoint unreachable");
             return;
         };
-        assert!(has_field(&data, "returnOnInvestedCapital"), "key-metrics should have 'returnOnInvestedCapital'");
-        assert!(has_field(&data, "investedCapital"), "key-metrics should have 'investedCapital'");
+        assert!(
+            has_field(&data, "returnOnInvestedCapital"),
+            "key-metrics should have 'returnOnInvestedCapital'"
+        );
+        assert!(
+            has_field(&data, "investedCapital"),
+            "key-metrics should have 'investedCapital'"
+        );
     }
 
     // ── EODHD normalizer tests ──
@@ -481,7 +587,9 @@ mod tests {
     // names. Requires HKASK_EODHD_API_KEY env var.
 
     fn eodhd_key() -> Option<String> {
-        env::var("HKASK_EODHD_API_KEY").ok().filter(|s| !s.is_empty())
+        env::var("HKASK_EODHD_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
     }
 
     async fn fetch_eodhd(client: &reqwest::Client, path: &str) -> Option<Value> {
@@ -515,14 +623,29 @@ mod tests {
             eprintln!("SKIP: no General section in EODHD response");
             return;
         };
-        assert!(general.contains_key("Code"), "EODHD General should have 'Code'");
-        assert!(general.contains_key("Name"), "EODHD General should have 'Name'");
-        assert!(general.contains_key("GicSector"), "EODHD General should have 'GicSector'");
+        assert!(
+            general.contains_key("Code"),
+            "EODHD General should have 'Code'"
+        );
+        assert!(
+            general.contains_key("Name"),
+            "EODHD General should have 'Name'"
+        );
+        assert!(
+            general.contains_key("GicSector"),
+            "EODHD General should have 'GicSector'"
+        );
         // MarketCapitalization is in Highlights, not General
         let highlights = data.get("Highlights").and_then(|h| h.as_object());
         if let Some(highlights) = highlights {
-            assert!(highlights.contains_key("MarketCapitalization"), "EODHD Highlights should have 'MarketCapitalization'");
-            assert!(highlights.contains_key("DividendYield"), "EODHD Highlights should have 'DividendYield'");
+            assert!(
+                highlights.contains_key("MarketCapitalization"),
+                "EODHD Highlights should have 'MarketCapitalization'"
+            );
+            assert!(
+                highlights.contains_key("DividendYield"),
+                "EODHD Highlights should have 'DividendYield'"
+            );
         }
     }
 
@@ -547,9 +670,18 @@ mod tests {
         };
         let first_entry = yearly.iter().next().map(|(_, v)| v);
         if let Some(entry) = first_entry.and_then(|e| e.as_object()) {
-            assert!(entry.contains_key("totalRevenue"), "EODHD income statement should have 'totalRevenue'");
-            assert!(!entry.contains_key("revenue"), "EODHD income statement should NOT have 'revenue' (needs mapping)");
-            assert!(entry.contains_key("grossProfit"), "EODHD income statement should have 'grossProfit'");
+            assert!(
+                entry.contains_key("totalRevenue"),
+                "EODHD income statement should have 'totalRevenue'"
+            );
+            assert!(
+                !entry.contains_key("revenue"),
+                "EODHD income statement should NOT have 'revenue' (needs mapping)"
+            );
+            assert!(
+                entry.contains_key("grossProfit"),
+                "EODHD income statement should have 'grossProfit'"
+            );
         }
     }
 
@@ -575,10 +707,22 @@ mod tests {
         };
         let first_entry = yearly.iter().next().map(|(_, v)| v);
         if let Some(entry) = first_entry.and_then(|e| e.as_object()) {
-            assert!(entry.contains_key("capitalExpenditures"), "EODHD cash flow should have 'capitalExpenditures'");
-            assert!(!entry.contains_key("capitalExpenditure"), "EODHD cash flow should NOT have 'capitalExpenditure' (needs mapping)");
-            assert!(entry.contains_key("totalCashFromOperatingActivities"), "EODHD cash flow should have 'totalCashFromOperatingActivities'");
-            assert!(entry.contains_key("freeCashFlow"), "EODHD cash flow should have 'freeCashFlow'");
+            assert!(
+                entry.contains_key("capitalExpenditures"),
+                "EODHD cash flow should have 'capitalExpenditures'"
+            );
+            assert!(
+                !entry.contains_key("capitalExpenditure"),
+                "EODHD cash flow should NOT have 'capitalExpenditure' (needs mapping)"
+            );
+            assert!(
+                entry.contains_key("totalCashFromOperatingActivities"),
+                "EODHD cash flow should have 'totalCashFromOperatingActivities'"
+            );
+            assert!(
+                entry.contains_key("freeCashFlow"),
+                "EODHD cash flow should have 'freeCashFlow'"
+            );
         }
     }
 
@@ -604,10 +748,22 @@ mod tests {
         };
         let first_entry = yearly.iter().next().map(|(_, v)| v);
         if let Some(entry) = first_entry.and_then(|e| e.as_object()) {
-            assert!(entry.contains_key("totalLiab"), "EODHD balance sheet should have 'totalLiab'");
-            assert!(!entry.contains_key("totalLiabilities"), "EODHD balance sheet should NOT have 'totalLiabilities' (needs mapping)");
-            assert!(entry.contains_key("totalStockholderEquity"), "EODHD balance sheet should have 'totalStockholderEquity'");
-            assert!(entry.contains_key("commonStockSharesOutstanding"), "EODHD balance sheet should have 'commonStockSharesOutstanding'");
+            assert!(
+                entry.contains_key("totalLiab"),
+                "EODHD balance sheet should have 'totalLiab'"
+            );
+            assert!(
+                !entry.contains_key("totalLiabilities"),
+                "EODHD balance sheet should NOT have 'totalLiabilities' (needs mapping)"
+            );
+            assert!(
+                entry.contains_key("totalStockholderEquity"),
+                "EODHD balance sheet should have 'totalStockholderEquity'"
+            );
+            assert!(
+                entry.contains_key("commonStockSharesOutstanding"),
+                "EODHD balance sheet should have 'commonStockSharesOutstanding'"
+            );
         }
     }
 
@@ -623,8 +779,14 @@ mod tests {
         };
         if let Some(arr) = data.as_array() {
             if let Some(first) = arr.first().and_then(|e| e.as_object()) {
-                assert!(first.contains_key("adjusted_close"), "EODHD EOD should have 'adjusted_close'");
-                assert!(!first.contains_key("adjClose"), "EODHD EOD should NOT have 'adjClose' (needs mapping)");
+                assert!(
+                    first.contains_key("adjusted_close"),
+                    "EODHD EOD should have 'adjusted_close'"
+                );
+                assert!(
+                    !first.contains_key("adjClose"),
+                    "EODHD EOD should NOT have 'adjClose' (needs mapping)"
+                );
                 assert!(first.contains_key("close"), "EODHD EOD should have 'close'");
             }
         }
@@ -656,10 +818,18 @@ mod tests {
 
         // Find the primary listing
         let primary = arr.iter().find(|e| {
-            e.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false)
-                && e.get("Type").and_then(|v| v.as_str()).map(|t| t == "Common Stock").unwrap_or(false)
+            e.get("isPrimary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                && e.get("Type")
+                    .and_then(|v| v.as_str())
+                    .map(|t| t == "Common Stock")
+                    .unwrap_or(false)
         });
-        assert!(primary.is_some(), "should find a primary common stock listing for Vodafone");
+        assert!(
+            primary.is_some(),
+            "should find a primary common stock listing for Vodafone"
+        );
         let primary = primary.unwrap();
         assert_eq!(
             primary.get("Code").and_then(|v| v.as_str()),
@@ -694,8 +864,13 @@ mod tests {
         assert!(!arr.is_empty());
 
         let primary = arr.iter().find(|e| {
-            e.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false)
-                && e.get("Type").and_then(|v| v.as_str()).map(|t| t == "Common Stock").unwrap_or(false)
+            e.get("isPrimary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                && e.get("Type")
+                    .and_then(|v| v.as_str())
+                    .map(|t| t == "Common Stock")
+                    .unwrap_or(false)
         });
         assert!(primary.is_some(), "should find primary listing for AAPL");
         let primary = primary.unwrap();

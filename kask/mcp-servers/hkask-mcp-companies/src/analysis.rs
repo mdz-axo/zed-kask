@@ -191,10 +191,11 @@ pub(crate) fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
         .iter()
         .filter_map(|entry| {
             let year = extract_year(entry)?;
-            let roic = entry
-                .get("roic")
-                .and_then(|v| v.as_f64())
-                .or_else(|| entry.get("returnOnInvestedCapital").and_then(|v| v.as_f64()))?;
+            let roic = entry.get("roic").and_then(|v| v.as_f64()).or_else(|| {
+                entry
+                    .get("returnOnInvestedCapital")
+                    .and_then(|v| v.as_f64())
+            })?;
             Some((year, roic))
         })
         .collect();

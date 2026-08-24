@@ -2394,10 +2394,7 @@ mod tests {
             serialized["include"],
             json!(["reasoning.encrypted_content"])
         );
-        assert_eq!(
-            serialized["reasoning"],
-            json!({"effort": "none"})
-        );
+        assert_eq!(serialized["reasoning"], json!({"effort": "none"}));
     }
 
     #[test]
@@ -2518,7 +2515,7 @@ mod tests {
                 true,
                 None,
                 None,
-                                &OPEN_AI_PROVIDER_ID,
+                &OPEN_AI_PROVIDER_ID,
             )
             .unwrap();
 
@@ -2656,7 +2653,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-                        &OPEN_AI_PROVIDER_ID,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2697,7 +2694,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-                        &OPEN_AI_PROVIDER_ID,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -4885,7 +4882,7 @@ mod tests {
             true,
             None,
             None,
-                        &LanguageModelProviderId::new("my-compatible-endpoint"),
+            &LanguageModelProviderId::new("my-compatible-endpoint"),
         )
         .unwrap();
 

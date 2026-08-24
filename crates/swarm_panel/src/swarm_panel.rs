@@ -4472,7 +4472,11 @@ mod tests {
             name: "Team Alpha".into(),
         };
         match &action {
-            DestructiveAction::DeleteSwarm { swarm_id, source, name } => {
+            DestructiveAction::DeleteSwarm {
+                swarm_id,
+                source,
+                name,
+            } => {
                 assert_eq!(swarm_id, "team_alpha");
                 assert_eq!(*source, AgentSource::Local);
                 assert_eq!(name, "Team Alpha");
@@ -4489,7 +4493,11 @@ mod tests {
             source: AgentSource::Cloud,
         };
         match &action {
-            DestructiveAction::RemoveAgent { swarm_id, agent_id, source } => {
+            DestructiveAction::RemoveAgent {
+                swarm_id,
+                agent_id,
+                source,
+            } => {
                 assert_eq!(swarm_id, "ws_123");
                 assert_eq!(agent_id, "analyst");
                 assert_eq!(*source, AgentSource::Cloud);

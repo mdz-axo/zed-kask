@@ -150,7 +150,12 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     parse_numeric(
         &lower,
         &mut map,
-        &["average volume", "avg volume", "200 day volume", "200-day volume"],
+        &[
+            "average volume",
+            "avg volume",
+            "200 day volume",
+            "200-day volume",
+        ],
         &more_than("avgvol_200d_min"),
         &less_than("avgvol_200d_max"),
         ValueKind::Bare,
@@ -190,7 +195,12 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
     parse_numeric(
         &lower,
         &mut map,
-        &["weekly change", "5 day change", "5-day change", "week change"],
+        &[
+            "weekly change",
+            "5 day change",
+            "5-day change",
+            "week change",
+        ],
         &more_than("refund_5d_p_min"),
         &less_than("refund_5d_p_max"),
         ValueKind::Percent,
@@ -300,9 +310,7 @@ pub(crate) fn parse_screening_prompt(prompt: &str) -> serde_json::Value {
 /// `["field", "<", value]` and string fields to `["field", "=", value]`.
 /// Only includes fields that the EODHD Screener API supports — post-screen
 /// fields are excluded.
-pub(crate) fn build_screener_filters(
-    criteria: &serde_json::Value,
-) -> Vec<serde_json::Value> {
+pub(crate) fn build_screener_filters(criteria: &serde_json::Value) -> Vec<serde_json::Value> {
     let empty = serde_json::Map::new();
     let obj = criteria.as_object().unwrap_or(&empty);
     let mut filters = Vec::new();
@@ -524,10 +532,7 @@ fn parse_string_value_first(
         r"(?i)([a-zA-Z][a-zA-Z\s&.]+?)\s+{}(?:\s*(?:,|and|with|$))",
         kw
     );
-    if let Some(captures) = Regex::new(&pattern)
-        .ok()
-        .and_then(|re| re.captures(prompt))
-    {
+    if let Some(captures) = Regex::new(&pattern).ok().and_then(|re| re.captures(prompt)) {
         let val = captures.get(1).map(|m| m.as_str().trim()).unwrap_or("");
         if !val.is_empty() && !is_operator_word(val) && !is_numeric_word(val) {
             map.insert(
@@ -549,10 +554,7 @@ fn parse_exchange_from_geography(
     }
 
     let pattern = r"(?i)\b(us|usa|nyse|nasdaq|amex|lse|to|tsx|bats|neo)\b\s+(?:stocks?|exchange|listed|traded)";
-    if let Some(captures) = Regex::new(pattern)
-        .ok()
-        .and_then(|re| re.captures(prompt))
-    {
+    if let Some(captures) = Regex::new(pattern).ok().and_then(|re| re.captures(prompt)) {
         let val = captures.get(1).map(|m| m.as_str()).unwrap_or("");
         if !val.is_empty() {
             map.insert(

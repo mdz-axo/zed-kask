@@ -135,9 +135,11 @@ impl SwarmPanel {
                                     .style(ButtonStyle::Filled)
                                     .label_size(LabelSize::XSmall)
                                     .disabled(in_flight)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.save_swarm_metadata(cx);
-                                    })),
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.save_swarm_metadata(cx);
+                                        },
+                                    )),
                                 )
                                 .child(
                                     Button::new(
@@ -149,9 +151,11 @@ impl SwarmPanel {
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_edit_metadata(cx);
-                                    })),
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.cancel_edit_metadata(cx);
+                                        },
+                                    )),
                                 ),
                         ),
                 )
@@ -225,9 +229,11 @@ impl SwarmPanel {
                                      Local swarms only — ABW has no metadata-edit \
                                      endpoint.",
                                 ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.begin_edit_metadata(window, cx);
-                                })),
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.begin_edit_metadata(window, cx);
+                                    },
+                                )),
                             )
                         })
                         // Copy — both backends. Local: one-click via
@@ -235,10 +241,7 @@ impl SwarmPanel {
                         // Compose form for operator review (copy = read + create).
                         .child(
                             Button::new(
-                                SharedString::from(format!(
-                                    "clone-swarm-{}",
-                                    detail.workspace_id
-                                )),
+                                SharedString::from(format!("clone-swarm-{}", detail.workspace_id)),
                                 "Copy",
                             )
                             .style(ButtonStyle::Subtle)
@@ -322,10 +325,7 @@ impl SwarmPanel {
                         // actual delete fires from `confirm_destructive`.
                         .child(
                             Button::new(
-                                SharedString::from(format!(
-                                    "delete-swarm-{}",
-                                    detail.workspace_id
-                                )),
+                                SharedString::from(format!("delete-swarm-{}", detail.workspace_id)),
                                 if is_local { "Delete Swarm" } else { "Delete" },
                             )
                             .style(ButtonStyle::Subtle)
@@ -513,14 +513,16 @@ impl SwarmPanel {
                                  No credit cost; the agent itself is not deleted. \
                                  Confirmation required."
                             }))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.request_remove_agent(
-                                    row_workspace.clone(),
-                                    row_agent_id.clone(),
-                                    row_source.clone(),
-                                    cx,
-                                );
-                            })),
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.request_remove_agent(
+                                        row_workspace.clone(),
+                                        row_agent_id.clone(),
+                                        row_source.clone(),
+                                        cx,
+                                    );
+                                },
+                            )),
                         )
                 })))
             })
@@ -603,17 +605,12 @@ impl SwarmPanel {
                     this.child(
                         v_flex()
                             .gap_0p5()
-                            .children(
-                                messages
-                                    .iter()
-                                    .take(3)
-                                    .map(|msg| {
-                                        Label::new(msg.clone())
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                            .truncate()
-                                    }),
-                            ),
+                            .children(messages.iter().take(3).map(|msg| {
+                                Label::new(msg.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .truncate()
+                            })),
                     )
                 },
             )

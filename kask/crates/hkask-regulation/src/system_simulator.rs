@@ -76,7 +76,7 @@ impl MovingAverageExtrapolator {
                     trend: 0.0,
                     reliable: false,
                     ticks_to_threshold: None,
-                }
+                };
             }
         };
         let last_n = if values.len() > self.window {

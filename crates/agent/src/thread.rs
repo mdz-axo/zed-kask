@@ -1572,7 +1572,8 @@ impl Thread {
         let (profile_id, profile_downgraded_for_restricted_workspace) =
             Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
         let reasoning_effort = settings.default_model.as_ref().and_then(|m| {
-            m.enable_thinking.then(|| m.effort.clone().unwrap_or_else(|| "default".to_string()))
+            m.enable_thinking
+                .then(|| m.effort.clone().unwrap_or_else(|| "default".to_string()))
         });
         let speed = settings
             .default_model
@@ -1674,8 +1675,13 @@ impl Thread {
             return;
         };
 
-        self.reasoning_effort = (selection.enable_thinking && model.supports_thinking())
-            .then(|| selection.effort.clone().unwrap_or_else(|| "default".to_string()));
+        self.reasoning_effort =
+            (selection.enable_thinking && model.supports_thinking()).then(|| {
+                selection
+                    .effort
+                    .clone()
+                    .unwrap_or_else(|| "default".to_string())
+            });
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(model.as_ref())))

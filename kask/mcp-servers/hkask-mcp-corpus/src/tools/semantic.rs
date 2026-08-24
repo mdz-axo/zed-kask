@@ -524,7 +524,8 @@ impl CorpusServer {
         let store = crate::helpers::open_memory_store(db_path, passphrase)?;
 
         let batch = batch_size.max(1);
-        let batches: Vec<Vec<(String, String)>> = chunks.chunks(batch).map(|c| c.to_vec()).collect();
+        let batches: Vec<Vec<(String, String)>> =
+            chunks.chunks(batch).map(|c| c.to_vec()).collect();
         let num_batches = batches.len();
 
         // Concurrent embedding: spawn one task per batch, gated by a semaphore.
@@ -564,8 +565,7 @@ impl CorpusServer {
             join_set.spawn(async move {
                 let _permit = sem.acquire().await;
 
-                let batch_texts: Vec<String> =
-                    chunk_batch.iter().map(|c| c.1.clone()).collect();
+                let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
                 let vectors = match retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
@@ -633,9 +633,7 @@ impl CorpusServer {
         let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
 
         // Populate the in-memory vector index.
-        let mut passages = indexed_passages
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut passages = indexed_passages.lock().unwrap_or_else(|e| e.into_inner());
         let passages = std::mem::take(&mut *passages);
         if !passages.is_empty() {
             let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());

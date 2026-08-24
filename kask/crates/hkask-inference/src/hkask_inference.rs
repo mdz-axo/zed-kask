@@ -175,13 +175,12 @@ impl hkask_types::InferencePort for LazyInferencePort {
                     .await;
             }
             // Fall back to direct HTTP.
-            let port = DirectEmbeddingPort::try_new(&self.embedding_model)
-                .ok_or_else(|| {
-                    hkask_types::InferenceError::Connection(format!(
-                        "No inference available: {IPC_BRIDGE_UNAVAILABLE} \
+            let port = DirectEmbeddingPort::try_new(&self.embedding_model).ok_or_else(|| {
+                hkask_types::InferenceError::Connection(format!(
+                    "No inference available: {IPC_BRIDGE_UNAVAILABLE} \
                          and direct fallback failed (no API key or provider)"
-                    ))
-                })?;
+                ))
+            })?;
             port.generate_with_model(
                 &prompt,
                 &params,
@@ -202,12 +201,11 @@ impl hkask_types::InferencePort for LazyInferencePort {
                 return client.embed(&model, &texts).await;
             }
             // Fall back to direct HTTP.
-            let port = DirectEmbeddingPort::try_new(&embedding_model)
-                .ok_or_else(|| {
-                    hkask_types::EmbeddingGenerationError::Connection(format!(
-                        "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
-                    ))
-                })?;
+            let port = DirectEmbeddingPort::try_new(&embedding_model).ok_or_else(|| {
+                hkask_types::EmbeddingGenerationError::Connection(format!(
+                    "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+                ))
+            })?;
             port.embed(&model, &texts).await
         })
     }
@@ -506,17 +504,27 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
             })?;
 
             let choice = parsed.choices.into_iter().next().ok_or_else(|| {
-                hkask_types::InferenceError::Connection(
-                    "chat response has no choices".to_string(),
-                )
+                hkask_types::InferenceError::Connection("chat response has no choices".to_string())
             })?;
 
             let text = choice.message.content.unwrap_or_default();
             let model = parsed.model.unwrap_or_default();
             let usage = hkask_types::InferenceUsage {
-                prompt_tokens: parsed.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0),
-                completion_tokens: parsed.usage.as_ref().and_then(|u| u.completion_tokens).unwrap_or(0),
-                total_tokens: parsed.usage.as_ref().and_then(|u| u.total_tokens).unwrap_or(0),
+                prompt_tokens: parsed
+                    .usage
+                    .as_ref()
+                    .and_then(|u| u.prompt_tokens)
+                    .unwrap_or(0),
+                completion_tokens: parsed
+                    .usage
+                    .as_ref()
+                    .and_then(|u| u.completion_tokens)
+                    .unwrap_or(0),
+                total_tokens: parsed
+                    .usage
+                    .as_ref()
+                    .and_then(|u| u.total_tokens)
+                    .unwrap_or(0),
             };
 
             Ok(hkask_types::InferenceResult {
@@ -533,7 +541,11 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
 
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         // Strip any provider prefix — the API expects the bare model id.
-        let model_id = model.split_once('/').map(|(_, rest)| rest).unwrap_or(model).to_string();
+        let model_id = model
+            .split_once('/')
+            .map(|(_, rest)| rest)
+            .unwrap_or(model)
+            .to_string();
         let api_url = self.api_url.clone();
         let api_key = self.api_key.clone();
         let client = self.client.clone();
@@ -558,14 +570,11 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 request = request.header("Authorization", format!("Bearer {api_key}"));
             }
 
-            let response = request
-                .send()
-                .await
-                .map_err(|e| {
-                    hkask_types::EmbeddingGenerationError::Connection(format!(
-                        "direct embedding request failed: {e}"
-                    ))
-                })?;
+            let response = request.send().await.map_err(|e| {
+                hkask_types::EmbeddingGenerationError::Connection(format!(
+                    "direct embedding request failed: {e}"
+                ))
+            })?;
 
             let status = response.status();
             if !status.is_success() {
@@ -591,8 +600,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 ))
             })?;
 
-            let embeddings: Vec<Vec<f32>> =
-                parsed.data.into_iter().map(|d| d.embedding).collect();
+            let embeddings: Vec<Vec<f32>> = parsed.data.into_iter().map(|d| d.embedding).collect();
 
             if embeddings.is_empty() {
                 return Err(hkask_types::EmbeddingGenerationError::EmptyResponse);

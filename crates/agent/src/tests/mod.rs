@@ -6403,7 +6403,10 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             Some(subagent_model.id())
         );
         assert!(subagent_thread.reasoning_effort().is_some());
-        assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
+        assert_eq!(
+            subagent_thread.reasoning_effort(),
+            Some(&"high".to_string())
+        );
     });
 
     parent_thread.update(cx, |parent_thread, _cx| {
@@ -6421,7 +6424,10 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             Some(subagent_model.id())
         );
         assert!(subagent_thread.reasoning_effort().is_some());
-        assert_eq!(subagent_thread.reasoning_effort(), Some(&"high".to_string()));
+        assert_eq!(
+            subagent_thread.reasoning_effort(),
+            Some(&"high".to_string())
+        );
     });
 }
 

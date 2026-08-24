@@ -1661,7 +1661,6 @@ pub struct KaskDataServiceSettingsContent {
     pub nebius_enabled: Option<bool>,
 }
 
-
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskCuratorSettingsContent {
     pub always_on: Option<bool>,

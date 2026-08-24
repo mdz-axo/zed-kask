@@ -26,7 +26,8 @@ fn unwrap_content(output: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn portfolio_list_returns_empty_array_on_fresh_store() {
-    let dir = std::env::temp_dir().join(format!("hkask-portfolio-smoke-list-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("hkask-portfolio-smoke-list-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let owner = WebID::new();
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
@@ -37,15 +38,21 @@ async fn portfolio_list_returns_empty_array_on_fresh_store() {
     let portfolios = content
         .get("portfolios")
         .and_then(|v| v.as_array())
-        .unwrap_or_else(|| panic!("portfolio_list content must have 'portfolios' array, got: {content}"));
-    assert!(portfolios.is_empty(), "fresh store must list zero portfolios");
+        .unwrap_or_else(|| {
+            panic!("portfolio_list content must have 'portfolios' array, got: {content}")
+        });
+    assert!(
+        portfolios.is_empty(),
+        "fresh store must list zero portfolios"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
 async fn ledger_import_csv_then_read_round_trips() {
-    let dir = std::env::temp_dir().join(format!("hkask-portfolio-smoke-csv-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("hkask-portfolio-smoke-csv-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let owner = WebID::new();
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);

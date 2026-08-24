@@ -742,9 +742,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod smoke {
     use super::*;
     use crate::ocr::ThresholdConfig;
+    use hkask_types::WebID;
     use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
     use hkask_types::template::LLMParameters;
-    use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
@@ -759,12 +759,17 @@ mod smoke {
             _: &str,
             _: &LLMParameters,
             _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
+        ) -> Pin<
+            Box<
+                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
+        > {
             Box::pin(async {
                 Err(InferenceError::Connection(
                     "noop inference port — not configured for smoke tests".into(),
-            ))
+                ))
             })
         }
     }
@@ -774,8 +779,7 @@ mod smoke {
         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
             &inference_port,
         )));
-        let pipeline_executor =
-            Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
+        let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
         CorpusServer::new(
             WebID::new(),
             None,

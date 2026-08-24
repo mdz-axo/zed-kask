@@ -671,7 +671,8 @@ impl NativeAgent {
         cx.spawn(async move |cx| {
             let templates = Templates::new();
             let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
-            Ok(Rc::new(NativeAgentConnection(agent, ZED_AGENT_ID.clone())) as Rc<dyn acp_thread::AgentConnection>)
+            Ok(Rc::new(NativeAgentConnection(agent, ZED_AGENT_ID.clone()))
+                as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 
@@ -2085,7 +2086,9 @@ impl NativeAgent {
                 }
             })?;
 
-            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
+            let connection = this
+                .upgrade()
+                .map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2121,7 +2124,9 @@ impl NativeAgent {
                 acp_thread.update_token_usage(None, cx);
             });
 
-            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
+            let connection = this
+                .upgrade()
+                .map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2215,7 +2220,9 @@ impl NativeAgent {
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
-            let connection = this.upgrade().map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
+            let connection = this
+                .upgrade()
+                .map(|agent| NativeAgentConnection(agent, ZED_AGENT_ID.clone()));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -6497,7 +6504,10 @@ mod internal_tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert!(!thread.reasoning_effort().is_some(), "thinking defaults to false");
+                assert!(
+                    !thread.reasoning_effort().is_some(),
+                    "thinking defaults to false"
+                );
             });
         });
 

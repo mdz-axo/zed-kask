@@ -468,7 +468,10 @@ mod smoke_tests {
         let events_path = scratch.join("events.db").to_string_lossy().to_string();
         let memory_path = scratch.join("memory.db").to_string_lossy().to_string();
 
-        let client = Arc::new(SwarmClient::new(reqwest::Client::new(), SwarmConfig::default()));
+        let client = Arc::new(SwarmClient::new(
+            reqwest::Client::new(),
+            SwarmConfig::default(),
+        ));
         let consent = Arc::new(ConsentStore::default());
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
         let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
@@ -502,8 +505,7 @@ mod smoke_tests {
             .swarm_list_local_swarms(Parameters(ListLocalSwarmsRequest {}))
             .await;
 
-        let parsed: Value =
-            serde_json::from_str(&output).expect("tool output must be valid JSON");
+        let parsed: Value = serde_json::from_str(&output).expect("tool output must be valid JSON");
         let content = parsed
             .get("content")
             .expect("success envelope must carry a \"content\" field");
@@ -512,10 +514,7 @@ mod smoke_tests {
             Some(0),
             "empty swarms dir yields count 0"
         );
-        assert!(
-            content["swarms"].is_array(),
-            "swarms must be a JSON array"
-        );
+        assert!(content["swarms"].is_array(), "swarms must be a JSON array");
     }
 
     /// `swarm_a2a_card` with no `agent_name` lists every local agent card.
@@ -528,8 +527,7 @@ mod smoke_tests {
             .swarm_a2a_card(Parameters(A2aCardRequest { agent_name: None }))
             .await;
 
-        let parsed: Value =
-            serde_json::from_str(&output).expect("tool output must be valid JSON");
+        let parsed: Value = serde_json::from_str(&output).expect("tool output must be valid JSON");
         let content = parsed
             .get("content")
             .expect("success envelope must carry a \"content\" field");

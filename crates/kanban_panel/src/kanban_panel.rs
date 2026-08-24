@@ -649,9 +649,7 @@ impl KanbanPanel {
                             let selected_still_exists = this
                                 .selected_board_id
                                 .as_ref()
-                                .is_some_and(|id| {
-                                    this.boards.iter().any(|b| &b.board_id == id)
-                                });
+                                .is_some_and(|id| this.boards.iter().any(|b| &b.board_id == id));
                             if !selected_still_exists {
                                 this.clear_board_selection();
                             }
@@ -725,10 +723,7 @@ impl KanbanPanel {
                         // refresh can re-select or show the empty state.
                         // Without this, the panel loops on "board not
                         // found" while the dead board's widget stays.
-                        if matches!(
-                            err.kind,
-                            Some(hkask_types::McpErrorKind::NotFound)
-                        ) {
+                        if matches!(err.kind, Some(hkask_types::McpErrorKind::NotFound)) {
                             this.clear_board_selection();
                             this.fetch_boards(cx);
                             return;

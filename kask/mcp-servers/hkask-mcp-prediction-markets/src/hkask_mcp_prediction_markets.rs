@@ -1652,9 +1652,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod smoke {
     use super::*;
+    use hkask_types::WebID;
     use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
     use hkask_types::template::LLMParameters;
-    use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
     use std::collections::HashSet;
     use std::pin::Pin;
@@ -1671,8 +1671,13 @@ mod smoke {
             _: &str,
             _: &LLMParameters,
             _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
+        ) -> Pin<
+            Box<
+                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
+        > {
             Box::pin(async {
                 Err(InferenceError::Connection(
                     "noop inference port — not configured for smoke tests".into(),
@@ -1688,8 +1693,8 @@ mod smoke {
     fn make_server() -> PredictionMarketsServer {
         let cache_ttl_secs: u64 = DEFAULT_CACHE_TTL_SECS;
         let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
-        let portfolio_dir = std::env::temp_dir()
-            .join(format!("hkask-pm-smoke-{}", uuid::Uuid::new_v4()));
+        let portfolio_dir =
+            std::env::temp_dir().join(format!("hkask-pm-smoke-{}", uuid::Uuid::new_v4()));
         let portfolio_store = hkask_mcp_portfolio::PortfolioStore::with_dir(portfolio_dir);
         PredictionMarketsServer::new(
             WebID::new(),
@@ -1743,7 +1748,9 @@ mod smoke {
             .as_array()
             .expect("called_tools must be an array");
         assert!(
-            called.iter().any(|tool| tool == "prediction_markets_status"),
+            called
+                .iter()
+                .any(|tool| tool == "prediction_markets_status"),
             "status must record its own invocation, got: {content}"
         );
     }
@@ -1767,8 +1774,7 @@ mod smoke {
             .await;
         let content = unwrap_content(&output);
         assert_eq!(
-            content["model"],
-            "DR-AS (Xi, Moallemi, Pai & Wang, arXiv:2607.08199)",
+            content["model"], "DR-AS (Xi, Moallemi, Pai & Wang, arXiv:2607.08199)",
             "volatility must label its model, got: {content}"
         );
         assert!(

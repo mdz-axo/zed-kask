@@ -12,11 +12,10 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
-    KaskGeneralSettingsContent, KaskMcpSettingsContent,
-    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
-    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
-    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
+    KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
+    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
+    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
+    KaskSwarmSettingsContent, KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -1400,7 +1399,6 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
     }
 }
 
-
 impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
@@ -1976,5 +1974,4 @@ mod tests {
             Some("2048")
         );
     }
-
 }

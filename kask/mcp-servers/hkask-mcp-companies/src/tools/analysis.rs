@@ -337,31 +337,36 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::StockUniverseRequest>,
     ) -> String {
-        execute_tool_semantic(self, "stock_universe", Self::ontology_anchor("company_screener"), async {
-            let listings = providers::fetch_eodhd_screener_listing(
-                &self.client,
-                &self.eodhd_api_key,
-                &req.exchange,
-                req.min_market_cap,
-            )
-            .await?;
+        execute_tool_semantic(
+            self,
+            "stock_universe",
+            Self::ontology_anchor("company_screener"),
+            async {
+                let listings = providers::fetch_eodhd_screener_listing(
+                    &self.client,
+                    &self.eodhd_api_key,
+                    &req.exchange,
+                    req.min_market_cap,
+                )
+                .await?;
 
-            let count = listings.len();
+                let count = listings.len();
 
-            let output = serde_json::json!({
-                "exchange": req.exchange,
-                "min_market_cap": req.min_market_cap,
-                "count": count,
-                "results": listings,
-                "fibo": {
-                    "screener": fibo::STOCK_SCREENER,
-                    "market_capitalization": fibo::MARKET_CAPITALIZATION,
-                },
-                "source": "EODHD Screener API",
-            });
+                let output = serde_json::json!({
+                    "exchange": req.exchange,
+                    "min_market_cap": req.min_market_cap,
+                    "count": count,
+                    "results": listings,
+                    "fibo": {
+                        "screener": fibo::STOCK_SCREENER,
+                        "market_capitalization": fibo::MARKET_CAPITALIZATION,
+                    },
+                    "source": "EODHD Screener API",
+                });
 
-            Ok(fibo::enrich_with_ontology(output, "company_screener"))
-        })
+                Ok(fibo::enrich_with_ontology(output, "company_screener"))
+            },
+        )
         .await
     }
     pub async fn company_research_search(

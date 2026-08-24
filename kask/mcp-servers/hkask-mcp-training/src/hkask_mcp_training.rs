@@ -578,7 +578,11 @@ mod smoke {
             _parameters: &LLMParameters,
             _tools: Option<&[ChatToolDefinition]>,
         ) -> Pin<
-            Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+            Box<
+                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
         > {
             Box::pin(async {
                 Err(InferenceError::Connection(
@@ -621,9 +625,8 @@ mod smoke {
             .expect("in-memory sqlite pool must construct for smoke tests");
         let driver: Arc<dyn DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
         let adapter_store = Arc::new(
-            AdapterStore::from_driver(driver).expect(
-                "AdapterStore::from_driver must succeed against a fresh in-memory pool",
-            ),
+            AdapterStore::from_driver(driver)
+                .expect("AdapterStore::from_driver must succeed against a fresh in-memory pool"),
         );
         let pipeline = Mutex::new(DatasetPipeline::new(
             std::env::temp_dir().join("hkask-mcp-training-smoke-cache"),
@@ -650,9 +653,10 @@ mod smoke {
         let parsed: serde_json::Value = serde_json::from_str(output).unwrap_or_else(|error| {
             panic!("tool output must be valid JSON, got: {output} ({error})")
         });
-        parsed.get("content").cloned().unwrap_or_else(|| {
-            panic!("tool output must have a 'content' key, got: {parsed}")
-        })
+        parsed
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| panic!("tool output must have a 'content' key, got: {parsed}"))
     }
 
     #[tokio::test]
@@ -669,7 +673,9 @@ mod smoke {
             .await;
         let content = unwrap_content(&output);
 
-        let finding_count = content.get("finding_count").and_then(serde_json::Value::as_u64);
+        let finding_count = content
+            .get("finding_count")
+            .and_then(serde_json::Value::as_u64);
         assert!(
             finding_count.is_some(),
             "training_validate_config must report an integer 'finding_count', got: {content}"

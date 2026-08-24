@@ -465,8 +465,24 @@ pub async fn fetch_key_metrics(
     // Enrich with ratios and financial-growth data from FMP.
     // These supplementary fetches are best-effort — if they fail, the key-metrics
     // data is still returned (with None for the moved fields).
-    let ratios_raw = fmp_get(client, "/ratios", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
-    let growth_raw = fmp_get(client, "/financial-growth", fmp_api_key, symbol, &[("limit", &limit_str)]).await.ok();
+    let ratios_raw = fmp_get(
+        client,
+        "/ratios",
+        fmp_api_key,
+        symbol,
+        &[("limit", &limit_str)],
+    )
+    .await
+    .ok();
+    let growth_raw = fmp_get(
+        client,
+        "/financial-growth",
+        fmp_api_key,
+        symbol,
+        &[("limit", &limit_str)],
+    )
+    .await
+    .ok();
 
     let enriched = enrich_key_metrics(raw.value, ratios_raw, growth_raw);
     Ok(KeyMetrics::from_raw(enriched))
@@ -507,11 +523,7 @@ pub async fn fetch_historical_price(
 /// downstream code sees the same field set as before. Also adds field aliases
 /// for renamed fields (`roic` for `returnOnInvestedCapital`, `calendarYear`
 /// for `fiscalYear`) so existing `.get("fieldName")` calls continue to work.
-fn enrich_key_metrics(
-    mut raw: Value,
-    ratios: Option<Value>,
-    growth: Option<Value>,
-) -> Value {
+fn enrich_key_metrics(mut raw: Value, ratios: Option<Value>, growth: Option<Value>) -> Value {
     let Some(entries) = raw.as_array_mut() else {
         return raw;
     };
@@ -522,7 +534,11 @@ fn enrich_key_metrics(
         .and_then(|r| r.as_array())
         .map_or(std::collections::HashMap::new(), |arr| {
             arr.iter()
-                .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(|d| (d.to_string(), e)))
+                .filter_map(|e| {
+                    e.get("date")
+                        .and_then(|d| d.as_str())
+                        .map(|d| (d.to_string(), e))
+                })
                 .collect()
         });
 
@@ -531,7 +547,11 @@ fn enrich_key_metrics(
         .and_then(|g| g.as_array())
         .map_or(std::collections::HashMap::new(), |arr| {
             arr.iter()
-                .filter_map(|e| e.get("date").and_then(|d| d.as_str()).map(|d| (d.to_string(), e)))
+                .filter_map(|e| {
+                    e.get("date")
+                        .and_then(|d| d.as_str())
+                        .map(|d| (d.to_string(), e))
+                })
                 .collect()
         });
 
@@ -578,12 +598,13 @@ fn enrich_key_metrics(
             // Merge ratios and growth fields by matching date.
             // Extract the date string first to avoid holding an immutable borrow
             // across the mutable `obj.insert` calls below.
-            let date_str = obj.get("date").and_then(|d| d.as_str()).map(|s| s.to_string());
+            let date_str = obj
+                .get("date")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string());
             if let Some(date) = date_str.as_deref() {
                 // Merge ratios fields.
-                if let Some(ratios_entry) = ratios_by_date.get(date)
-                    .and_then(|r| r.as_object())
-                {
+                if let Some(ratios_entry) = ratios_by_date.get(date).and_then(|r| r.as_object()) {
                     for field in RATIOS_FIELDS {
                         if !obj.contains_key(*field) {
                             if let Some(val) = ratios_entry.get(*field) {
@@ -594,9 +615,7 @@ fn enrich_key_metrics(
                 }
 
                 // Merge growth fields.
-                if let Some(growth_entry) = growth_by_date.get(date)
-                    .and_then(|g| g.as_object())
-                {
+                if let Some(growth_entry) = growth_by_date.get(date).and_then(|g| g.as_object()) {
                     for field in GROWTH_FIELDS {
                         if !obj.contains_key(*field) {
                             if let Some(val) = growth_entry.get(*field) {
@@ -866,7 +885,11 @@ fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
                         map_field(obj_map, "totalLiab", "totalLiabilities");
                         map_field(obj_map, "totalStockholderEquity", "totalStockholdersEquity");
                         map_field(obj_map, "totalStockholderEquity", "totalEquity");
-                        map_field(obj_map, "cashAndShortTermInvestments", "cashAndCashEquivalents");
+                        map_field(
+                            obj_map,
+                            "cashAndShortTermInvestments",
+                            "cashAndCashEquivalents",
+                        );
                         map_field(obj_map, "commonStockSharesOutstanding", "sharesOutstanding");
                     }
                     obj
@@ -909,12 +932,28 @@ fn normalize_eodhd_cash_flow(fundamentals: &Value) -> Value {
                             .entry("date".to_string())
                             .or_insert_with(|| Value::String(date.to_string()));
                         // Map EODHD field names → FMP field names
-                        map_field(obj_map, "totalCashFromOperatingActivities", "netCashProvidedByOperatingActivities");
-                        map_field(obj_map, "totalCashflowsFromInvestingActivities", "netCashProvidedByInvestingActivities");
-                        map_field(obj_map, "totalCashFromFinancingActivities", "netCashProvidedByFinancingActivities");
+                        map_field(
+                            obj_map,
+                            "totalCashFromOperatingActivities",
+                            "netCashProvidedByOperatingActivities",
+                        );
+                        map_field(
+                            obj_map,
+                            "totalCashflowsFromInvestingActivities",
+                            "netCashProvidedByInvestingActivities",
+                        );
+                        map_field(
+                            obj_map,
+                            "totalCashFromFinancingActivities",
+                            "netCashProvidedByFinancingActivities",
+                        );
                         map_field(obj_map, "capitalExpenditures", "capitalExpenditure");
                         map_field(obj_map, "depreciation", "depreciationAndAmortization");
-                        map_field(obj_map, "totalCashFromOperatingActivities", "operatingCashFlow");
+                        map_field(
+                            obj_map,
+                            "totalCashFromOperatingActivities",
+                            "operatingCashFlow",
+                        );
                     }
                     obj
                 })
@@ -1146,9 +1185,15 @@ fn compute_year_metrics(
     // ── operatingCycle and cashConversionCycle ──
     // OC = DIO + DSO; CCC = OC - DPO
     if let (Some(dio), Some(dso), Some(dpo)) = (
-        obj_map.get("daysOfInventoryOutstanding").and_then(|v| v.as_f64()),
-        obj_map.get("daysOfSalesOutstanding").and_then(|v| v.as_f64()),
-        obj_map.get("daysOfPayablesOutstanding").and_then(|v| v.as_f64()),
+        obj_map
+            .get("daysOfInventoryOutstanding")
+            .and_then(|v| v.as_f64()),
+        obj_map
+            .get("daysOfSalesOutstanding")
+            .and_then(|v| v.as_f64()),
+        obj_map
+            .get("daysOfPayablesOutstanding")
+            .and_then(|v| v.as_f64()),
     ) {
         obj_map
             .entry("operatingCycle".to_string())
@@ -1192,7 +1237,10 @@ fn compute_valuation_ratios(
             if let Some(ni) = net_income {
                 if ni > 0.0 {
                     f_map.insert("peRatio".to_string(), Value::from(market_cap / ni));
-                    f_map.insert("priceToEarningsRatio".to_string(), Value::from(market_cap / ni));
+                    f_map.insert(
+                        "priceToEarningsRatio".to_string(),
+                        Value::from(market_cap / ni),
+                    );
                 }
             }
         }
@@ -1223,7 +1271,10 @@ fn compute_valuation_ratios(
                 .and_then(|v| v.as_f64());
             if let Some(rev) = revenue {
                 if rev > 0.0 {
-                    f_map.insert("priceToSalesRatio".to_string(), Value::from(market_cap / rev));
+                    f_map.insert(
+                        "priceToSalesRatio".to_string(),
+                        Value::from(market_cap / rev),
+                    );
                 }
             }
         }
@@ -1253,28 +1304,23 @@ fn compute_valuation_ratios(
 ///
 /// Looks up revenue from the income statement for each year and computes
 /// revenueGrowth[n] = (revenue[n] - revenue[n-1]) / revenue[n-1].
-fn compute_revenue_growth(
-    items: &mut [Value],
-    income_yearly: Option<&Value>,
-) {
+fn compute_revenue_growth(items: &mut [Value], income_yearly: Option<&Value>) {
     let Some(income_yearly) = income_yearly else {
         return;
     };
 
     // Build a sorted list of (date, revenue) from income statements.
-    let mut revenue_by_date: Vec<(String, f64)> = income_yearly
-        .as_object()
-        .map_or(vec![], |map| {
-            map.iter()
-                .filter_map(|(date, stmt)| {
-                    let rev = stmt
-                        .get("revenue")
-                        .or_else(|| stmt.get("totalRevenue"))
-                        .and_then(|v| v.as_f64())?;
-                    Some((date.clone(), rev))
-                })
-                .collect()
-        });
+    let mut revenue_by_date: Vec<(String, f64)> = income_yearly.as_object().map_or(vec![], |map| {
+        map.iter()
+            .filter_map(|(date, stmt)| {
+                let rev = stmt
+                    .get("revenue")
+                    .or_else(|| stmt.get("totalRevenue"))
+                    .and_then(|v| v.as_f64())?;
+                Some((date.clone(), rev))
+            })
+            .collect()
+    });
     revenue_by_date.sort_by(|a, b| a.0.cmp(&b.0));
 
     // For each item in the key-metrics array, compute revenue growth.
@@ -1301,7 +1347,6 @@ fn compute_revenue_growth(
         }
     }
 }
-
 
 /// Normalize EODHD /eod/{symbol} historical prices → FMP-compatible format.
 ///
@@ -1428,8 +1473,9 @@ pub async fn fetch_eodhd_screener(
     eodhd_api_key: &str,
     filters: &[serde_json::Value],
 ) -> Result<Vec<Value>, McpToolError> {
-    let filters_json = serde_json::to_string(filters)
-        .map_err(|e| McpToolError::internal(format!("failed to serialize screener filters: {e}")))?;
+    let filters_json = serde_json::to_string(filters).map_err(|e| {
+        McpToolError::internal(format!("failed to serialize screener filters: {e}"))
+    })?;
 
     // First pass: try direct pagination with the given filters.
     let mut all_rows = fetch_screener_page(client, eodhd_api_key, &filters_json, 0).await?;
@@ -1484,7 +1530,9 @@ pub async fn fetch_eodhd_screener_listing(
     let mut listings: Vec<CompanyListing> = rows
         .iter()
         .filter_map(|row| parse_screener_row(row))
-        .filter(|l| l.exchange.eq_ignore_ascii_case(exchange) || exchange.eq_ignore_ascii_case("US"))
+        .filter(|l| {
+            l.exchange.eq_ignore_ascii_case(exchange) || exchange.eq_ignore_ascii_case("US")
+        })
         .collect();
 
     // Sort by market cap descending
@@ -1530,8 +1578,9 @@ async fn fetch_screener_with_bands(
             band_filters.push(serde_json::json!(["market_capitalization", "<", upper]));
         }
 
-        let filters_json = serde_json::to_string(&band_filters)
-            .map_err(|e| McpToolError::internal(format!("failed to serialize band filters: {e}")))?;
+        let filters_json = serde_json::to_string(&band_filters).map_err(|e| {
+            McpToolError::internal(format!("failed to serialize band filters: {e}"))
+        })?;
 
         let mut offset = 0u32;
         loop {
@@ -1583,8 +1632,9 @@ async fn fetch_screener_page(
         return Err(classify_http_error("EODHD", status, &body));
     }
 
-    let raw: Value = serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("failed to parse EODHD screener response: {e}")))?;
+    let raw: Value = serde_json::from_str(&body).map_err(|e| {
+        McpToolError::unavailable(format!("failed to parse EODHD screener response: {e}"))
+    })?;
 
     let rows = raw.get("data").and_then(|d| d.as_array());
 
@@ -1695,10 +1745,7 @@ pub async fn resolve_symbol(
         .get("Exchange")
         .and_then(|v| v.as_str())
         .ok_or_else(|| McpToolError::unavailable("EODHD search result missing 'Exchange'"))?;
-    let company_name = best
-        .get("Name")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let company_name = best.get("Name").and_then(|v| v.as_str()).map(String::from);
 
     let symbol = format!("{code}.{exchange}");
     let is_us = exchange == "US";

@@ -52,9 +52,7 @@ pub(crate) mod fibo_cache;
 mod financial_model;
 pub(crate) mod portfolio;
 mod providers;
-pub(crate) use providers::{
-    CompanyProfile, HistoricalPriceView, KeyMetrics, Provider,
-};
+pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
 pub(crate) mod research;

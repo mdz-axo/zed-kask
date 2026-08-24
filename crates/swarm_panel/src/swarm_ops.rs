@@ -14,7 +14,10 @@ use crate::SWARM_SERVER;
 use crate::SwarmDetailView;
 use crate::SwarmPanel;
 use crate::SwarmRosterAgent;
-use crate::parse::{AgentSource, LocalAgentInfo, LocalAgentListResponse, extract_wallet_balance, parse_run_status_messages, parse_swarm_roster};
+use crate::parse::{
+    AgentSource, LocalAgentInfo, LocalAgentListResponse, extract_wallet_balance,
+    parse_run_status_messages, parse_swarm_roster,
+};
 
 impl SwarmPanel {
     /// Open the roster drill-down for a swarm (item 4). The fetch is
@@ -99,19 +102,16 @@ impl SwarmPanel {
                                         // or unparseable catalogue yields an
                                         // empty vec — members are still
                                         // shown with empty metadata.
-                                        let cards: Vec<LocalAgentInfo> =
-                                            agents_result
-                                                .as_ref()
-                                                .ok()
-                                                .and_then(|out| parse_tool_response(out))
-                                                .and_then(|c| {
-                                                    serde_json::from_value::<
-                                                        LocalAgentListResponse,
-                                                    >(c)
+                                        let cards: Vec<LocalAgentInfo> = agents_result
+                                            .as_ref()
+                                            .ok()
+                                            .and_then(|out| parse_tool_response(out))
+                                            .and_then(|c| {
+                                                serde_json::from_value::<LocalAgentListResponse>(c)
                                                     .ok()
-                                                })
-                                                .map(|r| r.agents)
-                                                .unwrap_or_default();
+                                            })
+                                            .map(|r| r.agents)
+                                            .unwrap_or_default();
                                         detail.agents = ids
                                             .iter()
                                             .map(|id| {
@@ -146,8 +146,7 @@ impl SwarmPanel {
                                     }
                                     None => {
                                         detail.error = Some(
-                                            format!("Failed to parse roster: {output}")
-                                                .into(),
+                                            format!("Failed to parse roster: {output}").into(),
                                         );
                                     }
                                 }
@@ -232,7 +231,9 @@ impl SwarmPanel {
             AgentSource::Local | AgentSource::Synced => crate::CreateTarget::Local,
         };
         self.compose.status = Some(
-            ["Loading swarm details…", "Loading swarm details…"][0].to_string().into()
+            ["Loading swarm details…", "Loading swarm details…"][0]
+                .to_string()
+                .into(),
         );
         self.compose.busy = false;
 
@@ -288,14 +289,12 @@ impl SwarmPanel {
                             let members: Vec<String> = if is_local {
                                 parsed
                                     .and_then(|c| {
-                                        c.get("members").and_then(|m| m.as_array()).map(
-                                            |members| {
-                                                members
-                                                    .iter()
-                                                    .filter_map(|m| m.as_str().map(str::to_string))
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        )
+                                        c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                            members
+                                                .iter()
+                                                .filter_map(|m| m.as_str().map(str::to_string))
+                                                .collect::<Vec<_>>()
+                                        })
                                     })
                                     .unwrap_or_default()
                             } else {
@@ -308,10 +307,8 @@ impl SwarmPanel {
                                             c.get("workspace").and_then(|w| w.get("agents")),
                                             c.get("team").and_then(|t| t.get("agents")),
                                         ];
-                                        candidates
-                                            .into_iter()
-                                            .find_map(|c| c?.as_array())
-                                            .map(|agents| {
+                                        candidates.into_iter().find_map(|c| c?.as_array()).map(
+                                            |agents| {
                                                 agents
                                                     .iter()
                                                     .filter_map(|a| {
@@ -321,7 +318,8 @@ impl SwarmPanel {
                                                             .map(str::to_string)
                                                     })
                                                     .collect::<Vec<_>>()
-                                            })
+                                            },
+                                        )
                                     })
                                     .unwrap_or_default()
                             };
@@ -356,15 +354,9 @@ impl SwarmPanel {
         self.compose.editing_swarm_source = None;
         self.compose.create_target = self.active_backend;
         self.compose.status = None;
-        self.compose
-            .name
-            .update(cx, |e, cx| e.clear(window, cx));
-        self.compose
-            .mission
-            .update(cx, |e, cx| e.clear(window, cx));
-        self.compose
-            .agents
-            .update(cx, |e, cx| e.clear(window, cx));
+        self.compose.name.update(cx, |e, cx| e.clear(window, cx));
+        self.compose.mission.update(cx, |e, cx| e.clear(window, cx));
+        self.compose.agents.update(cx, |e, cx| e.clear(window, cx));
     }
 
     /// Fetch and show a swarm's recent run status (item 3):
@@ -891,11 +883,7 @@ impl SwarmPanel {
     /// Enter metadata-edit mode: populates the name and mission editors from
     /// the loaded swarm and flips `editing_metadata`. Local swarms only — ABW
     /// has no metadata-edit endpoint.
-    pub(crate) fn begin_edit_metadata(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn begin_edit_metadata(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(detail) = self.detail.swarm_detail.as_ref() else {
             return;
         };
@@ -942,7 +930,12 @@ impl SwarmPanel {
             } else if let Some(detail) = self.detail.swarm_detail.as_ref() {
                 (
                     detail.workspace_id.clone(),
-                    self.detail.edit_name_editor.read(cx).text(cx).trim().to_string(),
+                    self.detail
+                        .edit_name_editor
+                        .read(cx)
+                        .text(cx)
+                        .trim()
+                        .to_string(),
                     self.detail.edit_mission_editor.read(cx).text(cx),
                 )
             } else {
@@ -1038,7 +1031,9 @@ impl SwarmPanel {
                     match result {
                         Ok(output) => {
                             let cloned_id = parse_tool_response(&output).and_then(|c| {
-                                c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string)
+                                c.get("swarm_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
                             });
                             this.fetch_all(cx);
                             if let Some(id) = cloned_id {
@@ -1065,11 +1060,7 @@ impl SwarmPanel {
     /// and credit cost). This avoids inventing an ABW clone endpoint — clone
     /// = read + create, using existing tools. Missing agents surface as hire
     /// failures during the create flow.
-    pub(crate) fn clone_swarm_to_compose(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn clone_swarm_to_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(detail) = self.detail.swarm_detail.as_ref() else {
             return;
         };
@@ -1091,8 +1082,7 @@ impl SwarmPanel {
             .agents
             .update(cx, |e, cx| e.set_text(agents, window, cx));
         self.compose.create_target = crate::CreateTarget::Cloud;
-        self.compose.status =
-            Some("Review and create to copy this ABW swarm.".into());
+        self.compose.status = Some("Review and create to copy this ABW swarm.".into());
         self.close_swarm_detail(cx);
         self.set_mode(crate::PanelMode::Compose, window, cx);
         cx.notify();
@@ -1105,11 +1095,7 @@ impl SwarmPanel {
     /// Consent tokens for member hires are minted first (same flow as
     /// `create_swarm`). On success, re-fetches so the swarm list shows the
     /// updated `cloud_workspace_id` link.
-    pub(crate) fn push_local_swarm_to_cloud(
-        &mut self,
-        swarm_id: String,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn push_local_swarm_to_cloud(&mut self, swarm_id: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
@@ -1314,13 +1300,18 @@ impl SwarmPanel {
                     match result {
                         Ok(output) => {
                             let local_id = parse_tool_response(&output).and_then(|c| {
-                                c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string)
+                                c.get("swarm_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
                             });
                             this.fetch_all(cx);
-                            this.spend.hire_error = Some(format!(
-                                "Pulled ABW swarm to local{}.",
-                                local_id.map(|id| format!(": {id}")).unwrap_or_default()
-                            ).into());
+                            this.spend.hire_error = Some(
+                                format!(
+                                    "Pulled ABW swarm to local{}.",
+                                    local_id.map(|id| format!(": {id}")).unwrap_or_default()
+                                )
+                                .into(),
+                            );
                         }
                         Err(err) => {
                             this.spend.hire_error =

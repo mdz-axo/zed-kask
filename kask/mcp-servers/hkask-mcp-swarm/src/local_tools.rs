@@ -1293,9 +1293,9 @@ impl SwarmServer {
                     .local_swarms
                     .update_metadata(&req.swarm_id, &req.name, &req.mission)
                     .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
-                    serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name })
-                }))
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+                ))
             },
         )
         .await
@@ -1328,9 +1328,9 @@ impl SwarmServer {
                     .local_swarms
                     .clone_swarm(&req.swarm_id)
                     .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
-                    serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name })
-                }))
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+                ))
             },
         )
         .await
@@ -1542,10 +1542,7 @@ impl SwarmServer {
                 // Store the ABW workspace_id on the new local swarm.
                 let swarm = self
                     .local_swarms
-                    .set_cloud_workspace_id(
-                        &swarm.swarm_id,
-                        Some(req.workspace_id.clone()),
-                    )
+                    .set_cloud_workspace_id(&swarm.swarm_id, Some(req.workspace_id.clone()))
                     .map_err(map_local_swarm_error)?;
 
                 Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {

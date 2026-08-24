@@ -24,11 +24,9 @@ pub(crate) mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::{CyberneticsLoop, RolloutEventError, RolloutEventSource};
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
-pub use metacognition::{
-    AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop,
-};
+pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
 
+pub use loops::CurationInput;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};
-pub use loops::CurationInput;
