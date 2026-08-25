@@ -67,6 +67,59 @@ You are anchored on the following methodologies:\n\
   anchor on outside-view base rates, update with Bayesian likelihood ratios.\n\
 ";
 
+/// Format a compact system-state block from the regulation loop's health
+/// snapshot. The block is explicitly labeled as a snapshot so the model
+/// knows it's stale at decision time and must pull `curator_status` for live
+/// updates. This breaks the naive-realist trap (Dunning, Self-Insight 2005):
+/// without the label, the model would treat the static text as complete
+/// reality and not seek fresh state.
+///
+/// The block is compact — only high-signal fields that change the model's
+/// regulatory posture: regulation effectiveness, escalation count, critical
+/// alerts, memory degradation, alert log cap status.
+fn format_state_block(snapshot: &serde_json::Value) -> String {
+    let effectiveness = snapshot
+        .get("regulation_effectiveness")
+        .and_then(|v| v.as_f64())
+        .map(|v| format!("{:.0}%", v * 100.0))
+        .unwrap_or_else(|| "unavailable".to_string());
+    let escalations = snapshot
+        .get("escalation_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let critical = snapshot
+        .get("critical_alerts")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let memory_degraded = snapshot
+        .get("memory")
+        .and_then(|m| m.get("degraded"))
+        .and_then(|d| d.as_bool())
+        .unwrap_or(false);
+    let alert_log_count = snapshot
+        .get("alert_log_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let alert_log_cap = snapshot
+        .get("alert_log_cap")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let alert_log_status = if alert_log_cap > 0 && alert_log_count >= alert_log_cap * 8 / 10 {
+        "approaching cap — review needed"
+    } else {
+        "nominal"
+    };
+
+    format!(
+        "## Current System State (snapshot at session start — pull curator_status for live updates)\n\
+        - Regulation effectiveness: {effectiveness}\n\
+        - Escalations (current cycle): {escalations}\n\
+        - Critical alerts: {critical}\n\
+        - Memory degraded: {memory_degraded}\n\
+        - Alert log: {alert_log_count}/{alert_log_cap} ({alert_log_status})"
+    )
+}
+
 /// The Curator agent server — an overlay on the Zed Agent.
 ///
 /// Like `NativeAgentServer`, but:
@@ -146,14 +199,39 @@ impl AgentServer for CuratorAgentServer {
             // NativeAgentServer via `build_connection` so the two cannot drift.
             let templates = crate::templates::Templates::new();
             let agent = cx.update(|cx| crate::NativeAgent::new(thread_store, templates, fs, cx));
+
+            // S6: Fetch a compact system-state snapshot from the regulation
+            // loop and append it to the curator context. This breaks the
+            // naive-realist trap (Dunning, Self-Insight 2005): without live
+            // state, the static prompt says "monitor system health" but
+            // provides no state, so the model anchors on the static text and
+            // treats it as complete reality. The label explicitly tells the
+            // model this is a snapshot, not complete reality — pull
+            // `curator_status` for live updates.
+            let state_block = if let Some(provider) =
+                crate::metacognition_provider()
+            {
+                match provider.health_snapshot_json().await {
+                    Some(snapshot) => format_state_block(&snapshot),
+                    None => String::new(),
+                }
+            } else {
+                String::new()
+            };
+
             cx.update(|cx| {
                 agent.update(cx, |agent, _cx| {
-                    let context = match extra_context {
+                    let mut context = match extra_context {
                         Some(extra) => {
                             SharedString::from(format!("{CURATOR_STATIC_CONTEXT}\n{extra}"))
                         }
                         None => SharedString::from(CURATOR_STATIC_CONTEXT),
                     };
+                    if !state_block.is_empty() {
+                        context = SharedString::from(format!(
+                            "{context}\n\n{state_block}"
+                        ));
+                    }
                     agent.set_curator_static_context(context);
                     if let Some(scope) = mcp_server_scope {
                         agent.set_mcp_server_scope(scope);

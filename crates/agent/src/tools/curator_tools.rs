@@ -43,7 +43,7 @@ pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider
         .expect("METACOGNITION_PROVIDER poisoned") = provider;
 }
 
-fn metacognition_provider() -> Option<Arc<dyn MetacognitionProvider>> {
+pub(crate) fn metacognition_provider() -> Option<Arc<dyn MetacognitionProvider>> {
     METACOGNITION_PROVIDER
         .lock()
         .expect("METACOGNITION_PROVIDER poisoned")

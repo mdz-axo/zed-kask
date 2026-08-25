@@ -813,9 +813,9 @@ impl RealMemoryPort {
     /// Recall all memory snippets from the **curator's** sovereign stores for
     /// a specific thread — the entity-scoped parallel of `recall_thread`.
     ///
-    /// Used by the curator context injector's `inject_static_context` to load
-    /// the curator's prior turns on this thread into the system prompt once
-    /// per session. Returns `Ok(vec![])` when the curator stores are not
+    /// Used by the curator context injector's `inject_context` to load
+    /// the curator's prior turns on this thread per turn (fresh, not
+    /// session-cached). Returns `Ok(vec![])` when the curator stores are not
     /// available (graceful degradation).
     pub fn recall_thread_curator<'a>(
         &'a self,
@@ -1056,11 +1056,11 @@ impl RealMemoryPort {
     ///
     /// The episodic entity is `chat:thread:{thread_id}` (scoped by `perspective`),
     /// and the semantic entity is `curator:thread:{thread_id}`. This is the
-    /// correct recall path for `inject_static_context` — the previous
-    /// implementation passed the `thread_id` UUID as the query to
+    /// correct recall path for `inject_context`'s thread-scoped half — the
+    /// previous implementation passed the `thread_id` UUID as the query to
     /// `recall_context`, which never matched stored turn text (the stored
-    /// embeddings are of `user_input`, not the thread_id), so static context
-    /// injection was dead code for both the user and curator injectors.
+    /// embeddings are of `user_input`, not the thread_id), so thread-scoped
+    /// recall was dead code for both the user and curator injectors.
     async fn recall_thread_from<'a>(
         &'a self,
         episodic_store: &'a Arc<MemoryStore>,
@@ -1259,7 +1259,7 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use hkask_storage::database::sqlite::SqliteDriver;
 
@@ -1267,7 +1267,7 @@ mod tests {
         WebID::new()
     }
 
-    fn in_memory_port() -> RealMemoryPort {
+    pub(crate) fn in_memory_port() -> RealMemoryPort {
         in_memory_port_with_cadence(0, 0.3)
     }
 
@@ -1334,9 +1334,9 @@ mod tests {
     /// channel-closed `for_tests()` stub. For tests that exercise the
     /// end-to-end embedding recall path. The receiver task runs on the
     /// current tokio runtime (the test's `#[tokio::test]` reactor).
-    fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
+    pub(crate) fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
     where
-        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+        F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
     {
         let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
@@ -2145,11 +2145,11 @@ mod tests {
     }
 
     /// `recall_thread` should recall a thread's prior turns by exact entity
-    /// match, not by content similarity. This pins the static-context fix —
-    /// the previous `inject_static_context` passed the `thread_id` UUID as the
+    /// match, not by content similarity. This pins the thread-scoped recall
+    /// fix — the previous `inject_context` passed the `thread_id` UUID as the
     /// query to `recall_context`, which never matched stored turn text (the
-    /// stored embeddings are of `user_input`, not the thread_id), so static
-    /// context injection was dead code.
+    /// stored embeddings are of `user_input`, not the thread_id), so
+    /// thread-scoped recall was dead code.
     #[tokio::test]
     async fn recall_thread_recalls_thread_by_entity() {
         let port = in_memory_port();

@@ -141,8 +141,8 @@ pub trait MemoryPort: Send + Sync {
     /// overlap), this recalls by exact entity match — returning every h_mem
     /// stored under the thread's entity (`chat:thread:{thread_id}` for episodic,
     /// `curator:thread:{thread_id}` for the semantic copy). Used by the
-    /// context injector's `inject_static_context` to load a thread's prior
-    /// turns into the system prompt once per session.
+    /// context injector's `inject_context` to load a thread's prior
+    /// turns per turn (fresh, not session-cached).
     ///
     /// The default implementation returns an empty vec — graceful degradation
     /// when no memory store is configured.

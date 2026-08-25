@@ -73,6 +73,21 @@ use tokio::net::UnixStream;
 /// because the shared types crate is owned by another workstream.
 const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// Fallback file path for the inference IPC socket path.
+///
+/// Written by `kask_bridge::set_inference_socket_path` so MCP server child
+/// processes can discover the socket even when their env lacks
+/// `HKASK_INFERENCE_SOCKET` (e.g. after a self-healing reconnect using a
+/// stale `LaunchSpec`).
+fn read_socket_path_from_file() -> Option<String> {
+    let xdg = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| "/run/user/1000".to_string());
+    std::fs::read_to_string(format!("{xdg}/kask/inference-socket-path"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Grace margin added on top of the server's published establishment timeout
 /// when computing the IPC read deadline.
 ///
@@ -270,14 +285,22 @@ impl InferenceIpcClient {
         })
     }
 
-    /// Construct from the `HKASK_INFERENCE_SOCKET` env var.
+    /// Construct from the `HKASK_INFERENCE_SOCKET` env var, with a
+    /// file-based fallback.
     ///
-    /// Returns `None` if the env var is not set (MCP server falls back to
+    /// Returns `None` if neither the env var nor the fallback file is
+    /// set (MCP server falls back to `MediaRouter::from_env()`). The
+    /// fallback file (`$XDG_RUNTIME_DIR/kask/inference-socket-path`) is
+    /// written by `set_inference_socket_path` in `kask_bridge` and covers
+    /// the case where the MCP server was relaunched by the self-healing
+    /// mechanism with a stale `LaunchSpec` that predates the IPC server
+    /// start — the env var is absent in the stale env, but the file
+    /// always reflects the current socket path.
     pub async fn from_env() -> Option<Result<Self, InferenceError>> {
-        let path = std::env::var(INFERENCE_SOCKET_ENV).ok()?;
-        if path.is_empty() {
-            return None;
-        }
+        let path = std::env::var(INFERENCE_SOCKET_ENV)
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or_else(read_socket_path_from_file)?;
         Some(Self::connect(Path::new(&path)).await)
     }
 

@@ -1682,11 +1682,10 @@ fn main() {
                                 // injector is not re-wired.
                                 //
                                 // zed-kask: D26 — the injector is wired unconditionally
-                                // (not gated on `kask.memory.auto_inject`) so the kask
-                                // tool-use warnings (`TOOL_WARNING_PROMPT`) always land
-                                // in the system prompt. `auto_inject` is passed into the
-                                // constructor and gates memory recall only; the warnings
-                                // are emitted from `inject_static_context` regardless.
+                                // (not gated on `kask.memory.auto_inject`) so recall is
+                                // always available. `auto_inject` is passed into the
+                                // constructor and gates memory recall only; tool warnings
+                                // live in the system prompt template (`system_prompt.hbs`).
                                 let auto_inject = kask_settings.memory.auto_inject;
                                 let injector = std::sync::Arc::new(
                                     kask_bridge::BridgeContextInjector::new(
@@ -1699,7 +1698,7 @@ fn main() {
                                 agent::set_context_injector(Some(injector));
                                 log::info!(
                                     "hKask context injector wired (agent: {agent_name}, \
-                                     auto_inject={auto_inject}) — tool warnings always on"
+                                     auto_inject={auto_inject})"
                                 );
 
                                 // D11 curator mirror: wire the curator context

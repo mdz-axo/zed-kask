@@ -43,9 +43,9 @@ pub struct SystemPromptTemplate<'a> {
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
-    /// Static context loaded once per session via
-    /// `ContextInjector::inject_static_context`. Rendered after the project
-    /// context section. `None` when no injector is set (I2).
+    /// Agent static context (e.g., Curator overlay, Steer panel overlay).
+    /// Rendered in the system prompt's `## Session Context` section.
+    /// `None` when no agent overlay is set.
     pub static_context: Option<SharedString>,
     /// Whether agent-run terminal commands are wrapped in an OS-level
     /// sandbox for this thread. When `true` — and the `terminal` tool is
@@ -147,6 +147,43 @@ mod tests {
         assert!(
             rendered.contains("CURATOR-CTX"),
             "static_context body must render even without rules/AGENTS.md"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_contains_tool_failure_mode_warnings() {
+        // The tool warnings were moved from `inject_static_context` (runtime
+        // injection) into the template itself. They must render unconditionally
+        // — no guard, no injector dependency.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+        assert!(
+            rendered.contains("## Tool failure-mode warnings (kask)"),
+            "tool warnings heading must render unconditionally in the template"
+        );
+        assert!(
+            rendered.contains("read_file"),
+            "read_file failure-mode guidance must be present"
+        );
+        assert!(
+            rendered.contains("edit_file"),
+            "edit_file failure-mode guidance must be present"
+        );
+        assert!(
+            rendered.contains("terminal"),
+            "terminal failure-mode guidance must be present"
         );
     }
 

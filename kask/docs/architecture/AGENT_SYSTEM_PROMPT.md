@@ -145,16 +145,17 @@ upstream behaviour carries a test, per the repo's divergence rule.
 
 ### 5.1 `## Session Context` — new section (D2 / D6)
 
-- **zed-kask** `:305-313` renders `{{{static_context}}}`. Field declared at
+- **zed-kask** renders `{{{static_context}}}`. Field declared at
   `templates.rs:49`.
 - **Upstream** has no such block and no `static_context` field.
-- **Why:** it is the render target for all three overlays (§2) and for
-  `ContextInjector::inject_static_context` (`agent.rs:3007-3015`).
+- **Why:** it is the render target for agent overlays (Curator role, Steer
+  panel prompts). Memory recall is per-turn via `inject_context`
+  (`Role::System` message), not via this block.
 - **Pinned by** `test_system_prompt_renders_session_context_without_rules_or_agents_md`.
 
 **Defect fixed 2026-08-12 — the reason the test exists.** The block was
-originally nested *inside* the `{{#if (or user_agents_md has_rules)}}` guard at
-`:271`. For any project with no `.rules` file **and** no personal `AGENTS.md`,
+originally nested *inside* the `{{#if (or user_agents_md has_rules)}}` guard.
+For any project with no `.rules` file **and** no personal `AGENTS.md`,
 `static_context` rendered as nothing — silently dropping the Curator, swarm Steer,
 and kanban Steer prompts. It went unnoticed because this repo has a `.rules` file
 (making `has_rules` true) and because all eleven pre-existing template tests
@@ -162,6 +163,16 @@ passed `static_context: None`. The block is now a **sibling** of that guard. Thi
 is the class of failure that motivates asserting on observable behaviour rather
 than on the presence of code: the overlay existed, was wired, and never
 arrived[^hunt-thomas-1999].
+
+**Refactored 2026-08-25 — `inject_static_context` deleted.** The
+`ContextInjector::inject_static_context` method and `Thread.static_context` /
+`static_context_loaded` fields were removed. Tool-use warnings moved into the
+`system_prompt.hbs` template as an unconditional `## Tool failure-mode warnings
+(kask)` section. Thread-scoped memory recall (`recall_thread` /
+`recall_thread_curator`) was folded into the per-turn `inject_context` path so
+memory is fresh at decision time rather than snapshotted once per session. The
+`## Session Context` block now carries only agent overlays (Curator role + Steer
+prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 
 ### 5.2 Loop-termination guardrail — new bullet
 

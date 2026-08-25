@@ -92,9 +92,9 @@ loops the SKILL.md bodies describe.
 | `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
 | `BridgeContextInjector::new` | `kask/crates/kask_bridge/src/context_injector.rs:168-181` |
 | `BridgeContextInjector::new_curator` | `kask/crates/kask_bridge/src/context_injector.rs:191-204` |
-| `should_recall` | `kask/crates/kask_bridge/src/context_injector.rs:110-115` |
-| `format_recall_context` | `kask/crates/kask_bridge/src/context_injector.rs:127-141` |
-| `TOOL_WARNING_PROMPT` | `kask/crates/kask_bridge/src/context_injector.rs:77-85` |
+| `should_recall` | `kask/crates/kask_bridge/src/context_injector.rs:108-113` |
+| `format_recall_context` | `kask/crates/kask_bridge/src/context_injector.rs:121-135` |
+| Tool warnings (template) | `crates/agent/src/templates/system_prompt.hbs` (unconditional section) |
 | `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22-25` |
 | `BridgeMetacognitionProvider` | `kask/crates/kask_bridge/src/metacognition_bridge.rs:16-24` |
 | `BridgeCuratorDirectiveSink` | `kask/crates/kask_bridge/src/directive_bridge.rs:22-30` |
@@ -436,11 +436,15 @@ within iterations.
 - `new_curator` (`context_injector.rs:191-204`) — recalls from the curator's
   `curator.db`.
 
-The prompt-length gate `should_recall` (`context_injector.rs:110-115`)
+The prompt-length gate `should_recall` (`context_injector.rs:108-113`)
 skips recall for prompts shorter than 20 chars or 3 words. The
 `auto_inject` flag gates memory recall only; the kask tool-use warnings
-(`TOOL_WARNING_PROMPT`, `context_injector.rs:77-85`) are always emitted from
-`inject_static_context` regardless of the flag.
+are baked into the `system_prompt.hbs` template as an unconditional section.
+
+Per-turn `inject_context` merges two recall paths into a single
+`Role::System` message: prompt-salient recall (`recall_context`, embedding
+similarity) and thread-scoped recall (`recall_thread`, entity match). Both
+are fresh every turn — no session-lifetime snapshot.
 
 ## Re-exports
 

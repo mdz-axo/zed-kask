@@ -41,6 +41,21 @@ pub fn set_inference_socket_path(path: &str) {
         );
     }
     *guard = path.to_string();
+
+    // Also write the socket path to a well-known file so MCP server child
+    // processes that were relaunched with a stale LaunchSpec (missing
+    // HKASK_INFERENCE_SOCKET in their env) can discover the socket via the
+    // file fallback in `InferenceIpcClient::from_env`.
+    let xdg = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| "/run/user/1000".to_string());
+    let file_path = format!("{xdg}/kask/inference-socket-path");
+    if let Err(e) = std::fs::write(&file_path, path) {
+        tracing::warn!(
+            target: "hkask.inference_socket",
+            "Failed to write inference socket path to {file_path}: {e} — \
+             MCP servers relaunched with stale env will not find the socket"
+        );
+    }
 }
 
 /// Get the current inference IPC socket path, or `None` if not yet set.

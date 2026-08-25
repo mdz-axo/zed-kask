@@ -207,11 +207,12 @@ collision), sorted by relevance descending, truncated to `recall_limit`,
 filtered by `recall_min_confidence` (default 0.3), wrapped in data-boundary
 markers, and injected as a `Role::System` message after the system prompt.
 
-### Static context (once per session)
+### Thread-scoped recall (per turn)
 
-`inject_static_context` calls `recall_thread(thread_id)` once per session,
-which recalls by exact entity match (not embedding KNN). This loads the
-thread's prior turns into the system prompt.
+`inject_context` calls `recall_thread(thread_id)` on every turn (fresh,
+not session-cached), which recalls by exact entity match (not embedding
+KNN). This loads the thread's prior turns alongside prompt-salient recall
+into a single `Role::System` message.
 
 See [Memory Recall Flow](../diagrams/flowchart-memory-recall.md).
 

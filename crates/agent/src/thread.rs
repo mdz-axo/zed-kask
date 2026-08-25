@@ -1432,24 +1432,16 @@ pub struct Thread {
     /// `ProjectContext` on every `render_system_prompt` call when the inputs
     /// haven't changed.
     cached_filtered_context: Option<CachedFilteredContext>,
-    /// Static context loaded once per session via `ContextInjector::inject_static_context`.
-    /// Rendered in the system prompt after the project context section. Included
-    /// in the system-prompt digest (I1). `None` when no `ContextInjector` is set
-    /// or when it returns `None` (I2 — upstream Zed compatibility).
-    static_context: Option<SharedString>,
-    /// Whether `inject_static_context` has been attempted this session. Without
-    /// this, an empty recall result (`None`) leaves `static_context` as `None`,
-    /// and the `is_none()` guard re-queries the memory store on every turn —
-    /// a redundant SQLite + embedding query per turn for zero benefit.
-    static_context_loaded: bool,
+    /// Static context set by the agent (e.g., Curator overlay, Steer
+    /// panel overlay). Rendered in the system prompt's `## Session Context`
+    /// section. Included in the system-prompt digest so cache busts on change.
     /// When set, overrides the default system prompt template. Used by the
     /// Curator agent to inject its own persona/system prompt instead of the
     /// default Zed Agent prompt. When `None`, the standard `system_prompt.hbs`
     /// template is rendered.
     system_prompt_override: Option<SharedString>,
-    /// Static context set by the agent (e.g., Curator overlay). Kept separate
-    /// from the injected `static_context` so both can coexist — the Curator
-    /// context is merged with memory-recall context in `render_system_prompt`.
+    /// Static context set by the agent (e.g., Curator overlay). Rendered in
+    /// the system prompt's `## Session Context` section.
     agent_static_context: Option<SharedString>,
     /// The agent ID that owns this thread (e.g., `CURATOR_AGENT_ID`, `ZED_AGENT_ID`).
     /// `None` for threads created before agent identity was tracked (upstream-zed
@@ -1636,8 +1628,6 @@ impl Thread {
             )),
             cached_system_prompt: None,
             cached_filtered_context: None,
-            static_context: None,
-            static_context_loaded: false,
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
@@ -2044,8 +2034,6 @@ impl Thread {
             )),
             cached_system_prompt: None,
             cached_filtered_context: None,
-            static_context: None,
-            static_context_loaded: false,
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
@@ -2254,9 +2242,8 @@ impl Thread {
     /// The static context is rendered after the project context section.
     /// Used by the Curator overlay to inject regulatory context.
     ///
-    /// This is stored separately from the memory-injected `static_context`
-    /// so both can coexist. In `render_system_prompt`, the agent context is
-    /// concatenated with the injected context.
+    /// Set agent static context (e.g., Curator overlay). Rendered in the
+    /// system prompt's `## Session Context` section.
     pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
         self.agent_static_context = Some(context);
         self.cached_system_prompt = None; // bust the cache
@@ -3048,7 +3035,13 @@ impl Thread {
                         // Fire-and-forget — the memory system handles classification
                         // and consolidation asynchronously. When no memory port is
                         // injected (upstream zed, or before composition root runs),
-                        // this is a no-op.
+                        // this is a no-op — but we log it so the operator can see
+                        // that turns are being dropped (the feedback-gap trap:
+                        // silent no-ops make the system appear to remember when it
+                        // doesn't).
+                        let thread_id_for_log = this
+                            .read_with(cx, |thread, _| thread.id().to_string())
+                            .unwrap_or_default();
                         if let Some(port) = crate::memory_port() {
                             let record = this.update(cx, |thread, _cx| crate::ThreadTurnRecord {
                                 thread_id: thread.id().to_string(),
@@ -3092,6 +3085,13 @@ impl Thread {
                                 })
                                 .detach();
                             }
+                        } else {
+                            log::warn!(
+                                target: "reg.memory",
+                                "turn ingest skipped (thread {thread_id_for_log}) — \
+                                 memory port not yet wired (pre-login). \
+                                 This turn will not be remembered."
+                            );
                         }
                     }
                     Err(error) => {
@@ -3216,40 +3216,6 @@ impl Thread {
                 // If we injected deferred results, the intent is ToolResults
                 // (we're delivering tool outputs to the model).
                 intent = CompletionIntent::ToolResults;
-            }
-
-            // Load static context lazily on the first iteration. This is
-            // async because the underlying memory recall may need to await on
-            // the GPUI or tokio executor. The result is cached on `Thread` for
-            // the rest of the session.
-            //
-            // We guard on `static_context_loaded` (not `static_context.is_none()`)
-            // because `inject_static_context` returns `None` for an empty recall
-            // result — without the flag, every turn would re-query the memory
-            // store and get the same empty answer.
-            if !this
-                .read_with(cx, |this, _| this.static_context_loaded)
-                .unwrap_or(false)
-            {
-                let agent_id = this
-                    .read_with(cx, |this, _| this.agent_id.clone())
-                    .unwrap_or(None);
-                if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
-                    let thread_id = this
-                        .read_with(cx, |this, _| this.id.to_string())
-                        .unwrap_or_default();
-                    if !thread_id.is_empty() {
-                        let static_context = injector.inject_static_context(&thread_id).await;
-                        this.update(cx, |this, _cx| {
-                            this.static_context = static_context.map(SharedString::from);
-                            this.static_context_loaded = true;
-                        })?;
-                    } else {
-                        this.update(cx, |this, _cx| this.static_context_loaded = true)?;
-                    }
-                } else {
-                    this.update(cx, |this, _cx| this.static_context_loaded = true)?;
-                }
             }
 
             // Re-read the model and refresh tools on each iteration so that
@@ -5288,19 +5254,10 @@ impl Thread {
         let is_linux = cfg!(target_os = "linux");
         let is_windows = cfg!(target_os = "windows");
 
-        // Static context is loaded async in `run_turn_internal` and cached
-        // on `self.static_context`. Here we just read the cached value.
-        // Merge agent static context (e.g., Curator overlay) with the
-        // injected static context (e.g., memory recall). Both are rendered
-        // in the system prompt's "Session Context" section.
-        let static_context = match (&self.agent_static_context, &self.static_context) {
-            (Some(agent_ctx), Some(injected_ctx)) => Some(SharedString::from(format!(
-                "{agent_ctx}\n\n---\n\n{injected_ctx}"
-            ))),
-            (Some(agent_ctx), None) => Some(agent_ctx.clone()),
-            (None, Some(injected_ctx)) => Some(injected_ctx.clone()),
-            (None, None) => None,
-        };
+        // Agent static context (e.g., Curator overlay, Steer panel overlay)
+        // is rendered in the system prompt's "Session Context" section.
+        // Memory recall is per-turn via `inject_context` (Role::System message).
+        let static_context = self.agent_static_context.clone();
 
         // Apply conditional-rules scoping: filter out rules files whose
         // frontmatter specifies `alwaysApply: false` with globs that don't

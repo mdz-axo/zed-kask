@@ -75,13 +75,15 @@ gate: prompts shorter than 20 characters or 3 words skip recall entirely
 (`context_injector.rs:110-115`). This avoids an embedding HTTP call for short
 code-focused prompts like "run the tests."
 
-When recall does fire, the injector calls `memory_port.recall_context`, filters
-by `recall_min_confidence`, and wraps each snippet in an explicit data boundary
-(`MEMORY_CONTEXT_OPEN` … `MEMORY_CONTEXT_CLOSE`, `context_injector.rs:54-58`)
-so the model treats recalled memory as data, not as instructions. A separate
-`inject_static_context` path always appends the kask tool-use warnings
-(`TOOL_WARNING_PROMPT`, `context_injector.rs:77-85`) regardless of the
-`auto_inject` setting.
+When recall does fire, the injector calls `memory_port.recall_context`
+(prompt-salient, embedding similarity) and `memory_port.recall_thread`
+(thread-scoped, entity match), filters each by its confidence threshold,
+and wraps each snippet in an explicit data boundary
+(`MEMORY_CONTEXT_OPEN` … `MEMORY_CONTEXT_CLOSE`, `context_injector.rs:42-46`)
+so the model treats recalled memory as data, not as instructions. Both recall
+paths are fresh every turn — no session-lifetime snapshot. The kask tool-use
+warnings are baked into the `system_prompt.hbs` template as an unconditional
+`## Tool failure-mode warnings (kask)` section.
 
 A second constructor, `new_curator` (`context_injector.rs:191-204`), produces
 an injector that recalls from the curator's sovereign `curator.db` instead of

@@ -2910,22 +2910,7 @@ pub trait ContextInjector: Send + Sync {
         >,
     >;
 
-    /// Retrieve static context for the thread — intended to be loaded once
-    /// per session and included in the system prompt (not retrieved per-turn).
-    /// Returns a string that will be rendered after the project context section.
-    ///
-    /// This is an async method because the underlying memory recall may need
-    /// to await on the GPUI or tokio executor. The caller (`run_turn_internal`)
-    /// awaits this once on the first `render_system_prompt` and caches the
-    /// result on `Thread.static_context`.
-    ///
-    /// Default implementation returns `None` (I2 — upstream Zed compatibility).
-    fn inject_static_context<'a>(
-        &'a self,
-        _thread_id: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
-        Box::pin(async move { None })
-    }
+
 }
 
 /// Global hook for the context injector (D11).

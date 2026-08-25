@@ -174,7 +174,7 @@ impl LanguageModelEmbeddingPort {
         tokio_handle: tokio::runtime::Handle,
     ) -> Self
     where
-        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+        F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
     {
         let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
         tokio_handle.spawn(async move {

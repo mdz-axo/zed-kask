@@ -281,6 +281,14 @@ There are project rules that apply to these root directories:
 
 {{/if}}
 
+## Tool failure-mode warnings (kask)
+
+The built-in file/terminal tools have known failure modes. Follow these rules:
+
+- `read_file`: Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns "tool input was not fully received" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
+- `edit_file`: If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
+- `terminal`: Never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
+
 {{#if static_context}}
 ## Session Context
 
