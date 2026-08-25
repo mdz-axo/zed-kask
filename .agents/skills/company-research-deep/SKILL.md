@@ -54,9 +54,11 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 ### wardley-anchor
 
 1. Compressed value-chain map of the rotated Company Board — compresses wardley-mapper's 6-step process into a single LLM call.
-2. Inventory components, classify each on the Wardley evolution axis (Genesis → Custom → Product → Commodity), map them on the value chain.
-3. Surface commoditization candidates, choke points, and invisible gorillas.
-4. GORILLA consumes choke_points and invisible_gorillas; ECONOMIC TRAJECTORY consumes commoditization_candidates as the falling-cost anchor.
+2. **Inventory two classes of components:**
+   - **Internal value-chain components** — what the company builds. Classify each on the Wardley evolution axis (Genesis → Custom → Product → Commodity).
+   - **Claimed market categories** — every market or capability the company claims to own, create, or be unique in. For each, search via `web_search` for incumbents who already sell it as a product line. Classify based on **what incumbents do**, not what the company claims. If incumbents sell it as a product line, it is at Product/Commodity stage — flag it as a commoditization red flag.
+3. Surface commoditization candidates (including any claimed market found to be at Product/Commodity stage), choke points, and invisible gorillas.
+4. GORILLA consumes choke_points, invisible_gorillas, AND commoditization_candidates — a claimed market at Product/Commodity stage caps the Obvious Problem score (the company is entering an existing market, not solving a new problem). ECONOMIC TRAJECTORY consumes commoditization_candidates as the falling-cost anchor.
 5. **Conditional full Wardley:** If the compressed choke_point score (from GORILLA, evaluated after this step) is < 60, re-run with the full `wardley-mapper` skill (6-step process: inventory → classify → map → movement → recommendations → present). The full map adds movement analysis (component velocity on the evolution axis) and visual positioning that the compressed adapter cannot produce. This conditional trigger avoids convergence fatigue on clear-cut cases while preserving depth when the strategic position is uncertain.
 
 ### economic-trajectory
@@ -69,10 +71,12 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ### gorilla-4dim
 
-1. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, and the economic trajectory.
-2. Score each dimension 0–100 based on evidence.
-3. Call `lisp_eval` to apply the fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
-4. Do NOT propose alternative weightings — the weights are fixed by firm methodology.
+1. **Market-reality gate (before scoring Obvious Problem).** For each market/capability the company claims to own or have created, search via `web_search` for incumbents who sell it as a product line. Output a table: `claimed market | incumbent | what they sell | URL`. If incumbents exist, the market is at Product/Commodity stage — cap Obvious Problem at 40. If you cannot find incumbents after searching, say so explicitly and score normally, but flag it for review.
+2. **Falsification before scoring.** Before scoring any dimension above 70, write one paragraph arguing against it. If you can't write a convincing counter-argument, the score is probably too high.
+3. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, the economic trajectory, and the market-reality gate.
+4. Score each dimension 0–100. Every score must cite the evidence it's based on — transcript quote, web source, or financial data point. A score with no cited evidence is invalid.
+5. Call `lisp_eval` to apply the fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
+6. Do NOT propose alternative weightings — the weights are fixed by firm methodology.
 
 ### gorilla-capability-reason
 

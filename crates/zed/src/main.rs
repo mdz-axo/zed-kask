@@ -660,7 +660,7 @@ fn main() {
         // threads.db`, resolved by `resolve_under_data_dir`. This relocates
         // archived chat threads from the upstream `paths::data_dir()/threads/`
         // (`~/.local/share/zed-kask/threads/`) to the kask data root
-        // (`~/.local/share/hkask/threads/`) so all kask artifacts share one
+        // (`~/.local/share/zed-kask/threads/`) so all kask artifacts share one
         // rooted tree. Pre-release: no back-compat — the kask path is always
         // used. Wired early (user-independent) so the path is available
         // before any thread is loaded.
@@ -677,7 +677,7 @@ fn main() {
         // This relocates global skills from the upstream
         // `paths::data_dir()/agents/skills/`
         // (`~/.local/share/zed-kask/agents/skills/`) to the kask data root
-        // (`~/.local/share/hkask/skills/`) so all kask artifacts share one
+        // (`~/.local/share/zed-kask/skills/`) so all kask artifacts share one
         // rooted tree. Pre-release: no back-compat. Wired early
         // (user-independent) so the path is available before any skill is
         // loaded.

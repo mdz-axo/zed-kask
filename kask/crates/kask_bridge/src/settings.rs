@@ -36,10 +36,12 @@ pub struct KaskSettings {
     /// Kask data directory — the root for all kask databases, agent state,
     /// and file-based stores. When empty, `mcp_env()` resolves a default
     /// via `hkask_types::agent_paths::resolve_data_dir()` (HKASK_DATA_DIR
-    /// env var → XDG_DATA_HOME/hkask → ~/.local/share/hkask) and injects
+    /// env var → XDG_DATA_HOME/zed-kask → ~/.local/share/zed-kask) and injects
     /// it as `HKASK_DATA_DIR` for every MCP server. This ensures servers
     /// always receive a consistent data directory without requiring the
     /// operator to set environment variables manually.
+    /// User-facing artifacts (reports, exports) are stored separately in
+    /// ~/Documents/zk-data/ via `resolve_artifacts_dir()`.
     pub data_dir: String,
 
     /// Kask-wide general configuration: global inference concurrency + batching.

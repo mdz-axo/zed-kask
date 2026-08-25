@@ -40,7 +40,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 ### Skill Locations
 
 - **Project-local skills:** `.agents/skills/<name>/SKILL.md` (in the worktree)
-- **Global skills:** `~/.local/share/hkask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing)
+- **Global skills:** `~/.local/share/zed-kask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing)
 - **Prompt templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
 - `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities.
 
@@ -88,7 +88,7 @@ hKask ships **10 MCP servers** launched by zed's `context_server` as child proce
 ### Ensemble / Coaching (Multi-agent interaction)
 - `kata-coaching`, `kata-improvement`, `improv` — Toyota Kata dialogues.
 
-For the current skill catalog, see `.agents/skills/` (project-local) and `~/.local/share/hkask/skills/` (global).
+For the current skill catalog, see `.agents/skills/` (project-local) and `~/.local/share/zed-kask/skills/` (global).
 
 ---
 

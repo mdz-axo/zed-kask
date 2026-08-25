@@ -26,18 +26,31 @@ mds_categories: [lifecycle, composition, trust]
 
 ## 1. Root
 
-All kask artifacts live under a single data root, resolved by
+All kask internal data (databases, traces, MCP state, skills, threads) lives under a single data root, resolved by
 `hkask_types::agent_paths::resolve_data_dir()`
-(`kask/crates/hkask-types/src/agent_paths.rs:29-46`):
+(`kask/crates/hkask-types/src/agent_paths.rs`):
 
 | Precedence | Path (Linux) |
 |---|---|
 | 1 | `$HKASK_DATA_DIR` |
-| 2 | `$XDG_DATA_HOME/hkask` |
-| 3 | `$HOME/.local/share/hkask` |
+| 2 | `$XDG_DATA_HOME/zed-kask` |
+| 3 | `$HOME/.local/share/zed-kask` |
 | 4 | current working directory (fallback, warns) |
 
-macOS: `~/Library/Application Support/hkask`. Windows: `%LOCALAPPDATA%\hkask`.
+macOS: `~/Library/Application Support/zed-kask`. Windows: `%LOCALAPPDATA%\zed-kask`.
+
+User-facing artifacts (reports, screens, exports) are stored separately in a
+visible directory via `resolve_artifacts_dir()`:
+
+| Precedence | Path (Linux) |
+|---|---|
+| 1 | `$HKASK_ARTIFACTS_DIR` |
+| 2 | `$XDG_DOCUMENTS_DIR/zk-data` |
+| 3 | `$HOME/Documents/zk-data` |
+| 4 | `$HOME/zk-data` (fallback) |
+
+This separation keeps internal app data hidden (XDG convention) while making
+user-facing output visible and intuitive.
 
 This root is injected as `HKASK_DATA_DIR` into every MCP server child process
 by `KaskSettings::mcp_env()`
@@ -179,7 +192,7 @@ under `mcp/{server_id}/`.
 (`crates/agent/src/db.rs`).
 
 **Canonical kask path:** `resolve_under_data_dir(Path::new("threads/threads.db"))`
-→ `~/.local/share/hkask/threads/threads.db`.
+→ `~/.local/share/zed-kask/threads/threads.db`.
 
 Pre-release: no back-compat window. The kask path is always used once
 `set_threads_db_path_override` is wired (early in `main.rs`, user-independent).

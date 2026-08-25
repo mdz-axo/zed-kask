@@ -8,3 +8,4 @@ pub(crate) mod portfolio;
 
 pub(crate) mod transcript;
 pub(crate) mod valuation;
+pub(crate) mod artifacts;

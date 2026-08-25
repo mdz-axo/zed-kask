@@ -288,6 +288,7 @@ impl CompaniesServer {
             + Self::economic_profit_router()
             + Self::expectations_router()
             + Self::transcript_router()
+            + Self::artifacts_router()
 
     }
 

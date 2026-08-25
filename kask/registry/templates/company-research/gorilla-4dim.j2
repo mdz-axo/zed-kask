@@ -44,10 +44,19 @@ The Wardley map's `invisible_gorillas` and `choke_points` fields ground the Invi
 
 | Dimension | Weight | Description |
 |-----------|--------|-------------|
-| **Obvious Problem** | 25% | Large, structural, widely acknowledged problem |
+| **Obvious Problem** | 25% | Large, structural, widely acknowledged problem — BUT the claimed market must be verified as real and non-commoditized (see market-reality gate below) |
 | **Invisible Gorilla** | 30% | Market can't see the solution (blind spot) |
 | **Combinatorial Solution** | 25% | New combination of existing technologies |
 | **Choke Point** | 20% | Strategic position in value chain |
+
+## Market-Reality Verification Gate (before scoring Obvious Problem)
+
+Before scoring Obvious Problem, examine the Wardley map's `claimed_market` type components. For each:
+1. If the Wardley map classified a claimed market as **Product** or **Commodity** (incumbents sell it as a product line), the company is **entering an existing market**, not creating a new one. Cap Obvious Problem at 40.
+2. If the Wardley map flagged `requires_incumbent_search: true` for a claimed market, you MUST search via `web_search` for incumbents before scoring. Search: `"{claimed_market} incumbent product catalog commodity award"`. If incumbents are found selling it as a product line, classify and cap accordingly.
+3. If the claimed market is genuinely at Genesis/Custom stage (no incumbents, truly novel), score Obvious Problem normally.
+
+This gate prevents companies from scoring high on Obvious Problem by claiming a proprietary market for something incumbents already productize. Example: "direct-to-device" is sold by MDA Space as MDA AURORA™ D2D — it is at Product stage, not Genesis. A company claiming D2D as their unique market is entering an existing market.
 
 The weights are fixed by firm methodology. Do NOT propose alternative weightings — the lisp.eval compute step in the process applies these exact weights. Your job is to score each dimension 0–100 based on the evidence in the Company Board.
 

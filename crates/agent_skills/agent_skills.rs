@@ -93,11 +93,11 @@ pub fn is_reserved_skill_name(name: &str) -> bool {
 /// User-facing display form of the global skills directory path.
 ///
 /// zed-kask: D28 — global skills live under the kask data root
-/// (`~/.local/share/hkask/skills/`), not the app data root.
+/// (`~/.local/share/zed-kask/skills/`), not the app data root.
 #[cfg(target_os = "windows")]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = r"%LOCALAPPDATA%\hkask\skills";
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = r"%LOCALAPPDATA%\zed-kask\skills";
 #[cfg(not(target_os = "windows"))]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/.local/share/hkask/skills";
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/.local/share/zed-kask/skills";
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///

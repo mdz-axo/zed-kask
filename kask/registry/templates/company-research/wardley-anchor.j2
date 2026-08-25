@@ -71,9 +71,13 @@ Produce a compressed Wardley map in a single pass. This compresses the full ward
 
 ### Steps to perform (internally, in one response):
 
-1. **Inventory**: Enumerate every component in the company's value chain. Include: customer-facing capabilities, platform services, infrastructure, conceptual components (business model, governance, partnerships). Be exhaustive — missing components create blind spots.
+1. **Inventory two classes of components:**
+   - **Internal value-chain components**: Enumerate every component in the company's value chain. Include: customer-facing capabilities, platform services, infrastructure, conceptual components (business model, governance, partnerships). Be exhaustive — missing components create blind spots.
+   - **Claimed market categories**: For every market or capability the company claims to own, create, or be unique in (e.g., "direct-to-device," "space-based cellular broadband," "medium-lift launch"), add it as a component. This is critical — companies often claim proprietary ownership of markets that incumbents already productize. If you don't map the claimed market on the evolution axis, you can't detect when it's already commoditized.
 
 2. **Classify**: For each component, classify on the evolution axis (Genesis / Custom / Product / Commodity) using maturity, adoption, standardization, and differentiation criteria. Mark `should_commoditize: true` for components the company builds custom that the broader market has already commoditized.
+   - **For claimed market categories**: Classification must be based on **what incumbents actually do in the broader market**, not what the company claims. If you cannot determine this from the Company Board alone, note it as a `requires_incumbent_search: true` flag — the GORILLA step's market-reality gate will verify via web search. If incumbents sell the capability as a product line (e.g., MDA Space sells MDA AURORA™ D2D satellites to EchoStar/Globalstar), classify it as **Product** or **Commodity** — not Genesis or Custom — regardless of what the company's marketing claims.
+   - **Commoditization red flag**: A company claiming to "create" or "invent" a market that is already at Product/Commodity stage in the broader market is entering an existing market, not creating a new one. Flag this explicitly in `commoditization_candidates` and `invisible_gorillas` (the market's commoditization is the invisible gorilla — the company's narrative hides it).
 
 3. **Map**: Place each component on the value chain (Y: visibility, X: evolution) with (x, y) coordinates [0.0–1.0] and dependency links.
 
@@ -88,10 +92,12 @@ Return JSON only:
     "components": [
       {
         "name": "...",
-        "type": "infrastructure|platform_service|user_facing|conceptual|protocol",
+        "type": "infrastructure|platform_service|user_facing|conceptual|protocol|claimed_market",
         "evolution": "Genesis|Custom|Product|Commodity",
         "should_commoditize": false,
-        "rationale": "why this stage",
+        "requires_incumbent_search": false,
+        "incumbent_evidence": "named incumbents who sell this as a product line (if known), or null if requires_incumbent_search",
+        "rationale": "why this stage — for claimed_market types, this must explain what incumbents do, not what the company claims",
         "x": 0.0,
         "y": 0.0,
         "dependencies": ["..."],
