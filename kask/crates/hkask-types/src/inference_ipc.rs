@@ -52,6 +52,24 @@ use crate::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, LL
 /// Environment variable name for the Unix socket path.
 pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
 
+/// Environment variable name for the inference establishment timeout in
+/// seconds.
+///
+/// The zed process publishes its configured `inference_timeout_secs`
+/// (the deadline the server-side `LanguageModelInferencePort` enforces on
+/// `stream_completion` establishment) so child-process IPC clients can set
+/// their read deadline to `server_timeout + grace` instead of inventing an
+/// independent (and shorter) one. Without this, a slow-but-alive provider
+/// whose establishment takes longer than the client's read timeout produces a
+/// storm of `BrokenPipe` warnings: the client gives up first, closes its
+/// socket, and the server's later response write hits EPIPE. With this, the
+/// client strictly outlasts the server, so a timed-out inference produces one
+/// timeout (the server's), not two contradictory warnings.
+///
+/// Clients that cannot read this var (or find it empty) fall back to a
+/// conservative default — never to zero.
+pub const INFERENCE_TIMEOUT_ENV: &str = "HKASK_INFERENCE_TIMEOUT_SECS";
+
 /// A request from the MCP server to the zed inference bridge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceRequest {

@@ -337,37 +337,18 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
 /// Build the `(env_var, credential_url)` pairs for all credentials that
 /// should be injected into MCP server child processes.
 ///
-/// Reads the `KaskSettings` to determine which data services and inference
-/// providers are enabled, and returns the credential URLs for each.
-pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, String)> {
+/// Returns credential URLs for all data services and inference providers.
+/// The key's presence in env or keychain is the toggle — no settings bool.
+pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
     let mut urls = Vec::new();
 
-    // Data services — inject secrets (keychain-backed). Services with a
-    // settings toggle (`*_enabled` on `KaskDataServiceSettings`) are gated on
-    // the toggle; services without a toggle (ABW, DB passphrase, SMTP, RunPod
-    // S3, FRED, and the no-field services like SerpAPI/Firecrawl/
-    // Browserbase/HF token) are injected unconditionally when the keychain
-    // entry exists — they have no enable/disable control. The per-MCP-server
-    // `credentials` allowlist is the final filter, so listing a key here does
-    // not reach a server that doesn't declare it. `build_mcp_server_env`
-    // also skips env vars already set in the process environment.
-    // (RUNPOD_TEMPLATE_ID was removed from this list — it's a non-secret
-    // config value now traveling the config_env path.)
+    // Data services — inject unconditionally. The key's presence is the
+    // toggle: if it's not in the parent env or keychain, `build_mcp_server_env`
+    // skips it and the server surfaces `permission_denied`. A separate
+    // `*_enabled` bool on settings is a spandrel — it can only ever block a
+    // key that is already configured, which is pure negative value.
     for desc in DATA_SERVICES {
-        let enabled = match desc.credential_key {
-            "eodhd" => settings.data_services.eodhd_enabled,
-            "fmp" => settings.data_services.fmp_enabled,
-            "exa" => settings.data_services.exa_enabled,
-            "tavily" => settings.data_services.tavily_enabled,
-            "brave" => settings.data_services.brave_enabled,
-            "runpod" => settings.data_services.runpod_enabled,
-            "nebius_project_id" | "nebius_subnet_id" => settings.data_services.nebius_enabled,
-            // No toggle for this service — inject when the keychain entry exists.
-            _ => true,
-        };
-        if enabled {
-            urls.push((desc.env_var.to_string(), desc.credential_url()));
-        }
+        urls.push((desc.env_var.to_string(), desc.credential_url()));
     }
 
     // Inference providers — inject API keys for all providers that have an

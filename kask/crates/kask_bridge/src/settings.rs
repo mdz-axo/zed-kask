@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
-    KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
-    KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMemorySettingsContent,
-    KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskGeneralSettingsContent,
+    KaskMcpSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
     KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
@@ -47,9 +47,6 @@ pub struct KaskSettings {
 
     /// MCP server configuration — which of the 12 built-in servers to load.
     pub mcp: KaskMcpSettings,
-
-    /// Data service toggles (non-secret — API keys are in the keychain).
-    pub data_services: KaskDataServiceSettings,
 
     /// Curator configuration.
     pub curator: KaskCuratorSettings,
@@ -152,31 +149,6 @@ impl Default for KaskMcpSettings {
             overrides: HashMap::default(),
         }
     }
-}
-
-/// Data service toggles. API keys are in the keychain, not here.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskDataServiceSettings {
-    /// Enable EODHD (historical price data).
-    pub eodhd_enabled: bool,
-
-    /// Enable FMP (Financial Modeling Prep).
-    pub fmp_enabled: bool,
-
-    /// Enable Exa (research search).
-    pub exa_enabled: bool,
-
-    /// Enable Tavily (research search).
-    pub tavily_enabled: bool,
-
-    /// Enable Brave Search.
-    pub brave_enabled: bool,
-
-    /// Enable RunPod (GPU cloud for training).
-    pub runpod_enabled: bool,
-
-    /// Enable Nebius (GPU cloud for training).
-    pub nebius_enabled: bool,
 }
 
 /// Curator configuration.
@@ -770,21 +742,6 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
     }
 }
 
-impl From<KaskDataServiceSettingsContent> for KaskDataServiceSettings {
-    fn from(c: KaskDataServiceSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            eodhd_enabled: c.eodhd_enabled.unwrap_or(default.eodhd_enabled),
-            fmp_enabled: c.fmp_enabled.unwrap_or(default.fmp_enabled),
-            exa_enabled: c.exa_enabled.unwrap_or(default.exa_enabled),
-            tavily_enabled: c.tavily_enabled.unwrap_or(default.tavily_enabled),
-            brave_enabled: c.brave_enabled.unwrap_or(default.brave_enabled),
-            runpod_enabled: c.runpod_enabled.unwrap_or(default.runpod_enabled),
-            nebius_enabled: c.nebius_enabled.unwrap_or(default.nebius_enabled),
-        }
-    }
-}
-
 impl From<KaskCuratorEmailSettingsContent> for KaskCuratorEmailSettings {
     fn from(c: KaskCuratorEmailSettingsContent) -> Self {
         let default = Self::default();
@@ -967,7 +924,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             data_dir: c.data_dir.unwrap_or_default(),
             general: c.general.map(Into::into).unwrap_or_default(),
             mcp: c.mcp.map(Into::into).unwrap_or_default(),
-            data_services: c.data_services.map(Into::into).unwrap_or_default(),
             curator: c.curator.map(Into::into).unwrap_or_default(),
             memory: c.memory.map(Into::into).unwrap_or_default(),
             condenser: c.condenser.map(Into::into).unwrap_or_default(),

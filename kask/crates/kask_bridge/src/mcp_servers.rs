@@ -444,13 +444,18 @@ pub fn filter_credentials_for_server(
 /// injected last and is not in any allowlist (every server may route inference
 /// through zed's `LanguageModelRegistry`).
 ///
-/// `inference_socket` is a parameter, not a global read, so this function is
-/// unit-testable without touching `INFERENCE_SOCKET_PATH`.
+/// `inference_socket` and `inference_timeout_secs` are parameters, not global
+/// reads, so this function is unit-testable without touching
+/// `INFERENCE_SOCKET_PATH`. The timeout publishes the server's
+/// `stream_completion` establishment deadline to child-process IPC clients so
+/// they can align their read deadline; see
+/// `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV`.
 pub async fn build_mcp_server_env(
     server_id: &str,
     settings: &crate::KaskSettings,
     credentials_provider: &dyn credentials_provider::CredentialsProvider,
     inference_socket: Option<&str>,
+    inference_timeout_secs: Option<u64>,
     cx: &gpui::AsyncApp,
 ) -> std::collections::HashMap<String, String> {
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
@@ -474,7 +479,7 @@ pub async fn build_mcp_server_env(
     //    below only runs when the parent env did not provide a non-empty
     //    value), and the governed child receives it.
     let cred_urls =
-        filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp(settings));
+        filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp());
     for (env_var, url) in cred_urls {
         if let Ok(value) = std::env::var(&env_var)
             && !value.is_empty()
@@ -512,6 +517,20 @@ pub async fn build_mcp_server_env(
         env.insert(
             hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
             socket.to_string(),
+        );
+    }
+
+    // 4. Inference establishment timeout — publish the server's deadline so
+    //    IPC clients can set their read timeout to `server_timeout + grace`
+    //    instead of inventing an independent (shorter) one. Without this, a
+    //    slow-but-alive provider produces a storm of `BrokenPipe` warnings: the
+    //    client times out first, closes its socket, and the server's later
+    //    response write hits EPIPE. With this, the client strictly outlasts the
+    //    server, so a timed-out inference produces one timeout (the server's).
+    if let Some(secs) = inference_timeout_secs {
+        env.insert(
+            hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
+            secs.to_string(),
         );
     }
 
@@ -1099,6 +1118,7 @@ mod tests {
             //   1. config filtered by `config_env` allowlist
             //   2. credentials merged (filtered by `credentials` allowlist)
             //   3. inference socket added
+            //   4. inference timeout added
             let mut env = filter_config_env_for_server(server.id, &full_config);
             for key in server.credentials.unwrap_or(&[]) {
                 if credential_keys.contains(&key) {
@@ -1108,6 +1128,10 @@ mod tests {
             env.insert(
                 hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
                 "/tmp/sock".to_string(),
+            );
+            env.insert(
+                hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
+                "300".to_string(),
             );
 
             let allowed: std::collections::HashSet<&str> = std::collections::HashSet::from_iter(
@@ -1119,6 +1143,9 @@ mod tests {
                     .chain(server.credentials.unwrap_or(&[]).iter().copied())
                     .chain(std::iter::once(
                         hkask_types::inference_ipc::INFERENCE_SOCKET_ENV,
+                    ))
+                    .chain(std::iter::once(
+                        hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
                     )),
             );
 
@@ -1160,7 +1187,7 @@ mod tests {
         let mut env = std::collections::HashMap::<String, String>::new();
         let cred_urls = filter_credentials_for_server(
             "swarm",
-            &crate::credential_urls_for_mcp(&crate::KaskSettings::default()),
+            &crate::credential_urls_for_mcp(),
         );
         for (env_var, _url) in cred_urls {
             if let Ok(value) = std::env::var(&env_var)
@@ -1262,7 +1289,7 @@ mod tests {
         let settings = crate::KaskSettings::default();
         // Collect the (env_var, url) pairs the swarm server would receive.
         let cred_urls =
-            filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp(&settings));
+            filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
         // Find the swarm memory passphrase URL; if absent, the test setup is
         // stale relative to the registry and we fail loudly.
         let passphrase_url = cred_urls
@@ -1283,7 +1310,15 @@ mod tests {
         unsafe { std::env::remove_var("HKASK_SWARM_MEMORY_PASSPHRASE") };
 
         let cx = gpui::TestAppContext::single().to_async();
-        let env = build_mcp_server_env("swarm", &settings, &provider, Some("/tmp/sock"), &cx).await;
+        let env = build_mcp_server_env(
+            "swarm",
+            &settings,
+            &provider,
+            Some("/tmp/sock"),
+            Some(300),
+            &cx,
+        )
+        .await;
 
         // The credential must survive the config filter and land in the
         // composed env with the keychain value — not be dropped by the config
@@ -1303,6 +1338,19 @@ mod tests {
                 .map(|v| v.as_str()),
             Some("/tmp/sock"),
             "inference socket must be injected into the composed env"
+        );
+
+        // The inference timeout must also be injected — it is published
+        // alongside the socket so child IPC clients can align their read
+        // deadline with the server's `inference_timeout`. Without this, a
+        // slow-but-alive provider produces a `BrokenPipe` warn storm (client
+        // times out first, server's later write hits EPIPE).
+        assert_eq!(
+            env.get(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV)
+                .map(|v| v.as_str()),
+            Some("300"),
+            "inference timeout must be injected into the composed env so IPC \
+             clients can align their read deadline with the server's"
         );
     }
 
@@ -1331,7 +1379,7 @@ mod tests {
         };
 
         let cx = gpui::TestAppContext::single().to_async();
-        let env = build_mcp_server_env("portfolio", &settings, &provider, None, &cx).await;
+        let env = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
 
         // The portfolio server's allowlist is `HKASK_TRANSACTIONS_DIR` only.
         // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —

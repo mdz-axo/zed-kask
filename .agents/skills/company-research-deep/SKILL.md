@@ -1,6 +1,6 @@
 ---
 name: company-research-deep
-description: "Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process: COMPANY deep 8-part analysis (MCP tool calls + LLM synthesis) → FALSTAFFIAN competitive perspective rotation → WARDLEY compressed value-chain map → GORILLA 4-dimension framework (fixed weights, `lisp_eval` scoring) + capabilities-reasoner floor/ceiling/maturity assessment → ECONOMIC TRAJECTORY probe → IMAGINE 5/10/20Y scenarios + digital stage (scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar synthesis + essentialist 3-gate eliminative interrogation (cross-skill goal-analysis quality gate) → convergence check → loop on needs_work. Converges on THESIS investment_grade verdict."
+description: "Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 13-step process following the scientific method: COMPANY deep 8-part analysis (observation) → VERIFY early anchor (foundation grounding) → FALSTAFFIAN competitive perspective rotation (hypothesis framing) → WARDLEY compressed value-chain map (structural analysis) → ECONOMIC TRAJECTORY probe with strategy-literature search (theoretical framework) → GORILLA 4-dimension framework (hypothesis evaluation, fixed weights, `lisp_eval` scoring) + capabilities-reasoner floor/ceiling/maturity assessment (falsification) → IMAGINE 5/10Y scenarios + digital stage (prediction, scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar synthesis (conclusion) + essentialist 3-gate eliminative interrogation (parsimony) → VERIFY late gate (full-pipeline grounding) → PERSIST report to companies MCP server → CONDENSE to ≤5000-word human-readable summary. Converges on THESIS investment_grade verdict."
 ---
 
 # Company Research — Deep Pipeline
@@ -13,7 +13,7 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 - When you want the full EFRA-AI research pipeline (COMPANY → GORILLA → IMAGINE → THESIS) as a single governed process.
 - When you want the 8-part company analysis (Self-View, Business Franchise, Management Skill, Financial Profile, Invisible Layer, Turd Blossom, Value Gorilla Elevator Pitch, Investment Thesis Statement).
 - When you want the GORILLA 4-dimension framework (Obvious Problem / Invisible Gorilla / Combinatorial Solution / Choke Point) with fixed methodology weights.
-- When you want IMAGINE's 5/10/20Y scenarios with digital transformation stage classification and falsifiable predictions persisted to the forecast-ledger.
+- When you want IMAGINE's 5/10Y scenarios with digital transformation stage classification and falsifiable predictions persisted to the forecast-ledger.
 - When you want the THESIS three-pillar synthesis (Business Franchise, Management Quality, Valuation) with a cross-skill goal-analysis quality gate.
 
 ## Instructions
@@ -28,8 +28,21 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 6. Turd Blossom — is the market pricing it like a turd? Early shoots of improvement?
 7. Value Gorilla Elevator Pitch — economic opportunity + exploitation + why the market doubts it.
 8. Investment Thesis Statement — durable, timeless, covering all three pillars.
-9. Consume company_transcript, dcf_valuation, comparable_analysis, web_search MCP tool outputs.
+9. Consume company_transcript, dcf_valuation, comparable_analysis, web_search, fetch MCP tool outputs.
 10. Emit data_gaps for any failed MCP tool — never collapse to None.
+11. **Intent-routed search:** Before calling `web_search`, call `web_recommend_provider` with the query and `intent` hint. Use the recommended provider explicitly via `web_search(provider="...")` rather than defaulting to RRF fusion. This prevents the arxiv-only fallback that occurs when no provider is explicitly selected and the credential map is stale.
+12. **Earnings call transcripts:** If `company_transcript` is unavailable, search for `"{company} earnings call transcript Q{N} {year}"` via `web_search(provider="serpapi")` — SerpAPI supports YouTube transcript extraction. Fall back to `web_search(provider="tavily")` for written transcript sources. Never substitute Wikipedia-sourced paraphrases for verbatim management quotes without flagging a `data_gap`.
+
+### verify-early-anchor
+
+1. Verify that the CompanyBoard's factual claims and cited quotes are grounded in the MCP tool outputs and transcript consumed by company-8part. This is the early anchor — it catches foundation hallucinations BEFORE they contaminate downstream steps (Falstaffian rotation, Wardley map, GORILLA, IMAGINE, THESIS).
+2. Call `spawn_agent` with a message that invokes the `grounding-verify` skill:
+   - label: "verify-early-anchor"
+   - message: instruct the agent to run the `grounding-verify` skill on the CompanyBoard output against all step-1 MCP tool outputs. Provide the CompanyBoard text as `target_text`, the MCP tool outputs as `source_outputs`, the pipeline tool call log as `pipeline_tool_log`, and the domain-specific leak rules for equity research as `leak_rules`.
+3. The spawned agent is decoupled from the company-8part generator — it has no shared conversation history (self-improvement §9.1). It receives only the stage output and the source outputs.
+4. Consume the `fact_score`, `verified_claims`, `data_gaps`, `confidence_adjustment`, and `confidence_band` from the spawned agent's output.
+5. If `fact_score < 0.60`: block downstream steps, re-enter company-8part with fact-check gaps injected into the convergence loop. If `fact_score = nil`: emit `data_gap: "fact_score_early_measurement_failed"` + confidence penalty -0.20, proceed with caution. If `0.60 ≤ fact_score < 0.80`: proceed, emit `data_gaps` for failed sub-metrics, apply confidence penalty -0.10. If `fact_score ≥ 0.80`: proceed with no penalty.
+6. The `verified_claims` registry from this step is append-only — downstream steps and the late gate can read it but cannot modify it. This prevents the un-stripping trap.
 
 ### falstaffian-competitive-rotation
 
@@ -44,10 +57,19 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 2. Inventory components, classify each on the Wardley evolution axis (Genesis → Custom → Product → Commodity), map them on the value chain.
 3. Surface commoditization candidates, choke points, and invisible gorillas.
 4. GORILLA consumes choke_points and invisible_gorillas; ECONOMIC TRAJECTORY consumes commoditization_candidates as the falling-cost anchor.
+5. **Conditional full Wardley:** If the compressed choke_point score (from GORILLA, evaluated after this step) is < 60, re-run with the full `wardley-mapper` skill (6-step process: inventory → classify → map → movement → recommendations → present). The full map adds movement analysis (component velocity on the evolution axis) and visual positioning that the compressed adapter cannot produce. This conditional trigger avoids convergence fatigue on clear-cut cases while preserving depth when the strategic position is uncertain.
+
+### economic-trajectory
+
+1. Identify the falling-cost trajectory in the subject's industry, the design constraint being removed, the Coasean firm-boundary shifts, and the Kauffman adjacent possible nodes.
+2. Consume the Wardley map's commoditization_candidates as the falling-cost anchor — what's becoming commodity IS the falling-cost trajectory.
+3. **Strategy-literature-probe:** Before asserting Coasean shifts or adjacent-possible nodes, search for grounding literature via `web_search(provider="exa")` with semantically-framed queries: `"industrial organization market structure entry barriers {industry}"`, `"case study vertical integration {industry} {strategy}"`, `"platform economics two-sided market {business_model}"`. Exa's neural search finds literature by meaning, not keyword. Consume the results as evidence for the trajectory claims — do not assert theoretical grounding without a source. Emit `literature_sources` with each trajectory claim.
+4. Emit economic_trajectory with falling_cost, constraint_being_removed, coasean_shifts, adjacent_possible_nodes, convergence_vectors, implications_for_subject, literature_sources.
+5. IMAGINE consumes this as the anchor for its 5/10Y scenarios.
 
 ### gorilla-4dim
 
-1. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board and the Wardley map.
+1. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, and the economic trajectory.
 2. Score each dimension 0–100 based on evidence.
 3. Call `lisp_eval` to apply the fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
 4. Do NOT propose alternative weightings — the weights are fixed by firm methodology.
@@ -62,21 +84,14 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 1. Classify the digital transformation stage (MODEL / SHADOW / TWIN / SOURCE).
 2. Classify the growth driver (innovation / demographic / both / neither).
-3. Construct 5/10/20Y scenarios using the scenario_build MCP tool output as scaffold, ANCHORED on the economic trajectory and CHALLENGED by the Falstaffian rotations.
-4. Emit 3–5 falsifiable predictions tagged by horizon (5Y/10Y/20Y) for the forecast-ledger — the IMAGINE kata loop.
+3. Construct 5/10Y scenarios using the scenario_build MCP tool output as scaffold, ANCHORED on the economic trajectory and CHALLENGED by the Falstaffian rotations.
+4. Emit 3–5 falsifiable predictions tagged by horizon (5Y/10Y) for the forecast-ledger — the IMAGINE kata loop.
 5. Emit what's not on the page (anchored on the adjacent possible) and what's not in the price (anchored on the trajectory's implications).
-
-### economic-trajectory
-
-1. Identify the falling-cost trajectory in the subject's industry, the design constraint being removed, the Coasean firm-boundary shifts, and the Kauffman adjacent possible nodes.
-2. Consume the Wardley map's commoditization_candidates as the falling-cost anchor — what's becoming commodity IS the falling-cost trajectory.
-3. Emit economic_trajectory with falling_cost, constraint_being_removed, coasean_shifts, adjacent_possible_nodes, convergence_vectors, implications_for_subject.
-4. IMAGINE consumes this as the anchor for its 5/10/20Y scenarios.
 
 ### thesis-three-pillars
 
 1. Synthesize all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal).
-2. The terminal stage must cross-reference the IMAGINE 20Y scenario.
+2. The terminal stage must cross-reference the IMAGINE 10Y scenario.
 3. Emit the thesis statement (durable, timeless, covering all three pillars).
 4. Do NOT self-evaluate — the investment_grade / needs_work / incomplete verdict comes from the cross-skill goal-analysis/judge step in the process.
 
@@ -87,17 +102,6 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 3. Gate 2 (Surface): count load-bearing claims — ≤ 7 passes, > 7 requires justification.
 4. Gate 3 (Contract): trace abstractions — are moat source, durability, and terminal stage genuine content or labels/hedges?
 5. The elimination_report feeds the goal-analysis quality gate as additional evidence — it does not block the thesis directly.
-
-### verify-early-anchor
-
-1. Verify that the CompanyBoard's factual claims and cited quotes are grounded in the MCP tool outputs and transcript consumed by company-8part. This is the early anchor — it catches foundation hallucinations BEFORE they contaminate GORILLA, IMAGINE, and THESIS.
-2. Call `spawn_agent` with a message that invokes the `grounding-verify` skill:
-   - label: "verify-early-anchor"
-   - message: instruct the agent to run the `grounding-verify` skill on the CompanyBoard output against all step-1 MCP tool outputs. Provide the CompanyBoard text as `target_text`, the MCP tool outputs as `source_outputs`, the pipeline tool call log as `pipeline_tool_log`, and the domain-specific leak rules for equity research as `leak_rules`.
-3. The spawned agent is decoupled from the company-8part generator — it has no shared conversation history (self-improvement §9.1). It receives only the stage output and the source outputs.
-4. Consume the `fact_score`, `verified_claims`, `data_gaps`, `confidence_adjustment`, and `confidence_band` from the spawned agent's output.
-5. If `fact_score < 0.60`: block downstream steps, re-enter company-8part with fact-check gaps injected into the convergence loop. If `fact_score = nil`: emit `data_gap: "fact_score_early_measurement_failed"` + confidence penalty -0.20, proceed with caution. If `0.60 ≤ fact_score < 0.80`: proceed, emit `data_gaps` for failed sub-metrics, apply confidence penalty -0.10. If `fact_score ≥ 0.80`: proceed with no penalty.
-6. The `verified_claims` registry from this step is append-only — downstream steps and the late gate can read it but cannot modify it. This prevents the un-stripping trap.
 
 ### verify-late-gate
 
@@ -111,6 +115,26 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 6. If `fact_score_final < 0.60`: flag `needs_work` with fact-check gaps injected into convergence loop. If `fact_score_final = nil`: surface to quality gate as `incomplete` (cannot evaluate thesis quality without factuality signal). If `0.60 ≤ fact_score_final < 0.80`: proceed to quality gate with confidence penalty -0.10. If `fact_score_final ≥ 0.80`: proceed to quality gate with no penalty.
 7. The fact_score does NOT replace the `goal-analysis/judge` semantic evaluation — two independent gates, not one. `fact_score < 0.60` bypasses semantic evaluation (a thesis on hallucinated facts cannot be evaluated for investment quality); `fact_score ≥ 0.60` still requires the semantic quality gate.
 
+### persist-report
+
+1. After the quality gate verdict (investment_grade / needs_work / incomplete), persist the full pipeline output to the companies MCP server's report store via `report_save`.
+2. Call `report_save` on the `hkask-mcp-companies` server with:
+   - `kind`: `"report"`
+   - `name`: `"{ticker}-{date}"` for single-company analyses, or `"{ticker-a}-vs-{ticker-b}-{date}"` for comparative analyses
+   - `payload`: JSON object containing the full structured pipeline output — CompanyBoard, rotated_board, wardley_map, economic_trajectory (with literature_sources), gorilla_score (with per-dimension breakdown), ImagineBoard (with falsifiable predictions), thesis, fact_score_final, quality_gate_verdict, data_gaps
+3. The report is persisted to `{data_dir}/mcp/companies/reports/{name}.json` — the canonical location for company-research-deep output. This enables `report_load` for downstream consumption (portfolio analysis, comparison reports, forecast-ledger) and `report_list` for enumeration.
+4. **Never write reports to the workspace filesystem.** The report store is the only persistence path. Writing to the repo root or any project directory is a broken feedback loop — the operator cannot distinguish a skill output from a user-authored file.
+
+### condense-report
+
+1. After persisting the full structured JSON, produce a condensed human-readable report of ≤5,000 words (excluding appendices, figures, and references/citations).
+2. The condensed report preserves all analytical content (8-part analysis, Falstaffian rotation, Wardley map, GORILLA scoring, economic trajectory, IMAGINE 5/10Y scenarios, three-pillar thesis, essentialist 3-gate, comparative verdict) in compressed prose. It is the communication artifact — the structured JSON is the source of truth, the condensed report is the human interface.
+3. Call `report_save` on the `hkask-mcp-companies` server with:
+   - `kind`: `"report"`
+   - `name`: `"{ticker}-summary-{date}"` (or `"{ticker-a}-vs-{ticker-b}-summary-{date}"` for comparative analyses)
+   - `payload`: JSON object with `markdown` field containing the condensed report, plus `word_count`, `source_report` (the name of the full structured report), and `pipeline` field set to `"company-research-deep"`
+4. The condensed report is persisted alongside the full structured report in `{data_dir}/mcp/companies/reports/{name}-summary-{date}.json`. Both artifacts are enumerable via `report_list` and retrievable via `report_load`.
+
 ## Convergence
 
 The deep pipeline converges on the THESIS quality gate verdict: investment_grade = 0.0 (fully converged), needs_work = 0.5 (re-enter COMPANY with THESIS gaps injected), incomplete = 1.0 (escalate). max_iterations: 3 bounds the loop.
@@ -119,14 +143,15 @@ The fact_score (from verify-late-gate) feeds the quality gate as additional evid
 
 ## Cross-Skill Composition
 
-- Step 4 (FALSTAFFIAN) reuses `metacognition/falstaffian-perspective-engine` shapes and decision tree (via `company-research/falstaffian-competitive-rotation`).
-- Step 5 (WARDLEY) compresses `wardley-mapper`'s 6-step process via the `company-research/wardley-anchor` adapter.
-- Step 7 reuses `capabilities-reasoner/capability-reason` (via `company-research/gorilla-capability-reason` adapter) — types each GORILLA dimension against a capability registry with floor/ceiling/maturity-gate limits. Dimensions with maturity blocks are nil'd by the `lisp_eval` scoring call.
-- Step 13 reuses `essentialist/essentialist-flow` (via `company-research/thesis-essentialist` adapter) — runs a single pass of the 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis to enforce parsimony. The elimination_report feeds the goal-analysis quality gate as additional evidence.
-- Verification step 1 (verify-early-anchor) invokes `grounding-verify` as a `spawn_agent` call — decoupled from the company-8part generator (self-improvement §9.1). The skill extracts claims, assigns provenance tiers on a strength lattice, mechanically verifies citations, scans narrative for leak rules, and computes a composite fact_score with nil-propagation.
-- Verification step 2 (verify-late-gate) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `goal-analysis/judge` quality gate as additional evidence.
+- Step 3 (FALSTAFFIAN) reuses `metacognition/falstaffian-perspective-engine` shapes and decision tree (via `company-research/falstaffian-competitive-rotation`).
+- Step 4 (WARDLEY) compresses `wardley-mapper`'s 6-step process via the `company-research/wardley-anchor` adapter. Conditionally upgrades to full `wardley-mapper` when choke_point score < 60.
+- Step 5 (ECONOMIC TRAJECTORY) includes a strategy-literature-probe via Exa semantic search for IO/competition economics grounding.
+- Step 6 reuses `capabilities-reasoner/capability-reason` (via `company-research/gorilla-capability-reason` adapter) — types each GORILLA dimension against a capability registry with floor/ceiling/maturity-gate limits. Dimensions with maturity blocks are nil'd by the `lisp_eval` scoring call.
+- Step 10 reuses `essentialist/essentialist-flow` (via `company-research/thesis-essentialist` adapter) — runs a single pass of the 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis to enforce parsimony. The elimination_report feeds the goal-analysis quality gate as additional evidence.
+- Step 11 (VERIFY-LATE-GATE) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `goal-analysis/judge` quality gate as additional evidence.
 - The fact_score computation uses `lisp_eval` (deterministic scoring, same pattern as GORILLA's fixed-weight scoring). The provenance lattice and extraction ceiling are adapted from Fermi's `grounding_trust.rs`.
-- Step 14 reuses `goal-analysis/judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in goal-analysis's semantic evaluator, not LLM self-assessment.
+- Step 12 reuses `goal-analysis/judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in goal-analysis's semantic evaluator, not LLM self-assessment.
+- Steps 12-13 (PERSIST + CONDENSE) persist the full structured JSON and the condensed ≤5000-word human-readable summary to the `hkask-mcp-companies` report store via `report_save`.
 
 ## Registry Templates
 
@@ -145,8 +170,8 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `company-8part.j2` | Agent 13 COMPANY (DEEPEN). Deep 8-part company analysis: Self-View, Business Franchise, Management Skill (CEO long-term + CFO working capital scorecards), Financial Profile (signposts + 3-stage valuation), Invisible Layer, Turd Blossom, Value Gorilla Elevator Pitch, Investment Thesis Statement. Consumes `company_transcript`, `dcf_valuation`, `comparable_analysis`, `web_search`, `fetch` MCP tool outputs (bound via input_mapping from prior direct tool calls). Emits `CompanyBoard` with all 8 sections, `data_gaps`. |
 | `falstaffian-competitive-rotation.j2` | v0.38.0 addition. Rotates the competitive framing of the Company Board before GORILLA scores it. Applies Falstaffian semantic rotation shapes (predicate hollow, subject expansion, object inversion, direction reversal) to expose framing errors in the analyst narrative. Emits rotated_board with competitor-complement analysis, market creator vs participant classification (Wardley evolution axis), framing errors detected, and rotated competitive position. Anchored to MAIA "Falstaff: Give Me Life", "Competition: Readings vs Reality", "Company Analysis", "Thinking Like an Owner". Cross-references metacognition/falstaffian-perspective-engine shapes and decision tree. |
 | `gorilla-4dim.j2` | Agent 10 GORILLA. Value Gorilla 4-dimension framework with fixed methodology weights (Obvious Problem 25% / Invisible Gorilla 30% / Combinatorial Solution 25% / Choke Point 20%). Weights are fixed by firm methodology — NOT user-tunable, so mcda was rejected (essentialist Surface gate: adds ceremony for fixed weights). Scoring is a `lisp_eval` call, not an mcda call. In v0.38.0, GORILLA consumes the ROTATED board (from falstaffian-competitive- rotation), not the raw Company Board — the rotation corrects framing errors before scoring. Emits `gorilla_score`, `verdict` (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50), per-dimension scores. |
-| `economic-trajectory.j2` | v0.38.0 addition. Economically-anchored imagination scaffold. Identifies the falling-cost trajectory in the subject's industry (McAfee dematerialization), the design constraint being removed (MAIA bottleneck framework), the Coasean firm-boundary shifts (Kauffman economic web), the Kauffman adjacent possible nodes (never-before-born goods and services, Darwinian preadaptations), and convergence vectors (Diamandis). Emits economic_trajectory with falling_cost, constraint_being_removed, coasean_shifts, adjacent_possible_nodes, convergence_vectors, implications_for_ subject, trajectory_velocity. IMAGINE consumes this as the anchor for its 5/10/20Y scenarios. Anchored to MAIA "Focus and Imagination", "More From Less", "Kauffman Readings", "The Future Is Faster", "Bottlenecks and Critical Mass", "Time Horizons". |
-| `imagine-longrange.j2` | Agent 11 IMAGINE. Projects the business at 5, 10, 20 years and walks it back analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN / SOURCE), Growth Driver Classification (innovation / demographic / both / neither). In v0.38.0, scenarios are ANCHORED on the economic trajectory probe (falling cost, constraint removal, adjacent possible) and CHALLENGED by the Falstaffian rotations (rotated competitive framing, framing errors detected). Consumes `scenario_build` MCP tool output and the `economic_trajectory` probe. Emits `ImagineBoard` with digital stage, growth driver, 3 scenarios (each with trajectory_anchor and falstaffian_challenge), 3–5 falsifiable predictions (tagged by horizon, each with trajectory_ basis), what's not on the page (anchored on adjacent possible), what's not in the price (anchored on trajectory implications), trajectory_anchoring, falstaffian_challenge. |
+| `economic-trajectory.j2` | v0.38.0 addition. Economically-anchored imagination scaffold. Identifies the falling-cost trajectory in the subject's industry (McAfee dematerialization), the design constraint being removed (MAIA bottleneck framework), the Coasean firm-boundary shifts (Kauffman economic web), the Kauffman adjacent possible nodes (never-before-born goods and services, Darwinian preadaptations), and convergence vectors (Diamandis). Emits economic_trajectory with falling_cost, constraint_being_removed, coasean_shifts, adjacent_possible_nodes, convergence_vectors, implications_for_ subject, trajectory_velocity. IMAGINE consumes this as the anchor for its 5/10Y scenarios. Anchored to MAIA "Focus and Imagination", "More From Less", "Kauffman Readings", "The Future Is Faster", "Bottlenecks and Critical Mass", "Time Horizons". |
+| `imagine-longrange.j2` | Agent 11 IMAGINE. Projects the business at 5 and 10 years and walks it back analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN / SOURCE), Growth Driver Classification (innovation / demographic / both / neither). In v0.38.0, scenarios are ANCHORED on the economic trajectory probe (falling cost, constraint removal, adjacent possible) and CHALLENGED by the Falstaffian rotations (rotated competitive framing, framing errors detected). Consumes `scenario_build` MCP tool output and the `economic_trajectory` probe. Emits `ImagineBoard` with digital stage, growth driver, 3 scenarios (each with trajectory_anchor and falstaffian_challenge), 3–5 falsifiable predictions (tagged by horizon, each with trajectory_ basis), what's not on the page (anchored on adjacent possible), what's not in the price (anchored on trajectory implications), trajectory_anchoring, falstaffian_challenge. |
 | `thesis-three-pillars.j2` | Agent 12 THESIS. Synthesizes all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Quality gate verdict `investment_grade` / `needs_work` / `incomplete` is the deep pipeline convergence signal. Per .rules (LLM-improves-against-LLM-scored-target trap): the quality gate uses `goal-analysis` semantic evaluation, not self-assessment — wired as a cross-skill `render_template` call, not inside this template. |
 | `intel-semantic-classify.j2` | v0.38.0 cross-skill adapter. Adapts pragmatic-semantics/ semantics-classify-statement to the INTEL mosaic. Classifies every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance — BEFORE downstream steps consume the intel. Prevents certainty-level drift: a management quote treated as an ontological fact, a scenario treated as a forecast. Emits semantic_tags and certainty_drift_risk that downstream templates (forensic, critical- factor, valuation) consume via intel_bundle.semantic_tags. |
 | `gorilla-capability-reason.j2` | v0.38.0 cross-skill adapter. Adapts capabilities-reasoner/ capability-reason to the GORILLA 4-dim framework. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. Emits capability_assessments, floor_violations, ceiling_violations, maturity_blocks. A maturity block on a dimension means the `lisp_eval` scoring call should treat that dimension's score as nil, not as the elicited value. |

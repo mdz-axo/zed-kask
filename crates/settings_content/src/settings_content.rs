@@ -1565,10 +1565,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub mcp: Option<KaskMcpSettingsContent>,
 
-    /// Data service toggles (non-secret).
-    #[serde(default)]
-    pub data_services: Option<KaskDataServiceSettingsContent>,
-
     /// Curator configuration.
     #[serde(default)]
     pub curator: Option<KaskCuratorSettingsContent>,
@@ -1648,17 +1644,6 @@ pub struct KaskMcpSettingsContent {
     pub load_default: Option<bool>,
     #[serde(default)]
     pub overrides: HashMap<String, bool>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskDataServiceSettingsContent {
-    pub eodhd_enabled: Option<bool>,
-    pub fmp_enabled: Option<bool>,
-    pub exa_enabled: Option<bool>,
-    pub tavily_enabled: Option<bool>,
-    pub brave_enabled: Option<bool>,
-    pub runpod_enabled: Option<bool>,
-    pub nebius_enabled: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

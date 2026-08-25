@@ -57,7 +57,10 @@ pub use inference_providers::{
     credential_urls_for_mcp, mirror_credential_to_provider, mirror_kask_credentials_to_providers,
     resolve_embedding_credentials,
 };
-pub use inference_socket::{get_inference_socket_path, set_inference_socket_path};
+pub use inference_socket::{
+    get_inference_socket_path, get_inference_timeout_secs, set_inference_socket_path,
+    set_inference_timeout_secs,
+};
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BuiltinMcpServer, build_mcp_server_env, builtin_mcp_server_ids,
     builtin_mcp_server_pairs, filter_credentials_for_server,
@@ -69,8 +72,8 @@ pub use memory::{
 pub use model_resolution::resolve_model_names;
 pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskCuratorSettings, KaskDataServiceSettings, KaskGeneralSettings, KaskMcpSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMemorySettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
     KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
     KaskTrainingSettings, SwarmModeConfig,
 };

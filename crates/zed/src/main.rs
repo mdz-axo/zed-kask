@@ -1986,6 +1986,17 @@ fn main() {
                         let inference_timeout = std::time::Duration::from_secs(
                             kask_settings.general.inference_timeout_secs,
                         );
+                        // Publish the server's establishment deadline so IPC clients
+                        // (child MCP server processes) can align their read timeout
+                        // with it. Without this, the client's independent 120s read
+                        // deadline fires before the server's 300s establishment
+                        // deadline, closing the socket mid-flight; the server's
+                        // later response write then hits `BrokenPipe`, producing a
+                        // warn storm that blames the IPC layer for what was a
+                        // self-inflicted cancellation. See `INFERENCE_TIMEOUT_ENV`.
+                        kask_bridge::set_inference_timeout_secs(
+                            kask_settings.general.inference_timeout_secs,
+                        );
                         let (inference_port, inference_task) =
                             kask_bridge::LanguageModelInferencePort::new(
                                 inference_model.clone(),
@@ -2816,6 +2827,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
                 &settings,
                 credentials_provider.as_ref(),
                 kask_bridge::get_inference_socket_path().as_deref(),
+                kask_bridge::get_inference_timeout_secs(),
                 cx,
             )
             .await;
@@ -2973,6 +2985,7 @@ async fn kask_server_env(
         &settings,
         credentials_provider.as_ref(),
         kask_bridge::get_inference_socket_path().as_deref(),
+        kask_bridge::get_inference_timeout_secs(),
         cx,
     )
     .await

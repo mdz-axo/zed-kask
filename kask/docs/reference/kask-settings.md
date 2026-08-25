@@ -180,20 +180,9 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 | `ocr_tuneable` | `bool` | `true` | OCR tuneable mode enabled |
 | `template_root` | `String` | `"registry"` | Jinja2 template root directory |
 
-## Media (`KaskMediaSettings`)
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `tts_model` | `String` | `""` | TTS model override (e.g., `"ollama/kokoro"`) |
-| `stt_model` | `String` | `""` | STT model override (e.g., `"ollama/whisper-large-v3"`) |
-| `vision_model` | `String` | `""` | Vision model override |
-| `image_gen_model` | `String` | `""` | Image generation model override |
-
 ## Scenarios (`KaskScenariosSettings`)
 
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `data_dir` | `String` | `""` | Scenario persistence directory; empty = in-memory |
+No fields — the scenarios data dir is derived from the global `data_dir` as `mcp/scenarios/` by `mcp_env()`. The server reads it via `HKASK_SCENARIOS_DATA`.
 
 ## Prediction Markets (`KaskPredictionMarketsSettings`)
 
@@ -438,10 +427,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_OCR_SAMPLE_RATE` | corpus | `corpus.ocr_sample_rate` |
 | `HKASK_OCR_TUNEABLE` | corpus | `corpus.ocr_tuneable` |
 | `HKASK_TEMPLATE_ROOT` | corpus | `corpus.template_root` |
-| `HKASK_MEDIA_TTS_MODEL` | media | `media.tts_model` |
-| `HKASK_MEDIA_STT_MODEL` | media | `media.stt_model` |
-| `HKASK_MEDIA_VISION_MODEL` | media | `media.vision_model` |
-| `HKASK_MEDIA_IMAGE_GEN_MODEL` | media | `media.image_gen_model` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
@@ -464,7 +449,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RSS_DB` | research | Operator override for RSS DB path (default `mcp/research/rss.db`) |
-| `HKASK_MEDIA_DB` | media | Operator override for gallery DB path (default `mcp/media/gallery.db`) — consumed by the media settings module for TTS/STT/vision model configuration |
 | `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
 | `HKASK_SWARM_LEDGER_PATH` | swarm | Operator override for swarm ledger path (default `mcp/swarm/ledger.db`) |
 | `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |

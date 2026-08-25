@@ -73,30 +73,95 @@ use tokio::net::UnixStream;
 /// because the shared types crate is owned by another workstream.
 const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Maximum time to wait for a single IPC response line.
+/// Grace margin added on top of the server's published establishment timeout
+/// when computing the IPC read deadline.
 ///
-/// Generous enough for long-running inference, but prevents the MCP server
-/// from blocking forever if the zed process hangs. On timeout the returned
-/// `std::io::Error` is treated by callers as a read failure, which nulls the
-/// cached stream so the next call reconnects instead of retrying on a dead
-/// connection.
-const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// The client must strictly outlast the server: when the server gives up at
+/// `T` (its `inference_timeout`), the response is written shortly after, and
+/// the client must still be reading to receive it instead of having already
+/// closed the socket and triggered a `BrokenPipe` on the server's write. The
+/// grace covers scheduling jitter on the server's timeout future and the
+/// round-trip from the server's timeout firing to the response line being
+/// flushed. 30s is generous relative to those (microseconds-to-milliseconds)
+/// and short relative to a genuine server hang (minutes).
+const IPC_READ_TIMEOUT_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fallback read deadline when the server has not published
+/// `HKASK_INFERENCE_TIMEOUT_SECS` — e.g. an older server, or an out-of-process
+/// client. Conservative: longer than the historical 120s default, so a
+/// server running the current default (300s) doesn't trigger a storm of
+/// premature `BrokenPipe` writes when this client is paired with it. The
+/// server's own `inference_timeout` still bounds the request, so this only
+/// affects how long the client waits for the server's response (or its
+/// timeout response) — never the inference itself.
+const IPC_READ_TIMEOUT_FALLBACK: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Compute the IPC read deadline for a single response line.
+///
+/// Reads `HKASK_INFERENCE_TIMEOUT_SECS` (the server's published establishment
+/// timeout) and returns `server_timeout + IPC_READ_TIMEOUT_GRACE` so the client
+/// strictly outlasts the server. Without this alignment, a slow-but-alive
+/// provider whose establishment takes `T_client < T_establishment < T_server`
+/// produces a `BrokenPipe` warn storm: the client gives up at `T_client`,
+/// closes its socket, and the server's response write at `T_server` hits EPIPE.
+/// With alignment, the client waits past `T_server`, so a timed-out inference
+/// produces one timeout (the server's), not two contradictory warnings.
+///
+/// Falls back to `IPC_READ_TIMEOUT_FALLBACK` when the env var is unset or
+/// unparseable — the server's own `inference_timeout` still bounds the
+/// inference, so the fallback only affects how long the client waits for the
+/// server's response (or its timeout response), not the inference itself. A
+/// malformed value is logged once via `tracing::warn!` naming the offending
+/// value (see `.rules` — "Numeric env vars that fail to parse must `log::warn!`
+/// naming the malformed value, not silently fall back").
+fn ipc_read_timeout() -> std::time::Duration {
+    match std::env::var(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV) {
+        Ok(raw) if !raw.is_empty() => match raw.parse::<u64>() {
+            Ok(0) => {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    env_var = hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
+                    raw = %raw,
+                    "HKASK_INFERENCE_TIMEOUT_SECS is 0 — using fallback {}s \
+                     (0 means disable on the server side and is not a valid client \
+                     read deadline)",
+                    IPC_READ_TIMEOUT_FALLBACK.as_secs(),
+                );
+                IPC_READ_TIMEOUT_FALLBACK
+            }
+            Ok(secs) => std::time::Duration::from_secs(secs) + IPC_READ_TIMEOUT_GRACE,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    env_var = hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
+                    raw = %raw,
+                    "HKASK_INFERENCE_TIMEOUT_SECS is not a valid u64 — using fallback \
+                     {}s",
+                    IPC_READ_TIMEOUT_FALLBACK.as_secs(),
+                );
+                IPC_READ_TIMEOUT_FALLBACK
+            }
+        },
+        _ => IPC_READ_TIMEOUT_FALLBACK,
+    }
+}
 
 /// Read one newline-delimited response from the socket, capped at
 /// `MAX_IPC_LINE_BYTES`. Returns `None` when the server closed the
 /// connection before sending any bytes; a line without a terminating
 /// newline (overlong or truncated) is an error.
 async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, std::io::Error> {
+    let timeout = ipc_read_timeout();
     // +1 so a line of exactly cap bytes followed by a newline is accepted
     // while anything longer is detected as missing-newline.
     let mut reader = BufReader::new(stream.take(MAX_IPC_LINE_BYTES + 1));
     let mut line = String::new();
-    let bytes_read = tokio::time::timeout(IPC_READ_TIMEOUT, reader.read_line(&mut line))
+    let bytes_read = tokio::time::timeout(timeout, reader.read_line(&mut line))
         .await
         .map_err(|_elapsed| {
             std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                format!("IPC read timed out after {}s", IPC_READ_TIMEOUT.as_secs()),
+                format!("IPC read timed out after {}s", timeout.as_secs()),
             )
         })??;
     if bytes_read == 0 {

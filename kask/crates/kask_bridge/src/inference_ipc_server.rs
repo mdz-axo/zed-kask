@@ -567,28 +567,47 @@ async fn handle_connection(
             }
         };
 
-        if let Err(e) = writer.write_all(response_json.as_bytes()).await {
-            tracing::warn!(
-                target: "reg.inference",
-                error = %e,
-                "Inference IPC write failed — closing connection"
-            );
-            break;
+        // Classify peer-cancellation vs genuine write failure. The peer is a
+        // child MCP server process that may close its socket at any time —
+        // its own read timeout, a parent-side cancel, or process exit. EPIPE
+        // / ConnectionReset on `write_all` is the *normal* way a peer cancels:
+        // the request was already read and dispatched, and the server only
+        // discovers the cancellation when it tries to write the response.
+        // Logging this at `warn` produces a storm that blames the IPC layer
+        // for what was a self-inflicted cancellation — the operator can't
+        // distinguish "provider slow" from "IPC broken" from it. Peer
+        // cancellation is logged at `debug` so it's available for diagnosis
+        // without masquerading as a fault.
+        let write_result = async {
+            writer.write_all(response_json.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await?;
+            Ok::<(), std::io::Error>(())
         }
-        if let Err(e) = writer.write_all(b"\n").await {
-            tracing::warn!(
-                target: "reg.inference",
-                error = %e,
-                "Inference IPC write failed — closing connection"
+        .await;
+        if let Err(e) = write_result {
+            let is_peer_cancellation = matches!(
+                e.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
             );
-            break;
-        }
-        if let Err(e) = writer.flush().await {
-            tracing::warn!(
-                target: "reg.inference",
-                error = %e,
-                "Inference IPC flush failed — closing connection"
-            );
+            if is_peer_cancellation {
+                tracing::debug!(
+                    target: "reg.inference",
+                    error = %e,
+                    "Inference IPC peer closed before response written — \
+                     client cancelled (e.g. its read deadline fired, or the \
+                     child process exited). Not a server-side fault; closing \
+                     this connection. If the client's deadline fired, check \
+                     HKASK_INFERENCE_TIMEOUT_SECS alignment with the server's \
+                     inference_timeout_secs."
+                );
+            } else {
+                tracing::warn!(
+                    target: "reg.inference",
+                    error = %e,
+                    "Inference IPC write failed — closing connection"
+                );
+            }
             break;
         }
     }

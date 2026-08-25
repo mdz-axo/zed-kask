@@ -65,3 +65,57 @@ pub fn get_inference_socket_path() -> Option<String> {
         Some(guard.clone())
     }
 }
+
+/// The inference establishment timeout in seconds, published to MCP server
+/// child processes so IPC clients can align their read deadline with the
+/// server's. See `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV` for the
+/// rationale.
+static INFERENCE_TIMEOUT_SECS: Mutex<u64> = Mutex::new(0);
+
+/// Set the inference establishment timeout (seconds). Replaces any previous
+/// value.
+///
+/// Called from the deferred task in `main.rs` after `LanguageModelInferencePort`
+/// is constructed, so the value matches what the server is actually enforcing.
+/// Zero means "unset" — `get_inference_timeout_secs` returns `None` for it.
+pub fn set_inference_timeout_secs(secs: u64) {
+    let mut guard = match INFERENCE_TIMEOUT_SECS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference_socket",
+                "INFERENCE_TIMEOUT_SECS mutex poisoned — recovering via into_inner"
+            );
+            poisoned.into_inner()
+        }
+    };
+    if *guard != 0 && *guard != secs {
+        tracing::info!(
+            target: "hkask.inference_socket",
+            old = %*guard,
+            new = %secs,
+            "Inference IPC timeout updated — IPC server restarted"
+        );
+    }
+    *guard = secs;
+}
+
+/// Get the inference establishment timeout in seconds, or `None` if not yet
+/// set (or set to zero, which means "unset").
+///
+/// Called from the same sites as `get_inference_socket_path` to inject
+/// `HKASK_INFERENCE_TIMEOUT_SECS` into MCP server child-process env maps.
+#[must_use]
+pub fn get_inference_timeout_secs() -> Option<u64> {
+    let guard = match INFERENCE_TIMEOUT_SECS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference_socket",
+                "INFERENCE_TIMEOUT_SECS mutex poisoned — recovering via into_inner"
+            );
+            poisoned.into_inner()
+        }
+    };
+    (*guard != 0).then_some(*guard)
+}

@@ -47,7 +47,6 @@ loops the SKILL.md bodies describe.
 | `KaskResearchSettings` | `kask/crates/kask_bridge/src/settings.rs:374-379` |
 | `KaskCompaniesSettings` | `kask/crates/kask_bridge/src/settings.rs:382-395` |
 | `KaskCorpusSettings` | `kask/crates/kask_bridge/src/settings.rs:398-425` |
-| `KaskMediaSettings` | `kask/crates/kask_bridge/src/settings.rs:447-460` |
 | `KaskPredictionMarketsSettings` | `kask/crates/kask_bridge/src/settings.rs:463-471` |
 | `KaskScenariosSettings` | `kask/crates/kask_bridge/src/settings.rs:474-478` |
 | `KaskSwarmSettings` | `kask/crates/kask_bridge/src/settings.rs:485-523` |
@@ -126,7 +125,6 @@ classDiagram
         +research: KaskResearchSettings
         +companies: KaskCompaniesSettings
         +corpus: KaskCorpusSettings
-        +media: KaskMediaSettings
         +scenarios: KaskScenariosSettings
         +prediction_markets: KaskPredictionMarketsSettings
         +swarm: KaskSwarmSettings
@@ -305,7 +303,6 @@ values are included — servers have their own fallback defaults.
 | `HKASK_EMBEDDING_MODEL` | `corpus.embedding_model` or `models.embedding_model` | `!= default` / non-empty |
 | `HKASK_OCR_*` | `corpus.ocr_*` | `!= default` |
 | `HKASK_TEMPLATE_ROOT` | `corpus.template_root` | `!= default` |
-| `HKASK_MEDIA_*_MODEL` | `media.*_model` | Non-empty |
 | `HKASK_SCENARIOS_DATA` | derived from `data_dir` | Always (D28; `mcp/scenarios/`) |
 | `HKASK_PREDICTION_MARKETS_*` | `prediction_markets.*` / derived from `data_dir` | Non-empty / `> 0` / Always (D28; `mcp/prediction-markets/`) |
 | `HKASK_SWARM_MODE` | `swarm.mode` | `!= default` |
