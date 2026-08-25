@@ -82,11 +82,16 @@ pub struct SwarmConfig {
     pub default_agent_model: String,
     /// Directory containing local agent cards (`<id>/agent_card.json`),
     /// read by `LocalAgentRegistry` in `Local` mode. Default
-    /// `agents/local/curated` relative to the working directory.
+    /// `mcp/swarm/agents/curated` relative to the hKask data directory —
+    /// the swarm server owns these cards, so they live under its per-server
+    /// subtree per the Standardized Artifact Storage layout. (Previously
+    /// `agents/local/curated` at the data root top level, which broke the
+    /// per-server subtree invariant.)
     pub local_agents_dir: String,
     /// Directory containing local swarms (`<id>/swarm.json`), read/written by
-    /// `LocalSwarmRegistry`. Default `agents/local/swarms` relative to the
-    /// hKask data directory. The local replica of an ABW workspace roster.
+    /// `LocalSwarmRegistry`. Default `mcp/swarm/swarms` relative to the
+    /// hKask data directory — the local replica of an ABW workspace roster,
+    /// owned by the swarm server.
     pub local_swarms_dir: String,
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
     /// exposes local agents to external A2A clients). Default `false` (opt-in
@@ -111,9 +116,11 @@ pub struct SwarmConfig {
     /// is an enhancement, not a dependency).
     pub memory_passphrase: String,
     /// On-disk path for the local swarm semantic-memory DB. Default
-    /// `<hkask data dir>/swarm_memory.db` (resolved under the data dir so the
-    /// server finds it regardless of CWD). Read from `HKASK_SWARM_MEMORY_DB`
-    /// (an absolute override is used as-is).
+    /// `<hkask data dir>/mcp/swarm/memory.db` (resolved under the data dir
+    /// so the server finds it regardless of CWD). Read from
+    /// `HKASK_SWARM_MEMORY_DB` (an absolute override is used as-is).
+    /// Previously `swarm_memory.db` at the data root top level — moved under
+    /// `mcp/swarm/` per the Standardized Artifact Storage layout.
     pub memory_db_path: String,
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Only relevant if the embedding-search path is used; the EAV-retrieval
@@ -143,12 +150,12 @@ impl Default for SwarmConfig {
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
             default_agent_model: hkask_inference::model_constants::DEFAULT_AGENT_MODEL.to_string(),
-            local_agents_dir: "agents/local/curated".to_string(),
-            local_swarms_dir: "agents/local/swarms".to_string(),
+            local_agents_dir: "mcp/swarm/agents/curated".to_string(),
+            local_swarms_dir: "mcp/swarm/swarms".to_string(),
             a2a_http_enabled: false,
             allowed_tool_servers: None,
             memory_passphrase: "allostery".to_string(),
-            memory_db_path: "swarm_memory.db".to_string(),
+            memory_db_path: "mcp/swarm/memory.db".to_string(),
             embedding_dim: 1024,
         }
     }
@@ -156,7 +163,7 @@ impl Default for SwarmConfig {
 
 /// Resolve `local_agents_dir` against the hKask data directory.
 ///
-/// A relative path (the default `agents/local/curated`) is joined under the
+/// A relative path (the default `mcp/swarm/agents/curated`) is joined under the
 /// data dir resolved by `hkask_types::agent_paths::resolve_under_data_dir` —
 /// this ensures the MCP server finds the same agent cards regardless of where
 /// the parent process spawned it (the swarm server inherits Zed's CWD, which
@@ -178,7 +185,7 @@ pub fn resolve_local_agents_dir(local_agents_dir: &str) -> String {
 
 /// Resolve `local_swarms_dir` against the hKask data directory. Same rule as
 /// [`resolve_local_agents_dir`]: a relative path (the default
-/// `agents/local/swarms`) is joined under the data dir; an absolute path
+/// `mcp/swarm/swarms`) is joined under the data dir; an absolute path
 /// (operator-set via `HKASK_LOCAL_SWARMS_DIR`) is used as-is.
 pub fn resolve_local_swarms_dir(local_swarms_dir: &str) -> String {
     if std::path::Path::new(local_swarms_dir).is_absolute() {

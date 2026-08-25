@@ -36,6 +36,9 @@ regex.workspace = true
 hkask-forecast.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 

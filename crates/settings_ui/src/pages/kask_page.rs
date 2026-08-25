@@ -21,20 +21,17 @@ mod condenser;
 mod curator;
 mod data_services;
 mod general;
-mod portfolio;
 
 pub(crate) use {
     companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
-    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page, portfolio::render_portfolio_page,
+    mcp_servers::render_mcp_servers_page, memory::render_memory_page, models::render_models_page,
     prediction_markets::render_prediction_markets_page, research::render_research_page,
     scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
-mod media;
 mod memory;
 mod models;
 mod prediction_markets;
@@ -326,27 +323,15 @@ pub(crate) fn kask_string_input(
                                 kask.corpus.get_or_insert_default().template_root =
                                     Some(parsed.clone());
                             }
-                            ("media", "tts_model") => {
-                                kask.media.get_or_insert_default().tts_model = Some(parsed.clone());
-                            }
-                            ("media", "stt_model") => {
-                                kask.media.get_or_insert_default().stt_model = Some(parsed.clone());
-                            }
-                            ("media", "vision_model") => {
-                                kask.media.get_or_insert_default().vision_model =
-                                    Some(parsed.clone());
-                            }
-                            ("media", "image_gen_model") => {
-                                kask.media.get_or_insert_default().image_gen_model =
-                                    Some(parsed.clone());
-                            }
                             ("scenarios", "data_dir") => {
-                                kask.scenarios.get_or_insert_default().data_dir =
-                                    Some(parsed.clone());
+                                // No-op — scenarios has no per-server path field.
+                                // The data dir is derived from the global
+                                // `data_dir` as `mcp/scenarios/`.
                             }
                             ("prediction_markets", "data_dir") => {
-                                kask.prediction_markets.get_or_insert_default().data_dir =
-                                    Some(parsed.clone());
+                                // No-op — prediction_markets has no per-server
+                                // path field. The data dir is derived from the
+                                // global `data_dir` as `mcp/prediction-markets/`.
                             }
                             ("prediction_markets", "cache_ttl_secs") => {
                                 if let Ok(v) = parsed.parse::<u64>() {
@@ -392,8 +377,9 @@ pub(crate) fn kask_string_input(
                                     Some(keywords);
                             }
                             ("portfolio", "transactions_dir") => {
-                                kask.portfolio.get_or_insert_default().transactions_dir =
-                                    Some(parsed.clone());
+                                // No-op — portfolio has no per-server path field.
+                                // The transactions dir is derived from the global
+                                // `data_dir` as `mcp/portfolio/transactions/`.
                             }
                             ("corpus", "embedding_dim") => {
                                 if let Ok(v) = parsed.parse::<u32>() {
@@ -610,19 +596,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             render: render_companies_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Portfolio".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.portfolio"),
-            description: Some(
-                "Configure the portfolio MCP server: transactions directory the \
-                 dashboard auto-loads from.".into(),
-            ),
-            search_aliases: &["portfolio", "transactions", "holdings", "ledger"],
-            in_json: true,
-            files: USER,
-            render: render_portfolio_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
             title: "Corpus".into(),
             r#type: Default::default(),
             json_path: Some("kask.corpus"),
@@ -633,18 +606,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_corpus_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Media".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.media"),
-            description: Some(
-                "Configure the media MCP server: TTS, STT, vision, and image generation models.".into(),
-            ),
-            search_aliases: &["media", "tts", "stt", "vision", "image generation"],
-            in_json: true,
-            files: USER,
-            render: render_media_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Scenarios".into(),

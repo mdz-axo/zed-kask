@@ -64,10 +64,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // server falls back to the XDG/HOME default, diverging from the
             // parent process when the override is set.
             "HKASK_DATA_DIR",
-            // Transactions directory — emitted by `emit_portfolio_env` from
-            // `KaskPortfolioSettings.transactions_dir`; read by the portfolio
-            // server's auto-loader (`server.rs:611`). Default resolves to
-            // `mcp/portfolio/transactions/` under the kask data root.
+            // Transactions directory — emitted by `emit_portfolio_env`
+            // from the global `data_dir` as `mcp/portfolio/transactions/`;
+            // read by the portfolio server's auto-loader (`server.rs:611`).
             "HKASK_TRANSACTIONS_DIR",
         ]),
     },
@@ -111,6 +110,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
+            // Data dir — needed so the corpus server resolves its cache
+            // (`mcp/corpus/cache/`) and semantic DB under the same root as
+            // the parent process. Without this, an operator `HKASK_DATA_DIR`
+            // override is silently dropped by `filter_config_env_for_server`.
+            "HKASK_DATA_DIR",
             "HKASK_EMBEDDING_DIM",
             "HKASK_EMBEDDING_MODEL",
             "HKASK_OCR_CONCURRENCY",
@@ -217,6 +221,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
+            // Data dir — needed so the research server's fallback
+            // (`resolve_under_data_dir(mcp_server_db("research", "rss"))`)
+            // resolves under the same root as the parent process when
+            // `HKASK_RSS_DB` is unset. Without this, an operator
+            // `HKASK_DATA_DIR` override is silently dropped.
+            "HKASK_DATA_DIR",
             "HKASK_WEB_CACHE_TTL_SECS",
             "HKASK_WEB_CACHE_MAX_ENTRIES",
             // RSS DB path — read by open_database_with_extensions(). Without

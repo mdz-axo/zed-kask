@@ -1,4 +1,4 @@
-//! Scenarios sub-page — data directory for scenario persistence.
+//! Scenarios sub-page — scenario planning and Wardley mapping.
 
 use super::*;
 
@@ -8,22 +8,10 @@ pub(crate) fn render_scenarios_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let raw = raw_kask_settings(cx);
-    // Resolve via `From` so the UI shows the same defaults the runtime uses.
-    let scenarios: kask_bridge::KaskScenariosSettings = raw
-        .and_then(|c| c.scenarios)
-        .map(Into::into)
-        .unwrap_or_default();
-    let data_dir = scenarios.data_dir;
-
-    let data_dir_input = kask_string_input(
-        "kask-scenarios-data-dir",
-        "Data Directory",
-        "(in-memory)",
-        data_dir,
-        "scenarios",
-        "data_dir",
-    );
+    let _raw = raw_kask_settings(cx);
+    // No per-server settings — the scenarios data dir is derived from the
+    // global `data_dir` as `mcp/scenarios/` by `mcp_env()`. The server reads
+    // it via `HKASK_SCENARIOS_DATA`.
 
     v_flex()
         .id("kask-scenarios-page")
@@ -41,25 +29,13 @@ pub(crate) fn render_scenarios_page(
                 .child(
                     Label::new(
                         "The scenarios server provides scenario planning and Wardley mapping. \
-                         Configure the data directory for scenario persistence.",
+                         Scenario data persists to mcp/scenarios/ under the shared kask data \
+                         directory (set on the General page). There are no per-server path \
+                         settings — all MCP servers share the single data directory.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 ),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Data Directory"))
-                .child(
-                    Label::new(
-                        "Directory for scenario data persistence. Leave empty for in-memory.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(data_dir_input),
         )
         .into_any_element()
 }

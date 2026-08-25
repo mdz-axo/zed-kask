@@ -1589,17 +1589,9 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub companies: Option<KaskCompaniesSettingsContent>,
 
-    /// Portfolio MCP server configuration.
-    #[serde(default)]
-    pub portfolio: Option<KaskPortfolioSettingsContent>,
-
     /// Corpus MCP server configuration.
     #[serde(default)]
     pub corpus: Option<KaskCorpusSettingsContent>,
-
-    /// Media MCP server configuration.
-    #[serde(default)]
-    pub media: Option<KaskMediaSettingsContent>,
 
     /// Scenarios MCP server configuration.
     #[serde(default)]
@@ -1746,11 +1738,6 @@ pub struct KaskCompaniesSettingsContent {
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskPortfolioSettingsContent {
-    pub transactions_dir: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskCorpusSettingsContent {
     pub embedding_dim: Option<u32>,
     pub embedding_model: Option<String>,
@@ -1763,22 +1750,10 @@ pub struct KaskCorpusSettingsContent {
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskMediaSettingsContent {
-    pub tts_model: Option<String>,
-    pub stt_model: Option<String>,
-    pub vision_model: Option<String>,
-    pub image_gen_model: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskScenariosSettingsContent {
-    pub data_dir: Option<String>,
-}
+pub struct KaskScenariosSettingsContent {}
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskPredictionMarketsSettingsContent {
-    /// Data directory for the calibration journal. When empty, in-memory.
-    pub data_dir: Option<String>,
     /// Cache TTL in seconds for market-data responses.
     pub cache_ttl_secs: Option<u64>,
     /// Base-event registry: "domain:series,..." pairs for CMP construction.
@@ -1795,14 +1770,6 @@ pub struct KaskSwarmSettingsContent {
     /// When `true`, Xaman Ek curator calls do not require a per-call consent
     /// token. Default `false` (opt-in per call).
     pub curator_consent_default: Option<bool>,
-    /// Directory containing local agent cards (`<id>/agent_card.json`),
-    /// read in `local` mode. When empty, uses the default
-    /// `agents/local/curated`.
-    pub local_agents_dir: Option<String>,
-    /// Directory containing local swarms (`<id>/swarm.json`), the local
-    /// replica of an ABW workspace roster. When empty, uses the default
-    /// `agents/local/swarms`.
-    pub local_swarms_dir: Option<String>,
     /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
     /// read by `AgentExecutor::build_skill_catalog` to inject skill
     /// descriptions into the local agent's system prompt (Slice 6 — local
@@ -1824,9 +1791,6 @@ pub struct KaskSwarmSettingsContent {
     /// be >=8 chars. When empty, uses the pre-release default `"allostery"`
     /// — override with a real secret for production use.
     pub memory_passphrase: Option<String>,
-    /// On-disk path for the local swarm semantic-memory DB. When empty, uses
-    /// the default `<hkask data dir>/swarm_memory.db`.
-    pub memory_db_path: Option<String>,
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Default 1024. Only relevant if the embedding-search path is used.
     pub embedding_dim: Option<usize>,

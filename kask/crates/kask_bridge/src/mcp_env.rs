@@ -13,8 +13,8 @@
 
 use crate::settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskMediaSettings, KaskModelsSettings, KaskPortfolioSettings, KaskPredictionMarketsSettings,
-    KaskResearchSettings, KaskScenariosSettings, KaskSwarmSettings, KaskTrainingSettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings,
+    KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -102,27 +102,20 @@ pub(crate) fn emit_companies_env(
 
 /// Portfolio MCP server env emission.
 ///
-/// `transactions_dir` was previously emitted by `emit_companies_env` — a
-/// leftover from before the portfolio server was split out from the companies
-/// server. It is moved here so each emitter owns only its own server's
-/// settings. Default resolves to `mcp/portfolio/transactions/` under the
-/// kask data root per the Standardized Artifact Storage layout.
+/// No per-server path field — the transactions dir is derived from the
+/// global `data_dir` as `mcp/portfolio/transactions/` per the Standardized
+/// Artifact Storage layout. The server reads it via `HKASK_TRANSACTIONS_DIR`.
 pub(crate) fn emit_portfolio_env(
-    portfolio: &KaskPortfolioSettings,
+    data_dir: &str,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    // D28 — Standardized Artifact Storage. Emit HKASK_TRANSACTIONS_DIR
-    // so the portfolio server can auto-load transaction files. Default
-    // is `mcp/portfolio/transactions/` under the kask data root.
-    let transactions_dir = if !portfolio.transactions_dir.is_empty() {
-        portfolio.transactions_dir.clone()
-    } else {
-        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-            "mcp/portfolio/transactions",
+    let transactions_dir = std::path::Path::new(data_dir)
+        .join(hkask_types::agent_paths::mcp_server_subdir(
+            "portfolio",
+            "transactions",
         ))
         .to_string_lossy()
-        .to_string()
-    };
+        .to_string();
     env.insert("HKASK_TRANSACTIONS_DIR".to_string(), transactions_dir);
 }
 
@@ -208,76 +201,36 @@ pub(crate) fn emit_corpus_template_root_env(
     env.insert("HKASK_TEMPLATE_ROOT".to_string(), template_root);
 }
 
-pub(crate) fn emit_media_env(
-    media: &KaskMediaSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    if !media.tts_model.is_empty() {
-        env.insert("HKASK_MEDIA_TTS_MODEL".to_string(), media.tts_model.clone());
-    }
-    if !media.stt_model.is_empty() {
-        env.insert("HKASK_MEDIA_STT_MODEL".to_string(), media.stt_model.clone());
-    }
-    if !media.vision_model.is_empty() {
-        env.insert(
-            "HKASK_MEDIA_VISION_MODEL".to_string(),
-            media.vision_model.clone(),
-        );
-    }
-    if !media.image_gen_model.is_empty() {
-        env.insert(
-            "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
-            media.image_gen_model.clone(),
-        );
-    }
-}
-
 pub(crate) fn emit_scenarios_env(
-    scenarios: &KaskScenariosSettings,
+    data_dir: &str,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    // D28 — Standardized Artifact Storage. Always emit HKASK_SCENARIOS_DATA
-    // so the scenarios server resolves its persistence dir under the kask
-    // data root consistently. When the operator hasn't overridden the default,
-    // resolve to `mcp/scenarios/` — the per-server subtree the scenarios
-    // server's fallback (`resolve_under_data_dir(MCP_DIR).join("scenarios")`)
-    // already expects. Without this, the server only sees the env var when the
-    // operator set it, and falls back to `resolve_under_data_dir` which reads
-    // HKASK_DATA_DIR (allowlisted separately) — emitting the resolved default
-    // here keeps the two paths from diverging.
-    let scenarios_data_dir = if !scenarios.data_dir.is_empty() {
-        scenarios.data_dir.clone()
-    } else {
-        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-            hkask_types::agent_paths::MCP_DIR,
-        ))
-        .join("scenarios")
+    // D28 — Standardized Artifact Storage. The scenarios data dir is derived
+    // from the global `data_dir` as `mcp/scenarios/`. No per-server override —
+    // one global data root, each server owns its subfolder.
+    let scenarios_data_dir = std::path::Path::new(data_dir)
+        .join(hkask_types::agent_paths::mcp_server_subdir("scenarios", ""))
         .to_string_lossy()
-        .to_string()
-    };
+        .to_string();
     env.insert("HKASK_SCENARIOS_DATA".to_string(), scenarios_data_dir);
 }
 
 pub(crate) fn emit_prediction_markets_env(
+    data_dir: &str,
     prediction_markets: &KaskPredictionMarketsSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    // D28 — Standardized Artifact Storage. Always emit
-    // HKASK_PREDICTION_MARKETS_DATA so the prediction-markets server resolves
-    // its calibration journal under the kask data root consistently. Default
-    // resolves to `mcp/prediction-markets/` — the per-server subtree the
-    // server's fallback (`resolve_under_data_dir(MCP_DIR).join("prediction-markets")`)
-    // already expects.
-    let prediction_markets_data_dir = if !prediction_markets.data_dir.is_empty() {
-        prediction_markets.data_dir.clone()
-    } else {
-        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-            hkask_types::agent_paths::MCP_DIR,
+    // D28 — Standardized Artifact Storage. The prediction-markets data dir
+    // is derived from the global `data_dir` as `mcp/prediction-markets/`.
+    // No per-server override — one global data root, each server owns its
+    // subfolder.
+    let prediction_markets_data_dir = std::path::Path::new(data_dir)
+        .join(hkask_types::agent_paths::mcp_server_subdir(
+            "prediction-markets",
+            "",
         ))
-        .join("prediction-markets")
         .to_string_lossy()
-        .to_string()
-    };
+        .to_string();
     env.insert(
         "HKASK_PREDICTION_MARKETS_DATA".to_string(),
         prediction_markets_data_dir,
@@ -297,6 +250,7 @@ pub(crate) fn emit_prediction_markets_env(
 }
 
 pub(crate) fn emit_swarm_env(
+    data_dir: &str,
     swarm: &KaskSwarmSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
@@ -322,18 +276,20 @@ pub(crate) fn emit_swarm_env(
             swarm.curator_consent_default.to_string(),
         );
     }
-    if !swarm.local_agents_dir.is_empty() {
-        env.insert(
-            "HKASK_LOCAL_AGENTS_DIR".to_string(),
-            swarm.local_agents_dir.clone(),
-        );
-    }
-    if !swarm.local_swarms_dir.is_empty() {
-        env.insert(
-            "HKASK_LOCAL_SWARMS_DIR".to_string(),
-            swarm.local_swarms_dir.clone(),
-        );
-    }
+    // D28 — Standardized Artifact Storage. The swarm server's local
+    // registries and memory DB are derived from the global `data_dir` under
+    // `mcp/swarm/`. No per-server override — one global data root, each
+    // server owns its subfolder.
+    let swarm_root = std::path::Path::new(data_dir)
+        .join(hkask_types::agent_paths::mcp_server_subdir("swarm", ""));
+    let local_agents_dir = swarm_root
+        .join("agents")
+        .join("curated")
+        .to_string_lossy()
+        .to_string();
+    env.insert("HKASK_LOCAL_AGENTS_DIR".to_string(), local_agents_dir);
+    let local_swarms_dir = swarm_root.join("swarms").to_string_lossy().to_string();
+    env.insert("HKASK_LOCAL_SWARMS_DIR".to_string(), local_swarms_dir);
     if !swarm.skills_dir.is_empty() {
         env.insert("HKASK_SKILLS_DIR".to_string(), swarm.skills_dir.clone());
     }
@@ -355,12 +311,8 @@ pub(crate) fn emit_swarm_env(
             swarm.memory_passphrase.clone(),
         );
     }
-    if !swarm.memory_db_path.is_empty() {
-        env.insert(
-            "HKASK_SWARM_MEMORY_DB".to_string(),
-            swarm.memory_db_path.clone(),
-        );
-    }
+    let memory_db_path = swarm_root.join("memory.db").to_string_lossy().to_string();
+    env.insert("HKASK_SWARM_MEMORY_DB".to_string(), memory_db_path);
     if swarm.embedding_dim != swarm_default.embedding_dim {
         env.insert(
             "HKASK_SWARM_EMBEDDING_DIM".to_string(),
@@ -565,6 +517,43 @@ mod tests {
             Some(expected_pm.as_str()),
             "default prediction_markets_data must resolve to `{{data_dir}}/mcp/prediction-markets`"
         );
+        // Swarm local agents dir resolves under the swarm server's subtree.
+        let expected_swarm_agents = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("swarm")
+            .join("agents")
+            .join("curated")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
+            Some(expected_swarm_agents.as_str()),
+            "default local_agents_dir must resolve to `{{data_dir}}/mcp/swarm/agents/curated`"
+        );
+        // Swarm local swarms dir resolves under the swarm server's subtree.
+        let expected_swarm_swarms = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("swarm")
+            .join("swarms")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
+            Some(expected_swarm_swarms.as_str()),
+            "default local_swarms_dir must resolve to `{{data_dir}}/mcp/swarm/swarms`"
+        );
+        // Swarm memory DB resolves under the swarm server's subtree.
+        let expected_swarm_mem = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("swarm")
+            .join("memory.db")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),
+            Some(expected_swarm_mem.as_str()),
+            "default swarm memory_db_path must resolve to `{{data_dir}}/mcp/swarm/memory.db`"
+        );
     }
 
     // `HKASK_DATA_DIR` is a kask-wide critical path — it must ALWAYS be
@@ -713,17 +702,31 @@ mod tests {
         assert!(!env.contains_key("HKASK_ABW_MAX_CREDITS"));
         assert!(!env.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
         assert!(!env.contains_key("HKASK_SWARM_MODE"));
-        assert!(!env.contains_key("HKASK_LOCAL_AGENTS_DIR"));
-        assert!(!env.contains_key("HKASK_LOCAL_SWARMS_DIR"));
         assert!(!env.contains_key("HKASK_SKILLS_DIR"));
         assert!(!env.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
         assert!(!env.contains_key("HKASK_A2A_HTTP_ENABLE"));
         assert!(!env.contains_key("HKASK_SWARM_MEMORY_PASSPHRASE"));
-        assert!(!env.contains_key("HKASK_SWARM_MEMORY_DB"));
         assert!(!env.contains_key("HKASK_SWARM_EMBEDDING_DIM"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
+        );
+        // D28 — HKASK_LOCAL_AGENTS_DIR, HKASK_LOCAL_SWARMS_DIR, and
+        // HKASK_SWARM_MEMORY_DB are now always emitted (resolved from
+        // `data_dir` per the Standardized Artifact Storage layout), so they
+        // are NOT suppressed for default settings. See
+        // `mcp_env_always_emits_per_server_data_dirs`.
+        assert!(
+            env.contains_key("HKASK_LOCAL_AGENTS_DIR"),
+            "HKASK_LOCAL_AGENTS_DIR must always be emitted — the swarm server resolves its local agent registry from it"
+        );
+        assert!(
+            env.contains_key("HKASK_LOCAL_SWARMS_DIR"),
+            "HKASK_LOCAL_SWARMS_DIR must always be emitted — the swarm server resolves its local swarms registry from it"
+        );
+        assert!(
+            env.contains_key("HKASK_SWARM_MEMORY_DB"),
+            "HKASK_SWARM_MEMORY_DB must always be emitted — the swarm server resolves its semantic-memory DB from it"
         );
         assert_eq!(settings.swarm.max_credits_per_dispatch, 50);
         assert!(!settings.swarm.curator_consent_default);
@@ -735,17 +738,15 @@ mod tests {
     #[test]
     fn swarm_settings_non_default_emits_env() {
         let mut settings = KaskSettings::default();
+        settings.data_dir = "/custom/kask/data".to_string();
         settings.swarm.mode = SwarmModeConfig::Local;
         settings.swarm.max_credits_per_dispatch = 100;
         settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
         settings.swarm.curator_consent_default = true;
-        settings.swarm.local_agents_dir = "/custom/agents/dir".to_string();
-        settings.swarm.local_swarms_dir = "/custom/swarms/dir".to_string();
         settings.swarm.skills_dir = "/custom/skills/dir".to_string();
         settings.swarm.default_agent_model = "claude-sonnet-4-6".to_string();
         settings.swarm.a2a_http_enabled = true;
         settings.swarm.memory_passphrase = "real-secret".to_string();
-        settings.swarm.memory_db_path = "/custom/memory.db".to_string();
         settings.swarm.embedding_dim = 2048;
         let env = settings.mcp_env();
         assert_eq!(
@@ -765,13 +766,15 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
+        // Local agents/swarms/memory paths are derived from the global
+        // `data_dir` — no per-server override. The custom data_dir propagates.
         assert_eq!(
             env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
-            Some("/custom/agents/dir")
+            Some("/custom/kask/data/mcp/swarm/agents/curated")
         );
         assert_eq!(
             env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
-            Some("/custom/swarms/dir")
+            Some("/custom/kask/data/mcp/swarm/swarms")
         );
         assert_eq!(
             env.get("HKASK_SKILLS_DIR").map(String::as_str),
@@ -791,7 +794,7 @@ mod tests {
         );
         assert_eq!(
             env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),
-            Some("/custom/memory.db")
+            Some("/custom/kask/data/mcp/swarm/memory.db")
         );
         assert_eq!(
             env.get("HKASK_SWARM_EMBEDDING_DIM").map(String::as_str),

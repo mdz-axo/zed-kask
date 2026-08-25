@@ -12,9 +12,8 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
-    KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPortfolioSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMemorySettingsContent,
+    KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
     KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
@@ -67,14 +66,8 @@ pub struct KaskSettings {
     /// Companies MCP server configuration.
     pub companies: KaskCompaniesSettings,
 
-    /// Portfolio MCP server configuration.
-    pub portfolio: KaskPortfolioSettings,
-
     /// Corpus MCP server configuration.
     pub corpus: KaskCorpusSettings,
-
-    /// Media MCP server configuration.
-    pub media: KaskMediaSettings,
 
     /// Scenarios MCP server configuration.
     pub scenarios: KaskScenariosSettings,
@@ -354,22 +347,6 @@ pub struct KaskCompaniesSettings {
     pub fermi_defaults: String,
 }
 
-/// Portfolio MCP server configuration.
-///
-/// The portfolio server was split out from the companies server once it
-/// became clear that portfolio management (transaction-ledger composition)
-/// is a distinct concern from company research. The `transactions_dir`
-/// field lived on `KaskCompaniesSettings` as a leftover from before the
-/// split; it is moved here so each server's settings struct owns only its
-/// own concerns.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskPortfolioSettings {
-    /// Directory for portfolio transaction files (CSV/JSON). The portfolio
-    /// dashboard auto-loads any new files from this directory. When empty,
-    /// defaults to `<kask_data_dir>/mcp/portfolio/transactions/`.
-    pub transactions_dir: String,
-}
-
 /// Corpus MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskCorpusSettings {
@@ -419,27 +396,13 @@ fn default_embedding_model() -> String {
     hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
-/// Media MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskMediaSettings {
-    /// TTS model override (provider-prefixed, e.g. "ollama/kokoro").
-    pub tts_model: String,
-
-    /// STT model override (provider-prefixed, e.g. "ollama/whisper-large-v3").
-    pub stt_model: String,
-
-    /// Vision model override (e.g., "OpenRouter/qwen/qwen3-vl-235b-a22b-instruct").
-    pub vision_model: String,
-
-    /// Image generation model override (provider-prefixed).
-    pub image_gen_model: String,
-}
-
-/// Prediction-markets MCP server configuration.
+/// Prediction-markets data-service configuration.
+///
+/// No path fields — the prediction-markets data dir is derived from the
+/// global `KaskSettings::data_dir` as `mcp/prediction-markets/` by
+/// `mcp_env()`. The server reads it via `HKASK_PREDICTION_MARKETS_DATA`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskPredictionMarketsSettings {
-    /// Data directory for the calibration journal. When empty, in-memory.
-    pub data_dir: String,
     /// Cache TTL in seconds for market-data responses (0 = server default).
     pub cache_ttl_secs: u64,
     /// Base-event registry: "domain:series,..." pairs for CMP construction.
@@ -447,11 +410,12 @@ pub struct KaskPredictionMarketsSettings {
 }
 
 /// Scenarios MCP server configuration.
+///
+/// No path fields — the scenarios data dir is derived from the global
+/// `KaskSettings::data_dir` as `mcp/scenarios/` by `mcp_env()`. The server
+/// reads it via `HKASK_SCENARIOS_DATA`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskScenariosSettings {
-    /// Data directory for scenario persistence. When empty, uses in-memory.
-    pub data_dir: String,
-}
+pub struct KaskScenariosSettings {}
 
 /// Swarm (Agent Bestiary World) MCP server configuration.
 ///
@@ -479,16 +443,6 @@ pub struct KaskSwarmSettings {
     /// When `true`, the operator has globally opted in and the token is optional.
     pub curator_consent_default: bool,
 
-    /// Directory containing local agent cards (`<id>/agent_card.json`),
-    /// read by `LocalAgentRegistry` in `Local` mode. When empty, uses the
-    /// default `agents/local/curated`.
-    pub local_agents_dir: String,
-
-    /// Directory containing local swarms (`<id>/swarm.json`), read/written by
-    /// `LocalSwarmRegistry` - the local replica of an ABW workspace roster.
-    /// When empty, uses the default `agents/local/swarms`.
-    pub local_swarms_dir: String,
-
     /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
     /// read by `AgentExecutor::build_skill_catalog` to inject skill
     /// descriptions into the local agent's system prompt (Slice 6 — local
@@ -510,10 +464,6 @@ pub struct KaskSwarmSettings {
     /// SQLCipher passphrase for the local swarm semantic-memory store. Must
     /// be >=8 chars. When empty, uses the pre-release default `"allostery"`.
     pub memory_passphrase: String,
-
-    /// On-disk path for the local swarm semantic-memory DB. When empty, uses
-    /// the default `<hkask data dir>/swarm_memory.db`.
-    pub memory_db_path: String,
 
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Default 1024.
@@ -568,13 +518,10 @@ impl Default for KaskSwarmSettings {
             api_url: String::new(),
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
-            local_agents_dir: String::new(),
-            local_swarms_dir: String::new(),
             skills_dir: String::new(),
             default_agent_model: String::new(),
             a2a_http_enabled: false,
             memory_passphrase: String::new(),
-            memory_db_path: String::new(),
             embedding_dim: 1024,
         }
     }
@@ -766,15 +713,14 @@ impl KaskSettings {
         crate::mcp_env::emit_condenser_env(&self.condenser, &mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         crate::mcp_env::emit_companies_env(&self.companies, &mut env);
-        crate::mcp_env::emit_portfolio_env(&self.portfolio, &mut env);
+        crate::mcp_env::emit_portfolio_env(&data_dir, &mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_ocr_env(&self.corpus, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
-        crate::mcp_env::emit_media_env(&self.media, &mut env);
-        crate::mcp_env::emit_scenarios_env(&self.scenarios, &mut env);
-        crate::mcp_env::emit_prediction_markets_env(&self.prediction_markets, &mut env);
-        crate::mcp_env::emit_swarm_env(&self.swarm, &mut env);
+        crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
+        crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
+        crate::mcp_env::emit_swarm_env(&data_dir, &self.swarm, &mut env);
         crate::mcp_env::emit_training_env(&self.training, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_email_env(&self.curator.email, &mut env);
@@ -927,15 +873,6 @@ impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
     }
 }
 
-impl From<KaskPortfolioSettingsContent> for KaskPortfolioSettings {
-    fn from(c: KaskPortfolioSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            transactions_dir: c.transactions_dir.unwrap_or(default.transactions_dir),
-        }
-    }
-}
-
 impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
     fn from(c: KaskCorpusSettingsContent) -> Self {
         let default = Self::default();
@@ -964,23 +901,10 @@ impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
     }
 }
 
-impl From<KaskMediaSettingsContent> for KaskMediaSettings {
-    fn from(c: KaskMediaSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            tts_model: c.tts_model.unwrap_or(default.tts_model),
-            stt_model: c.stt_model.unwrap_or(default.stt_model),
-            vision_model: c.vision_model.unwrap_or(default.vision_model),
-            image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
-        }
-    }
-}
-
 impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSettings {
     fn from(c: KaskPredictionMarketsSettingsContent) -> Self {
         let default = Self::default();
         Self {
-            data_dir: c.data_dir.unwrap_or(default.data_dir),
             cache_ttl_secs: c.cache_ttl_secs.unwrap_or(default.cache_ttl_secs),
             base_events: c.base_events.unwrap_or(default.base_events),
         }
@@ -989,10 +913,8 @@ impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSetting
 
 impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
     fn from(c: KaskScenariosSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            data_dir: c.data_dir.unwrap_or(default.data_dir),
-        }
+        let _ = c;
+        Self::default()
     }
 }
 
@@ -1008,13 +930,10 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
             curator_consent_default: c
                 .curator_consent_default
                 .unwrap_or(default.curator_consent_default),
-            local_agents_dir: c.local_agents_dir.unwrap_or(default.local_agents_dir),
-            local_swarms_dir: c.local_swarms_dir.unwrap_or(default.local_swarms_dir),
             skills_dir: c.skills_dir.unwrap_or(default.skills_dir),
             default_agent_model: c.default_agent_model.unwrap_or(default.default_agent_model),
             a2a_http_enabled: c.a2a_http_enabled.unwrap_or(default.a2a_http_enabled),
             memory_passphrase: c.memory_passphrase.unwrap_or(default.memory_passphrase),
-            memory_db_path: c.memory_db_path.unwrap_or(default.memory_db_path),
             embedding_dim: c.embedding_dim.unwrap_or(default.embedding_dim),
         }
     }
@@ -1054,9 +973,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
             research: c.research.map(Into::into).unwrap_or_default(),
             companies: c.companies.map(Into::into).unwrap_or_default(),
-            portfolio: c.portfolio.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
-            media: c.media.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),

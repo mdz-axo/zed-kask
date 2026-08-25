@@ -164,7 +164,8 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 |-------|------|---------|-------|
 | `chronic_staleness_days` | `u32` | `0` | 0 = use hardcoded default (90); >0 = override |
 | `fermi_defaults` | `String` | `""` | JSON with `growth` + `margin` arrays; empty = hardcoded defaults |
-| `transactions_dir` | `String` | `""` | Portfolio transaction files; empty = `<kask_data_dir>/mcp/portfolio/transactions/` |
+
+No `transactions_dir` field — the portfolio transactions dir is derived from the global `data_dir` as `mcp/portfolio/transactions/` by `mcp_env()`. See the Portfolio section below.
 
 ## Corpus (`KaskCorpusSettings`)
 
@@ -214,8 +215,8 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-
 | `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
 | `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
-| `local_agents_dir` | `String` | `""` | `HKASK_LOCAL_AGENTS_DIR` | Directory for local agent cards (`<id>/agent_card.json`) in `local` mode; empty = `agents/local/curated` |
-| `local_swarms_dir` | `String` | `""` | `HKASK_LOCAL_SWARMS_DIR` | Directory for local swarms (`<id>/swarm.json`), read/written by `LocalSwarmRegistry`; empty = `agents/local/swarms` |
+
+No `local_agents_dir`, `local_swarms_dir`, or `memory_db_path` fields — these paths are derived from the global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and `HKASK_SWARM_MEMORY_DB`.
 
 The ABW API key is a secret — it lives in the keychain under
 `kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY` by
@@ -428,7 +429,7 @@ not an OpenAI-compatible chat endpoint).
 
 | `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
-| `HKASK_TRANSACTIONS_DIR` | portfolio | `companies.transactions_dir` (emitted for portfolio server) |
+| `HKASK_TRANSACTIONS_DIR` | portfolio | derived from `data_dir` as `mcp/portfolio/transactions/` |
 | `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
 | `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
 | `HKASK_OCR_CONCURRENCY` | corpus | `corpus.ocr_concurrency` |
@@ -441,16 +442,17 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_MEDIA_STT_MODEL` | media | `media.stt_model` |
 | `HKASK_MEDIA_VISION_MODEL` | media | `media.vision_model` |
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | media | `media.image_gen_model` |
-| `HKASK_SCENARIOS_DATA` | scenarios | `scenarios.data_dir` |
-| `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | `prediction_markets.data_dir` |
+| `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
+| `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
 | `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | prediction-markets | `prediction_markets.base_events` |
 | `HKASK_SWARM_MODE` | swarm | `swarm.mode` |
 | `HKASK_ABW_API_URL` | swarm | `swarm.api_url` |
 | `HKASK_ABW_MAX_CREDITS` | swarm | `swarm.max_credits_per_dispatch` |
 | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | swarm | `swarm.curator_consent_default` |
-| `HKASK_LOCAL_AGENTS_DIR` | swarm | `swarm.local_agents_dir` |
-| `HKASK_LOCAL_SWARMS_DIR` | swarm | `swarm.local_swarms_dir` |
+| `HKASK_LOCAL_AGENTS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/agents/curated/` |
+| `HKASK_LOCAL_SWARMS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/swarms/` |
+| `HKASK_SWARM_MEMORY_DB` | swarm | derived from `data_dir` as `mcp/swarm/memory.db` |
 | `HKASK_ABW_API_KEY` | swarm | ABW API key (keychain only) |
 | `HKASK_TRAINING_HOST` | training | `training.host` |
 | `HKASK_TRAINING_CACHE_DIR` | training | `training.cache_dir` |

@@ -111,6 +111,24 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
         .join(format!("{purpose}.db"))
 }
 
+/// Returns the relative path `mcp/{server_id}/{subdir}` for a server's
+/// non-DB artifact directory (e.g. `mcp/portfolio/transactions`,
+/// `mcp/swarm/agents/curated`, `mcp/companies/screens`). The caller
+/// resolves this against the data dir via `resolve_under_data_dir`.
+///
+/// This is the directory equivalent of [`mcp_server_db`] — use it for any
+/// server-owned artifact that is not a `.db` file. Centralizing the path
+/// construction here means a layout change (e.g. renaming `mcp/` to
+/// `servers/`) touches one helper, not 10+ call sites.
+pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
+    let base = PathBuf::from(MCP_DIR).join(sanitize_name(server_id));
+    if subdir.is_empty() {
+        base
+    } else {
+        base.join(subdir)
+    }
+}
+
 // ── Database paths ───────────────────────────────────────────────────────────
 
 /// Agent sovereign database — HMemStore, EmbeddingStore, Regulation events.

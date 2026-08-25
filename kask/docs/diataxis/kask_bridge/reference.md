@@ -173,8 +173,6 @@ classDiagram
         +api_url: String
         +max_credits_per_dispatch: u32
         +curator_consent_default: bool
-        +local_agents_dir: String
-        +local_swarms_dir: String
         +skills_dir: String
     }
     class KaskModelsSettings {
@@ -299,7 +297,7 @@ values are included — servers have their own fallback defaults.
 | `HKASK_DATA_DIR` | `data_dir` | Always (settings → env → resolved default) |
 | `HKASK_WEBID` | `HKASK_CURATOR_WEBID` env | When `HKASK_CURATOR_WEBID` is set |
 | `HKASK_MCP_SERVER_IDS` | `BUILT_IN_MCP_SERVERS_IDS` | Always |
-| `HKASK_TRANSACTIONS_DIR` | `companies.transactions_dir` | Always (D28; default `mcp/portfolio/transactions/`) |
+| `HKASK_TRANSACTIONS_DIR` | derived from `data_dir` | Always (D28; `mcp/portfolio/transactions/`) |
 | `HKASK_RSS_DB` | `research.rss_db` | Non-empty |
 | `HKASK_CHRONIC_STALENESS_DAYS` | `companies.chronic_staleness_days` | `> 0` |
 | `HKASK_FERMI_DEFAULTS` | `companies.fermi_defaults` | Non-empty |
@@ -308,14 +306,15 @@ values are included — servers have their own fallback defaults.
 | `HKASK_OCR_*` | `corpus.ocr_*` | `!= default` |
 | `HKASK_TEMPLATE_ROOT` | `corpus.template_root` | `!= default` |
 | `HKASK_MEDIA_*_MODEL` | `media.*_model` | Non-empty |
-| `HKASK_SCENARIOS_DATA` | `scenarios.data_dir` | Non-empty |
-| `HKASK_PREDICTION_MARKETS_*` | `prediction_markets.*` | Non-empty / `> 0` |
+| `HKASK_SCENARIOS_DATA` | derived from `data_dir` | Always (D28; `mcp/scenarios/`) |
+| `HKASK_PREDICTION_MARKETS_*` | `prediction_markets.*` / derived from `data_dir` | Non-empty / `> 0` / Always (D28; `mcp/prediction-markets/`) |
 | `HKASK_SWARM_MODE` | `swarm.mode` | `!= default` |
 | `HKASK_ABW_API_URL` | `swarm.api_url` | Non-empty |
 | `HKASK_ABW_MAX_CREDITS` | `swarm.max_credits_per_dispatch` | `!= default` |
 | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | `swarm.curator_consent_default` | `!= default` |
-| `HKASK_LOCAL_AGENTS_DIR` | `swarm.local_agents_dir` | Non-empty |
-| `HKASK_LOCAL_SWARMS_DIR` | `swarm.local_swarms_dir` | Non-empty |
+| `HKASK_LOCAL_AGENTS_DIR` | derived from `data_dir` | Always (D28; `mcp/swarm/agents/curated/`) |
+| `HKASK_LOCAL_SWARMS_DIR` | derived from `data_dir` | Always (D28; `mcp/swarm/swarms/`) |
+| `HKASK_SWARM_MEMORY_DB` | derived from `data_dir` | Always (D28; `mcp/swarm/memory.db`) |
 | `HKASK_SKILLS_DIR` | `swarm.skills_dir` | Non-empty |
 | `HKASK_TRAINING_HOST` / `HKASK_TRAINING_CACHE_DIR` | `training.*` | Non-empty |
 | `HKASK_DEFAULT_MODEL` | `models.default_model` | Non-empty |

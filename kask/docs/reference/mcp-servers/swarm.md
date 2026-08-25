@@ -142,15 +142,15 @@ local agent ids with a mission. No cost, no consent token.
 
 ### Local agent registry
 
-Local agent cards live at `agents/local/curated/<id>/agent_card.json`
-(`HKASK_LOCAL_AGENTS_DIR` overrides the directory; empty default resolves to
-`agents/local/curated`). The registry is read by `swarm_list_local_agents` and
+Local agent cards live at `mcp/swarm/agents/curated/<id>/agent_card.json`
+(derived from the global `data_dir` as `mcp/swarm/agents/curated/`). The
+registry is read by `swarm_list_local_agents` and
 `swarm_delegate_local`.
 
 | Tool                            | Purpose                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `swarm_list_local_agents`       | List local agent cards from the registry. Each card carries a `cloud_id`: present = synced with an ABW agent, absent = local-only.                                                                                                                                                                                                          |
-| `swarm_create_local_agent`      | Write a new local agent card to the registry (`agents/local/curated/<id>/agent_card.json`) and reload the registry.                                                                                                                                                                                                                         |
+| `swarm_create_local_agent`      | Write a new local agent card to the registry (`mcp/swarm/agents/curated/<id>/agent_card.json`) and reload the registry.                                                                                                                                                                                                                         |
 | `swarm_reconfigure_local_agent` | Update an existing local agent's `system_prompt` in place (the C6 reconfigure step in the cybernetic swarm plan); preserves all other card fields.                                                                                                                                                                                          |
 | `swarm_clone_to_local`          | Clone an ABW agent card into the local registry with `min_provider_class: local`; sets `cloud_id` to mark it as synced (the cloud→local bridge). Requires the ABW API key.                                                                                                                                                                  |
 | `swarm_remove_local`            | Delete a local agent card (the local counterpart of firing). A synced card's ABW agent is NOT touched.                                                                                                                                                                                                                                      |
@@ -432,14 +432,14 @@ injected by `mcp_env_with_credentials` — it never appears in the config env ma
 | `kask.swarm.api_url`                  | `HKASK_ABW_API_URL`                 | `https://agent-bestiary.world`   | ABW base URL override                                         |
 | `kask.swarm.max_credits_per_dispatch` | `HKASK_ABW_MAX_CREDITS`             | `50`                             | Per-dispatch ceiling (both modes)                             |
 | `kask.swarm.curator_consent_default`  | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | `false`                          | When `false`, `swarm_xaman` needs a consent token (S5 policy) |
-| `kask.swarm.local_agents_dir`         | `HKASK_LOCAL_AGENTS_DIR`            | (empty = `agents/local/curated`) | Local agent cards directory                                   |
-| `kask.swarm.local_swarms_dir`         | `HKASK_LOCAL_SWARMS_DIR`            | (empty = `agents/local/swarms`) | Local swarms directory (local replica of ABW workspace roster) |
 | `kask.swarm.skills_dir`               | `HKASK_SKILLS_DIR`                  | (empty = skill-blind)            | Skill corpus dir for local agent skill-awareness (Slice 6)   |
 | `kask.swarm.default_agent_model`      | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | `claude-haiku-4-5-20251001`      | Default model for new ABW agents (KA-05)                      |
 | `kask.swarm.a2a_http_enabled`         | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
 | `kask.swarm.memory_passphrase`        | `HKASK_SWARM_MEMORY_PASSPHRASE`     | `allostery`                      | SQLCipher passphrase for local swarm semantic-memory store   |
-| `kask.swarm.memory_db_path`           | `HKASK_SWARM_MEMORY_DB`             | (empty = data dir)               | Local swarm semantic-memory DB path                           |
 | `kask.swarm.embedding_dim`            | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store          |
+| —                                     | `HKASK_LOCAL_AGENTS_DIR`            | `mcp/swarm/agents/curated`       | Local agent cards directory (derived from global `data_dir`) |
+| —                                     | `HKASK_LOCAL_SWARMS_DIR`            | `mcp/swarm/swarms`               | Local swarms directory (derived from global `data_dir`)      |
+| —                                     | `HKASK_SWARM_MEMORY_DB`             | `mcp/swarm/memory.db`            | Local swarm semantic-memory DB path (derived from global `data_dir`) |
 | —                                     | `HKASK_SWARM_LEDGER_PATH`           | (data dir)                       | Local ledger SQLite path (operator env var only)              |
 | —                                     | `HKASK_SWARM_CONSENT_STORE`         | (data dir)                       | Consent store SQLite path (operator env var only)             |
 | —                                     | `HKASK_ABW_API_KEY`                 | —                                | ABW Pro API key (keychain credential, **never** in `mcp_env`) |

@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (44) — `portfolio_list` moved to portfolio MCP server
+//! ## Tools (47) — `portfolio_list` moved to portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -25,6 +25,8 @@
 //!   file_attach, file_list, file_delete
 //! - `tools/transcript.rs` — earnings-call transcript tools
 //! - `tools/screener.rs` — stock_screener, research_search
+//! - `tools/report.rs` — report_save, report_load, report_list (persist screens &
+//!   reports under `mcp/companies/{screens|reports}/` per Standardized Artifact Storage)
 //!
 //! The pin test is the source of truth for the count; this list is a map.
 //!
@@ -55,6 +57,7 @@ mod providers;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
+mod report_store;
 pub(crate) mod research;
 mod scenarios;
 mod screener;
@@ -64,6 +67,7 @@ mod valuation_service;
 pub(crate) use forecast::{
     StoredForecast, current_price_from_multiple, projected_terminal_multiple,
 };
+pub(crate) use report_store::ReportStore;
 pub(crate) mod types;
 
 use portfolio::{PersistedForecast, PortfolioManager};
@@ -112,6 +116,7 @@ hkask_mcp_server::mcp_server!(
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
         pub fibo_cache: Option<fibo_cache::FiboDataCache>,
+        pub report_store: ReportStore,
     }
 );
 
@@ -284,6 +289,7 @@ impl CompaniesServer {
             + Self::economic_profit_router()
             + Self::expectations_router()
             + Self::transcript_router()
+            + Self::report_router()
     }
 
     /// Map a tool name to its ontology concept URI. The concept is used both
@@ -390,6 +396,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 })),
                 superforecast::FermiDefaults::from_env(),
                 fibo_cache,
+                ReportStore::new(),
             ))
         },
         vec![

@@ -1,6 +1,13 @@
 //! Swarm sub-page — Agent Bestiary World backend mode, credit ceiling,
-//! curator consent default, local agent/swarm directories, default agent
-//! model, A2A HTTP gateway, and local semantic-memory configuration.
+//! curator consent default, default agent model, A2A HTTP gateway, and
+//! local semantic-memory configuration.
+//!
+//! No per-server path fields — the swarm server's local agent registry,
+//! local swarms registry, and memory DB are derived from the global
+//! `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and
+//! `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via
+//! `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and
+//! `HKASK_SWARM_MEMORY_DB`.
 
 use super::*;
 
@@ -19,13 +26,10 @@ pub(crate) fn render_swarm_page(
     let api_url = swarm.api_url;
     let max_credits = swarm.max_credits_per_dispatch.to_string();
     let curator_consent_default = swarm.curator_consent_default;
-    let local_agents_dir = swarm.local_agents_dir;
-    let local_swarms_dir = swarm.local_swarms_dir;
     let skills_dir = swarm.skills_dir;
     let default_agent_model = swarm.default_agent_model;
     let a2a_http_enabled = swarm.a2a_http_enabled;
     let memory_passphrase = swarm.memory_passphrase;
-    let memory_db_path = swarm.memory_db_path;
     let embedding_dim = swarm.embedding_dim.to_string();
 
     // ABW API key — the core credential for ABW mode. Lives in the keychain
@@ -179,62 +183,8 @@ pub(crate) fn render_swarm_page(
             }
         });
 
-    let local_agents_dir_input = SettingsInputField::new("kask-swarm-local-agents-dir")
-        .tab_index(4)
-        .with_initial_text(local_agents_dir)
-        .with_placeholder("agents/local/curated")
-        .aria_label("Local Agents Directory")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .local_agents_dir = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
-
-    let local_swarms_dir_input = SettingsInputField::new("kask-swarm-local-swarms-dir")
-        .tab_index(5)
-        .with_initial_text(local_swarms_dir)
-        .with_placeholder("agents/local/swarms")
-        .aria_label("Local Swarms Directory")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .local_swarms_dir = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
-
     let skills_dir_input = SettingsInputField::new("kask-swarm-skills-dir")
-        .tab_index(6)
+        .tab_index(4)
         .with_initial_text(skills_dir)
         .with_placeholder(".agents/skills")
         .aria_label("Skills Directory")
@@ -261,7 +211,7 @@ pub(crate) fn render_swarm_page(
         });
 
     let default_agent_model_input = SettingsInputField::new("kask-swarm-default-agent-model")
-        .tab_index(7)
+        .tab_index(5)
         .with_initial_text(default_agent_model)
         .with_placeholder("claude-haiku-4-5-20251001")
         .aria_label("Default Agent Model")
@@ -317,10 +267,10 @@ pub(crate) fn render_swarm_page(
             );
         },
     )
-    .tab_index(8);
+    .tab_index(6);
 
     let memory_passphrase_input = SettingsInputField::new("kask-swarm-memory-passphrase")
-        .tab_index(9)
+        .tab_index(7)
         .with_initial_text(memory_passphrase)
         .with_placeholder("allostery")
         .aria_label("Memory Passphrase")
@@ -346,35 +296,8 @@ pub(crate) fn render_swarm_page(
             }
         });
 
-    let memory_db_path_input = SettingsInputField::new("kask-swarm-memory-db-path")
-        .tab_index(10)
-        .with_initial_text(memory_db_path)
-        .with_placeholder("swarm_memory.db")
-        .aria_label("Memory DB Path")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .memory_db_path = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
-
     let embedding_dim_input = SettingsInputField::new("kask-swarm-embedding-dim")
-        .tab_index(11)
+        .tab_index(8)
         .with_initial_text(embedding_dim)
         .with_placeholder("1024")
         .aria_label("Embedding Dimension")
@@ -414,7 +337,11 @@ pub(crate) fn render_swarm_page(
                     Label::new(
                         "Agent Bestiary World agent swarms and the Xaman Ek curator. \
                          Configure the backend mode (remote ABW vs local substrate), the \
-                         per-dispatch credit ceiling, and the curator consent default.",
+                         per-dispatch credit ceiling, and the curator consent default. \
+                         Local agent cards, local swarms, and the semantic-memory DB \
+                         persist to mcp/swarm/ under the shared kask data directory (set \
+                         on the General page). There are no per-server path settings — \
+                         all MCP servers share the single data directory.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -454,38 +381,6 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 )
                 .child(max_credits_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Local Agents Directory"))
-                .child(
-                    Label::new(
-                        "Directory containing local agent cards (<id>/agent_card.json), read \
-                         in Local mode. Leave empty for the default (agents/local/curated). \
-                         Or set HKASK_LOCAL_AGENTS_DIR.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(local_agents_dir_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Local Swarms Directory"))
-                .child(
-                    Label::new(
-                        "Directory containing local swarms (<id>/swarm.json), the local \
-                         replica of an ABW workspace roster. Leave empty for the default \
-                         (agents/local/swarms). Or set HKASK_LOCAL_SWARMS_DIR.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(local_swarms_dir_input),
         )
         .child(Divider::horizontal())
         .child(
@@ -538,22 +433,6 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 )
                 .child(memory_passphrase_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Memory DB Path"))
-                .child(
-                    Label::new(
-                        "On-disk path for the local swarm semantic-memory DB. Leave empty \
-                         for the default (<hkask data dir>/swarm_memory.db). Or set \
-                         HKASK_SWARM_MEMORY_DB.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(memory_db_path_input),
         )
         .child(Divider::horizontal())
         .child(

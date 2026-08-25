@@ -1,5 +1,5 @@
-//! Prediction-markets sub-page — calibration data directory, cache TTL,
-//! base-event registry for the prediction-markets data service.
+//! Prediction-markets sub-page — cache TTL, base-event registry for the
+//! prediction-markets data service.
 
 use super::*;
 
@@ -16,14 +16,6 @@ pub(crate) fn render_prediction_markets_page(
         .map(Into::into)
         .unwrap_or_default();
 
-    let data_dir_input = kask_string_input(
-        "kask-prediction-markets-data-dir",
-        "Data Directory",
-        "(in-memory)",
-        prediction_markets.data_dir,
-        "prediction_markets",
-        "data_dir",
-    );
     let cache_ttl_input = kask_string_input(
         "kask-prediction-markets-cache-ttl",
         "Cache TTL (seconds)",
@@ -63,26 +55,14 @@ pub(crate) fn render_prediction_markets_page(
                         "The prediction-markets server is a read-only data service for \
                          Polymarket and Kalshi market-implied probabilities, with calibration, \
                          volatility, and constant-maturity-prediction analytics. No trading \
-                         credentials are used or accepted.",
+                         credentials are used or accepted. Calibration data persists to \
+                         mcp/prediction-markets/ under the shared kask data directory (set on \
+                         the General page). There are no per-server path settings — all MCP \
+                         servers share the single data directory.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 ),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Calibration Data Directory"))
-                .child(
-                    Label::new(
-                        "Directory for the calibration journal (resolved-market outcomes). \
-                         Leave empty for in-memory.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(data_dir_input),
         )
         .child(Divider::horizontal())
         .child(

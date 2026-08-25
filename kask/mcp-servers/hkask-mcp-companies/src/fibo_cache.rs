@@ -435,11 +435,9 @@ pub(crate) fn hash_params(extra: &[(&str, &str)]) -> String {
 /// the per-server subtree invariant (an operator `ls mcp/` saw `fibo-cache/`
 /// alongside `portfolio/`, `scenarios/`, etc. instead of under `companies/`).
 pub(crate) fn resolve_cache_db_path(owner: &str) -> Result<PathBuf, String> {
-    let mut path = hkask_types::agent_paths::resolve_under_data_dir(Path::new(
-        hkask_types::agent_paths::MCP_DIR,
-    ))
-    .join("companies")
-    .join("fibo-cache");
+    let mut path = hkask_types::agent_paths::resolve_under_data_dir(
+        &hkask_types::agent_paths::mcp_server_subdir("companies", "fibo-cache"),
+    );
     path.push(sanitize_name(owner));
     std::fs::create_dir_all(&path)
         .map_err(|e| format!("failed to create fibo-cache directory: {e}"))?;
