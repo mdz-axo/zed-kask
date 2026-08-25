@@ -18,6 +18,27 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ## Instructions
 
+### Data Provenance Hierarchy (applies to all steps)
+
+All financial data used in the pipeline must be classified by provenance strength. Stronger provenance overrides weaker provenance when they conflict.
+
+| Level | Source | Legal standing | Use as DCF/valuation input? |
+|-------|--------|---------------|---------------------------|
+| 1 | Audited financial statements (10-K, 10-Q) | Audited, legal penalties for misrepresentation | **Yes — these are the anchor** |
+| 2 | Earnings call transcripts | Regulation FD applies, but forward-looking statements have safe harbor | No — use for qualitative analysis, management assessment, milestone tracking |
+| 3 | Press releases / investor presentations | Selective disclosure, not audited | No — use for context, not for financial inputs |
+| 4 | Media coverage / analyst reports | Third-party interpretation, may repeat company claims | No — use for incumbent research, market context |
+| 5 | Web research / news | Variable quality | No — use for market-reality gate, incumbent verification |
+
+**DCF inputs must come from Level 1 (audited financial statements) only.** If audited data is insufficient for a meaningful DCF — e.g., pre-revenue company with no historical revenue, margins, or working capital data — the correct output is "insufficient audited data for DCF," not substituting analyst estimates, round-number guesses, or transcript claims as inputs. Swapping in non-audited data as DCF inputs pollutes the calculation and produces a number that has the appearance of rigor without the substance.
+
+**Customer base evidence** must distinguish between:
+- Revenue from paying customers (Level 1 — from audited financials)
+- Customer/partner counts cited in transcripts (Level 2 — management claim, not audited)
+- Partnership announcements in press releases (Level 3 — selective disclosure)
+
+A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Level 2) does not constitute evidence of paying customers. Only recognized revenue from audited financials (Level 1) verifies that customers pay for the product.
+
 ### company-8part
 
 1. Self-View — how the company describes itself (verbatim from fetched IR page).
@@ -26,8 +47,8 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 4. Financial Profile — signposts + 3-stage valuation (consensus → normalization → terminal).
 5. Invisible Layer — what's not on the page, what's not in the price.
 6. Turd Blossom — is the market pricing it like a turd? Early shoots of improvement?
-7. Value Gorilla Elevator Pitch — economic opportunity + exploitation + why the market doubts it.
-8. Investment Thesis Statement — durable, timeless, covering all three pillars.
+7. Strategic Position Summary — what problem exists (verified), what the company claims, what evidence supports or contradicts.
+8. Investment Thesis Statement — state whether evidence supports a thesis. If insufficient, say so.
 9. Consume company_transcript, dcf_valuation, comparable_analysis, web_search, fetch MCP tool outputs.
 10. Emit data_gaps for any failed MCP tool — never collapse to None.
 11. **Intent-routed search:** Before calling `web_search`, call `web_recommend_provider` with the query and `intent` hint. Use the recommended provider explicitly via `web_search(provider="...")` rather than defaulting to RRF fusion. This prevents the arxiv-only fallback that occurs when no provider is explicitly selected and the credential map is stale.
@@ -71,18 +92,28 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ### gorilla-4dim
 
-1. **Market-reality gate (before scoring Obvious Problem).** For each market/capability the company claims to own or have created, search via `web_search` for incumbents who sell it as a product line. Output a table: `claimed market | incumbent | what they sell | URL`. If incumbents exist, the market is at Product/Commodity stage — cap Obvious Problem at 40. If you cannot find incumbents after searching, say so explicitly and score normally, but flag it for review.
-2. **Falsification before scoring.** Before scoring any dimension above 70, write one paragraph arguing against it. If you can't write a convincing counter-argument, the score is probably too high.
-3. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, the economic trajectory, and the market-reality gate.
-4. Score each dimension 0–100. Every score must cite the evidence it's based on — transcript quote, web source, or financial data point. A score with no cited evidence is invalid.
-5. Call `lisp_eval` to apply the fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
-6. Do NOT propose alternative weightings — the weights are fixed by firm methodology.
+1. **Market-reality gate.** For each market the company claims to own or have created, search via `web_search` for incumbents who sell it as a product line. Output: `claimed market | incumbent | what they sell | URL`. If incumbents exist, cap Obvious Problem at 40. If no incumbents found after searching, state this explicitly and score normally.
+2. **Financial red-flag screen.** Answer two questions using Level 1 (audited financial statement) data only:
+   - Is capex producing revenue? (Compare capex trajectory to revenue trajectory from 10-K/10-Q filings.)
+   - Is revenue real? (Check whether reported revenue is from paying customers or from contracts/MoUs. Audited revenue is recognized revenue — not backlog, not contracted, not "committed.")
+   If audited data is insufficient to answer either question, state "insufficient audited data" and apply a confidence penalty. If either answer is negative based on audited data, apply a confidence penalty to all GORILLA scores.
+3. **Falsification before scoring above 70.** Write one paragraph arguing against any dimension scored above 70. If the counter-argument is more convincing than the supporting evidence, reduce the score.
+4. Score the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, the economic trajectory, the market-reality gate, and the financial red-flag screen.
+5. Every score must cite evidence: transcript quote, web source URL, or financial data point. A score without cited evidence is invalid.
+6. Call `lisp_eval` to apply fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
+7. Do NOT propose alternative weightings.
 
 ### gorilla-capability-reason
 
 1. Type each GORILLA dimension against a capability registry with floor, ceiling, and maturity-gate limits.
-2. Evaluate whether the GORILLA scores are defensible given the company's capability maturity.
-3. Emit floor_violations, ceiling_violations, maturity_blocks. A maturity block means the `lisp_eval` scoring call treats that dimension as nil — a blocked dimension's score is not credible without its prerequisite.
+2. **Execution evidence requirement.** For each dimension scored above 50, cite one prior-quarter guidance item or stated milestone from the Company Board and whether it was delivered. The comparison is: `prior guidance | delivered? | evidence`. If delivery is absent across 2+ dimensions, apply a maturity block — the score is treated as nil, not as the elicited value. This distinguishes companies that see an opportunity and are executing from companies that see an opportunity and are not.
+3. **Customer base evidence requirement.** The most valuable asset any business has is its paying customer base (Reichheld: loyal, low-turnover customers drive ROIC by reducing acquisition costs and enabling referral-driven growth). For each dimension scored above 50, cite evidence of paying customers using the Data Provenance Hierarchy:
+   - **Paying customers (Level 1 — audited)**: recognized revenue from 10-K/10-Q, customer counts disclosed in audited filings, ARPU calculated from audited revenue ÷ customer count
+   - **Non-paying relationships (Level 2-3 — unaudited)**: partnerships, MoUs, letters of intent, "agreements" cited in transcripts or press releases that have not converted to recognized revenue
+   If the company has no Level 1 evidence of paying customers but claims a large partner ecosystem (Level 2-3), apply a maturity block on Obvious Problem and Combinatorial Solution. A company that cannot get people to pay for its product has not demonstrated the capability to monetize the opportunity, regardless of opportunity size.
+   Cross-reference the `listening` skill output for multi-quarter trajectory: are customer counts growing? Are partners converting to paying customers? Is revenue per customer growing? Persistent partner counts without revenue conversion is a signal that the company sees the opportunity but cannot execute on the most basic business function.
+4. Evaluate whether the GORILLA scores are defensible given the company's capability maturity, execution track record, and customer base evidence.
+5. Emit floor_violations, ceiling_violations, maturity_blocks. A maturity block means the `lisp_eval` scoring call treats that dimension as nil.
 
 ### imagine-longrange
 

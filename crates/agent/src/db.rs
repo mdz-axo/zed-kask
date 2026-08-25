@@ -2,7 +2,7 @@ use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
@@ -357,8 +357,6 @@ impl DbThread {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
-    #[serde(rename = "json")]
-    Json,
     #[serde(rename = "zstd")]
     Zstd,
 }
@@ -366,7 +364,6 @@ pub enum DataType {
 impl Bind for DataType {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let value = match self {
-            DataType::Json => "json",
             DataType::Zstd => "zstd",
         };
         value.bind(statement, start_index)
@@ -377,7 +374,6 @@ impl Column for DataType {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (value, next_index) = String::column(statement, start_index)?;
         let data_type = match value.as_str() {
-            "json" => DataType::Json,
             "zstd" => DataType::Zstd,
             _ => anyhow::bail!("Unknown data type: {}", value),
         };
@@ -436,7 +432,7 @@ impl ThreadsDatabase {
                 "THREAD_FALLBACK_{}",
                 test_name.unwrap_or_default()
             )))
-        } else if let Some(kask_path) = crate::threads_db_path_override() {
+        } else {
             // zed-kask: D28 — Standardized Artifact Storage.
             // Archived chat threads live under the kask data root
             // (`{data_dir}/threads/threads.db`), resolved via the kask-side
@@ -450,55 +446,30 @@ impl ThreadsDatabase {
             // Pre-release: no back-compat. The override is always wired early
             // in `main.rs` (user-independent), so this branch is the
             // production path.
+            let kask_path = crate::threads_db_path_override().with_context(|| {
+                "threads_db_path_override not wired — main.rs must call \
+                 set_threads_db_path_override before constructing ThreadsDatabase"
+            })?;
             if let Some(parent) = kask_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             Connection::open_file(&kask_path.to_string_lossy())
-        } else {
-            // Override not set — fall back to upstream path so the editor
-            // remains functional pre-kask-bridge wiring.
-            let threads_dir = paths::data_dir().join("threads");
-            std::fs::create_dir_all(&threads_dir)?;
-            let sqlite_path = threads_dir.join("threads.db");
-            Connection::open_file(&sqlite_path.to_string_lossy())
         };
 
         connection.exec(indoc! {"
             CREATE TABLE IF NOT EXISTS threads (
                 id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                folder_paths TEXT,
+                folder_paths_order TEXT,
                 summary TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 data_type TEXT NOT NULL,
-                data BLOB NOT NULL
+                data BLOB NOT NULL,
+                created_at TEXT
             )
         "})?()
         .map_err(|e| e.context("Failed to create threads table"))?;
-
-        if let Ok(mut s) = connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN parent_id TEXT
-        "})
-        {
-            s().ok();
-        }
-
-        if let Ok(mut s) = connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN folder_paths TEXT;
-            ALTER TABLE threads ADD COLUMN folder_paths_order TEXT;
-        "})
-        {
-            s().ok();
-        }
-
-        if let Ok(mut s) = connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN created_at TEXT;
-        "})
-        {
-            if s().is_ok() {
-                connection.exec(indoc! {"
-                    UPDATE threads SET created_at = updated_at WHERE created_at IS NULL
-                "})?()?;
-            }
-        }
 
         let db = Self {
             executor,
@@ -662,7 +633,6 @@ impl ThreadsDatabase {
                 let decompressed = zstd::decode_all(&data[..])?;
                 String::from_utf8(decompressed)?
             }
-            DataType::Json => String::from_utf8(data)?,
         };
         DbThread::from_json(json_data.as_bytes())
     }

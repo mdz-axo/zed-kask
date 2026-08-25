@@ -296,7 +296,7 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
 
    a. Group files into work units of ~10 files each (or 1 file per group
       for large PDFs > 10 MB).
-   b. Start with `concurrency_step` subagents (default 4). Call
+   b. Start with 4 subagents. Call
       `spawn_agent` for each work unit:
       - `label`: "Convert batch {{ batch_index }}"
       - `message`: "Convert these files to text in
@@ -304,7 +304,7 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
         Use `pdftotext -q` for PDFs, Python html.parser for HTML, copy
         for TXT/MD. Log per-file results. Report the count of
         successfully converted files."
-   c. On all agents succeeding, add `concurrency_step` more agents for
+   c. On all agents succeeding, add 4 more agents for
       the next round.
    d. On any agent throttling (429/503) or erroring, hold at the current
       level for the next round before ramping further.
@@ -383,8 +383,8 @@ directory:
         multi_tier {{ multi_tier }}. Output to
         `corpus/chunks/{{ entity_ref_prefix }}-batch-{{ batch_index }}.jsonl`.
         Report the chunk count."
-   c. Follow the step-up ramp: start at `concurrency_step`, add
-      `concurrency_step` per round on success, cap at `max_concurrency`.
+   c. Follow the concurrency dispatch pattern: start at 4, add
+      4 per round on success, cap at `max_concurrency`.
    d. After all subagents complete, merge batch outputs:
       ```
       cat corpus/chunks/{{ entity_ref_prefix }}-batch-*.jsonl > corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl
@@ -498,8 +498,8 @@ calls per chunk and will time out on large inputs (observed: timeout on
    batches — every chunk must be tagged or the quality gate fails.
 
 3. **Parallel subagent dispatch** (if `parallel_subagents` is true):
-   Spawn subagents to tag batches concurrently with the step-up ramp:
-   a. Start with `concurrency_step` subagents (default 4). For each,
+   Spawn subagents to tag batches concurrently with the concurrency dispatch pattern:
+   a. Start with 4 subagents. For each,
       call `spawn_agent`:
       - `label`: "Tag batch {{ batch_index }}"
       - `message`: "Call `corpus_tag_chunks` on
@@ -509,7 +509,7 @@ calls per chunk and will time out on large inputs (observed: timeout on
         and concurrency {{ concurrency }}. Report the tagged chunk count.
         If the tool times out, reduce concurrency to 2 and retry. If it
         still times out, report the error — do NOT skip the batch."
-   b. On all agents succeeding, add `concurrency_step` more agents for
+   b. On all agents succeeding, add 4 more agents for
       the next round.
    c. On any agent throttling (429/503) or erroring, hold at the current
       concurrency level for the next round.
@@ -635,8 +635,8 @@ step-up ramp.
         with output
         `corpus/qa/{{ entity_ref_prefix }}-gen-batch-{{ batch_index }}.jsonl`
         and concurrency {{ concurrency }}. Report the QA pair count."
-   c. Follow the step-up ramp: start at `concurrency_step`, add
-      `concurrency_step` per round on success, cap at `max_concurrency`.
+   c. Follow the concurrency dispatch pattern: start at 4, add
+      4 per round on success, cap at `max_concurrency`.
    d. Merge batch outputs:
       ```
       cat corpus/qa/{{ entity_ref_prefix }}-gen-batch-*.jsonl > corpus/qa/{{ entity_ref_prefix }}-generated.jsonl
@@ -797,14 +797,13 @@ downstream stages with incomplete input. The only exceptions are:
   or halt with a failure report. Do NOT create subsets or samples to
   bypass the failure. A 33,000-chunk corpus reduced to 380 chunks is a
   98.8% data loss — the downstream stages would produce garbage.
-- **Concurrency step-up ramp**: when dispatching parallel subagents, start
-  at `concurrency_step` (default 4) concurrent agents, add
-  `concurrency_step` per round on success, and cap at `max_concurrency`
-  (default 96). On throttle (429/503), hold at the last successful level.
-  The product of subagent count × per-subagent tool `concurrency` should
-  stay within `max_concurrency` to avoid exceeding the process-wide
-  limiter. These settings live in `KaskGeneralSettings` and are
-  configurable via the settings UI (General page).
+- **Concurrency dispatch pattern**: when dispatching parallel subagents, start
+  at 4 concurrent agents, add 4 per round on success, and cap at
+  `max_concurrency` (default 96). On throttle (429/503), hold at the last
+  successful level. The product of subagent count × per-subagent tool
+  `concurrency` should stay within `max_concurrency` to avoid exceeding the
+  process-wide limiter. `max_concurrency` lives in `KaskGeneralSettings` and
+  is configurable via the settings UI (General page).
 - **Subagent depth limit**: `MAX_SUBAGENT_DEPTH` is 1 — subagents spawned
   by the pipeline agent cannot spawn further subagents. Each subagent
   must complete its assigned work unit independently. Plan batch sizes

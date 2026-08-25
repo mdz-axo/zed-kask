@@ -5119,13 +5119,34 @@ impl Thread {
                 .iter()
                 .map(|(name, tool)| (name.clone(), tool.description()))
                 .collect();
-            let retained = crate::tool_router::apply_router_bypassing_built_ins(
+            let mut retained = crate::tool_router::apply_router_bypassing_built_ins(
                 router.as_ref(),
                 tool_descriptions.iter().map(|(n, d)| (n, d)),
                 self.last_user_message_text().as_deref(),
                 open_file_paths,
                 &built_in_names,
             );
+            // zed-kask: Skill bodies and tool results reference MCP tools by
+            // name. The router scores against the user's message only, so
+            // tools referenced by skill bodies injected mid-turn (via the
+            // `skill` tool) get filtered out before the model can call them.
+            // Scan recent conversation history for tool name references and
+            // retain them — the same exact-name bypass the router applies to
+            // the user's message, extended to the conversation.
+            for message in self.messages.iter().rev().take(20) {
+                let text = message.to_markdown();
+                if text.is_empty() {
+                    continue;
+                }
+                let text_lower = text.to_lowercase();
+                for (name, _) in &tools {
+                    if !retained.contains(name)
+                        && text_lower.contains(&name.to_lowercase())
+                    {
+                        retained.insert(name.clone());
+                    }
+                }
+            }
             tools.retain(|name, _| retained.contains(name));
         }
 

@@ -187,7 +187,12 @@ impl Client {
             .unwrap_or_else(String::new);
 
         let timeout = binary.timeout.map(Duration::from_secs);
-        let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
+        let transport = Arc::new(StdioTransport::new(
+            binary,
+            working_directory,
+            server_id.0.clone(),
+            &cx,
+        )?);
         Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
 

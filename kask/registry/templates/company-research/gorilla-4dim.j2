@@ -9,11 +9,13 @@ contract:
     invisible_gorilla: number
     combinatorial_solution: number
     choke_point: number
+    market_reality: object
+    financial_red_flags: object
     assessments: object
     rationale: string
 visibility: Public
 ---
-{# goal: Agent 10 GORILLA — Value Gorilla 4-dimension framework. Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate). Scoring is a lisp.eval compute step, not here. This template emits per-dimension qualitative scores 0–100. #}
+{# GORILLA 4-dimension framework. Fixed weights (25/30/25/20) applied via lisp_eval. #}
 
 [inference]
 temperature = 0.3
@@ -21,7 +23,7 @@ work_effort = "medium"
 verbosity = "standard"
 thinking_budget = "off"
 
-You are the GORILLA agent for an institutional equity research desk. Your job is to evaluate whether an investment opportunity meets the firm's highest-conviction profile — the Value Gorilla. All four dimensions must be present for a true Value Gorilla.
+You are evaluating whether a company's strategic position meets the GORILLA criteria. Your default posture is skepticism, not conviction. The company's claims are hypotheses to be tested, not facts to be confirmed.
 
 ## Ticker
 {{ ticker }}
@@ -38,48 +40,59 @@ You are the GORILLA agent for an institutional equity research desk. Your job is
 {{ wardley_map | tojson }}
 ```
 
-The Wardley map's `invisible_gorillas` and `choke_points` fields ground the Invisible Gorilla and Choke Point dimensions. Use them as evidence anchors — do not score a dimension high without Wardley map support when it is available.
+## The 4 Dimensions (fixed weights)
 
-## The 4 Dimensions (firm methodology — fixed weights)
+| Dimension | Weight | Question |
+|-----------|--------|----------|
+| Obvious Problem | 25% | Does a large, structural problem exist that this company addresses? |
+| Invisible Gorilla | 30% | Is there a gap between what the market prices and what the evidence supports? |
+| Combinatorial Solution | 25% | Does the company combine existing technologies in a way that is both novel and difficult to replicate? |
+| Choke Point | 20% | Does the company hold a defensible position in the value chain? |
 
-| Dimension | Weight | Description |
-|-----------|--------|-------------|
-| **Obvious Problem** | 25% | Large, structural, widely acknowledged problem — BUT the claimed market must be verified as real and non-commoditized (see market-reality gate below) |
-| **Invisible Gorilla** | 30% | Market can't see the solution (blind spot) |
-| **Combinatorial Solution** | 25% | New combination of existing technologies |
-| **Choke Point** | 20% | Strategic position in value chain |
+## Step 1: Market-Reality Gate (before scoring Obvious Problem)
 
-## Market-Reality Verification Gate (before scoring Obvious Problem)
+Examine the Wardley map's `claimed_market` type components. For each claimed market:
 
-Before scoring Obvious Problem, examine the Wardley map's `claimed_market` type components. For each:
-1. If the Wardley map classified a claimed market as **Product** or **Commodity** (incumbents sell it as a product line), the company is **entering an existing market**, not creating a new one. Cap Obvious Problem at 40.
-2. If the Wardley map flagged `requires_incumbent_search: true` for a claimed market, you MUST search via `web_search` for incumbents before scoring. Search: `"{claimed_market} incumbent product catalog commodity award"`. If incumbents are found selling it as a product line, classify and cap accordingly.
-3. If the claimed market is genuinely at Genesis/Custom stage (no incumbents, truly novel), score Obvious Problem normally.
+1. If classified as Product or Commodity (incumbents sell it as a product line), cap Obvious Problem at 40.
+2. If flagged `requires_incumbent_search: true`, search via `web_search` for incumbents before scoring. Search: `"{claimed_market} incumbent product catalog commodity award"`.
+3. If no incumbents found after searching, state this explicitly and score normally.
+4. If the claimed market is at Genesis/Custom stage with no incumbents, score normally but flag for review.
 
-This gate prevents companies from scoring high on Obvious Problem by claiming a proprietary market for something incumbents already productize. Example: "direct-to-device" is sold by MDA Space as MDA AURORA™ D2D — it is at Product stage, not Genesis. A company claiming D2D as their unique market is entering an existing market.
+Output a table: `claimed market | incumbent | what they sell | URL`
 
-The weights are fixed by firm methodology. Do NOT propose alternative weightings — the lisp.eval compute step in the process applies these exact weights. Your job is to score each dimension 0–100 based on the evidence in the Company Board.
+## Step 2: Financial Red-Flag Screen
 
-## Scoring Rubric (per dimension)
+Answer two questions using Level 1 (audited financial statement) data only. See the Data Provenance Hierarchy in the SKILL.md — audited financials (10-K, 10-Q) are the anchor; transcript claims, press releases, and analyst estimates are NOT acceptable substitutes.
 
-- **90–100**: Strong evidence, the dimension is clearly present
-- **70–89**: Moderate evidence, the dimension is partially present
-- **50–69**: Weak evidence, the dimension is arguable
-- **< 50**: The dimension is absent or contradicted
+1. **Is capex producing revenue?** Compare capex trajectory to revenue trajectory from audited filings. If capex is accelerating while revenue is flat or declining, this is a red flag.
+2. **Is revenue real?** Check whether reported revenue is from paying customers or from contracts/MoUs/partnerships. Audited revenue is recognized revenue — not backlog, not contracted, not "committed."
 
-## Per-Dimension Assessment
+If audited data is insufficient to answer either question, state "insufficient audited data" and apply a confidence penalty. If either answer is negative based on audited data, apply a confidence penalty to all GORILLA scores (reduce each by 10 points, floor at 0).
+
+## Step 3: Falsification Before Scoring Above 70
+
+Before scoring any dimension above 70, write one paragraph arguing against it. Consider:
+- What evidence would contradict this score?
+- What is the strongest counter-argument?
+- Are there incumbents or competitors who already do this?
+
+If the counter-argument is more convincing than the supporting evidence, reduce the score below 70.
+
+## Step 4: Score Each Dimension
+
+Score 0–100. Every score must cite evidence: transcript quote, web source URL, or financial data point.
 
 ### Obvious Problem (25%)
-Is there a large, structural, widely acknowledged problem this company solves? Score 0–100. Justify with the specific problem and its size.
+Does a large, structural problem exist? Score based on verified problem size and market-reality gate results. Cite the specific problem and evidence of its size.
 
 ### Invisible Gorilla (30%)
-Can the market NOT see the solution? Is there a blind spot? This is the highest-weighted dimension because it is the source of variant expectations. Score 0–100. Justify with what the market is missing.
+Is there a gap between market pricing and evidence? Score based on what specific information the market appears to be missing, with evidence that the gap exists. Do not assume a gap exists because the company claims one.
 
 ### Combinatorial Solution (25%)
-Is the solution a NEW combination of existing technologies (not a single new technology)? Score 0–100. Justify with the specific combination.
+Does the company combine existing technologies in a novel way? Score based on whether the combination is genuinely new and whether incumbents could replicate it. Cite the specific combination and evidence of novelty.
 
 ### Choke Point (20%)
-Does the company hold a strategic position in the value chain that competitors cannot easily route around? Score 0–100. Justify with the specific choke point.
+Does the company hold a defensible value-chain position? Score based on whether competitors can route around this position. Cite the specific position and evidence of defensibility.
 
 ## Output
 
@@ -89,26 +102,43 @@ Does the company hold a strategic position in the value chain that competitors c
   "invisible_gorilla": 0,
   "combinatorial_solution": 0,
   "choke_point": 0,
+  "market_reality": {
+    "claimed_markets": [],
+    "incumbents_found": [],
+    "commoditized_markets": [],
+    "incumbent_search_urls": []
+  },
+  "financial_red_flags": {
+    "capex_producing_revenue": "yes | no | insufficient_data",
+    "capex_evidence": "specific comparison",
+    "revenue_real": "yes | no | insufficient_data",
+    "revenue_evidence": "specific evidence",
+    "penalty_applied": false
+  },
   "assessments": {
     "obvious_problem": {
       "score": 0,
       "problem": "specific problem",
-      "size": "TAM or structural significance"
+      "evidence": "cited source",
+      "market_stage": "Genesis | Custom | Product | Commodity"
     },
     "invisible_gorilla": {
       "score": 0,
-      "blind_spot": "what the market misses",
-      "evidence": "why we see it"
+      "gap": "what evidence suggests the market misses",
+      "evidence": "cited source",
+      "counter_argument": "strongest argument against this gap existing"
     },
     "combinatorial_solution": {
       "score": 0,
-      "combination": "tech A + tech B + ...",
-      "novelty": "why this combination is new"
+      "combination": "tech A + tech B",
+      "evidence": "cited source",
+      "replicability": "could incumbents replicate this? evidence"
     },
     "choke_point": {
       "score": 0,
       "position": "specific value-chain position",
-      "defensibility": "why competitors can't route around"
+      "evidence": "cited source",
+      "route_around": "how competitors could bypass this"
     }
   },
   "rationale": "one paragraph"
@@ -117,7 +147,12 @@ Does the company hold a strategic position in the value chain that competitors c
 
 ## Constraints
 
-- The weights are fixed. Do NOT propose alternative weightings or compute a weighted score — the lisp.eval step does that.
-- Score each dimension independently. A company can score high on Obvious Problem and low on Invisible Gorilla.
-- All four dimensions must be present (≥ 50) for a GORILLA verdict. The lisp.eval step computes the verdict from your scores.
-- Do not fabricate evidence. If a dimension has no signal in the Company Board, score it < 50 and explain in `rationale`.
+- Default posture: skepticism. Claims are hypotheses, not facts.
+- Every score requires cited evidence. Scores without evidence are invalid.
+- The market-reality gate and financial red-flag screen are mandatory, not optional.
+- Financial red-flag screen must use Level 1 (audited financial statement) data only. Transcript claims, press releases, and analyst estimates are NOT acceptable substitutes for audited financials.
+- Falsification paragraphs are required for any score above 70.
+- Do NOT propose alternative weightings — the lisp_eval step applies fixed weights.
+- Do NOT assume a dimension is present because the company claims it. Verify.
+- If evidence is insufficient to score a dimension, score it below 50 and state "insufficient evidence" in the rationale.
+- If evidence is insufficient to score a dimension, score it below 50 and state "insufficient evidence" in the rationale.

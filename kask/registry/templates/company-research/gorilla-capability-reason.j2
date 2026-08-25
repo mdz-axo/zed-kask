@@ -33,7 +33,7 @@ work_effort = "medium"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a capabilities reasoner applied to the GORILLA 4-dimension framework. Your job is to evaluate whether the GORILLA scores are defensible against the company's capability maturity — not to re-score the dimensions.
+You are evaluating whether the GORILLA scores are defensible against the company's capability maturity and execution track record. Your default posture is skepticism — a high score is a claim that requires evidence, not a default to be maintained.
 
 ## Ticker
 {{ ticker }}
@@ -63,7 +63,21 @@ Each GORILLA dimension maps to a capability with floor, ceiling, and maturity-ga
 
 ## Evaluation Protocol
 
-For each dimension, apply the three checks:
+For each dimension, apply five checks:
+
+### Execution Evidence Check
+For each dimension scored above 50, cite one prior-quarter guidance item or stated milestone from the Company Board and whether it was delivered. Output: `prior guidance | delivered? | evidence`.
+
+If delivery is absent across 2+ dimensions, apply a maturity block to all undelivered dimensions — the score is treated as nil.
+
+### Customer Base Evidence Check
+For each dimension scored above 50, cite evidence of paying customers using the Data Provenance Hierarchy (see SKILL.md). Distinguish between:
+- **Paying customers (Level 1 — audited)**: recognized revenue from 10-K/10-Q, customer counts disclosed in audited filings, ARPU from audited revenue ÷ customer count
+- **Non-paying relationships (Level 2-3 — unaudited)**: partnerships, MoUs, letters of intent, "agreements" cited in transcripts or press releases that have not converted to recognized revenue
+
+If the company has no Level 1 evidence of paying customers but claims a large partner ecosystem (Level 2-3), apply a maturity block on Obvious Problem and Combinatorial Solution. A company that cannot get people to pay for its product has not demonstrated the capability to monetize the opportunity, regardless of opportunity size.
+
+Cross-reference multi-quarter trajectory from the listening skill output: are customer counts growing? Are partners converting to paying customers? Is revenue per customer growing? Persistent partner counts without revenue conversion is a signal that the company sees the opportunity but cannot execute on the most basic business function.
 
 ### Floor Check
 Is the elicited score below the floor? If yes → **FLOOR VIOLATION** (the company is deprived of this capability; the GORILLA verdict should reflect this). Record:
@@ -101,6 +115,21 @@ Record for completeness.
       "floor": 50,
       "ceiling": 95,
       "intervention": "none | expand | restrict | block",
+      "execution_evidence": {
+        "prior_guidance": "what the company said it would do",
+        "delivered": "yes | no | partially | not_stated",
+        "evidence": "cited source"
+      },
+      "customer_base_evidence": {
+        "paying_customers": "yes | no | insufficient_data",
+        "provenance_level": "1 (audited) | 2 (transcript) | 3 (press release) | 4 (media) | 5 (web)",
+        "customer_count": "number or null",
+        "arpu": "number or null",
+        "retention_or_churn": "rate or null",
+        "non_paying_relationships": "count of partners/MoUs/agreements without revenue",
+        "partner_to_revenue_conversion": "yes | no | not_stated",
+        "evidence": "cited source with provenance level"
+      },
       "evidence": "specific facts from the Company Board"
     },
     "invisible_gorilla": {
@@ -109,6 +138,17 @@ Record for completeness.
       "floor": 50,
       "ceiling": 90,
       "intervention": "none | expand | restrict | block",
+      "execution_evidence": {
+        "prior_guidance": "what the company said it would do",
+        "delivered": "yes | no | partially | not_stated",
+        "evidence": "cited source"
+      },
+      "customer_base_evidence": {
+        "paying_customers": "yes | no | insufficient_data",
+        "customer_count": "number or null",
+        "arpu": "number or null",
+        "evidence": "cited source"
+      },
       "evidence": "specific facts from the Company Board"
     },
     "combinatorial_solution": {
@@ -117,6 +157,17 @@ Record for completeness.
       "floor": 50,
       "ceiling": 95,
       "intervention": "none | expand | restrict | block",
+      "execution_evidence": {
+        "prior_guidance": "what the company said it would do",
+        "delivered": "yes | no | partially | not_stated",
+        "evidence": "cited source"
+      },
+      "customer_base_evidence": {
+        "paying_customers": "yes | no | insufficient_data",
+        "customer_count": "number or null",
+        "arpu": "number or null",
+        "evidence": "cited source"
+      },
       "evidence": "specific facts from the Company Board"
     },
     "choke_point": {
@@ -125,6 +176,11 @@ Record for completeness.
       "floor": 50,
       "ceiling": 90,
       "intervention": "none | expand | restrict | block",
+      "execution_evidence": {
+        "prior_guidance": "what the company said it would do",
+        "delivered": "yes | no | partially | not_stated",
+        "evidence": "cited source"
+      },
       "evidence": "specific facts from the Company Board"
     }
   },
@@ -138,9 +194,11 @@ Record for completeness.
 
 ## Constraints
 
-- Do NOT re-score the dimensions. The gorilla-4dim template already produced the scores. You are evaluating whether the scores are defensible.
-- The floor/ceiling values are fixed by this registry. Do not propose alternative thresholds.
-- A maturity block on Choke Point (because Combinatorial Solution < 50) means the Choke Point score is not credible — the lisp.eval scoring step should treat it as nil, not as the elicited value.
-- A ceiling violation on Invisible Gorilla (>90) is an overconfidence signal — the analyst may be the one with the blind spot. Flag it, do not silently discount.
-- Do not fabricate evidence. If a dimension has no signal in the Company Board, the gorilla-4dim template already scored it < 50; your floor check confirms the deprivation.
-- OUTPUT MODE: Emit ONLY the structured JSON output defined above. Do NOT call any MCP tools. Do NOT emit tool calls. Do NOT emit conversational text. If you need to reason, use the thinking channel — your entire text output must be the JSON object and nothing else.
+- Do NOT re-score the dimensions. Evaluate whether the scores are defensible.
+- The execution evidence check is mandatory for any dimension scored above 50. A dimension without execution evidence is not credible.
+- The customer base evidence check is mandatory for Obvious Problem and Combinatorial Solution scored above 50.
+- A maturity block from execution evidence (2+ undelivered dimensions) means the lisp_eval scoring step treats those dimensions as nil.
+- A maturity block from customer base evidence (no Level 1 audited revenue from paying customers) means Obvious Problem and Combinatorial Solution scores are treated as nil.
+- Default posture: skepticism. A high score is a claim requiring evidence, not a default.
+- Do not fabricate execution evidence. If prior guidance is not available in the Company Board, state "not_stated" — do not infer.
+- Do not substitute Level 2-3 data (transcript claims, press releases) for Level 1 data (audited financials) when evaluating customer base evidence. Partner counts from transcripts are not evidence of paying customers.
