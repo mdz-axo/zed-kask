@@ -1589,6 +1589,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub companies: Option<KaskCompaniesSettingsContent>,
 
+    /// Portfolio MCP server configuration.
+    #[serde(default)]
+    pub portfolio: Option<KaskPortfolioSettingsContent>,
+
     /// Corpus MCP server configuration.
     #[serde(default)]
     pub corpus: Option<KaskCorpusSettingsContent>,
@@ -1739,6 +1743,10 @@ pub struct KaskResearchSettingsContent {
 pub struct KaskCompaniesSettingsContent {
     pub chronic_staleness_days: Option<u32>,
     pub fermi_defaults: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPortfolioSettingsContent {
     pub transactions_dir: Option<String>,
 }
 

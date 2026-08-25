@@ -13,9 +13,10 @@ use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
     KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
-    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
-    KaskSwarmSettingsContent, KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
+    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPortfolioSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -65,6 +66,9 @@ pub struct KaskSettings {
 
     /// Companies MCP server configuration.
     pub companies: KaskCompaniesSettings,
+
+    /// Portfolio MCP server configuration.
+    pub portfolio: KaskPortfolioSettings,
 
     /// Corpus MCP server configuration.
     pub corpus: KaskCorpusSettings,
@@ -348,10 +352,21 @@ pub struct KaskCompaniesSettings {
     /// Fermi decomposition defaults as JSON (growth + margin question arrays).
     /// When empty, uses hardcoded defaults.
     pub fermi_defaults: String,
+}
 
+/// Portfolio MCP server configuration.
+///
+/// The portfolio server was split out from the companies server once it
+/// became clear that portfolio management (transaction-ledger composition)
+/// is a distinct concern from company research. The `transactions_dir`
+/// field lived on `KaskCompaniesSettings` as a leftover from before the
+/// split; it is moved here so each server's settings struct owns only its
+/// own concerns.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskPortfolioSettings {
     /// Directory for portfolio transaction files (CSV/JSON). The portfolio
     /// dashboard auto-loads any new files from this directory. When empty,
-    /// defaults to `<kask_data_dir>/transactions/`.
+    /// defaults to `<kask_data_dir>/mcp/portfolio/transactions/`.
     pub transactions_dir: String,
 }
 
@@ -751,6 +766,7 @@ impl KaskSettings {
         crate::mcp_env::emit_condenser_env(&self.condenser, &mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         crate::mcp_env::emit_companies_env(&self.companies, &mut env);
+        crate::mcp_env::emit_portfolio_env(&self.portfolio, &mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_ocr_env(&self.corpus, &mut env);
@@ -907,6 +923,14 @@ impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
                 .chronic_staleness_days
                 .unwrap_or(default.chronic_staleness_days),
             fermi_defaults: c.fermi_defaults.unwrap_or(default.fermi_defaults),
+        }
+    }
+}
+
+impl From<KaskPortfolioSettingsContent> for KaskPortfolioSettings {
+    fn from(c: KaskPortfolioSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
             transactions_dir: c.transactions_dir.unwrap_or(default.transactions_dir),
         }
     }
@@ -1030,6 +1054,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
             research: c.research.map(Into::into).unwrap_or_default(),
             companies: c.companies.map(Into::into).unwrap_or_default(),
+            portfolio: c.portfolio.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             media: c.media.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),

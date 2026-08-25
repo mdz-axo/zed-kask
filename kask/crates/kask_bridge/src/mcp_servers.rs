@@ -56,7 +56,20 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-portfolio",
         description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
         credentials: Some(&[]),
-        config_env: Some(&["HKASK_TRANSACTIONS_DIR"]),
+        config_env: Some(&[
+            // Data dir — needed so `resolve_under_data_dir` in `store.rs`
+            // resolves the portfolio DB under the same root as the parent
+            // process. Without this, an operator `HKASK_DATA_DIR` override is
+            // silently dropped by `filter_config_env_for_server` and the
+            // server falls back to the XDG/HOME default, diverging from the
+            // parent process when the override is set.
+            "HKASK_DATA_DIR",
+            // Transactions directory — emitted by `emit_portfolio_env` from
+            // `KaskPortfolioSettings.transactions_dir`; read by the portfolio
+            // server's auto-loader (`server.rs:611`). Default resolves to
+            // `mcp/portfolio/transactions/` under the kask data root.
+            "HKASK_TRANSACTIONS_DIR",
+        ]),
     },
     BuiltinMcpServer {
         id: "companies",
@@ -77,11 +90,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
-            // HKASK_TRANSACTIONS_DIR is not emitted by `mcp_env()` and not
-            // allowlisted: no MCP server crate reads it (verified across
-            // hkask-mcp-companies and hkask-mcp-portfolio). The settings field
-            // remains for forward compatibility; re-add emission + an entry
-            // here when a server crate gains a read site.
+            // Data dir — needed so the companies server can resolve
+            // `mcp/companies/` artifacts (screens, fibo-cache, portfolio
+            // snapshots) under the same root as the parent process. Without
+            // this, an operator `HKASK_DATA_DIR` override is silently
+            // dropped by `filter_config_env_for_server`.
+            "HKASK_DATA_DIR",
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
         ]),
@@ -215,7 +229,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-scenarios",
         description: "Scenarios — scenario planning and forecasting",
         credentials: Some(&[]),
-        config_env: Some(&["HKASK_SCENARIOS_DATA"]),
+        config_env: Some(&[
+            // Data dir — needed so the scenarios server's fallback
+            // (`resolve_under_data_dir(MCP_DIR).join("scenarios")`) resolves
+            // under the same root as the parent process when
+            // `HKASK_SCENARIOS_DATA` is unset. Without this, an operator
+            // `HKASK_DATA_DIR` override is silently dropped.
+            "HKASK_DATA_DIR",
+            "HKASK_SCENARIOS_DATA",
+        ]),
     },
     BuiltinMcpServer {
         id: "prediction-markets",
@@ -223,6 +245,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
         credentials: Some(&["HKASK_FRED_API_KEY"]),
         config_env: Some(&[
+            // Data dir — needed so the prediction-markets server's fallback
+            // (`resolve_under_data_dir(MCP_DIR).join("prediction-markets")`)
+            // resolves under the same root as the parent process when
+            // `HKASK_PREDICTION_MARKETS_DATA` is unset.
+            "HKASK_DATA_DIR",
             "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
             "HKASK_PREDICTION_MARKETS_DATA",
             "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
@@ -556,14 +583,22 @@ mod tests {
         );
         // Read site: std::env::var("HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS")
         // in `run()` (with a malformed-value warn, not silent fallback).
+        // HKASK_DATA_DIR is read transitively via `resolve_under_data_dir` →
+        // `resolve_data_dir` in hkask-types (the server's fallback when
+        // HKASK_PREDICTION_MARKETS_DATA is unset). Allowlisted so an
+        // operator `HKASK_DATA_DIR` override is not silently dropped by
+        // `filter_config_env_for_server`.
         assert_eq!(
             s.config_env.unwrap().to_vec(),
             vec![
+                "HKASK_DATA_DIR",
                 "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
                 "HKASK_PREDICTION_MARKETS_DATA",
                 "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
             ],
-            "prediction-markets config_env allowlist drifted — every entry must              have a read site in hkask-mcp-prediction-markets"
+            "prediction-markets config_env allowlist drifted — every entry must \
+             have a read site in hkask-mcp-prediction-markets (HKASK_DATA_DIR is \
+             read transitively via resolve_under_data_dir)"
         );
     }
 
@@ -586,11 +621,17 @@ mod tests {
         );
         // D28 — HKASK_TRANSACTIONS_DIR is read in `run()` to resolve the
         // transactions directory (default `mcp/portfolio/transactions/`).
+        // HKASK_DATA_DIR is read transitively via `resolve_under_data_dir`
+        // → `resolve_data_dir` in hkask-types (the server's fallback when
+        // HKASK_TRANSACTIONS_DIR is unset, and for the portfolio DB path in
+        // store.rs). Allowlisted so an operator `HKASK_DATA_DIR` override
+        // is not silently dropped by `filter_config_env_for_server`.
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            vec!["HKASK_TRANSACTIONS_DIR"],
+            vec!["HKASK_DATA_DIR", "HKASK_TRANSACTIONS_DIR"],
             "portfolio config_env allowlist drifted — add an entry only with \
-             a read site in hkask-mcp-portfolio"
+             a read site in hkask-mcp-portfolio (HKASK_DATA_DIR is read \
+             transitively via resolve_under_data_dir)"
         );
     }
 
@@ -891,11 +932,17 @@ mod tests {
             "scenarios has no credential read site; granting one would be an \
              unjustified secret grant"
         );
+        // HKASK_DATA_DIR is read transitively via `resolve_under_data_dir`
+        // → `resolve_data_dir` in hkask-types (the server's fallback when
+        // HKASK_SCENARIOS_DATA is unset). Allowlisted so an operator
+        // `HKASK_DATA_DIR` override is not silently dropped by
+        // `filter_config_env_for_server`.
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            vec!["HKASK_SCENARIOS_DATA"],
-            "scenarios config_env allowlist drifted — HKASK_SCENARIOS_DATA is its \
-             only std::env::var read"
+            vec!["HKASK_DATA_DIR", "HKASK_SCENARIOS_DATA"],
+            "scenarios config_env allowlist drifted — HKASK_SCENARIOS_DATA is \
+             its direct std::env::var read; HKASK_DATA_DIR is read transitively \
+             via resolve_under_data_dir"
         );
     }
 

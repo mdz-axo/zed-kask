@@ -13,8 +13,8 @@
 
 use crate::settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskMediaSettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSwarmSettings, KaskTrainingSettings,
+    KaskMediaSettings, KaskModelsSettings, KaskPortfolioSettings, KaskPredictionMarketsSettings,
+    KaskResearchSettings, KaskScenariosSettings, KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -98,11 +98,24 @@ pub(crate) fn emit_companies_env(
             companies.fermi_defaults.clone(),
         );
     }
+}
+
+/// Portfolio MCP server env emission.
+///
+/// `transactions_dir` was previously emitted by `emit_companies_env` — a
+/// leftover from before the portfolio server was split out from the companies
+/// server. It is moved here so each emitter owns only its own server's
+/// settings. Default resolves to `mcp/portfolio/transactions/` under the
+/// kask data root per the Standardized Artifact Storage layout.
+pub(crate) fn emit_portfolio_env(
+    portfolio: &KaskPortfolioSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
     // D28 — Standardized Artifact Storage. Emit HKASK_TRANSACTIONS_DIR
     // so the portfolio server can auto-load transaction files. Default
     // is `mcp/portfolio/transactions/` under the kask data root.
-    let transactions_dir = if !companies.transactions_dir.is_empty() {
-        companies.transactions_dir.clone()
+    let transactions_dir = if !portfolio.transactions_dir.is_empty() {
+        portfolio.transactions_dir.clone()
     } else {
         hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
             "mcp/portfolio/transactions",
@@ -223,24 +236,52 @@ pub(crate) fn emit_scenarios_env(
     scenarios: &KaskScenariosSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    if !scenarios.data_dir.is_empty() {
-        env.insert(
-            "HKASK_SCENARIOS_DATA".to_string(),
-            scenarios.data_dir.clone(),
-        );
-    }
+    // D28 — Standardized Artifact Storage. Always emit HKASK_SCENARIOS_DATA
+    // so the scenarios server resolves its persistence dir under the kask
+    // data root consistently. When the operator hasn't overridden the default,
+    // resolve to `mcp/scenarios/` — the per-server subtree the scenarios
+    // server's fallback (`resolve_under_data_dir(MCP_DIR).join("scenarios")`)
+    // already expects. Without this, the server only sees the env var when the
+    // operator set it, and falls back to `resolve_under_data_dir` which reads
+    // HKASK_DATA_DIR (allowlisted separately) — emitting the resolved default
+    // here keeps the two paths from diverging.
+    let scenarios_data_dir = if !scenarios.data_dir.is_empty() {
+        scenarios.data_dir.clone()
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+            hkask_types::agent_paths::MCP_DIR,
+        ))
+        .join("scenarios")
+        .to_string_lossy()
+        .to_string()
+    };
+    env.insert("HKASK_SCENARIOS_DATA".to_string(), scenarios_data_dir);
 }
 
 pub(crate) fn emit_prediction_markets_env(
     prediction_markets: &KaskPredictionMarketsSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    if !prediction_markets.data_dir.is_empty() {
-        env.insert(
-            "HKASK_PREDICTION_MARKETS_DATA".to_string(),
-            prediction_markets.data_dir.clone(),
-        );
-    }
+    // D28 — Standardized Artifact Storage. Always emit
+    // HKASK_PREDICTION_MARKETS_DATA so the prediction-markets server resolves
+    // its calibration journal under the kask data root consistently. Default
+    // resolves to `mcp/prediction-markets/` — the per-server subtree the
+    // server's fallback (`resolve_under_data_dir(MCP_DIR).join("prediction-markets")`)
+    // already expects.
+    let prediction_markets_data_dir = if !prediction_markets.data_dir.is_empty() {
+        prediction_markets.data_dir.clone()
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+            hkask_types::agent_paths::MCP_DIR,
+        ))
+        .join("prediction-markets")
+        .to_string_lossy()
+        .to_string()
+    };
+    env.insert(
+        "HKASK_PREDICTION_MARKETS_DATA".to_string(),
+        prediction_markets_data_dir,
+    );
     if prediction_markets.cache_ttl_secs > 0 {
         env.insert(
             "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS".to_string(),
@@ -420,8 +461,12 @@ mod tests {
     // default case. Now `mcp_env()` reads from `Default::default()`, so changing
     // `Default` automatically updates the comparison. This test pins that: a
     // `KaskSettings::default()` (all defaults) does not emit per-server config
-    // vars. `HKASK_DATA_DIR` is always emitted (it is a kask-wide critical
-    // path, not a per-server toggle) — see `mcp_env_always_emits_data_dir`.
+    // vars. The always-emitted vars (`HKASK_DATA_DIR`, `HKASK_TEMPLATE_ROOT`,
+    // `HKASK_TRANSACTIONS_DIR`, `HKASK_SCENARIOS_DATA`,
+    // `HKASK_PREDICTION_MARKETS_DATA`) are kask-wide critical paths resolved
+    // from `data_dir` per the Standardized Artifact Storage layout — they are
+    // NOT suppressed for default settings. See the `mcp_env_always_emits_*`
+    // tests for those.
     #[test]
     fn mcp_env_emits_nothing_for_default_settings() {
         let settings = KaskSettings::default();
@@ -451,6 +496,74 @@ mod tests {
         assert!(
             !env.contains_key("HKASK_CONDENSE_SALIENCY_WINDOW"),
             "default saliency_window must not be emitted"
+        );
+        // The per-server data-dir env vars are now always emitted (resolved
+        // from `data_dir` per the Standardized Artifact Storage layout), so
+        // they are NOT suppressed for default settings. See
+        // `mcp_env_always_emits_per_server_data_dirs`.
+        assert!(
+            env.contains_key("HKASK_TRANSACTIONS_DIR"),
+            "HKASK_TRANSACTIONS_DIR must always be emitted — the portfolio server auto-loads from it"
+        );
+        assert!(
+            env.contains_key("HKASK_SCENARIOS_DATA"),
+            "HKASK_SCENARIOS_DATA must always be emitted — the scenarios server resolves its persistence dir from it"
+        );
+        assert!(
+            env.contains_key("HKASK_PREDICTION_MARKETS_DATA"),
+            "HKASK_PREDICTION_MARKETS_DATA must always be emitted — the prediction-markets server resolves its calibration journal from it"
+        );
+    }
+
+    // The per-server data-dir env vars (`HKASK_TRANSACTIONS_DIR`,
+    // `HKASK_SCENARIOS_DATA`, `HKASK_PREDICTION_MARKETS_DATA`) must ALWAYS be
+    // emitted by `mcp_env()`, resolved from `data_dir` per the Standardized
+    // Artifact Storage layout. Without this, an operator `data_dir` override
+    // is silently dropped for those servers — the server falls back to
+    // `resolve_under_data_dir` which reads `HKASK_DATA_DIR` from its own env,
+    // but the per-server env var is the canonical delivery path and the
+    // server's fallback only works when `HKASK_DATA_DIR` is also allowlisted
+    // (which it now is for portfolio/scenarios/prediction-markets/companies).
+    #[test]
+    fn mcp_env_always_emits_per_server_data_dirs() {
+        let settings = KaskSettings::default();
+        let env = settings.mcp_env();
+        let data_dir = env
+            .get("HKASK_DATA_DIR")
+            .expect("HKASK_DATA_DIR must be emitted");
+        // Transactions dir resolves under the portfolio server's subtree.
+        let expected_transactions = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("portfolio")
+            .join("transactions")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_TRANSACTIONS_DIR").map(String::as_str),
+            Some(expected_transactions.as_str()),
+            "default transactions_dir must resolve to `{{data_dir}}/mcp/portfolio/transactions`"
+        );
+        // Scenarios data dir resolves under the scenarios server's subtree.
+        let expected_scenarios = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("scenarios")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_SCENARIOS_DATA").map(String::as_str),
+            Some(expected_scenarios.as_str()),
+            "default scenarios_data must resolve to `{{data_dir}}/mcp/scenarios`"
+        );
+        // Prediction-markets data dir resolves under its server's subtree.
+        let expected_pm = std::path::Path::new(data_dir)
+            .join("mcp")
+            .join("prediction-markets")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env.get("HKASK_PREDICTION_MARKETS_DATA").map(String::as_str),
+            Some(expected_pm.as_str()),
+            "default prediction_markets_data must resolve to `{{data_dir}}/mcp/prediction-markets`"
         );
     }
 

@@ -427,11 +427,18 @@ pub(crate) fn hash_params(extra: &[(&str, &str)]) -> String {
 // ── Path resolution ────────────────────────────────────────────────
 
 /// Resolve the FIBO cache DB path for an owner.
-/// `{kask_data_dir}/mcp/fibo-cache/{owner}/master.db`
+/// `{kask_data_dir}/mcp/companies/fibo-cache/{owner}/master.db`
+///
+/// The FIBO cache is owned by the companies server, so it lives under
+/// `mcp/companies/` per the Standardized Artifact Storage layout. Previously
+/// this resolved to `mcp/fibo-cache/` — a top-level `mcp/` entry that broke
+/// the per-server subtree invariant (an operator `ls mcp/` saw `fibo-cache/`
+/// alongside `portfolio/`, `scenarios/`, etc. instead of under `companies/`).
 pub(crate) fn resolve_cache_db_path(owner: &str) -> Result<PathBuf, String> {
     let mut path = hkask_types::agent_paths::resolve_under_data_dir(Path::new(
         hkask_types::agent_paths::MCP_DIR,
     ))
+    .join("companies")
     .join("fibo-cache");
     path.push(sanitize_name(owner));
     std::fs::create_dir_all(&path)

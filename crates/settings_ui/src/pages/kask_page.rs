@@ -21,15 +21,16 @@ mod condenser;
 mod curator;
 mod data_services;
 mod general;
+mod portfolio;
 
 pub(crate) use {
     companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page, prediction_markets::render_prediction_markets_page,
-    research::render_research_page, scenarios::render_scenarios_page, swarm::render_swarm_page,
-    training::render_training_page,
+    models::render_models_page, portfolio::render_portfolio_page,
+    prediction_markets::render_prediction_markets_page, research::render_research_page,
+    scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -390,8 +391,8 @@ pub(crate) fn kask_string_input(
                                 kask.condenser.get_or_insert_default().persona_keywords =
                                     Some(keywords);
                             }
-                            ("companies", "transactions_dir") => {
-                                kask.companies.get_or_insert_default().transactions_dir =
+                            ("portfolio", "transactions_dir") => {
+                                kask.portfolio.get_or_insert_default().transactions_dir =
                                     Some(parsed.clone());
                             }
                             ("corpus", "embedding_dim") => {
@@ -607,6 +608,19 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_companies_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Portfolio".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.portfolio"),
+            description: Some(
+                "Configure the portfolio MCP server: transactions directory the \
+                 dashboard auto-loads from.".into(),
+            ),
+            search_aliases: &["portfolio", "transactions", "holdings", "ledger"],
+            in_json: true,
+            files: USER,
+            render: render_portfolio_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Corpus".into(),
