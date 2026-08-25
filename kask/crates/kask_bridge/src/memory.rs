@@ -145,6 +145,7 @@ impl RealMemoryPort {
         embedding_port: LanguageModelEmbeddingPort,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
+        memory_life_days: f64,
         tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self, String> {
         let db = Database::open(db_path, passphrase).map_err(|e| e.to_string())?;
@@ -202,8 +203,10 @@ impl RealMemoryPort {
         // The parsing is extracted into pure functions (`resolve_storage_budget`,
         // `resolve_memory_life_days`) so proptests can exercise the
         // parse/fallback/warn logic without constructing a full `RealMemoryPort`.
+        // `memory_life_days` comes from settings.json; the env var
+        // `HKASK_MEMORY_LIFE_DAYS` overrides it (ops escape hatch).
         let storage_budget = resolve_storage_budget();
-        let memory_life_days = resolve_memory_life_days();
+        let memory_life_days = resolve_memory_life_days(memory_life_days);
         // Wire the `reg.memory.encode` span sink: every `store()` persists a
         // span to the user's `curator.db` regulation archive. Without this the
         // span emitter in `MemoryStore::store` is dead code (the `.rules`
@@ -440,40 +443,40 @@ fn resolve_storage_budget() -> usize {
     }
 }
 
-/// Parse a raw env-var value into a memory life in days (`f64`), falling back
-/// to `MemoryStore::default_memory_life_days()` on malformed/negative values.
-/// Same startup-failure-signal trap as `parse_storage_budget`.
-fn parse_memory_life_days(raw: &str) -> f64 {
+/// Parse a raw env-var value into a memory life in days (`f64`), falling
+/// back to `fallback` on malformed/negative values. Same
+/// startup-failure-signal trap as `parse_storage_budget`.
+fn parse_memory_life_days(raw: &str, fallback: f64) -> f64 {
     match raw.trim().parse::<f64>() {
         Ok(days) if days >= 0.0 => days,
         Ok(_negative) => {
             tracing::warn!(
                 target: "reg.memory",
                 value = %raw,
-                "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default {}",
-                hkask_memory::MemoryStore::default_memory_life_days()
+                "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to {fallback}"
             );
-            hkask_memory::MemoryStore::default_memory_life_days()
+            fallback
         }
         Err(e) => {
             tracing::warn!(
                 target: "reg.memory",
                 value = %raw,
                 error = %e,
-                "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default {}",
-                hkask_memory::MemoryStore::default_memory_life_days()
+                "HKASK_MEMORY_LIFE_DAYS malformed — falling back to {fallback}"
             );
-            hkask_memory::MemoryStore::default_memory_life_days()
+            fallback
         }
     }
 }
 
-/// Resolve `HKASK_MEMORY_LIFE_DAYS` from the environment, falling back to the
-/// default when unset.
-fn resolve_memory_life_days() -> f64 {
+/// Resolve `HKASK_MEMORY_LIFE_DAYS` from the environment, falling back to
+/// `settings_value` when unset. The env var overrides the settings.json
+/// value (ops/deployment escape hatch); a malformed env var warns and falls
+/// back to `settings_value`.
+fn resolve_memory_life_days(settings_value: f64) -> f64 {
     match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
-        Ok(raw) => parse_memory_life_days(&raw),
-        Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
+        Ok(raw) => parse_memory_life_days(&raw, settings_value),
+        Err(_) => settings_value,
     }
 }
 
@@ -2571,13 +2574,14 @@ pub(crate) mod tests {
         fn prop_parse_memory_life_days_accepts_nonneg_f64_falls_back_otherwise(
             raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\-eE ]{0,32}").unwrap()
         ) {
-            let result = parse_memory_life_days(&raw);
+            let fallback = hkask_memory::MemoryStore::default_memory_life_days();
+            let result = parse_memory_life_days(&raw, fallback);
             match raw.trim().parse::<f64>() {
                 Ok(days) if days.is_finite() && days >= 0.0 => {
                     prop_assert_eq!(result, days);
                 }
                 _ => {
-                    prop_assert_eq!(result, hkask_memory::MemoryStore::default_memory_life_days());
+                    prop_assert_eq!(result, fallback);
                 }
             }
         }

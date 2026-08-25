@@ -24,6 +24,7 @@ pub(crate) fn render_memory_page(
     let cascade_memory_saliency_floor = memory.cascade_memory_saliency_floor.to_string();
     let cascade_memory_max_chunks = memory.cascade_memory_max_chunks.to_string();
     let cascade_turn_token_cap = memory.cascade_turn_token_cap.to_string();
+    let memory_life_days = memory.memory_life_days.to_string();
 
     let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
         .tab_index(0)
@@ -67,6 +68,30 @@ pub(crate) fn render_memory_page(
                                 .memory
                                 .get_or_insert_default()
                                 .confidence_floor = Some(parsed);
+                        },
+                    );
+                }
+            }
+        });
+
+    let memory_life_input = SettingsInputField::new("kask-memory-life-days")
+        .tab_index(0)
+        .with_initial_text(memory_life_days)
+        .with_placeholder("180")
+        .aria_label("Memory Life (days)")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                if let Ok(parsed) = text.parse::<f64>() {
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .memory
+                                .get_or_insert_default()
+                                .memory_life_days = Some(parsed);
                         },
                     );
                 }
@@ -118,6 +143,24 @@ pub(crate) fn render_memory_page(
                         .color(Color::Muted),
                 )
                 .child(confidence_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Memory Life (days)"))
+                .child(
+                    Label::new(
+                        "Memory life S in days (Wozniak-Gorzelanczyk forgetting curve \
+                         R(t) = exp(-t/S)). After S days without recall, confidence \
+                         decays to ≈36.8%; the half-life is S·ln(2). Recalling a \
+                         memory resets its decay clock. Overridden by the \
+                         HKASK_MEMORY_LIFE_DAYS env var.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(memory_life_input),
         )
         .child(Divider::horizontal())
         .child(

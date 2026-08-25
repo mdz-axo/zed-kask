@@ -240,6 +240,13 @@ pub struct KaskMemorySettings {
     /// content), then truncated to the token cap if still over. 0 disables
     /// condensation (raw turn text is passed verbatim). Default: 512.
     pub cascade_turn_token_cap: u32,
+
+    /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
+    /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
+    /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
+    /// its decay clock. Default: 180 (≈6 months). Overridden by the
+    /// `HKASK_MEMORY_LIFE_DAYS` env var.
+    pub memory_life_days: f64,
 }
 
 impl Default for KaskMemorySettings {
@@ -254,6 +261,7 @@ impl Default for KaskMemorySettings {
             cascade_memory_saliency_floor: 0.3,
             cascade_memory_max_chunks: 5,
             cascade_turn_token_cap: 512,
+            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
         }
     }
 }
@@ -782,6 +790,7 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
             cascade_turn_token_cap: c
                 .cascade_turn_token_cap
                 .unwrap_or(default.cascade_turn_token_cap),
+            memory_life_days: c.memory_life_days.unwrap_or(default.memory_life_days),
         }
     }
 }
@@ -1180,6 +1189,7 @@ mod tests {
                 cascade_memory_saliency_floor: None,
                 cascade_memory_max_chunks: None,
                 cascade_turn_token_cap: None,
+                memory_life_days: None,
             }),
             ..Default::default()
         };

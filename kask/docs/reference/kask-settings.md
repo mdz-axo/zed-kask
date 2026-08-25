@@ -153,6 +153,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
 | `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
 | `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
+| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Overridden by `HKASK_MEMORY_LIFE_DAYS` env var |
 
 ## Condenser (`KaskCondenserSettings`)
 

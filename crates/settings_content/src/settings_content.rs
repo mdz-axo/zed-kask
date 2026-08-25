@@ -1694,6 +1694,11 @@ pub struct KaskMemorySettingsContent {
     /// condenser, then truncated to the token cap if still over. 0 disables
     /// condensation.
     pub cascade_turn_token_cap: Option<u32>,
+    /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
+    /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
+    /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
+    /// its decay clock. Overridden by the `HKASK_MEMORY_LIFE_DAYS` env var.
+    pub memory_life_days: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

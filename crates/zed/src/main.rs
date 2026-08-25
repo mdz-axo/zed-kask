@@ -1571,6 +1571,7 @@ fn main() {
                             embedding_port,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
+                            kask_settings.memory.memory_life_days,
                             gpui_tokio::Tokio::handle_async(&*cx),
                         ) {
                             Ok(real) => {
