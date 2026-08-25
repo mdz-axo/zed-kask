@@ -118,16 +118,18 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 ### persist-report
 
 1. After the quality gate verdict, write the full report as a **rich markdown file**.
-2. Reports are stored under the companies MCP server's artifact tree per the Standardized Artifact Storage policy (D28): `{data_dir}/mcp/companies/reports/`. Resolve the data dir by running `echo $HKASK_DATA_DIR` via `terminal` (falls back to `~/.local/share/hkask` on Linux).
-3. Create the reports directory if it does not exist: `mkdir -p $HKASK_DATA_DIR/mcp/companies/reports` via `terminal`.
-4. Write the markdown file to `{data_dir}/mcp/companies/reports/{ticker}-{date}.md` for single-company analyses, or `{data_dir}/mcp/companies/reports/{ticker-a}-vs-{ticker-b}-{date}.md` for comparative analyses. Use `write_file` with the full absolute path.
+2. Reports are stored in the user-facing artifacts directory: `~/Documents/zk-data/companies-mcp/reports/`. This is separate from the internal data dir (`~/.local/share/zed-kask/`) — reports are user-facing artifacts that should be visible, not buried in a hidden cache directory.
+3. Create the reports directory if it does not exist: `mkdir -p ~/Documents/zk-data/companies-mcp/reports` via `terminal`.
+4. Write the markdown file to `~/Documents/zk-data/companies-mcp/reports/{ticker}-{date}.md` for single-company analyses, or `~/Documents/zk-data/companies-mcp/reports/{ticker-a}-vs-{ticker-b}-{date}.md` for comparative analyses. Use `write_file` with the full absolute path.
 5. The markdown file is the deliverable — full rich markdown with all sections, mermaid diagrams, source notes, and citations.
+6. Do NOT write reports to the source tree (`zed-kask/reports/` or similar) — that pollutes the user's code repository.
+7. Do NOT write reports to the hidden internal data dir (`~/.local/share/zed-kask/mcp/companies/reports/`) — that buries user-facing output where the user will never find it.
 
 ### condense-report
 
 1. The full markdown report written in persist-report IS the deliverable.
-2. If it exceeds ~5,000 words, produce a condensed executive summary as a separate markdown file at `{data_dir}/mcp/companies/reports/{ticker}-summary-{date}.md`.
-3. Both files are markdown in `{data_dir}/mcp/companies/reports/`.
+2. If it exceeds ~5,000 words, produce a condensed executive summary as a separate markdown file at `~/Documents/zk-data/companies-mcp/reports/{ticker}-summary-{date}.md`.
+3. Both files are markdown in `~/Documents/zk-data/companies-mcp/reports/`.
 
 ## Convergence
 

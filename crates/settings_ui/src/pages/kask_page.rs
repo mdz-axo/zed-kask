@@ -459,13 +459,15 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.data_dir"),
             description: Some(
-                "Configure the kask data directory — the root for all kask \
-                 artifacts (agents/, mcp/, skills/, threads/). Every MCP server \
+                "Configure the zed-kask data directory — the root for internal \
+                 app data (agents/, mcp/, skills/, threads/). Every MCP server \
                  receives this path as HKASK_DATA_DIR. When empty, the runtime \
-                 resolves a platform default (~/.local/share/hkask on Linux)."
+                 resolves a platform default (~/.local/share/zed-kask on Linux). \
+                 User-facing artifacts (reports, exports) are stored separately \
+                 in ~/Documents/zk-data/."
                     .into(),
             ),
-            search_aliases: &["data dir", "data directory", "hkask data", "database path"],
+            search_aliases: &["data dir", "data directory", "zed-kask data", "hkask data", "database path"],
             in_json: true,
             files: USER,
             render: render_general_page,

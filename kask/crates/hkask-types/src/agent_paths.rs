@@ -11,13 +11,19 @@
 //!
 //! # Standardized Artifact Storage
 //!
-//! All persistent kask artifacts live under four class subdirs of
-//! `resolve_data_dir()` (see `kask/docs/architecture/standardized-artifact-storage.md`):
+//! All persistent kask artifacts live under class subdirs of either
+//! `resolve_data_dir()` (internal app data) or `resolve_artifacts_dir()`
+//! (user-facing artifacts), per `kask/docs/architecture/standardized-artifact-storage.md`:
 //!
+//! Internal data dir (`~/.local/share/zed-kask/`):
 //! - `agents/`  — per-agent files (sovereign DB, memory DB)
 //! - `mcp/`     — per-MCP-server artifacts (`mcp/{server_id}/{purpose}.db`)
 //! - `skills/`  — user skills (`skills/{skill_name}/`)
 //! - `threads/` — archived chat threads (`threads/threads.db`)
+//!
+//! Artifacts dir (`~/Documents/zk-data/`):
+//! - `companies-mcp/reports/` — company research reports
+//! - `companies-mcp/screens/` — company screens
 
 use std::path::PathBuf;
 
@@ -37,14 +43,14 @@ pub const SKILLS_DIR: &str = "skills";
 /// Resolved relative to `resolve_data_dir()` unless overridden via `HKASK_DB_PATH`.
 pub const DEFAULT_DB_PATH: &str = "hkask.db";
 
-/// Resolve the hKask data directory.
+/// Resolve the zed-kask data directory (internal app data).
 ///
 /// Order of precedence:
 /// 1. `HKASK_DATA_DIR` environment variable (honored only when absolute or
 ///    `.`-prefixed — a relative value is treated as misconfig and falls
 ///    through, so agent DBs don't silently land in an arbitrary CWD)
-/// 2. `$XDG_DATA_HOME/hkask`
-/// 3. `$HOME/.local/share/hkask`
+/// 2. `$XDG_DATA_HOME/zed-kask`
+/// 3. `$HOME/.local/share/zed-kask`
 /// 4. Current working directory (fallback, with a `warn!`)
 ///
 /// All relative database paths in `ServiceConfig` are resolved against
@@ -65,13 +71,13 @@ pub fn resolve_data_dir() -> std::path::PathBuf {
         // Fall through to XDG/HOME rather than honoring it.
     }
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg).join("hkask");
+        return std::path::PathBuf::from(xdg).join("zed-kask");
     }
     if let Ok(home) = std::env::var("HOME") {
         return std::path::PathBuf::from(home)
             .join(".local")
             .join("share")
-            .join("hkask");
+            .join("zed-kask");
     }
     tracing::warn!(
         target: "hkask.paths",
@@ -82,7 +88,7 @@ pub fn resolve_data_dir() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
-/// Resolve a relative agent path against the hKask data directory.
+/// Resolve a relative agent path against the zed-kask data directory.
 ///
 /// Delegates to `resolve_data_dir()` so the `HKASK_DATA_DIR` / XDG / HOME
 /// fallback chain has exactly one regulator. Previously this duplicated the
@@ -92,6 +98,57 @@ pub fn resolve_data_dir() -> std::path::PathBuf {
 #[must_use]
 pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf {
     resolve_data_dir().join(relative)
+}
+
+/// Root directory name for user-facing artifacts.
+const ARTIFACTS_DIR_NAME: &str = "zk-data";
+
+/// Resolve the zed-kask artifacts directory (user-facing output).
+///
+/// This is separate from `resolve_data_dir()` (internal app data) because
+/// user-facing artifacts like reports and exports should live in a visible,
+/// intuitive location — not buried in a hidden XDG cache directory.
+///
+/// Order of precedence:
+/// 1. `HKASK_ARTIFACTS_DIR` environment variable (honored only when absolute
+///    or `.`-prefixed — a relative value is treated as misconfig and falls
+///    through)
+/// 2. `$XDG_DOCUMENTS_DIR/zk-data`
+/// 3. `$HOME/Documents/zk-data`
+/// 4. `$HOME/zk-data` (fallback)
+#[must_use]
+pub fn resolve_artifacts_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("HKASK_ARTIFACTS_DIR") {
+        let path = std::path::PathBuf::from(&dir);
+        if path.is_absolute() || path.starts_with(".") {
+            return path;
+        }
+    }
+    // XDG documents dir (respects XDG_DOCUMENTS_DIR or falls back to
+    // $HOME/Documents on most Linux desktops).
+    if let Some(docs) = dirs::document_dir() {
+        return docs.join(ARTIFACTS_DIR_NAME);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::PathBuf::from(home)
+            .join("Documents")
+            .join(ARTIFACTS_DIR_NAME);
+    }
+    tracing::warn!(
+        target: "hkask.paths",
+        "No artifacts directory resolved (HKASK_ARTIFACTS_DIR, XDG_DOCUMENTS_DIR, HOME all unset) — \
+         falling back to CWD. User-facing artifacts may be created in an unpredictable location."
+    );
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join(ARTIFACTS_DIR_NAME)
+}
+
+/// Resolve a relative artifact path against the zed-kask artifacts directory.
+///
+/// Use this for user-facing outputs (reports, screens, exports) that should
+/// be visible to the user, not for internal app data (DBs, traces, MCP state).
+#[must_use]
+pub fn resolve_under_artifacts_dir(relative: &std::path::Path) -> std::path::PathBuf {
+    resolve_artifacts_dir().join(relative)
 }
 
 /// Get the directory for a specific agent.

@@ -11,17 +11,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  none (always succeeds)
-/// post: returns PathBuf to ~/.config/hkask/settings.json; parent directory created if missing
+/// post: returns PathBuf to ~/.config/zed-kask/settings.json; parent directory created if missing
 #[must_use]
 pub fn settings_path() -> std::path::PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    path.push("hkask");
+    path.push("zed-kask");
     if let Err(e) = std::fs::create_dir_all(&path) {
         tracing::warn!(
             target: "hkask.services_core",
             error = %e,
             path = %path.display(),
-            "Failed to create hkask config directory — \
+            "Failed to create zed-kask config directory — \
              settings persistence will fail if the directory doesn't exist."
         );
     }
@@ -29,7 +29,7 @@ pub fn settings_path() -> std::path::PathBuf {
     path
 }
 
-/// System-wide model defaults persisted to `~/.config/hkask/settings.json`.
+/// System-wide model defaults persisted to `~/.config/zed-kask/settings.json`.
 /// Shared across CLI, API, REPL, and all MCP servers.
 /// Priority: env var > settings.json > hardcoded default.
 ///

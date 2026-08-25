@@ -21,6 +21,7 @@ chrono.workspace = true
 thiserror.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
+dirs.workspace = true
 
 rusqlite = { workspace = true, optional = true }
 

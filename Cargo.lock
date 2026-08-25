@@ -9680,6 +9680,7 @@ name = "hkask-types"
 version = "0.38.0"
 dependencies = [
  "chrono",
+ "dirs",
  "futures-util",
  "rusqlite",
  "schemars 1.0.4",
