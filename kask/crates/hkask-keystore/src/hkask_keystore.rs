@@ -13,10 +13,10 @@
 //! child processes as environment variables by the parent zed process
 //! (via `kask_bridge::build_mcp_server_env`, which reads from zed's
 //! `CredentialsProvider` keychain under `kask://credentials/<key>`).
-//! The MCP servers' `InferenceConfig::from_env()` reads only the env var.
-//! This closes the two-namespace split that previously caused silent "API
-//! key not configured" errors when the `hkask` keychain fallback read a
-//! namespace that was always empty in zed-kask.
+//! The MCP servers' `resolve_credential` reads API keys from env vars only.
+//! This crate's `service=hkask` keychain namespace is reserved for internal
+//! keys (DB passphrase, swarm memory passphrase, master key, signing keys)
+//! that predate the zed integration.
 
 pub mod encryption;
 pub mod error;

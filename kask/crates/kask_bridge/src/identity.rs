@@ -140,10 +140,11 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 ///
 /// `build_mcp_server_env` reads the passphrase via the primary
 /// `ctx.credentials` tier of `resolve_db_passphrase`, which looks up this URL.
-/// Without the mirror, first-run provisioning only writes to the keystore
-/// keychain, so MCP servers reach the passphrase only via the fallback tier
-/// (`resolve_credential` → `hkask-db-passphrase`) — and `nudge_mcp_servers`
-/// never fires because `provision_agent` bypasses `write_credential`.
+/// Without the mirror, first-run provisioning only writes to the `hkask-keystore`
+/// keychain (`service=hkask`), so MCP servers reach the passphrase only via
+/// the fallback tier (`resolve_credential` → `hkask-db-passphrase`) — and
+/// `nudge_mcp_servers` never fires because `provision_agent` bypasses
+/// `write_credential`.
 ///
 /// This bridges the two keychain backends at write time, reusing the
 /// canonical write path so the ordering dependency (provision before server

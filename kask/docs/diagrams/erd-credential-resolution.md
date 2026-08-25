@@ -1,24 +1,26 @@
 ---
-title: "Credential Resolution Chain — ctx.credentials to keychain to nudge_mcp_servers"
+title: "Credential Resolution Chain — single keychain namespace via zed CredentialsProvider"
 audience: [architects, developers, operators]
-last_updated: 2026-08-15
+last_updated: 2026-08-24
 version: "0.38.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition, lifecycle]
 ---
 
-# Credential Resolution Chain — ctx.credentials to keychain to nudge_mcp_servers
+# Credential Resolution Chain — single keychain namespace
 
-Reference-quadrant ERD of the `HKASK_DB_PASSPHRASE` credential resolution
-chain. MCP servers resolve the DB passphrase via a 2-tier chain
-(`ctx.credentials` → `resolve_credential` env → keychain). The deferred
-post-login task mirrors the provisioned passphrase into zed's
-`CredentialsProvider` under `kask://credentials/hkask_db_passphrase` so the
-primary `ctx.credentials` tier picks it up. Writes/deletes to that namespace
-must call `nudge_mcp_servers` to re-fire the `SettingsStore` observer and
-restart changed servers. Every entity and edge traces to a grep-verified
-symbol.
+Reference-quadrant ERD of the credential resolution chain. API keys are
+stored in zed's `CredentialsProvider` keychain namespace
+(`kask://credentials/<key>`, label `zed-github-account`).
+`build_mcp_server_env` reads from this namespace and injects as env vars
+into MCP server child processes. The server's `resolve_credential` reads
+API keys from env only — there is no `service=hkask` keychain fallback for
+API keys. `HKASK_DB_PASSPHRASE` and `HKASK_SWARM_MEMORY_PASSPHRASE` have
+dedicated `hkask-keystore` resolvers (env → `service=hkask` keychain)
+because they predate the zed integration. Writes/deletes to the
+`kask://credentials/...` namespace must call `nudge_mcp_servers` to
+re-fire the `SettingsStore` observer and restart changed servers.
 
 ## The chain
 

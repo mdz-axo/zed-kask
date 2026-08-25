@@ -163,11 +163,12 @@ impl Default for InferenceConfig {
 impl InferenceConfig {
     /// Resolve from environment variables only (no keychain fallback).
     ///
-    /// API keys resolve keychain-first, then fall back to environment variables.
+    /// API keys are injected as env vars by `build_mcp_server_env` (which reads
+    /// from zed's `CredentialsProvider` keychain under `kask://credentials/<key>`).
     ///
     /// expect: "The system resolves inference configuration from the environment"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — inference configuration resolved from environment
-    /// post: returns InferenceConfig resolved from env vars and keychain
+    /// post: returns InferenceConfig resolved from env vars
     /// post: defaults to OpenRouter cloud if env vars unset
     pub fn from_env() -> Self {
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
@@ -219,11 +220,11 @@ fn resolve_api_key(env_name: &str) -> String {
     String::new()
 }
 
-/// Resolve the default provider from env var or keychain.
+/// Resolve the default provider from env var.
 ///
-/// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var only — no
-/// keychain fallback). Accepted values: RunPod, OpenRouter,
-/// ollama. Defaults to OpenRouter.
+/// Reads `HKASK_DEFAULT_PROVIDER` (env var only — injected by
+/// `build_mcp_server_env` from zed's keychain). Accepted values: RunPod,
+/// OpenRouter, ollama. Defaults to OpenRouter.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)

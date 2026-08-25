@@ -225,7 +225,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 
 **D9a — kask settings section** (`"kask": {...}` in settings.json + a settings struct). A new top-level section, isolated from core zed settings. Holds kask-unique, **non-secret** config:
 
-- `kask.data_services.{eodhd,fmp,polygon,alpha_vantage,tiingo,fred,...}` — enabled toggles + per-service config (endpoints, tiers). The **secret API key is NOT here** — it is in the keychain (D9b); settings holds only the reference/toggle.
+- `kask.data_services` — **removed**. API keys are stored in the keychain only (D9b); the key's presence IS the toggle. No settings.json `*_enabled` fields.
 - `kask.mcp.load_default` + `overrides` — the default-loaded set (§2.4; 10 on disk total) + per-server toggles (curator may be unloaded via override; filesystem/communication absent).
 - `kask.curator` — always-on toggle, regulation set-points (variety window, algedonic thresholds).
 - `kask.sovereignty.pod` — data-dir override, consent defaults.
@@ -243,7 +243,7 @@ A new **Kask** page: `crates/settings_ui/src/pages/kask_page.rs` + one entry in 
 
 Existing hKask config → kask settings + keychain, on first launch (and a `kask import-config` command):
 
-- env `HKASK_FMP_API_KEY` / `HKASK_EODHD_API_KEY` → `CredentialsProvider` entries `kask://credentials/{fmp,eodhd}` + `kask.data_services.{fmp,eodhd}.enabled = true`.
+- env `HKASK_FMP_API_KEY` / `HKASK_EODHD_API_KEY` → `CredentialsProvider` entries `kask://credentials/{fmp,eodhd}`. No `*_enabled` toggle — the key's presence is the toggle.
 - hKask keychain sovereignty keys (DB passphrase) → `keyring` crate directly (D5 — NOT `CredentialsProvider`).
 - hKask config-file settings (regulation thresholds, consolidation cadence, gas defaults) → `kask.*` settings.json section.
   Precedence: explicit settings.json > imported keychain > env-var fallback (during transition).

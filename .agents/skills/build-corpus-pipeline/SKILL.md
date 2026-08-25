@@ -820,7 +820,7 @@ downstream stages with incomplete input. The only exceptions are:
 - Every quality gate is a HARD gate. If a gate fails, HALT. Do not
   convert a failure into a warning and proceed.
 - Passphrase resolution: use the `hkask_mcp_server::server::resolve_db_passphrase`
-  helper if available (2-tier chain: ctx.credentials → env → keychain).
+  helper if available (2-tier chain: ctx.credentials → env → `hkask-keystore` keychain).
   Do not inline re-implementations. A missing credential is an
   authorization failure, not a transient error.
 - If any MCP tool call fails, call `curator_report_skill_use_issue` with:

@@ -847,11 +847,11 @@ impl InferencePort for LanguageModelInferencePort {
 //
 // Without this, the `else` branch of the model-dependent wiring block (in
 // `crates/zed/src/main.rs`) left `INFERENCE_SOCKET_PATH` unset, forcing the
-// curator and other MCP servers into the env-var/keychain fallback path.
-// That fallback reads from the `hkask` keychain namespace (via
-// `hkask_keystore::resolve`), which is empty in zed-kask because inference
-// keys live in zed's `CredentialsProvider` under `kask://credentials/<key>`.
-// The result was a silent "API key not configured" error that operators
+// curator and other MCP servers into the env-var-only fallback path.
+// API keys are injected as env vars by `build_mcp_server_env` (which reads
+// from zed's `CredentialsProvider` under `kask://credentials/<key>`), so
+// without the socket env var the server starts but inference calls fail.
+// The result was a silent "IPC bridge not configured" error that operators
 // could not trace back to the missing IPC socket.
 //
 // This port closes that gap: the IPC server starts with a no-op port, MCP
