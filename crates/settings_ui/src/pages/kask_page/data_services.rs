@@ -1,6 +1,6 @@
 //! Data Services sub-page — API key entry for EODHD, FMP, Exa, Tavily, Brave,
-//! RunPod, Nebius, HuggingFace, etc. Keys live in the OS keychain; enable
-//! toggles live in settings.json.
+//! RunPod, Nebius, HuggingFace, etc. Keys live in the OS keychain. The key's
+//! presence is the toggle — there is no separate enable/disable bool.
 
 use super::*;
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -37,43 +37,14 @@ pub(crate) fn render_data_services_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let provider = zed_credentials::global(cx);
-    let raw = raw_kask_settings(cx);
-    // Resolve via `From` so the UI shows the same defaults the runtime uses.
-    let data_services: kask_bridge::KaskDataServiceSettings = raw
-        .and_then(|c| c.data_services)
-        .map(Into::into)
-        .unwrap_or_default();
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for (key, label, dashboard_url, env_var) in data_service_descriptors() {
-        let has_toggle = kask_bridge::DATA_SERVICES
-            .iter()
-            .any(|d| d.credential_key == key && d.has_toggle());
-        let enabled = if has_toggle {
-            match key {
-                "eodhd" => data_services.eodhd_enabled,
-                "fmp" => data_services.fmp_enabled,
-                "exa" => data_services.exa_enabled,
-                "tavily" => data_services.tavily_enabled,
-                "brave" => data_services.brave_enabled,
-                "runpod" => data_services.runpod_enabled,
-                "runpod_s3_access_key" | "runpod_s3_secret" => data_services.runpod_enabled,
-                "nebius_project_id" | "nebius_subnet_id" => data_services.nebius_enabled,
-                _ => false,
-            }
-        } else {
-            // Key-only services (no settings toggle) are always shown as
-            // enabled — the API key input is visible regardless, and the
-            // service is active when the key is present in the keychain.
-            true
-        };
         rows.push(render_data_service_row(
             key,
             label,
             dashboard_url,
             env_var,
-            enabled,
-            has_toggle,
             provider.clone(),
             cx,
         ));
@@ -94,8 +65,9 @@ pub(crate) fn render_data_services_page(
                 .child(SettingsSectionHeader::new("Data Services"))
                 .child(
                     Label::new(
-                        "API keys are stored in the system keychain (kask://credentials/<key>). \
-                         Toggle a service to enable it, then enter its API key.",
+                        "API keys are stored in the system keychain \
+                         (kask://credentials/<key>). A service is enabled when its \
+                         key is present — enter the key to activate it.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -111,8 +83,6 @@ fn render_data_service_row(
     label: &'static str,
     dashboard_url: &'static str,
     env_var: &'static str,
-    enabled: bool,
-    has_toggle: bool,
     provider: Arc<dyn CredentialsProvider>,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -214,80 +184,21 @@ fn render_data_service_row(
             .into_any_element()
     };
 
-    if has_toggle {
-        let toggle_id = format!("kask-{key}-enabled");
-        let enable_toggle = SwitchField::new(
-            toggle_id,
-            Some(label),
-            Some(
-                format!(
-                    "Enable {label}. API key is stored in the keychain under \
-                 kask://credentials/{key}. Or set the {env_var} environment variable."
-                )
-                .into(),
+    v_flex()
+        .gap_2()
+        .child(
+            v_flex().gap_0p5().child(Label::new(label)).child(
+                Label::new(format!(
+                    "Enabled when the API key is present. Stored in the \
+                     keychain under kask://credentials/{key}, or set the \
+                     {env_var} environment variable."
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             ),
-            if enabled {
-                ToggleState::Selected
-            } else {
-                ToggleState::Unselected
-            },
-            move |state, _window, cx| {
-                let enabled = *state == ToggleState::Selected;
-                set_data_service_enabled(key, enabled, cx);
-            },
         )
-        .tab_index(0);
-
-        v_flex()
-            .gap_2()
-            .child(enable_toggle)
-            .when(enabled, |this| this.child(key_input))
-            .into_any_element()
-    } else {
-        // Key-only service: no toggle, always show the key input.
-        // The service is active when the key is present.
-        v_flex()
-            .gap_2()
-            .child(
-                v_flex().gap_0p5().child(Label::new(label)).child(
-                    Label::new(format!(
-                        "Enabled when the API key is present. Stored in the \
-                                 keychain under kask://credentials/{key}, or set the \
-                                 {env_var} environment variable."
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                ),
-            )
-            .child(key_input)
-            .into_any_element()
-    }
-}
-
-fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
-    let key = key.to_string();
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let kask = settings.kask.get_or_insert_default();
-        let data_services = kask.data_services.get_or_insert_default();
-        match key.as_str() {
-            "eodhd" => data_services.eodhd_enabled = Some(enabled),
-            "fmp" => data_services.fmp_enabled = Some(enabled),
-            "exa" => data_services.exa_enabled = Some(enabled),
-            "tavily" => data_services.tavily_enabled = Some(enabled),
-            "brave" => data_services.brave_enabled = Some(enabled),
-            "runpod" => data_services.runpod_enabled = Some(enabled),
-            "runpod_s3_access_key" | "runpod_s3_secret" => {
-                data_services.runpod_enabled = Some(enabled);
-            }
-            "nebius_project_id" | "nebius_subnet_id" => {
-                data_services.nebius_enabled = Some(enabled);
-            }
-            // Key-only services (serpapi, firecrawl, hf_token, fred) have no
-            // settings toggle — the UI renders them without a
-            // SwitchField, so this function is never called with those keys.
-            _ => {}
-        }
-    });
+        .child(key_input)
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -296,8 +207,8 @@ mod tests {
 
     /// The endpoint-refresh id must identify the RunPod provider in the
     /// `LanguageModelRegistry`. [`LanguageModelRegistry::provider`] is an exact
-    /// id match and returns `None` on mismatch — a drift would silently turn
-    /// the live refresh into a no-op (broken feedback loop). Pin it against the
+    /// id match and returns `None` on mismatch — a drift would silently turn the
+    /// live refresh into a no-op (broken feedback loop). Pin it against the
     /// canonical lowercase id the RunPod provider registers under (D29
     /// `PROVIDER_ID` is `"runpod"`).
     #[test]

@@ -25,7 +25,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | Field | Type | Default source |
 |-------|------|---------------|
 | `mcp` | `KaskMcpSettings` | `Default` |
-| `data_services` | `KaskDataServiceSettings` | derived `Default` (all false) |
 | `curator` | `KaskCuratorSettings` | `Default` |
 | `memory` | `KaskMemorySettings` | `Default` |
 | `condenser` | `KaskCondenserSettings` | `Default` |
@@ -54,26 +53,32 @@ The 10 servers (`BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/
 The master `load_default` toggle controls all servers; individual `overrides`
 take precedence. Set `load_default: false` to disable all kask MCP servers.
 
-## Data Services (`KaskDataServiceSettings`)
+## Data Services
 
-API key toggles for data services. Keys are stored in the system keychain under
-`kask://credentials/<key>`, not in settings.json. When MCP servers start, the
-composition root reads keys from the keychain and injects them as environment
-variables into the MCP server child process.[^owasp-secrets-settings]
+API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP,
+EODHD, RunPod, Nebius, HuggingFace, FRED, etc.) are stored in the system
+keychain under `kask://credentials/<key>`. There are no settings.json
+toggles — a service is enabled when its key is present in the keychain.
+When MCP servers start, the composition root reads keys from the keychain
+and injects them as environment variables into the MCP server child process.
 
-| Field | Default | Keychain key | Env var injected |
-|-------|---------|--------------|-------------------|
-| `eodhd_enabled` | `false` | `kask://credentials/hkask_eodhd_api_key` | `HKASK_EODHD_API_KEY` |
-| `fmp_enabled` | `false` | `kask://credentials/hkask_fmp_api_key` | `HKASK_FMP_API_KEY` |
-| `exa_enabled` | `false` | `kask://credentials/hkask_exa_api_key` | `HKASK_EXA_API_KEY` |
-| `tavily_enabled` | `false` | `kask://credentials/hkask_tavily_api_key` | `HKASK_TAVILY_API_KEY` |
-| `brave_enabled` | `false` | `kask://credentials/hkask_brave_api_key` | `HKASK_BRAVE_API_KEY` |
-| `runpod_enabled` | `false` | `kask://credentials/runpod` | `RUNPOD_API_KEY` |
-| `nebius_enabled` | `false` | `kask://credentials/nebius_project_id` | `NEBIUS_PROJECT_ID` |
+| Keychain key | Env var injected |
+|--------------|-------------------|
+| `kask://credentials/exa` | `HKASK_EXA_API_KEY` |
+| `kask://credentials/tavily` | `HKASK_TAVILY_API_KEY` |
+| `kask://credentials/brave` | `HKASK_BRAVE_API_KEY` |
+| `kask://credentials/serpapi` | `HKASK_SERPAPI_API_KEY` |
+| `kask://credentials/firecrawl` | `HKASK_FIRECRAWL_API_KEY` |
+| `kask://credentials/fmp` | `HKASK_FMP_API_KEY` |
+| `kask://credentials/eodhd` | `HKASK_EODHD_API_KEY` |
+| `kask://credentials/runpod` | `RUNPOD_API_KEY` |
+| `kask://credentials/nebius_project_id` | `NEBIUS_PROJECT_ID` |
+| `kask://credentials/hf_token` | `HF_TOKEN` |
+| `kask://credentials/fred` | `HKASK_FRED_API_KEY` |
 
-**To configure**: Toggle a service on, then enter the API key. The key is
-written to the keychain immediately. Alternatively, set the corresponding env
-var and restart Zed.
+**To configure**: Enter the API key via Settings → Kask → Data Services.
+The key is written to the keychain immediately and the MCP server restarts
+with the new key.
 
 ## Inference Providers (`KaskInferenceProvidersSettings`)
 

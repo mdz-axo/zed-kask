@@ -112,7 +112,7 @@ Since Nebius endpoints use a single URL + per-endpoint token and support `/v1/mo
    }
    ```
 3. **Enter the API key** (the per-endpoint token) via Settings → AI → LLM Providers → OpenAI Compatible → Nebius.
-4. **For MCP server env injection** (if needed): add a `NEBIUS_INFERENCE_API_KEY` env var to `DATA_SERVICES` or `INFERENCE_PROVIDERS` in `kask/crates/kask_bridge/src/inference_providers.rs`, with `credential_key: "nebius_inference"` and `ui_toggle: Some("nebius_inference")`. Add a `nebius_inference_enabled` field to `KaskDataServiceSettings` or `KaskInferenceProvidersSettings`. This is a settings schema change but no new provider code.
+4. **For MCP server env injection** (if needed): add a `NEBIUS_INFERENCE_API_KEY` env var to `DATA_SERVICES` or `INFERENCE_PROVIDERS` in `kask/crates/kask_bridge/src/inference_providers.rs`, with `credential_key: "nebius_inference"` and `shows_in_ui: true`. No settings.json toggle field needed — the key's presence in the keychain is the toggle.
 
 **Limitation:** The per-endpoint token means each Nebius endpoint needs its own `openai_compatible` entry (different URL + different token). If you have many endpoints, this is verbose. A dedicated provider would centralize this — but only if Nebius adds account-wide API key auth.
 

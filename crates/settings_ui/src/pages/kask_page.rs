@@ -111,7 +111,7 @@ pub(crate) fn data_service_descriptors()
 -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     kask_bridge::DATA_SERVICES
         .iter()
-        .filter(|d| d.shows_in_ui())
+        .filter(|d| d.shows_in_ui)
         .map(|d| (d.credential_key, d.label, d.dashboard_url, d.env_var))
         .collect()
 }

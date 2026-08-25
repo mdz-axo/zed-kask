@@ -63,7 +63,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // reads it), in addition to the `kask://credentials/runpod` write
     // handled by `DATA_SERVICES`. Skipped in
     // `credential_urls_for_mcp`'s `INFERENCE_PROVIDERS` loop (MCP injection
-    // is handled by the `DATA_SERVICES` loop via `runpod_enabled`).
+    // is handled by the `DATA_SERVICES` loop — the key's presence is the toggle).
     InferenceProviderDescriptor {
         id: "RunPod",
         name: "RunPod",
@@ -117,46 +117,22 @@ pub struct DataServiceDescriptor {
     /// The env var name that MCP servers read for this credential.
     pub env_var: &'static str,
     /// The credential key in the keychain (`kask://credentials/<key>`).
-    /// Used as the UI's row key and the settings toggle matcher.
+    /// Used as the UI's row key.
     pub credential_key: &'static str,
     /// Human-readable label shown in the settings UI.
     pub label: &'static str,
     /// Dashboard URL where the user can obtain or manage the credential.
     pub dashboard_url: &'static str,
-    /// The settings toggle key for this credential in the Data Services UI,
-    /// or `None` if the credential should not appear in the UI (managed
-    /// elsewhere, e.g. `HKASK_SMTP_PASSWORD` in the Curator page, or
-    /// `HKASK_DB_PASSPHRASE` which has no toggle). When `Some`, the value
-    /// matches the `key` arm in `set_data_service_enabled` and the `match
-    /// key` in `render_data_services_page`.
-    pub ui_toggle: Option<&'static str>,
+    /// Whether this credential should appear as a row in the Data Services
+    /// settings UI. Credentials managed elsewhere (e.g. `HKASK_SMTP_PASSWORD`
+    /// in the Curator page, `HKASK_DB_PASSPHRASE`) set this to `false`.
+    pub shows_in_ui: bool,
 }
 
 impl DataServiceDescriptor {
     /// The keychain URL for this credential in the kask namespace.
     pub fn credential_url(&self) -> String {
         format!("{KASK_CREDENTIAL_NAMESPACE}/{}", self.credential_key)
-    }
-
-    /// Whether this credential should appear as a row in the Data Services
-    /// settings UI. Credentials with `ui_toggle: None` are managed elsewhere
-    /// (e.g. SMTP password in the Curator page) or have no toggle.
-    pub fn shows_in_ui(&self) -> bool {
-        self.ui_toggle.is_some()
-    }
-
-    /// Whether this service has a functional enable/disable toggle backed by a
-    /// `KaskDataServiceSettings` field. Key-only services (SerpAPI, Firecrawl,
-    /// HF Token, FRED) have `ui_toggle: Some(...)` so they appear in the UI for
-    /// API key entry, but they have no settings.json toggle — they're enabled
-    /// unconditionally when the key is present. The UI renders these without a
-    /// SwitchField, always showing the key input.
-    pub fn has_toggle(&self) -> bool {
-        self.ui_toggle.is_some()
-            && !matches!(
-                self.credential_key,
-                "serpapi" | "firecrawl" | "hf_token" | "fred"
-            )
     }
 }
 
@@ -173,49 +149,49 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "eodhd",
         label: "EODHD",
         dashboard_url: "https://eodhd.com/dashboard",
-        ui_toggle: Some("eodhd"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_FMP_API_KEY",
         credential_key: "fmp",
         label: "FMP (Financial Modeling Prep)",
         dashboard_url: "https://site.financialmodelingprep.com/developer/docs",
-        ui_toggle: Some("fmp"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_EXA_API_KEY",
         credential_key: "exa",
         label: "Exa",
         dashboard_url: "https://dashboard.exa.ai/api-keys",
-        ui_toggle: Some("exa"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_TAVILY_API_KEY",
         credential_key: "tavily",
         label: "Tavily",
         dashboard_url: "https://app.tavily.com/api-key",
-        ui_toggle: Some("tavily"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_BRAVE_API_KEY",
         credential_key: "brave",
         label: "Brave Search",
         dashboard_url: "https://api.search.brave.com/app/subscriptions",
-        ui_toggle: Some("brave"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_SERPAPI_API_KEY",
         credential_key: "serpapi",
         label: "SerpAPI (Google Search)",
         dashboard_url: "https://serpapi.com/dashboard",
-        ui_toggle: Some("serpapi"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HKASK_FIRECRAWL_API_KEY",
         credential_key: "firecrawl",
         label: "Firecrawl (web scraping)",
         dashboard_url: "https://firecrawl.dev/",
-        ui_toggle: Some("firecrawl"),
+        shows_in_ui: true,
     },
     // ABW API key — not shown in the Data Services UI (no toggle, managed
     // via the keychain by the swarm server's governed launch path).
@@ -224,7 +200,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_abw_api_key",
         label: "ABW API Key",
         dashboard_url: "",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     // curator, corpus, training, kata-kanban, research) via
     // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
@@ -235,7 +211,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_db_passphrase",
         label: "DB Passphrase",
         dashboard_url: "",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     // Swarm memory SQLCipher passphrase — read by the swarm server at
     // hkask-mcp-swarm/src/config.rs via `HKASK_SWARM_MEMORY_PASSPHRASE`.
@@ -249,7 +225,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_swarm_memory_passphrase",
         label: "Swarm Memory Passphrase",
         dashboard_url: "",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     // Curator SMTP password — managed in the Curator Email settings page,
     // not in the Data Services page (avoids duplicate reset surfaces).
@@ -258,14 +234,14 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "hkask_smtp_password",
         label: "SMTP Password",
         dashboard_url: "",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     DataServiceDescriptor {
         env_var: "RUNPOD_API_KEY",
         credential_key: "runpod",
         label: "RunPod (GPU cloud for training)",
         dashboard_url: "https://runpod.io/",
-        ui_toggle: Some("runpod"),
+        shows_in_ui: true,
     },
     // RunPod S3 credentials — not read by any MCP server (no allowlist
     // references them). Not shown in the UI (dead surface); kept in the
@@ -276,14 +252,14 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "runpod_s3_access_key",
         label: "RunPod S3 Access Key (adapter storage)",
         dashboard_url: "https://runpod.io/",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     DataServiceDescriptor {
         env_var: "RUNPOD_S3_SECRET",
         credential_key: "runpod_s3_secret",
         label: "RunPod S3 Secret (adapter storage)",
         dashboard_url: "https://runpod.io/",
-        ui_toggle: None,
+        shows_in_ui: false,
     },
     // RUNPOD_TEMPLATE_ID was here as a Secret, but it is architecturally a
     // non-secret config value (a RunPod template ID). It has been moved to
@@ -302,7 +278,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "nebius_project_id",
         label: "Nebius Project ID (GPU cloud for training)",
         dashboard_url: "https://nebius.com/",
-        ui_toggle: Some("nebius_project_id"),
+        shows_in_ui: true,
     },
     // Nebius subnet ID — same note as NEBIUS_PROJECT_ID above.
     DataServiceDescriptor {
@@ -310,14 +286,14 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "nebius_subnet_id",
         label: "Nebius Subnet ID",
         dashboard_url: "https://nebius.com/",
-        ui_toggle: Some("nebius_subnet_id"),
+        shows_in_ui: true,
     },
     DataServiceDescriptor {
         env_var: "HF_TOKEN",
         credential_key: "hf_token",
         label: "HuggingFace Token",
         dashboard_url: "https://huggingface.co/settings/tokens",
-        ui_toggle: Some("hf_token"),
+        shows_in_ui: true,
     },
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
@@ -330,7 +306,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "fred",
         label: "FRED API Key",
         dashboard_url: "https://fred.stlouisfed.org/docs/api/api_key.html",
-        ui_toggle: Some("fred"),
+        shows_in_ui: true,
     },
 ];
 
@@ -356,7 +332,7 @@ pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
     // native provider infrastructure (Settings → AI → LLM Providers) handles
     // registration. The keychain read in `build_mcp_server_env` is the final
     // filter: if the key isn't in the keychain, it won't be injected.
-    // RunPod is skipped (handled by DATA_SERVICES above via `runpod_enabled`).
+    // RunPod is skipped (handled by DATA_SERVICES above).
     // Ollama is skipped (empty env_var — local, no key needed).
     for provider in INFERENCE_PROVIDERS {
         if provider.credential_key == "runpod" || provider.env_var.is_empty() {

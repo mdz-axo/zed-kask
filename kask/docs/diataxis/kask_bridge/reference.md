@@ -37,7 +37,6 @@ loops the SKILL.md bodies describe.
 | `spawn_test_email` | `kask/crates/kask_bridge/src/credentials.rs` |
 | `KaskSettings` | `kask/crates/kask_bridge/src/settings.rs:36-102` |
 | `KaskMcpSettings` | `kask/crates/kask_bridge/src/settings.rs:110-118` |
-| `KaskDataServiceSettings` | `kask/crates/kask_bridge/src/settings.rs:130-152` |
 | `KaskInferenceProvidersSettings` | `kask/crates/kask_bridge/src/settings.rs:164-174` |
 | `KaskInferenceProvidersSettings::from_env` | `kask/crates/kask_bridge/src/settings.rs:183-189` |
 | `KaskCuratorSettings` | `kask/crates/kask_bridge/src/settings.rs:240-252` |
@@ -118,7 +117,6 @@ classDiagram
     class KaskSettings {
         +data_dir: String
         +mcp: KaskMcpSettings
-        +data_services: KaskDataServiceSettings
         +curator: KaskCuratorSettings
         +memory: KaskMemorySettings
         +condenser: KaskCondenserSettings
@@ -275,8 +273,9 @@ two filters in load-bearing order:
 1. **Config** — `filter_config_env_for_server` over `settings.mcp_env()`
    output (`mcp_servers.rs:524`).
 2. **Credentials** — `filter_credentials_for_server` over
-   `credential_urls_for_mcp(settings)`, resolved from the keychain
-   (`mcp_servers.rs:531-547`).
+   `credential_urls_for_mcp()`, resolved from the keychain
+   (`mcp_servers.rs:481-512`). The key's presence in the keychain is the
+   toggle — there are no settings.json `*_enabled` bools.
 3. **Inference socket** — injected last, not in any allowlist
    (`mcp_servers.rs:549-556`).
 

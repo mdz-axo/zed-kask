@@ -1,68 +1,62 @@
-//! Credential resolution — keychain-first credential lookup.
+//! Credential resolution — env-var-first lookup with keychain fallback for
+//! internal passphrases only.
 
 use std::collections::HashMap;
 
 use super::error::McpToolError;
 
-/// Routes known credential names through the proper hkask keystore resolvers.
+/// Resolve a credential by env var name.
 ///
-/// Resolution order: env var → keychain. The env var is checked first because
-/// the governed MCP runtime (`McpRuntime::start_server_with_env`) injects
-/// credentials as env vars via `build_mcp_server_env` after `cmd.env_clear()`.
-/// The keychain read is the fallback for ungoverned (direct-launch) servers.
-/// Checking env first avoids a blocking keychain read in child processes
-/// where D-Bus env vars (`DBUS_SESSION_BUS_ADDRESS`) were cleared by
-/// `env_clear()` — the `keyring` crate's Secret Service backend blocks
-/// indefinitely without them.
+/// API keys are injected as env vars by `build_mcp_server_env` (which reads
+/// from zed's CredentialsProvider keychain namespace `kask://credentials/...`).
+/// The server reads them from env only — there is no keychain fallback for
+/// API keys, because the server is a leaf crate that cannot depend on zed's
+/// `CredentialsProvider` or `oo7`. One keychain namespace (zed's), one read
+/// path (`build_mcp_server_env`), one delivery mechanism (env vars).
+///
+/// `HKASK_DB_PASSPHRASE` and `HKASK_SWARM_MEMORY_PASSPHRASE` have dedicated
+/// keystore resolvers (env → `hkask-keystore` keychain) because they predate
+/// the zed CredentialsProvider integration and are read by `hkask-keystore`
+/// directly.
 ///
 /// pre:  env_var is non-empty
-/// post: returns credential value from the appropriate resolution chain
+/// post: returns credential value from env var
 #[must_use = "result must be used"]
 pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::KeystoreError> {
     match env_var {
         "HKASK_DB_PASSPHRASE" => {
-            // DB passphrase has a dedicated keystore resolver (env → keychain
-            // `hkask-db-passphrase`) that handles its own env-var-first chain.
             let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
             Ok(passphrase.to_string())
         }
         "HKASK_SWARM_MEMORY_PASSPHRASE" => {
-            // Swarm memory passphrase has a dedicated keystore resolver
-            // (env → keychain `hkask-swarm-memory-passphrase`) that handles
-            // its own env-var-first chain. Mirrors the DB passphrase branch.
-            let passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
+            let passphrase =
+                hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
             Ok(passphrase.to_string())
         }
 
         _ => {
-            // Check env var first — the governed MCP runtime injects
-            // credentials as env vars via `build_mcp_server_env`. This avoids
-            // a blocking keychain read in child processes where D-Bus env vars
-            // were cleared by `env_clear()`.
-            if let Ok(val) = std::env::var(env_var)
-                && !val.is_empty()
-            {
-                tracing::debug!(
-                    credential = env_var,
-                    "Credential resolved from environment variable"
-                );
-                return Ok(val);
+            // API keys — env var only. `build_mcp_server_env` reads from zed's
+            // keychain namespace and injects as env vars. No keychain fallback
+            // here: the server cannot read zed's `url=`-attributed entries via
+            // the `keyring` crate (which uses `service`/`username` attributes).
+            match std::env::var(env_var) {
+                Ok(val) if !val.is_empty() => {
+                    tracing::debug!(
+                        credential = env_var,
+                        "Credential resolved from environment variable"
+                    );
+                    Ok(val)
+                }
+                _ => Err(hkask_keystore::KeystoreError::NotFound(hkask_types::NotFound {
+                    entity_type: "credential".to_string(),
+                    id: format!(
+                        "Credential '{}' not set in environment — ensure it is in the \
+                         keychain under kask://credentials/ and that the MCP server was \
+                         launched via build_mcp_server_env (not direct-launch)",
+                        env_var
+                    ),
+                })),
             }
-            // Fall back to keychain for ungoverned (direct-launch) servers.
-            let val = hkask_keystore::Keychain::default()
-                .retrieve_by_key(env_var)
-                .map(|secret| secret.to_string())
-                .map_err(|_| {
-                    hkask_keystore::KeystoreError::NotFound(hkask_types::NotFound {
-                        entity_type: "credential".to_string(),
-                        id: format!(
-                            "Credential '{}' not found in environment or keychain",
-                            env_var
-                        ),
-                    })
-                })?;
-            tracing::debug!(credential = env_var, "Credential resolved via keychain");
-            Ok(val)
         }
     }
 }

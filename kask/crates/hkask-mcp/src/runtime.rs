@@ -399,6 +399,12 @@ pub struct McpRuntime {
     /// Resolved tuning parameters (env-overridable defaults).
     config: McpRuntimeConfig,
     governance: Option<ToolGovernance>,
+    /// Optional env-refresh callback. When set, `try_reconnect` calls it to
+    /// get fresh env (re-reading the keychain) instead of reusing the stale
+    /// `spec.env` from the original launch. Wired by `main.rs` to
+    /// `build_mcp_server_env` so auto-healed servers pick up credential
+    /// changes without a settings-change restart.
+    env_refresh: Arc<Option<Arc<dyn Fn(&str) -> Option<HashMap<String, String>> + Send + Sync>>>,
 }
 
 impl McpRuntime {
@@ -417,6 +423,7 @@ impl McpRuntime {
             health_failures: Arc::new(RwLock::new(HashMap::new())),
             config: McpRuntimeConfig::default(),
             governance: None,
+            env_refresh: Arc::new(None),
         }
     }
 

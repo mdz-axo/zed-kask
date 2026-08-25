@@ -34,10 +34,10 @@ pub(crate) fn render_swarm_page(
 
     // ABW API key — the core credential for ABW mode. Lives in the keychain
     // under `kask://credentials/hkask_abw_api_key`, injected as
-    // `HKASK_ABW_API_KEY` at server launch. Unlike data-service keys, this one
-    // has no `ui_toggle` in `DATA_SERVICES` (it's not a data service — it's the
-    // swarm backend auth credential), so it has no Data Services page row.
-    // Without this field the operator had no UI path to configure it at all.
+    // `HKASK_ABW_API_KEY` at server launch. Has `shows_in_ui: false` in
+    // `DATA_SERVICES` (it's the swarm backend auth credential, not a data
+    // service), so it has no Data Services page row. Without this field the
+    // operator had no UI path to configure it at all.
     let credentials_provider = zed_credentials::global(cx);
     let abw_credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
     let abw_key_configured = has_credential(
