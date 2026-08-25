@@ -87,22 +87,17 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 ### persist-report
 
-1. After the LENS convergence verdict (CONSISTENT / PARTIAL / INCONSISTENT), persist the full pipeline output to the companies MCP server's report store via `report_save`.
-2. Call `report_save` on the `hkask-mcp-companies` server with:
-   - `kind`: `"report"`
-   - `name`: `"{ticker}-flash-{date}"`
-   - `payload`: JSON object containing the full structured pipeline output — scout_decision, intel_mosaic, semantic_tags, forensic_pre_screen, critical_factors, forensic_full, valuation_8step, communication_enter (cascade_note + enter_score), kata_calibration_gap, lens_verdict, data_gaps
-3. The report is persisted to `{data_dir}/mcp/companies/reports/{name}.json` — the canonical location for company-research-flash output. This enables `report_load` for downstream consumption and `report_list` for enumeration.
-4. **Never write reports to the workspace filesystem.** The report store is the only persistence path. Writing to the repo root or any project directory is a broken feedback loop — the operator cannot distinguish a skill output from a user-authored file.
+1. After the LENS convergence verdict, write the full report as a **rich markdown file**.
+2. Reports are stored under the companies MCP server's artifact tree per the Standardized Artifact Storage policy (D28): `{data_dir}/mcp/companies/reports/`. Resolve the data dir by running `echo $HKASK_DATA_DIR` via `terminal` (falls back to `~/.local/share/hkask` on Linux).
+3. Create the reports directory if it does not exist: `mkdir -p $HKASK_DATA_DIR/mcp/companies/reports` via `terminal`.
+4. Write the markdown file to `{data_dir}/mcp/companies/reports/{ticker}-flash-{date}.md`. Use `write_file` with the full absolute path.
+5. The markdown file is the deliverable — full rich markdown with all sections, source notes, and citations.
 
 ### condense-report
 
-1. After persisting the full structured JSON, produce a condensed human-readable flash note. The CASCADE note from `communication-enter` is already 300–500 words — the condensed report wraps it with the key supporting evidence (scout alpha score, critical factors, valuation pt_12m + rr_ratio, LENS verdict, calibration_gap) into a ≤1,000-word note.
-2. Call `report_save` on the `hkask-mcp-companies` server with:
-   - `kind`: `"report"`
-   - `name`: `"{ticker}-flash-summary-{date}"`
-   - `payload`: JSON object with `markdown` field containing the condensed flash note, plus `word_count`, `source_report` (the name of the full structured report), and `pipeline` field set to `"company-research-flash"`
-3. The condensed report is persisted alongside the full structured report in `{data_dir}/mcp/companies/reports/{name}-flash-summary-{date}.json`.
+1. The full markdown report written in persist-report IS the deliverable.
+2. If a condensed flash note is needed, write it as a separate markdown file at `{data_dir}/mcp/companies/reports/{ticker}-flash-summary-{date}.md`.
+3. Both files are markdown in `{data_dir}/mcp/companies/reports/`.
 
 ## Convergence
 
@@ -156,4 +151,4 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.
 - No `unwrap_or(0)` on regulation signals. Missing LENS verdict surfaces as 1.0 (worst case), not silently converged.
 - The THESIS quality gate in the deep pipeline uses `goal-analysis/judge` (semantic evaluation), not self-assessment — to avoid the LLM-improves-against-LLM-scored-target trap.
-- **Reports are persisted via `report_save` on the `hkask-mcp-companies` server only.** Never write reports to the workspace filesystem — the report store is the canonical persistence path. Both the full structured JSON and the condensed human-readable note are persisted as separate artifacts in `{data_dir}/mcp/companies/reports/`.
+- Reports are written as markdown files to `reports/company-research/` via the built-in `write_file` tool.

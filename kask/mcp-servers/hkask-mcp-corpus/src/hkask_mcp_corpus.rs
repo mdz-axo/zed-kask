@@ -692,9 +692,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             let ocr_thresholds = ThresholdConfig::from_env();
 
-            // Resolve `HKASK_DB_PASSPHRASE` via the canonical 3-tier chain
-            // (ctx.credentials → env → keychain) once at construction and
-            // publish it to the process-wide `OnceLock` so every tool's
+            // Resolve `HKASK_DB_PASSPHRASE` via the canonical 2-tier chain
+            // (ctx.credentials → env → `hkask-keystore` keychain) once at
+            // construction and publish it to the process-wide `OnceLock` so every tool's
             // `default_corpus_passphrase` / `default_purge_passphrase` serde
             // default benefits from governed-launch injection. On resolution
             // failure we publish `None` and let each tool fall back to

@@ -117,23 +117,17 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ### persist-report
 
-1. After the quality gate verdict (investment_grade / needs_work / incomplete), persist the full pipeline output to the companies MCP server's report store via `report_save`.
-2. Call `report_save` on the `hkask-mcp-companies` server with:
-   - `kind`: `"report"`
-   - `name`: `"{ticker}-{date}"` for single-company analyses, or `"{ticker-a}-vs-{ticker-b}-{date}"` for comparative analyses
-   - `payload`: JSON object containing the full structured pipeline output — CompanyBoard, rotated_board, wardley_map, economic_trajectory (with literature_sources), gorilla_score (with per-dimension breakdown), ImagineBoard (with falsifiable predictions), thesis, fact_score_final, quality_gate_verdict, data_gaps
-3. The report is persisted to `{data_dir}/mcp/companies/reports/{name}.json` — the canonical location for company-research-deep output. This enables `report_load` for downstream consumption (portfolio analysis, comparison reports, forecast-ledger) and `report_list` for enumeration.
-4. **Never write reports to the workspace filesystem.** The report store is the only persistence path. Writing to the repo root or any project directory is a broken feedback loop — the operator cannot distinguish a skill output from a user-authored file.
+1. After the quality gate verdict, write the full report as a **rich markdown file**.
+2. Reports are stored under the companies MCP server's artifact tree per the Standardized Artifact Storage policy (D28): `{data_dir}/mcp/companies/reports/`. Resolve the data dir by running `echo $HKASK_DATA_DIR` via `terminal` (falls back to `~/.local/share/hkask` on Linux).
+3. Create the reports directory if it does not exist: `mkdir -p $HKASK_DATA_DIR/mcp/companies/reports` via `terminal`.
+4. Write the markdown file to `{data_dir}/mcp/companies/reports/{ticker}-{date}.md` for single-company analyses, or `{data_dir}/mcp/companies/reports/{ticker-a}-vs-{ticker-b}-{date}.md` for comparative analyses. Use `write_file` with the full absolute path.
+5. The markdown file is the deliverable — full rich markdown with all sections, mermaid diagrams, source notes, and citations.
 
 ### condense-report
 
-1. After persisting the full structured JSON, produce a condensed human-readable report of ≤5,000 words (excluding appendices, figures, and references/citations).
-2. The condensed report preserves all analytical content (8-part analysis, Falstaffian rotation, Wardley map, GORILLA scoring, economic trajectory, IMAGINE 5/10Y scenarios, three-pillar thesis, essentialist 3-gate, comparative verdict) in compressed prose. It is the communication artifact — the structured JSON is the source of truth, the condensed report is the human interface.
-3. Call `report_save` on the `hkask-mcp-companies` server with:
-   - `kind`: `"report"`
-   - `name`: `"{ticker}-summary-{date}"` (or `"{ticker-a}-vs-{ticker-b}-summary-{date}"` for comparative analyses)
-   - `payload`: JSON object with `markdown` field containing the condensed report, plus `word_count`, `source_report` (the name of the full structured report), and `pipeline` field set to `"company-research-deep"`
-4. The condensed report is persisted alongside the full structured report in `{data_dir}/mcp/companies/reports/{name}-summary-{date}.json`. Both artifacts are enumerable via `report_list` and retrievable via `report_load`.
+1. The full markdown report written in persist-report IS the deliverable.
+2. If it exceeds ~5,000 words, produce a condensed executive summary as a separate markdown file at `{data_dir}/mcp/companies/reports/{ticker}-summary-{date}.md`.
+3. Both files are markdown in `{data_dir}/mcp/companies/reports/`.
 
 ## Convergence
 
@@ -151,7 +145,7 @@ The fact_score (from verify-late-gate) feeds the quality gate as additional evid
 - Step 11 (VERIFY-LATE-GATE) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `goal-analysis/judge` quality gate as additional evidence.
 - The fact_score computation uses `lisp_eval` (deterministic scoring, same pattern as GORILLA's fixed-weight scoring). The provenance lattice and extraction ceiling are adapted from Fermi's `grounding_trust.rs`.
 - Step 12 reuses `goal-analysis/judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in goal-analysis's semantic evaluator, not LLM self-assessment.
-- Steps 12-13 (PERSIST + CONDENSE) persist the full structured JSON and the condensed ≤5000-word human-readable summary to the `hkask-mcp-companies` report store via `report_save`.
+- Steps 12-13 (PERSIST + CONDENSE) write the full markdown report and optional condensed summary to `reports/company-research/` via the built-in `write_file` tool.
 
 ## Registry Templates
 

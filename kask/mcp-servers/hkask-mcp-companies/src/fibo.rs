@@ -140,8 +140,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         // Non-financial artifacts — Dublin Core (text/dataset artifacts)
         "company_transcript" | "note_add" | "note_list" | "note_delete" => Some(dc_bibo::TEXT),
         "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::DATASET),
-        // Report & screen persistence — Dublin Core (text artifacts)
-        "report_save" | "report_load" | "report_list" => Some(dc_bibo::TEXT),
+
         _ => None,
     }
 }

@@ -19,7 +19,7 @@ pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
 /// Upstream uses `convert_case::Case::UpperSnake`,
 /// which splits multi-word IDs on case boundaries (e.g. `SomeProvider` →
 /// `SOME_PROVIDER_API_KEY`) and leaves `fal.ai` as
-/// an invalid env var name. The entire kask ecosystem (`.env` template, MCP servers,
+/// an invalid env var name. The entire kask ecosystem (MCP servers,
 /// keystore, UI text, docs) uses the concatenated form, so the upstream computation
 /// never matches the env vars kask users set. See DIVERGENCE.md D12.
 pub fn api_key_env_var_name_for(id: &str) -> String {

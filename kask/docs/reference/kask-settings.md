@@ -294,8 +294,8 @@ Corpus cannot read `ctx.credentials` from serde-default call sites, so it captur
 the resolved passphrase at server construction into `static CORPUS_DB_PASSPHRASE:
 OnceLock<Option<String>>` (`semantic/mod.rs`) via `set_corpus_db_passphrase`;
 `default_corpus_passphrase()` reads the `OnceLock` first, falls back to
-`resolve_credential`, giving the full 3-tier chain (creds → env → keychain)
-without changing serde-default signatures.
+`resolve_credential`, giving the full 2-tier chain (creds → env → `hkask-keystore`
+keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 

@@ -767,12 +767,12 @@ fn default_embed_batch_size() -> usize {
 
 /// Default passphrase for the corpus memory DB.
 ///
-/// Resolves `HKASK_DB_PASSPHRASE` via a 3-tier chain:
+/// Resolves `HKASK_DB_PASSPHRASE` via a 2-tier chain:
 /// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
 ///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
 ///    [`set_corpus_db_passphrase`].
-/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → keychain
-///    `hkask-db-passphrase`).
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore`
+///    keychain `hkask-db-passphrase`).
 ///
 /// Returns an empty string when the credential is unset in all tiers.
 /// `Database::open` rejects empty passphrases with a clear error
