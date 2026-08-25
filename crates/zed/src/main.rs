@@ -2001,9 +2001,37 @@ fn main() {
                             kask_bridge::LanguageModelInferencePort::new(
                                 inference_model.clone(),
                                 inference_timeout,
+                                kask_settings.general.max_concurrency as usize,
                                 async_cx,
                             );
                         inference_task.detach();
+
+                        // Wire the inference health source into the cybernetics
+                        // loop so it can sense inference saturation and timeout
+                        // storms. Without this, the loop reports `signal_count=0`
+                        // during a timeout storm — its existing sensors read
+                        // ledger/DB state, not inference dispatch state. The
+                        // `set_inference_health_source` method is used (not the
+                        // `with_*` builder) because the loop is already wrapped
+                        // in `Arc<RwLock<...>>` by the time the port exists.
+                        //
+                        // The health source is a clone of the port — the
+                        // port's health counters are `Arc`-shared, so the
+                        // sensor reads the same atomics the receiver task
+                        // updates. This mirrors the `set_event_sink` /
+                        // `set_alert_escalation_sink` pattern used elsewhere
+                        // in the deferred task.
+                        let inference_health_source: std::sync::Arc<
+                            dyn hkask_regulation::InferenceHealthSource,
+                        > = std::sync::Arc::new(inference_port.clone());
+                        {
+                            let loop_for_health = cybernetics_loop_for_panel_deferred.clone();
+                            gpui_tokio::Tokio::spawn(cx, async move {
+                                let mut loop_guard = loop_for_health.write().await;
+                                loop_guard.set_inference_health_source(inference_health_source);
+                            })
+                            .detach();
+                        }
 
                         let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(inference_port);

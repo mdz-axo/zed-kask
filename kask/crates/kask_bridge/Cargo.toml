@@ -57,6 +57,7 @@ tracing.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

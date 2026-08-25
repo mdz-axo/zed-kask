@@ -396,11 +396,6 @@ pub(crate) fn kask_string_input(
                                     kask.general.get_or_insert_default().max_concurrency = Some(v);
                                 }
                             }
-                            ("general", "concurrency_step") => {
-                                if let Ok(v) = parsed.parse::<u32>() {
-                                    kask.general.get_or_insert_default().concurrency_step = Some(v);
-                                }
-                            }
                             ("corpus", "ocr_simple_max") => {
                                 if let Ok(v) = parsed.parse::<f64>() {
                                     kask.corpus.get_or_insert_default().ocr_simple_max = Some(v);

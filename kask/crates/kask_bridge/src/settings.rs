@@ -105,11 +105,6 @@ pub struct KaskGeneralSettings {
     /// OpenRouter scales to this ceiling.
     pub max_concurrency: u32,
 
-    /// Concurrency step — the ramp origin and increment. The limiter starts
-    /// at `concurrency_step` permits and adds `concurrency_step` per ramp
-    /// tick on success until `max_concurrency` or a throttle. Default 4.
-    pub concurrency_step: u32,
-
     /// Wall-clock timeout for a single inference call (stream establishment +
     /// event drain). A hung provider stalls the request indefinitely without
     /// this — the cybernetics variety check flagged this as a critical gap
@@ -122,7 +117,6 @@ impl Default for KaskGeneralSettings {
     fn default() -> Self {
         Self {
             max_concurrency: 96,
-            concurrency_step: 4,
             inference_timeout_secs: 300,
         }
     }
@@ -724,19 +718,14 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
         let default = Self::default();
         // Treat 0 as "use default" — a user setting `max_concurrency: 0` would
         // construct a limiter that admits no permits, deadlocking every
-        // inference call. Same for `concurrency_step: 0` (the ramp origin
-        // and increment must be ≥ 1). `inference_timeout_secs: 0` is the
-        // legitimate "disable timeout" value (legacy behavior), so it
-        // passes through without the filter.
+        // inference call. `inference_timeout_secs: 0` is the legitimate
+        // "disable timeout" value (legacy behavior), so it passes through
+        // without the filter.
         Self {
             max_concurrency: c
                 .max_concurrency
                 .filter(|&v| v > 0)
                 .unwrap_or(default.max_concurrency),
-            concurrency_step: c
-                .concurrency_step
-                .filter(|&v| v > 0)
-                .unwrap_or(default.concurrency_step),
             inference_timeout_secs: c
                 .inference_timeout_secs
                 .unwrap_or(default.inference_timeout_secs),

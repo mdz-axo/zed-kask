@@ -29,4 +29,5 @@ pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop
 pub use loops::CurationInput;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
+pub use sensor_provider::InferenceHealthSource;
 pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};

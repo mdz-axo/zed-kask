@@ -1629,11 +1629,6 @@ pub struct KaskGeneralSettingsContent {
     /// different levels; OpenRouter scales to this ceiling.
     pub max_concurrency: Option<u32>,
 
-    /// Concurrency step — the ramp origin and increment. The limiter starts
-    /// at `concurrency_step` permits and adds `concurrency_step` per ramp
-    /// tick on success until `max_concurrency` or a throttle. Default 4.
-    pub concurrency_step: Option<u32>,
-
     /// Wall-clock timeout for a single inference call. 0 disables (legacy
     /// behavior). Default 300 (5 minutes).
     pub inference_timeout_secs: Option<u64>,

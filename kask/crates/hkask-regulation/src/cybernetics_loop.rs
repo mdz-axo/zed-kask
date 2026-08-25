@@ -439,6 +439,43 @@ impl CyberneticsLoop {
         self
     }
 
+    /// Wire an inference health source so the cybernetics loop can sense
+    /// inference saturation and timeout storms.
+    ///
+    /// Without this, the loop reports `signal_count=0` during an inference
+    /// timeout storm because its existing sensors read ledger/DB state, not
+    /// inference dispatch state. The `InferenceHealthSensor` emits
+    /// `SignalMetric::InferenceAvailable` when the inference layer is
+    /// saturated or storming, closing the blind-feedback-loop gap.
+    ///
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_inference_health_source(
+        self,
+        source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
+    ) -> Self {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::InferenceHealthSensor::new(source, 3),
+        ));
+        self
+    }
+
+    /// Wire an inference health source after construction.
+    ///
+    /// Used by the composition root to lazily wire the sensor after the
+    /// `LanguageModelInferencePort` is created (in the deferred post-login
+    /// task). The `with_inference_health_source` builder method can't be used
+    /// there because the loop is already wrapped in `Arc<RwLock<...>>` by the
+    /// time the port exists.
+    pub fn set_inference_health_source(
+        &mut self,
+        source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
+    ) {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::InferenceHealthSensor::new(source, 3),
+        ));
+    }
+
     /// Submit a rollout impact check for the next `verify_impact` pass.
     ///
     /// This is the producer side of the event-substrate phase 6 seam: a

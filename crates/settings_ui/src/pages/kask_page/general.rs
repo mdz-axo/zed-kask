@@ -59,14 +59,6 @@ pub(crate) fn render_general_page(
         "general",
         "max_concurrency",
     );
-    let concurrency_step_input = kask_string_input(
-        "kask-general-concurrency-step",
-        "Concurrency Step",
-        "Default: 4",
-        general.concurrency_step.to_string(),
-        "general",
-        "concurrency_step",
-    );
 
     v_flex()
         .id("kask-general-page")
@@ -142,17 +134,14 @@ pub(crate) fn render_general_page(
                     Label::new(
                         "Global inference concurrency — the process-wide ceiling on \
                          concurrent cloud inference provider calls. Applies to skill \
-                         cascades, corpus OCR, and MCP tool calls. The limiter starts \
-                         at the concurrency step and ramps up by the step on success \
-                         until the maximum or a provider throttle (429/503). Providers \
+                         cascades, corpus OCR, and MCP tool calls. Providers \
                          throttle at different levels; OpenRouter scales \
                          to the ceiling. Changes require a restart to take effect.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
-                .child(max_concurrency_input)
-                .child(concurrency_step_input),
+                .child(max_concurrency_input),
         )
         .into_any_element()
 }

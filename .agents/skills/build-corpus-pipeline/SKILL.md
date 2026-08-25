@@ -96,24 +96,23 @@ subagents, bounded by the process-wide concurrency settings in
 | Setting | Default | Role |
 |---------|---------|------|
 | `max_concurrency` | 96 | Process-wide ceiling on concurrent cloud inference calls. Shared across skill execution, corpus OCR, and MCP tool calls. |
-| `concurrency_step` | 4 | Ramp origin and increment. The limiter starts at `concurrency_step` permits and adds `concurrency_step` per ramp tick on success until `max_concurrency` or a throttle (429/503). |
 | `ocr_concurrency` | 4 | Corpus-specific: pages sent to the vision model in parallel during OCR. Overridable via `HKASK_OCR_CONCURRENCY`. |
 
-### Step-up ramp pattern
+### Concurrency dispatch pattern
 
 When dispatching parallel work units (file conversions, chunk batches,
-tagging batches), follow the step-up ramp:
+tagging batches), start with a small batch of 4 concurrent subagents and
+scale up on success:
 
-1. **Start** with `concurrency_step` concurrent subagents (default 4).
+1. **Start** with 4 concurrent subagents.
 2. **On success** (all agents returned without error or throttle), add
-   `concurrency_step` more agents for the next round.
+   4 more agents for the next round.
 3. **On throttle** (429/503 from the inference provider), back off to the
    last successful concurrency level and hold there.
 4. **Ceiling**: never exceed `max_concurrency` concurrent agents.
 
-This mirrors the process-wide limiter's behavior — the skill's
-subagent dispatch should track the same ramp curve rather than jumping
-straight to `max_concurrency` and triggering provider throttles.
+This avoids jumping straight to `max_concurrency` and triggering
+provider throttles.
 
 ### When to use subagents vs. tool concurrency
 

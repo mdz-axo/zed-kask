@@ -448,6 +448,110 @@ impl Sensor for MutationScoreSensor {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// INFERENCE HEALTH SENSOR (closes the blind-feedback-loop gap)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// A snapshot of inference health, read by [`InferenceHealthSensor`] from the
+/// inference dispatch layer.
+///
+/// This trait lives in `hkask-regulation` (not `kask_bridge`) because the
+/// dependency direction is `kask_bridge → hkask-regulation` — the regulation
+/// crate cannot depend on the bridge. The bridge implements this trait and
+/// passes an `Arc<dyn InferenceHealthSource>` to
+/// `CyberneticsLoop::with_inference_health_source`.
+///
+/// Without this sensor, the cybernetics loop reports `signal_count=0` during
+/// an inference timeout storm because its existing sensors read ledger/DB
+/// state, not inference dispatch state. The loop's `signal_count=0` is the
+/// silent witness of a broken feedback loop (the `.rules` `unwrap_or(0)` trap:
+/// a missing sense input reads as "no deviation").
+#[async_trait::async_trait]
+pub trait InferenceHealthSource: Send + Sync {
+    /// Number of inference calls currently in-flight (acquired a permit but
+    /// not yet completed). `0` when no calls are active.
+    async fn in_flight(&self) -> usize;
+
+    /// Configured maximum concurrent inference calls (`max_concurrency`).
+    async fn max_concurrency(&self) -> usize;
+
+    /// Number of inference calls that timed out in the recent window
+    /// (e.g. last 5 minutes). `0` when no timeouts have been observed.
+    async fn recent_timeout_count(&self) -> u64;
+}
+
+/// Senses inference health from the inference dispatch layer.
+///
+/// Emits `SignalMetric::InferenceAvailable` with value `0.0` when the
+/// inference layer is saturated (in_flight >= max_concurrency) or when recent
+/// timeouts exceed a threshold. The set-point is `1.0` (fully available); any
+/// deviation below `1.0` means the inference layer is degraded.
+///
+/// This closes the feedback loop that was blind to the 300s timeout storm:
+/// the cybernetics loop now senses inference saturation and can act on it
+/// (throttle, escalate) instead of reporting `signal_count=0` while inference
+/// burns 96 concurrent slots.
+pub(crate) struct InferenceHealthSensor {
+    source: Arc<dyn InferenceHealthSource>,
+    /// Timeout count above which the sensor reports inference as unavailable.
+    /// Default 3 — a single timeout is transient, 3+ in the recent window is
+    /// a storm.
+    timeout_threshold: u64,
+}
+
+impl InferenceHealthSensor {
+    pub fn new(source: Arc<dyn InferenceHealthSource>, timeout_threshold: u64) -> Self {
+        Self {
+            source,
+            timeout_threshold,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for InferenceHealthSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let in_flight = self.source.in_flight().await;
+        let max_concurrency = self.source.max_concurrency().await;
+        let recent_timeouts = self.source.recent_timeout_count().await;
+
+        // No data yet — the port hasn't been wired or no calls have been made.
+        // Return None (not a signal with value 1.0, which would mask a broken
+        // sensor as "healthy" — the `.rules` `unwrap_or(0)` trap).
+        if max_concurrency == 0 {
+            return None;
+        }
+
+        // Compute availability ratio. 1.0 = fully available (no in-flight
+        // saturation, no recent timeouts). 0.0 = saturated or storming.
+        let saturation_ratio = in_flight as f64 / max_concurrency as f64;
+        let availability = if recent_timeouts >= self.timeout_threshold {
+            // Storm detected — report 0.0 regardless of saturation.
+            0.0
+        } else if saturation_ratio >= 1.0 {
+            // Saturated but not storming — report the headroom fraction.
+            // When in_flight == max_concurrency, availability is 0.0.
+            0.0
+        } else {
+            // Healthy — report 1.0 (no deviation).
+            1.0
+        };
+
+        // Only emit when availability is below the set-point (1.0).
+        // Healthy states produce no signal, matching the other sensors.
+        if availability >= 1.0 {
+            return None;
+        }
+
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::InferenceAvailable,
+            availability,
+            1.0, // set-point: fully available
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +584,112 @@ mod tests {
         assert!(
             sensor.sense().await.is_none(),
             "healthy variety (deficit=0 <= set_point=100) returns None"
+        );
+    }
+
+    // ── InferenceHealthSensor: closes the blind-feedback-loop gap ──────
+    //
+    // The cybernetics loop reported `signal_count=0` during the 300s
+    // timeout storm because its existing sensors read ledger/DB state, not
+    // inference dispatch state. The InferenceHealthSensor reads in-flight
+    // count and recent timeouts from the inference port, emitting
+    // SignalMetric::InferenceAvailable when the layer is saturated or
+    // storming. These tests pin the sensor's behavior so a regression
+    // (e.g. removing the saturation gate, or collapsing the timeout storm
+    // check to a silent None) is caught.
+
+    /// A mock `InferenceHealthSource` for testing the sensor in isolation.
+    struct MockInferenceHealth {
+        in_flight: usize,
+        max_concurrency: usize,
+        recent_timeouts: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceHealthSource for MockInferenceHealth {
+        async fn in_flight(&self) -> usize {
+            self.in_flight
+        }
+        async fn max_concurrency(&self) -> usize {
+            self.max_concurrency
+        }
+        async fn recent_timeout_count(&self) -> u64 {
+            self.recent_timeouts
+        }
+    }
+
+    /// Healthy inference (no in-flight, no timeouts) returns None — the
+    /// sensor stays silent when there's no deviation, matching the other
+    /// sensors.
+    #[tokio::test]
+    async fn inference_health_sensor_returns_none_when_healthy() {
+        let source = Arc::new(MockInferenceHealth {
+            in_flight: 0,
+            max_concurrency: 96,
+            recent_timeouts: 0,
+        });
+        let sensor = InferenceHealthSensor::new(source, 3);
+        assert!(
+            sensor.sense().await.is_none(),
+            "healthy inference (no in-flight, no timeouts) returns None"
+        );
+    }
+
+    /// Saturated inference (in_flight >= max_concurrency) emits a signal
+    /// with value 0.0 — the layer is fully saturated.
+    #[tokio::test]
+    async fn inference_health_sensor_emits_on_saturation() {
+        let source = Arc::new(MockInferenceHealth {
+            in_flight: 96,
+            max_concurrency: 96,
+            recent_timeouts: 0,
+        });
+        let sensor = InferenceHealthSensor::new(source, 3);
+        let signal = sensor
+            .sense()
+            .await
+            .expect("saturated inference must emit a signal");
+        assert_eq!(signal.metric, SignalMetric::InferenceAvailable);
+        assert_eq!(
+            signal.value, 0.0,
+            "saturated inference has availability 0.0"
+        );
+        assert_eq!(signal.set_point, 1.0);
+    }
+
+    /// Timeout storm (recent_timeouts >= threshold) emits a signal with
+    /// value 0.0 — the layer is storming even if not fully saturated.
+    #[tokio::test]
+    async fn inference_health_sensor_emits_on_timeout_storm() {
+        let source = Arc::new(MockInferenceHealth {
+            in_flight: 2,
+            max_concurrency: 96,
+            recent_timeouts: 5,
+        });
+        let sensor = InferenceHealthSensor::new(source, 3);
+        let signal = sensor
+            .sense()
+            .await
+            .expect("timeout storm must emit a signal");
+        assert_eq!(signal.metric, SignalMetric::InferenceAvailable);
+        assert_eq!(signal.value, 0.0, "timeout storm has availability 0.0");
+    }
+
+    /// `max_concurrency == 0` returns None — the port hasn't been wired
+    /// or no calls have been made. This is NOT a signal with value 1.0,
+    /// which would mask a broken sensor as "healthy" (the `.rules`
+    /// `unwrap_or(0)` trap).
+    #[tokio::test]
+    async fn inference_health_sensor_returns_none_when_max_concurrency_zero() {
+        let source = Arc::new(MockInferenceHealth {
+            in_flight: 0,
+            max_concurrency: 0,
+            recent_timeouts: 0,
+        });
+        let sensor = InferenceHealthSensor::new(source, 3);
+        assert!(
+            sensor.sense().await.is_none(),
+            "max_concurrency=0 means no data — return None, not a signal masking a broken sensor"
         );
     }
 }

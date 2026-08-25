@@ -28,7 +28,7 @@ use language_model_core::{
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolChoice, LanguageModelToolUseInput, MessageContent, Role, StopReason,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
 struct InferenceRequest {
@@ -176,9 +176,32 @@ impl StreamAccumulator {
 ///
 /// The adapter holds only channel senders (`Send + Sync`); the actual inference
 /// call happens on the GPUI side via a spawned task that owns the `AsyncApp`.
+///
+/// Health-tracking fields (`in_flight`, `max_concurrency`, `recent_timeouts`)
+/// are shared between the adapter and the receiver task via `Arc`. The
+/// `InferenceHealthSource` impl reads these so the cybernetics loop can sense
+/// inference saturation and timeout storms — closing the blind-feedback-loop
+/// gap that caused `signal_count=0` during the 300s timeout storm.
+///
+/// `Clone` is derived so the composition root can hold one clone for the
+/// `InferencePort` trait object and another for the `InferenceHealthSource`
+/// trait object — both share the same `Arc`-backed health counters.
+#[derive(Clone)]
 pub struct LanguageModelInferencePort {
     tx: tokio::sync::mpsc::UnboundedSender<InferenceRequest>,
     stream_tx: tokio::sync::mpsc::UnboundedSender<StreamInferenceRequest>,
+    /// Number of inference calls currently in-flight (acquired a semaphore
+    /// permit but not yet completed). Incremented on permit acquisition,
+    /// decremented on completion (success, error, or timeout).
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    /// Configured maximum concurrent inference calls. Read by the
+    /// `InferenceHealthSource` impl so the cybernetics loop can compute
+    /// saturation ratio.
+    max_concurrency: Arc<std::sync::atomic::AtomicUsize>,
+    /// Timestamps of recent timeouts, kept within a 5-minute window. Used by
+    /// the `InferenceHealthSource` impl to detect timeout storms. Bounded by
+    /// the window — old entries are evicted on each read.
+    recent_timeouts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
 }
 
 impl LanguageModelInferencePort {
@@ -192,9 +215,22 @@ impl LanguageModelInferencePort {
     /// request indefinitely without this — the cybernetics variety check
     /// flagged this as a critical gap (disturbance class D2: provider timeout,
     /// no response). `Duration::ZERO` disables the timeout (legacy behavior).
+    ///
+    /// `max_concurrency` bounds the number of in-flight inference calls the
+    /// receiver will dispatch concurrently. Without this, a caller firing on
+    /// a fixed cadence (e.g. the agent thread's retry loop, or a background
+    /// curator turn) accumulates unbounded detached tasks on the GPUI
+    /// foreground executor. Each task polls `stream_completion`, which needs
+    /// the foreground executor to make progress; with 100+ tasks polling, the
+    /// executor thrashes and no task makes progress, so they all time out.
+    /// This is the deep-module puzzle: the `InferencePort` interface promises
+    /// "call generate, get a result" but the implementation leaked unbounded
+    /// foreground tasks. The semaphore is the enforcement point for the
+    /// `kask.general.max_concurrency` setting (default 96).
     pub fn new(
         model: Arc<dyn LanguageModel>,
         inference_timeout: Duration,
+        max_concurrency: usize,
         cx: AsyncApp,
     ) -> (Self, gpui::Task<()>) {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
@@ -202,8 +238,20 @@ impl LanguageModelInferencePort {
             tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
         let model_for_task = model.clone();
         let timeout_for_task = inference_timeout;
+        let concurrency_semaphore = Arc::new(Semaphore::new(max_concurrency.max(1)));
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let max_concurrency_arc =
+            Arc::new(std::sync::atomic::AtomicUsize::new(max_concurrency.max(1)));
+        let recent_timeouts: Arc<std::sync::Mutex<Vec<std::time::Instant>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let task = cx.spawn(async move |cx| {
+        let task = cx.spawn({
+            // Clone the health counters into the receiver task scope so each
+            // spawned request task can increment/decrement in-flight and push
+            // timeout timestamps.
+            let in_flight = in_flight.clone();
+            let recent_timeouts = recent_timeouts.clone();
+            async move |cx| {
             // Process both channels on the GPUI foreground executor.
             // `stream_completion` needs `&AsyncApp` which is not `Send`,
             // so both must run here. Streaming requests are spawned as
@@ -211,28 +259,75 @@ impl LanguageModelInferencePort {
             // inference concurrently. Awaiting each inline serialized all
             // skill execution behind whichever request the loop picked up first,
             // defeating the parallel fan-out in `skill_bundle`.
+            //
+            // Each spawned task acquires a permit from `concurrency_semaphore`
+            // before dispatching to `stream_completion`. This bounds the
+            // in-flight count to `max_concurrency`, preventing the foreground
+            // executor congestion that caused the 300s timeout storm. The
+            // permit is held for the lifetime of the task (including stream
+            // drain) and released on drop.
             loop {
                 tokio::select! {
                     Some(req) = rx.recv() => {
                         let model = model_for_task.clone();
                         let timeout = timeout_for_task;
+                        let semaphore = concurrency_semaphore.clone();
+                        let in_flight = in_flight.clone();
+                        let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
-                            Self::handle_non_streaming(req, &model, timeout, cx).await;
+                            let _permit = match semaphore.acquire().await {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    tracing::warn!(
+                                        target: "hkask.inference",
+                                        "inference concurrency semaphore closed — request dropped"
+                                    );
+                                    return;
+                                }
+                            };
+                            in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            Self::handle_non_streaming(req, &model, timeout, cx, &recent_timeouts).await;
+                            in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         }).detach();
                     }
                     Some(req) = stream_rx.recv() => {
                         let model = model_for_task.clone();
                         let timeout = timeout_for_task;
+                        let semaphore = concurrency_semaphore.clone();
+                        let in_flight = in_flight.clone();
+                        let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
-                            Self::handle_streaming(req, &model, timeout, cx).await;
+                            let _permit = match semaphore.acquire().await {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    tracing::warn!(
+                                        target: "hkask.inference",
+                                        "inference concurrency semaphore closed — stream request dropped"
+                                    );
+                                    return;
+                                }
+                            };
+                            in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            Self::handle_streaming(req, &model, timeout, cx, &recent_timeouts).await;
+                            in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         }).detach();
                     }
                     else => break,
                 }
             }
+            }
         });
 
-        (Self { tx, stream_tx }, task)
+        (
+            Self {
+                tx,
+                stream_tx,
+                in_flight,
+                max_concurrency: max_concurrency_arc,
+                recent_timeouts,
+            },
+            task,
+        )
     }
 
     /// Resolve a model, using the override if provided, else the default.
@@ -279,6 +374,7 @@ impl LanguageModelInferencePort {
         model_for_task: &Arc<dyn LanguageModel>,
         inference_timeout: Duration,
         cx: &AsyncApp,
+        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
@@ -315,6 +411,10 @@ impl LanguageModelInferencePort {
                             timeout_secs = inference_timeout.as_secs(),
                             "Inference stream establishment timed out — returning Connection error"
                         );
+                        recent_timeouts
+                            .lock()
+                            .unwrap()
+                            .push(std::time::Instant::now());
                         Err(InferenceError::Connection(format!(
                             "inference timed out after {}s",
                             inference_timeout.as_secs()
@@ -354,6 +454,7 @@ impl LanguageModelInferencePort {
         model_for_task: &Arc<dyn LanguageModel>,
         inference_timeout: Duration,
         cx: &AsyncApp,
+        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
@@ -384,6 +485,7 @@ impl LanguageModelInferencePort {
                             timeout_secs = inference_timeout.as_secs(),
                             "Streaming inference stream establishment timed out — returning Connection error"
                         );
+                        recent_timeouts.lock().unwrap().push(std::time::Instant::now());
                         Err(InferenceError::Connection(format!(
                             "inference timed out after {}s",
                             inference_timeout.as_secs()
@@ -838,6 +940,32 @@ impl InferencePort for LanguageModelInferencePort {
     }
 }
 
+/// Window for recent timeout tracking — timeouts older than this are evicted
+/// on each read. 5 minutes matches the cybernetics loop's tick cadence (10s)
+/// × 30 ticks, so the sensor sees a storm of ~30 timeouts before evicting.
+const RECENT_TIMEOUT_WINDOW: Duration = Duration::from_secs(300);
+
+#[async_trait::async_trait]
+impl hkask_regulation::InferenceHealthSource for LanguageModelInferencePort {
+    async fn in_flight(&self) -> usize {
+        self.in_flight.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn max_concurrency(&self) -> usize {
+        self.max_concurrency
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn recent_timeout_count(&self) -> u64 {
+        let now = std::time::Instant::now();
+        let mut timeouts = self.recent_timeouts.lock().unwrap();
+        // Evict timeouts older than the window. This keeps the Vec bounded —
+        // a long-running storm produces at most (rate × window) entries.
+        timeouts.retain(|t| now.duration_since(*t) < RECENT_TIMEOUT_WINDOW);
+        timeouts.len() as u64
+    }
+}
+
 // ── NoModelInferencePort ────────────────────────────────────────────────────
 //
 // An `InferencePort` that returns a clear "no default model configured" error
@@ -891,6 +1019,10 @@ impl InferencePort for NoModelInferencePort {
 #[cfg(test)]
 mod tests {
     use hkask_types::ChatMessage;
+    use hkask_types::InferencePort;
+    use language_model::fake_provider::FakeLanguageModel;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     // ── build_request_with_images: image attachment targeting ───────────
     //
@@ -941,5 +1073,83 @@ mod tests {
             .iter()
             .rposition(|m| m.role.as_str() != "system" && m.role.as_str() != "assistant");
         assert_eq!(old_predicate_idx, Some(3)); // would match "tool" — the bug
+    }
+
+    // ── concurrency semaphore bounds in-flight inference calls ─────────
+    //
+    // Regression test for the 300s timeout storm. Without the semaphore,
+    // `LanguageModelInferencePort::new` spawned a detached `cx.spawn` per
+    // request with no bound. A caller firing on a fixed cadence accumulated
+    // 100+ in-flight tasks on the GPUI foreground executor, which thrashed
+    // and timed out. The `max_concurrency` setting (default 96) was dead —
+    // read into the struct but never consumed.
+    //
+    // This test fires 5 requests with `max_concurrency = 2` against a
+    // `FakeLanguageModel` that never completes streams on its own. The
+    // semaphore must block the 3rd request from reaching `stream_completion`,
+    // so `completion_count()` (open stream senders) must never exceed 2.
+    #[gpui::test]
+    async fn concurrency_semaphore_bounds_in_flight_calls(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2, // max_concurrency
+            cx.to_async(),
+        );
+
+        // Fire 5 non-streaming requests. Each returns a future that resolves
+        // when the reply arrives — but the FakeLanguageModel never completes
+        // streams, so these futures stay pending. The semaphore should block
+        // requests 3-5 from reaching `stream_completion`.
+        //
+        // We join all 5 futures in a single spawned task so they are polled
+        // concurrently by the foreground executor. Without spawning, the
+        // returned `BoxFuture`s are never polled and the requests never reach
+        // the receiver task.
+        let _all_requests = cx.spawn(async move |_cx| {
+            let futs: Vec<_> = (0..5)
+                .map(|_| {
+                    port.generate(
+                        "test",
+                        &hkask_types::template::LLMParameters::default(),
+                        None,
+                    )
+                })
+                .collect();
+            // Drive all 5 concurrently. They will all stay pending because
+            // the FakeLanguageModel never completes streams.
+            futures_util::future::join_all(futs).await
+        });
+
+        // Let the foreground executor drain the spawned tasks. The first 2
+        // acquire permits and reach `stream_completion`; the remaining 3 block
+        // on `semaphore.acquire().await`.
+        cx.run_until_parked();
+
+        // Only 2 streams should be open — the semaphore blocked the rest.
+        assert_eq!(
+            fake.completion_count(),
+            2,
+            "max_concurrency=2 must bound in-flight stream_completion calls to 2; \
+             got {} — the semaphore is not enforcing the limit",
+            fake.completion_count()
+        );
+
+        // Complete one stream — the semaphore releases a permit, allowing
+        // the 3rd request through.
+        let first_request = fake.pending_completions().into_iter().next().unwrap();
+        fake.end_completion_stream(&first_request);
+        cx.run_until_parked();
+
+        assert_eq!(
+            fake.completion_count(),
+            2,
+            "after completing one stream, the next queued request should acquire \
+             the released permit — expected 2 open streams, got {}",
+            fake.completion_count()
+        );
     }
 }
