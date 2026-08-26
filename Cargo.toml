@@ -310,7 +310,6 @@ members = [
     "kask/mcp-servers/hkask-mcp-portfolio",
     "kask/mcp-servers/hkask-mcp-corpus",
     "kask/mcp-servers/hkask-mcp-swarm",
-    "kask/mcp-servers/hkask-mcp-media",
 ]
 default-members = ["crates/zed"]
 
@@ -332,6 +331,7 @@ acp_thread = { path = "crates/acp_thread" }
 acp_tools = { path = "crates/acp_tools" }
 action_log = { path = "crates/action_log" }
 activity_indicator = { path = "crates/activity_indicator" }
+ab_glyph = "0.2"
 agent = { path = "crates/agent" }
 agent_servers = { path = "crates/agent_servers" }
 agent_settings = { path = "crates/agent_settings" }

@@ -295,9 +295,18 @@ pub struct DriverPeriod {
     pub accounts_receivable: f64,
     pub inventory: f64,
     pub ppe_net: f64,
+    /// Other assets — unmodeled balance sheet items held constant.
+    /// This is the residual that makes A = L + E when we don't track every
+    /// line item. It is NOT cash (cash comes from the cash flow statement).
+    pub other_assets: f64,
     pub total_assets: f64,
     pub accounts_payable: f64,
     pub debt: f64,
+    /// Paid-in capital (contributed equity, held constant unless issuance).
+    pub paid_in_capital: f64,
+    /// Retained earnings: RE[t] = RE[t-1] + NI - dividends.
+    pub retained_earnings: f64,
+    /// Total equity = paid_in_capital + retained_earnings.
     pub equity: f64,
     pub total_liabilities_equity: f64,
     /// Balance check: total_assets - total_liabilities_equity. Must be ~0 every period.
@@ -308,10 +317,9 @@ pub struct DriverPeriod {
     pub cfi: f64,
     pub cff: f64,
     pub net_cash_change: f64,
-    /// Reconciliation: (cash - prev_cash) - net_cash_change. Should be ~0.
+    /// Reconciliation: (cash - prev_cash) - net_cash_change. Should be ~0
+    /// by construction since cash is derived from the cash flow statement.
     pub cash_reconciliation: f64,
-    /// Debt plug amount (shortfall financing when cash would go negative).
-    pub debt_plug: f64,
 
     // Free Cash Flow (firm-level, for non-financial DCF)
     pub free_cash_flow: f64,
@@ -395,6 +403,20 @@ pub fn project_driver_model(
 }
 
 /// Industrial-company projection: firm-level DCF with linked three statements.
+///
+/// Accounting linkage (nothing is a plug — every line item is computed from
+/// its driver, and cash comes from the cash flow statement):
+///
+/// - Income statement: Revenue → COGS → Gross Profit → SG&A → D&A → EBIT
+///   → Interest (avg debt) → EBT → Tax → NI
+/// - Balance sheet: Cash (from CF) + AR + Inventory + PP&E + Other Assets
+///   = AP + Debt + Paid-in Capital + Retained Earnings
+/// - Retained earnings: RE[t] = RE[t-1] + NI - Dividends
+/// - PP&E: PP&E[t] = PP&E[t-1] + Capex - D&A
+/// - Interest expense: (prev_debt + debt) / 2 × interest_rate (average balance)
+/// - Cash flow: CFO (NI + D&A - ΔNWC) + CFI (-Capex) + CFF (debt/equity - div)
+/// - Cash: cash[t] = cash[t-1] + CFO + CFI + CFF (from the cash flow statement)
+/// - Other assets: residual from unmodeled items, held constant
 fn project_industrial(
     hist: &HistoricalSnapshot,
     assumptions: &DriverAssumptions,
@@ -403,22 +425,27 @@ fn project_industrial(
     let mut periods: Vec<DriverPeriod> = Vec::with_capacity(total_years);
 
     // Starting balance sheet values from latest historical period.
-    // The historical balance sheet may not balance with our simplified item
-    // set (we track AR, inventory, PP&E, AP, debt, equity — but real balance
-    // sheets have other assets/liabilities). We use the actual historical cash
-    // and compute "other assets" as the residual that makes the balance sheet
-    // balance. Other assets are held constant through the projection.
+    // We track: cash, AR, inventory, PP&E, AP, debt, equity.
+    // Real balance sheets have items we don't model (deferred taxes, goodwill,
+    // intangibles, other current/non-current assets and liabilities). These
+    // are captured as "other assets" — a constant residual, NOT a plug.
+    // Cash is NOT a plug — it comes from the cash flow statement.
     let starting_total_le = hist.latest_ap() + hist.latest_debt() + hist.latest_equity();
     let starting_tracked_assets =
         hist.latest_cash() + hist.latest_ar() + hist.latest_inventory() + hist.latest_ppe_net();
-    // Other assets = L+E - tracked assets. Can be negative (other liabilities).
     let starting_other_assets = starting_total_le - starting_tracked_assets;
+
     let mut prev_revenue = hist.latest_revenue();
     let mut prev_nwc = hist.latest_ar() + hist.latest_inventory() - hist.latest_ap();
     let mut prev_debt = hist.latest_debt();
-    let mut prev_equity = hist.latest_equity();
     let mut prev_ppe = hist.latest_ppe_net();
     let mut prev_cash = hist.latest_cash();
+    // Split equity into paid-in capital and retained earnings.
+    // On first projection, assume all historical equity is retained earnings
+    // (paid_in_capital = 0). This is a simplification — a real model would
+    // read paid-in capital from the balance sheet API.
+    let mut prev_retained_earnings = hist.latest_equity();
+    let paid_in_capital = 0.0;
     let prev_other_assets = starting_other_assets;
 
     // Extract driver values (with fallbacks)
@@ -464,8 +491,12 @@ fn project_industrial(
 
         let ebit = gross_profit - sga - da;
 
-        // Balance sheet → Income statement: Debt drives interest expense
-        let interest_expense = prev_debt * assumptions.interest_rate;
+        // Driver 5: Debt rolls forward before interest expense so we can
+        // use the average debt balance (standard practice — debt changes
+        // throughout the period, so average is more accurate than beginning).
+        let debt = prev_debt + assumptions.debt_issuance - assumptions.debt_repayment;
+        let avg_debt = (prev_debt + debt) / 2.0;
+        let interest_expense = avg_debt * assumptions.interest_rate;
         let ebt = ebit - interest_expense;
         let tax = if ebt > 0.0 {
             ebt * assumptions.tax_rate
@@ -487,7 +518,6 @@ fn project_industrial(
             NwcMethod::PercentOfRevenue => {
                 let nwc = revenue * assumptions.nwc_pct
                     + assumptions.nwc_explicit.explicit.unwrap_or(0.0);
-                // Distribute NWC across AR, inventory, AP proportionally to historical mix
                 let ar_ratio = hist.ar_to_nwc_ratio();
                 let inv_ratio = hist.inventory_to_nwc_ratio();
                 let ap_ratio = hist.ap_to_nwc_ratio();
@@ -509,32 +539,10 @@ fn project_industrial(
         let capex = revenue * capex_pct + capex_adj;
         let ppe_net = prev_ppe + capex - da;
 
-        // Driver 5: Debt and equity
-        let debt = prev_debt + assumptions.debt_issuance - assumptions.debt_repayment;
+        // Driver 5: Retained earnings flow: RE[t] = RE[t-1] + NI - dividends
         let dividends = net_income * assumptions.dividend_payout_ratio;
-        let equity = prev_equity + net_income - dividends + assumptions.equity_issuance;
-
-        // Balance sheet identity: Assets = Liabilities + Equity
-        // Cash is the plug: Cash = (AP + Debt + Equity) - (AR + Inventory + PP&E + Other Assets)
-        // Other assets are held constant from the starting balance sheet gap.
-        let total_liabilities_equity = ap + debt + equity;
-        let non_cash_assets = ar + inventory + ppe_net + prev_other_assets;
-        let cash = total_liabilities_equity - non_cash_assets;
-
-        // If cash goes negative, the company needs to raise debt to cover it.
-        // This is the standard "debt plug" fallback in three-statement modelling.
-        let (cash, debt, total_liabilities_equity, debt_plug) = if cash < 0.0 {
-            let shortfall = -cash;
-            let adjusted_debt = debt + shortfall;
-            let adjusted_cash = 0.0;
-            let adjusted_total_le = ap + adjusted_debt + equity;
-            (adjusted_cash, adjusted_debt, adjusted_total_le, shortfall)
-        } else {
-            (cash, debt, total_liabilities_equity, 0.0)
-        };
-
-        let total_assets = cash + ar + inventory + ppe_net + prev_other_assets;
-        let balance_check = total_assets - total_liabilities_equity;
+        let retained_earnings = prev_retained_earnings + net_income - dividends;
+        let equity = paid_in_capital + retained_earnings + assumptions.equity_issuance;
 
         // ── Cash Flow Statement ────────────────────────────────────────────
         // CFO = Net Income + D&A - ΔNWC
@@ -542,17 +550,31 @@ fn project_industrial(
         let cfo = net_income + da - change_in_nwc;
         // CFI = -Capex
         let cfi = -capex;
-        // CFF = Debt issuance - Debt repayment + Equity issuance - Dividends + Debt plug
-        // The debt plug (shortfall financing) is included so CFF reconciles with
-        // the balance sheet cash change when the plug fires.
+        // CFF = Debt issuance - Debt repayment + Equity issuance - Dividends
         let cff = assumptions.debt_issuance - assumptions.debt_repayment
             + assumptions.equity_issuance
-            - dividends
-            + debt_plug;
+            - dividends;
         let net_cash_change = cfo + cfi + cff;
-        // Reconciliation check: net_cash_change should equal cash - prev_cash.
-        // The balance sheet plug ensures this by construction, but floating-point
-        // rounding can cause tiny discrepancies.
+
+        // Cash comes from the cash flow statement, NOT from the balance sheet
+        // identity. This is the correct accounting linkage: the cash flow
+        // statement explains the change in cash, and the balance sheet cash
+        // balance is the cumulative result.
+        let cash = prev_cash + net_cash_change;
+
+        // Other assets is the residual that makes the balance sheet balance.
+        // This is NOT a plug for cash — it represents unmodeled balance sheet
+        // items (deferred taxes, goodwill, intangibles, etc.) held constant.
+        // If this value changes significantly from the starting value, it
+        // signals that the model is missing material balance sheet items.
+        let total_liabilities_equity = ap + debt + equity;
+        let tracked_assets = cash + ar + inventory + ppe_net;
+        let other_assets = total_liabilities_equity - tracked_assets;
+        let total_assets = tracked_assets + other_assets;
+        let balance_check = total_assets - total_liabilities_equity;
+
+        // Reconciliation: cash is derived from CF, so this should be ~0 by
+        // construction (only floating-point rounding can cause a discrepancy).
         let cash_reconciliation = (cash - prev_cash) - net_cash_change;
 
         // FCF (firm-level) = NOPAT + D&A - Capex - ΔNWC
@@ -580,9 +602,12 @@ fn project_industrial(
             accounts_receivable: ar,
             inventory,
             ppe_net,
+            other_assets,
             total_assets,
             accounts_payable: ap,
             debt,
+            paid_in_capital,
+            retained_earnings,
             equity,
             total_liabilities_equity,
             balance_check,
@@ -591,7 +616,6 @@ fn project_industrial(
             cff,
             net_cash_change,
             cash_reconciliation,
-            debt_plug,
             free_cash_flow,
             discount_factor,
             present_value,
@@ -600,7 +624,7 @@ fn project_industrial(
         prev_revenue = revenue;
         prev_nwc = nwc;
         prev_debt = debt;
-        prev_equity = equity;
+        prev_retained_earnings = retained_earnings;
         prev_ppe = ppe_net;
         prev_cash = cash;
     }

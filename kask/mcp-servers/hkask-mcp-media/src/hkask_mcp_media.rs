@@ -10,7 +10,6 @@
 //! - Voice: voice_design, generate_speech
 //! - Audio: transcribe, transcribe_bundle, audio_capture, record_and_transcribe
 
-mod budget;
 mod error;
 mod gallery;
 pub mod media_block;
@@ -18,8 +17,6 @@ pub mod omc;
 mod templates;
 pub mod video;
 
-pub use budget::{MediaBudget, UnitCosts};
-use budget::{build_media_budget, charge_budget_gate};
 pub use error::{
     MediaError, classify_embedding_error, classify_inference_error, map_gallery_store_error,
     map_image_open_error, map_media_error,
@@ -116,10 +113,6 @@ hkask_mcp_server::mcp_server!(
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
         pub ffmpeg: FfmpegRunner,
-        /// Resolved rJoule budget configuration for inference cost (1 rJoule = $1 USD).
-        /// `tracker = None` = no budget enforcement (`HKASK_MEDIA_RJOULE_CAP` unset/0).
-        /// Resolved once at startup so the gate is deterministic.
-        pub budget: MediaBudget,
     }
 );
 
@@ -223,30 +216,6 @@ mod levenshtein_tests {
 }
 
 impl MediaServer {
-    // ── rJoule budget ───────────────────────────────────────────────────────
-    //
-    // The media server pre-charges rJoule (inference USD cost) before each
-    // billable generation call and rejects the request when the remaining
-    // budget is insufficient. We deliberately avoid
-    // `BudgetTracker::check_exhausted` because it is redundant with our own
-    // pre-charge gate; instead the rJoule gate is checked directly via
-    // `remaining_rjoule()`.
-
-    /// Pre-charge the rJoule budget for an estimated call and enforce the hard
-    /// limit. Returns `Ok(())` when no budget is configured (enforcement
-    /// disabled) or when the remaining budget covers the estimate; returns an
-    /// `McpToolError` (propagated to the UI) when the budget is exhausted.
-    ///
-    /// Thin delegate to [`charge_budget_gate`] — the gate logic is a free
-    /// function so it can be tested without constructing a full `MediaServer`.
-    async fn charge_budget(
-        &self,
-        tool: &str,
-        params: &hkask_types::MediaGenerateParams,
-    ) -> Result<(), McpToolError> {
-        charge_budget_gate(&self.budget, tool, params).await
-    }
-
     /// Lock the gallery and extract essential state. Drops the lock before
     /// returning, so the result is safe to hold across .await points.
     fn access_gallery(&self) -> Result<GalleryAccess, MediaError> {
@@ -1627,21 +1596,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-media",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
-            let media_budget = build_media_budget().map_err(|e| {
-                hkask_mcp_server::McpError::UnexpectedResponse {
-                    context: "media budget init".into(),
-                    detail: e.to_string(),
-                }
-            })?;
             Ok(MediaServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
                 vision_port.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),
                 templates::create_env(),
                 FfmpegRunner::detect(),
-                media_budget,
             ))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(

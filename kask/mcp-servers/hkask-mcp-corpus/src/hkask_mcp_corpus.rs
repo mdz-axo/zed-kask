@@ -621,6 +621,7 @@ impl CorpusServer {
             + Self::storage_router()
             + Self::corpus_router()
             + Self::tagging_router()
+            + Self::compose_router()
             + Self::gather_router()
     }
 

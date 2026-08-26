@@ -13,7 +13,17 @@ use serde_json::json;
 
 use crate::helpers::map_service_error;
 use crate::inference_svc::InferenceContext;
-use crate::{McpToolError, Parameters, execute_tool_semantic, tool};
+use crate::{Parameters, execute_tool_semantic, tool, tool_router};
+
+/// Resolve the embedding model from HkaskSettings.
+fn embedding_model() -> String {
+    hkask_services_core::settings::HkaskSettings::load().embedding_model()
+}
+
+/// Resolve the generation model from InferenceConfig.
+fn generation_model() -> String {
+    hkask_inference::InferenceConfig::from_env().default_model
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ComposeRequest {
@@ -53,7 +63,7 @@ impl crate::CorpusServer {
             "corpus_compose",
             Self::ontology_anchor("corpus_compose"),
             async {
-                let gen_model = crate::embedding_model();
+                let gen_model = embedding_model();
                 let config = crate::compose::CognitionConfig {
                     author: params.author.clone(),
                     jinja2_template: None,
@@ -122,7 +132,7 @@ impl crate::CorpusServer {
                     params.content
                 );
 
-                let gen_model = crate::embedding_model();
+                let gen_model = embedding_model();
                 let config = crate::compose::CognitionConfig {
                     author: params.author.clone(),
                     jinja2_template: None,

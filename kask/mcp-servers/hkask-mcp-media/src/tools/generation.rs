@@ -35,7 +35,6 @@ impl MediaServer {
                 {
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
-                self.charge_budget("generate_image", &media_params).await?;
                 let result = self
                     .vision_port
                     .media_generate("generate_image", &media_params)
@@ -93,7 +92,6 @@ impl MediaServer {
                 {
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
-                self.charge_budget("image_to_image", &media_params).await?;
                 let result = self
                     .vision_port
                     .media_generate("image_to_image", &media_params)
@@ -128,7 +126,6 @@ impl MediaServer {
                     scale,
                     ..Default::default()
                 };
-                self.charge_budget("upscale", &media_params).await?;
                 let result = self
                     .vision_port
                     .media_generate("upscale", &media_params)
@@ -176,7 +173,6 @@ impl MediaServer {
                 {
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
-                self.charge_budget("generate_video", &media_params).await?;
                 let result = self
                     .vision_port
                     .media_generate("generate_video", &media_params)

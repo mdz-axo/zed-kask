@@ -88,7 +88,6 @@ impl MediaServer {
                     ..Default::default()
                 };
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-                self.charge_budget("generate_speech", &media_params).await?;
                 self.vision_port
                     .media_generate("generate_speech", &media_params)
                     .await
@@ -131,7 +130,6 @@ impl MediaServer {
                     language: language.clone(),
                     ..Default::default()
                 };
-                self.charge_budget("transcribe", &media_params).await?;
                 self.vision_port
                     .media_generate("transcribe", &media_params)
                     .await
@@ -163,7 +161,6 @@ impl MediaServer {
                     language: language.clone(),
                     ..Default::default()
                 };
-                self.charge_budget("transcribe", &media_params).await?;
                 let raw = self
                     .vision_port
                     .media_generate("transcribe", &media_params)
@@ -324,13 +321,10 @@ impl MediaServer {
                     language: language.clone(),
                     ..Default::default()
                 };
-                match self.charge_budget("transcribe", &media_params).await {
-                    Ok(()) => self.vision_port
-                        .media_generate("transcribe", &media_params)
-                        .await
-                        .map_err(|e| classify_inference_error("Transcription failed", e)),
-                    Err(e) => Err(e),
-                }
+                self.vision_port
+                    .media_generate("transcribe", &media_params)
+                    .await
+                    .map_err(|e| classify_inference_error("Transcription failed", e))
             };
 
             match transcribe_result {

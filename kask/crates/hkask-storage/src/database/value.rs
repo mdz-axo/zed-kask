@@ -235,6 +235,15 @@ impl DbRow {
     pub fn get_int(&self, idx: usize) -> Result<i64, DbError> {
         self.get(idx)?.as_int()
     }
+
+    /// Extract an f64 from column `idx`.
+    ///
+    /// expect: "The system provides positional and named access to database query results"
+    /// pre:  idx is within bounds; column value is Real or Integer
+    /// post: returns Ok(f64) if valid, Err(DbError) on bounds or type error
+    pub fn get_real(&self, idx: usize) -> Result<f64, DbError> {
+        self.get(idx)?.as_real()
+    }
     /// Extract a bool from column `idx`.
     ///
     /// expect: "The system provides positional and named access to database query results"
