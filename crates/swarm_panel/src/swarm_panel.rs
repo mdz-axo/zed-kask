@@ -3424,7 +3424,6 @@ impl SerializableItem for SwarmPanel {
         _workspace: &mut Workspace,
         _item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         // Stateless item — nothing to persist beyond the fact that it's open.

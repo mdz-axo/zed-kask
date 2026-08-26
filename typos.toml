@@ -142,6 +142,8 @@ extend-ignore-re = [
     "elete",
     # Upstream test fixture identifier.
     "GHIzJ",
+    # Intentionally non-matching query in project search tests
+    "NOTHINGmATCHEStHIS",
 ]
 
 [default.extend-words]
