@@ -1402,11 +1402,7 @@ fn main() {
                 // mirror it into zed's CredentialsProvider. Without this, the
                 // swarm server has no passphrase and local knowledge tools degrade
                 // (they require >=8 chars). `provision_swarm_memory_passphrase`
-                // generates a random English word on first run (matching the DB
-                // passphrase pattern) and mirrors it into
-                // `build_mcp_server_env` warned on every launch. Provisioning
-                // generates a random English word on first run (matching the DB
-                // passphrase pattern) and mirrors it into
+                // uses the default "allostery" on first run and mirrors it into
                 // `kask://credentials/hkask_swarm_memory_passphrase` so the
                 // primary `ctx.credentials` tier works at launch. Both must
                 // `.await` before governed MCP server launch below.

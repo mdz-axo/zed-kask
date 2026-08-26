@@ -6,7 +6,7 @@ OS keychain integration and AES-256-GCM encryption for hKask.
 
 - **OS keychain** — stores secrets in the OS-native keystore (Linux: DBus Secret Service)
 - **AES-256-GCM** — authenticated encryption for passphrase-protected secrets
-- **Auto-provisioned passphrase** — generates a random English word on first run (stored in keychain; user can change it)
+- **Default passphrase** — uses `"allostery"` on first run (stored in keychain; user can change it via settings UI or env var)
 
 ## Configuration
 

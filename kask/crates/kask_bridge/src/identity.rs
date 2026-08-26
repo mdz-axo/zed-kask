@@ -18,8 +18,8 @@
 //! `provision_agent` handles first-run setup as a set of lookups and
 //! directory creation — no interactive onboarding:
 //! 1. Create the agent directory structure (`ensure_agent_dirs`)
-//! 2. Ensure a DB passphrase exists in the keychain (auto-generate a random
-//!    English word if none exists — the user can change it later)
+//! 2. Ensure a DB passphrase exists in the keychain (default `"allostery"`
+//!    on first run — the user can change it later)
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
 use std::sync::Arc;
@@ -78,9 +78,9 @@ pub struct ProvisionedAgent {
 ///
 /// 1. Derive the agent name from the username (sanitize for filesystem).
 /// 2. Create the agent directory structure on disk (idempotent).
-/// 3. Resolve the DB passphrase from the keychain; if none exists, generate
-///    a random English word (8+ letters) and store it. The user can change
-///    it later via the keychain or `HKASK_DB_PASSPHRASE` env var.
+/// 3. Resolve the DB passphrase from the keychain; if none exists, use the
+///    default `"allostery"` and store it. The user can change it later via
+///    the keychain or `HKASK_DB_PASSPHRASE` env var.
 /// 4. Compute the absolute memory DB path under the hKask data directory.
 ///
 /// Returns the path, passphrase, and WebID needed to construct a
@@ -114,7 +114,7 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
     // 2. Ensure a DB passphrase exists in the keychain.
     //    If the env var is set, use that (user override).
     //    If the keychain has one, use that (returning user).
-    //    Otherwise, generate a random English word and store it.
+    //    Otherwise, use the default "allostery" and store it.
     let passphrase = if let Ok(p) = std::env::var("HKASK_DB_PASSPHRASE") {
         if !p.trim().is_empty() {
             p
@@ -252,7 +252,7 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
 /// Resolution order:
 /// 1. `HKASK_SWARM_MEMORY_PASSPHRASE` env var (user override).
 /// 2. Existing keychain entry `hkask-swarm-memory-passphrase` (returning user).
-/// 3. Generate a random English word and store it (first run).
+/// 3. Use the default `"allostery"` and store it (first run).
 ///
 /// Returns the resolved passphrase so the caller can mirror it into zed's
 /// `CredentialsProvider` (see [`mirror_provisioned_swarm_memory_passphrase`]).

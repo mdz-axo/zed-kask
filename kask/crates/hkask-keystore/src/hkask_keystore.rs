@@ -31,4 +31,4 @@ pub use keychain::{
     Keychain, KeychainError, resolve, resolve_db_passphrase_string,
     resolve_swarm_memory_passphrase_string,
 };
-pub use passphrase::generate_random_passphrase;
+pub use passphrase::DEFAULT_PASSPHRASE;

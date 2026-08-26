@@ -912,7 +912,40 @@ impl OpenAiEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                // Some models emit tool_call deltas during streaming but
+                // finish with "stop" instead of "tool_calls". If we have
+                // accumulated tool calls, drain them before emitting the stop
+                // — otherwise the tool call is silently lost and only the
+                // preamble text appears in the chat.
+                if !self.tool_calls_by_index.is_empty() {
+                    log::warn!(
+                        "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
+                        self.tool_calls_by_index.len()
+                    );
+                    events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                        match parse_tool_arguments(&tool_call.arguments) {
+                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_call.id.clone().into(),
+                                    name: tool_call.name.as_str().into(),
+                                    is_input_complete: true,
+                                    input: LanguageModelToolUseInput::Json(input),
+                                    raw_input: tool_call.arguments.clone(),
+                                    thought_signature: tool_call.thought_signature.clone(),
+                                },
+                            )),
+                            Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: tool_call.id.into(),
+                                tool_name: tool_call.name.into(),
+                                raw_input: tool_call.arguments.clone().into(),
+                                json_parse_error: error.to_string(),
+                            }),
+                        }
+                    }));
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                } else {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {

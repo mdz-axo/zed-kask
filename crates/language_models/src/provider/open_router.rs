@@ -874,7 +874,40 @@ impl OpenRouterEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                // Some models (e.g., GLM 5.2 via OpenRouter) emit tool_call
+                // deltas during streaming but finish with "stop" instead of
+                // "tool_calls". If we have accumulated tool calls, drain them
+                // before emitting the stop — otherwise the tool call is
+                // silently lost and only the preamble text appears in the chat.
+                if !self.tool_calls_by_index.is_empty() {
+                    log::warn!(
+                        "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
+                        self.tool_calls_by_index.len()
+                    );
+                    events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                        match parse_tool_arguments(&tool_call.arguments) {
+                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_call.id.clone().into(),
+                                    name: tool_call.name.as_str().into(),
+                                    is_input_complete: true,
+                                    input: language_model::LanguageModelToolUseInput::Json(input),
+                                    raw_input: tool_call.arguments.clone(),
+                                    thought_signature: tool_call.thought_signature.clone(),
+                                },
+                            )),
+                            Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: tool_call.id.clone().into(),
+                                tool_name: tool_call.name.as_str().into(),
+                                raw_input: tool_call.arguments.clone().into(),
+                                json_parse_error: error.to_string(),
+                            }),
+                        }
+                    }));
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                } else {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
@@ -1090,6 +1123,160 @@ mod tests {
             thought_signature_value.as_deref(),
             Some("sha256:test_signature_xyz789")
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_calls_drained_on_finish_reason_stop() {
+        // Some models (e.g., GLM 5.2 via OpenRouter) emit tool_call deltas
+        // during streaming but finish with "stop" instead of "tool_calls".
+        // Without the drain fix, the accumulated tool call is silently lost
+        // and only the preamble text appears in the chat — the tool never
+        // runs. This test pins the fix: tool calls accumulated during
+        // streaming are drained and emitted even when finish_reason is "stop".
+        let mut mapper = OpenRouterEventMapper::new();
+
+        // Preamble text
+        let text_events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_1".into()),
+            created: 1234567890,
+            model: "z-ai/glm-5.2".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: Some("Let me test with both passphrases:".to_string()),
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_details: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        });
+        assert_eq!(text_events.len(), 1);
+        assert!(matches!(
+            &text_events[0],
+            Ok(LanguageModelCompletionEvent::Text(t)) if t == "Let me test with both passphrases:"
+        ));
+
+        // Tool call delta — accumulate id, name, and arguments
+        let tool_events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_1".into()),
+            created: 1234567890,
+            model: "z-ai/glm-5.2".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: None,
+                    tool_calls: Some(vec![ToolCallChunk {
+                        index: 0,
+                        id: Some("call_abc123".to_string()),
+                        function: Some(FunctionChunk {
+                            name: Some("corpus_query".to_string()),
+                            arguments: Some(r#"{"query":"investment philosophy","top_k":2}"#.to_string()),
+                            thought_signature: None,
+                        }),
+                    }]),
+                    reasoning_details: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        });
+        // The streaming ToolUse event (is_input_complete=false) should be
+        // emitted because id and name are both non-empty and arguments parse.
+        assert!(
+            tool_events.iter().any(|e| matches!(e, Ok(LanguageModelCompletionEvent::ToolUse(_)))),
+            "streaming ToolUse event should be emitted when id+name are present and args parse"
+        );
+
+        // Stream ends with "stop" — NOT "tool_calls".
+        // Before the fix: tool_calls_by_index was silently dropped, only
+        // Stop(EndTurn) was emitted, and the tool call was lost.
+        // After the fix: accumulated tool calls are drained and emitted.
+        let stop_events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_1".into()),
+            created: 1234567890,
+            model: "z-ai/glm-5.2".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_details: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        });
+
+        // Should contain a ToolUse event (is_input_complete=true) and
+        // Stop(ToolUse), NOT Stop(EndTurn).
+        let has_tool_use = stop_events.iter().any(|e| {
+            matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::ToolUse(t)) if t.is_input_complete
+            )
+        });
+        let has_tool_use_stop = stop_events.iter().any(|e| {
+            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+        });
+        let has_end_turn_stop = stop_events.iter().any(|e| {
+            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)))
+        });
+
+        assert!(
+            has_tool_use,
+            "finish_reason=\"stop\" with accumulated tool calls should emit a ToolUse event"
+        );
+        assert!(
+            has_tool_use_stop,
+            "finish_reason=\"stop\" with accumulated tool calls should emit Stop(ToolUse)"
+        );
+        assert!(
+            !has_end_turn_stop,
+            "finish_reason=\"stop\" with accumulated tool calls should NOT emit Stop(EndTurn)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_tool_calls_drained_on_finish_reason_stop_when_empty() {
+        // When no tool calls were accumulated, finish_reason=\"stop\" should
+        // still emit Stop(EndTurn) as before — the drain only fires when
+        // tool_calls_by_index is non-empty.
+        let mut mapper = OpenRouterEventMapper::new();
+
+        let stop_events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_1".into()),
+            created: 1234567890,
+            model: "z-ai/glm-5.2".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: Some("Done".to_string()),
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_details: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        });
+
+        let has_end_turn = stop_events.iter().any(|e| {
+            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)))
+        });
+        let has_tool_use = stop_events.iter().any(|e| {
+            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+        });
+
+        assert!(has_end_turn, "no tool calls → Stop(EndTurn)");
+        assert!(!has_tool_use, "no tool calls → no Stop(ToolUse)");
     }
 
     #[gpui::test]
