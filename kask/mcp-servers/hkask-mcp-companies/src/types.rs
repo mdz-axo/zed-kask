@@ -806,4 +806,10 @@ pub(crate) struct EpValuationRequest {
     pub moat_result: Option<crate::economic_profit::FadeHorizon>,
     /// Stage 1 years: hold current EP constant before fade (1–5, default 3).
     pub stage1_years: Option<u8>,
+    /// Risk-free rate for CAPM cost-of-equity calculation (financial-sector firms).
+    /// Default: 4.25% (10Y Treasury). Only used for equity-based valuation path.
+    pub risk_free_rate: Option<f64>,
+    /// Equity risk premium for CAPM cost-of-equity calculation (financial-sector firms).
+    /// Default: 4.5% (Damodaran implied ERP). Only used for equity-based valuation path.
+    pub equity_risk_premium: Option<f64>,
 }

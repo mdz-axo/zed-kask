@@ -225,14 +225,18 @@ impl CorpusServer {
             // DeepInfra prefix), route through the shared batch API in
             // `hkask-inference::batch` instead of N concurrent synchronous
             // IPC calls. This gives a 20–50% cost discount and no rate limits.
+            //
+            // Pass the ORIGINAL model string (with `:batch` suffix or
+            // `DeepInfra/` prefix) to `generate_batch` — the bridge calls
+            // `detect_batch_provider` again to strip the prefix and select
+            // the provider. Stripping here would cause the bridge's
+            // `detect_batch_provider` to return `None` (no `:batch` suffix,
+            // no `DeepInfra/` prefix) and fail with "not batch-eligible".
             if let Some(ref model_str) = selected_model {
-                if let Some((provider, clean_model)) =
-                    hkask_inference::batch::detect_batch_provider(model_str)
-                {
+                if hkask_inference::batch::detect_batch_provider(model_str).is_some() {
                     return self.generate_qa_via_batch_api(
                         prompts_vec,
-                        provider,
-                        &clean_model,
+                        model_str,
                         &output,
                         total,
                     )
@@ -397,10 +401,13 @@ impl CorpusServer {
     /// provider's Batch API (OpenRouter or DeepInfra). The corpus server
     /// never sees the credentials. OpenRouter offers a 50% cost discount;
     /// DeepInfra offers 20%.
+    ///
+    /// `model` is the ORIGINAL model string (e.g. `z-ai/glm-5.2:batch` or
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) — the bridge calls
+    /// `detect_batch_provider` to strip the prefix and select the provider.
     async fn generate_qa_via_batch_api(
         &self,
         prompts_vec: Vec<BatchQaPrompt>,
-        _provider: hkask_inference::batch::BatchProvider,
         model: &str,
         output: &str,
         total: usize,

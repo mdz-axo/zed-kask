@@ -160,12 +160,28 @@ fn ipc_read_timeout() -> std::time::Duration {
     }
 }
 
+/// Timeout for batch IPC roundtrips. Batch API calls can take hours to
+/// complete (OpenRouter/DeepInfra process asynchronously), so this is
+/// much longer than the default `ipc_read_timeout`. Matches
+/// `MAX_BATCH_WAIT` in `batch.rs` (6 hours) plus the same grace margin.
+const IPC_BATCH_READ_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(6 * 60 * 60 + 60);
+
 /// Read one newline-delimited response from the socket, capped at
 /// `MAX_IPC_LINE_BYTES`. Returns `None` when the server closed the
 /// connection before sending any bytes; a line without a terminating
 /// newline (overlong or truncated) is an error.
 async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, std::io::Error> {
-    let timeout = ipc_read_timeout();
+    read_response_line_with_timeout(stream, ipc_read_timeout()).await
+}
+
+/// Read one newline-delimited response with an explicit timeout. Used by
+/// `call_generate_batch` which needs a much longer timeout (batch API can
+/// take hours) than the default `ipc_read_timeout` (~330s).
+async fn read_response_line_with_timeout(
+    stream: &mut UnixStream,
+    timeout: std::time::Duration,
+) -> Result<Option<String>, std::io::Error> {
     // +1 so a line of exactly cap bytes followed by a newline is accepted
     // while anything longer is detected as missing-newline.
     let mut reader = BufReader::new(stream.take(MAX_IPC_LINE_BYTES + 1));
@@ -431,7 +447,55 @@ impl InferenceIpcClient {
             },
             ..Default::default()
         };
-        let response = self.ipc_roundtrip(&method, params).await?;
+        // Batch requests use a much longer read timeout than standard IPC
+        // calls — the batch API processes asynchronously and can take hours.
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: method.clone(),
+            params,
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| IpcTransportError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut stream = UnixStream::connect(&*self.socket_path)
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC connect failed: {e}")))?;
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let line = read_response_line_with_timeout(&mut stream, IPC_BATCH_READ_TIMEOUT)
+            .await
+            .map_err(|e| IpcTransportError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match line {
+            Some(line) => line,
+            None => {
+                return Err(IpcTransportError::Connection(
+                    "IPC socket closed by server".into(),
+                ).into());
+            }
+        };
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| IpcTransportError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(IpcTransportError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )).into());
+        }
+
         match response.outcome {
             InferenceOutcome::BatchResults { results } => Ok(results),
             InferenceOutcome::Error { error } => Err(InferenceError::Connection(

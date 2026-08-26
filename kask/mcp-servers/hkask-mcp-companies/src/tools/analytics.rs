@@ -470,7 +470,7 @@ impl CompaniesServer {
             // balance sheets where current liabilities include deposits,
             // making the NWC concept meaningless. Return an honest error
             // instead of a cryptic validation failure.
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "dcf_valuation") {
                 return Ok(err);
             }
 
@@ -587,7 +587,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "reverse_dcf") {
                 return Ok(err);
             }
 
@@ -736,7 +736,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "scenario_analysis") {
                 return Ok(err);
             }
 

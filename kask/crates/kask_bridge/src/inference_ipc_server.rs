@@ -902,6 +902,16 @@ async fn dispatch(
         let max_tokens = params.batch_max_tokens.unwrap_or(2000);
         let temperature = params.parameters.temperature;
 
+        if prompts.is_empty() {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "InvalidArgument".to_string(),
+                    message: "batch_prompts is empty — cannot submit an empty batch"
+                        .to_string(),
+                },
+            };
+        }
+
         // Detect the provider from the model name
         let Some((provider, clean_model)) =
             hkask_inference::batch::detect_batch_provider(model)
@@ -963,22 +973,13 @@ async fn dispatch(
             }
         };
 
-        // Format prompts for the batch API
-        let batch_prompts: Vec<hkask_inference::batch::BatchPrompt> = prompts
-            .iter()
-            .map(|p| hkask_inference::batch::BatchPrompt {
-                custom_id: p.custom_id.clone(),
-                system: p.system.clone(),
-                user: p.user.clone(),
-            })
-            .collect();
-
-        // Submit the batch and wait for results
+        // Submit the batch and wait for results — pass the IPC
+        // `BatchPromptEntry` directly; `submit_batch` accepts it.
         match hkask_inference::batch::submit_batch(
             provider,
             &api_key,
             &clean_model,
-            &batch_prompts,
+            prompts,
             max_tokens,
             temperature,
         )
@@ -988,11 +989,19 @@ async fn dispatch(
                 let results: Vec<BatchResultEntry> = batch_result
                     .results
                     .into_iter()
-                    .map(|(custom_id, r)| BatchResultEntry {
-                        custom_id,
-                        text: Some(r.text),
-                        total_tokens: r.total_tokens,
-                        error: None,
+                    .map(|(custom_id, r)| match r {
+                        Ok(success) => BatchResultEntry {
+                            custom_id,
+                            text: Some(success.text),
+                            total_tokens: success.total_tokens,
+                            error: None,
+                        },
+                        Err(err_msg) => BatchResultEntry {
+                            custom_id,
+                            text: None,
+                            total_tokens: 0,
+                            error: Some(err_msg),
+                        },
                     })
                     .collect();
                 return InferenceOutcome::BatchResults { results };
@@ -1242,6 +1251,13 @@ mod tests {
         Arc::new(tx)
     }
 
+    fn make_batch_credential_tx()
+    -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
+    {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
+        Arc::new(tx)
+    }
+
     fn make_tool_invoke_request(
         server: &str,
         tool: &str,
@@ -1267,6 +1283,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = make_tool_invoke_request(
             "kanban",
@@ -1280,6 +1297,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1304,6 +1322,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
 
@@ -1313,6 +1332,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1332,6 +1352,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
 
@@ -1341,6 +1362,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1361,6 +1383,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = make_tool_invoke_request(
             "kanban",
@@ -1374,6 +1397,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1393,6 +1417,7 @@ mod tests {
     async fn dispatch_tool_invoke_errors_without_tool_port() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = make_tool_invoke_request(
             "kanban",
@@ -1406,6 +1431,7 @@ mod tests {
             None, // no tool port
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1423,6 +1449,7 @@ mod tests {
     async fn dispatch_embed_errors_without_embedding_port() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1440,6 +1467,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1461,6 +1489,7 @@ mod tests {
         // called and the result is returned as `InferenceOutcome::Result`.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 42,
@@ -1472,7 +1501,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1487,6 +1516,7 @@ mod tests {
     async fn dispatch_generate_with_messages_returns_canned_result() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1501,7 +1531,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1515,6 +1545,7 @@ mod tests {
     async fn dispatch_generate_vision_returns_canned_result() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1527,7 +1558,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1544,6 +1575,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1562,6 +1594,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1580,6 +1613,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1598,6 +1632,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1641,6 +1676,7 @@ mod tests {
         )>();
         drop(rx);
         let list_models_tx = Arc::new(tx);
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1648,7 +1684,7 @@ mod tests {
             params: InferenceParams::default(),
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, request).await;
+        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -1672,6 +1708,7 @@ mod tests {
         // `CreateWorktreeThread`.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1689,6 +1726,7 @@ mod tests {
             None,
             &list_models_tx,
             None, // no worktree spawn port
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -1713,6 +1751,7 @@ mod tests {
         // return a Connection error — not reach the defensive arm.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
+        let batch_credential_tx = make_batch_credential_tx();
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
         drop(rx);
@@ -1734,6 +1773,7 @@ mod tests {
             None,
             &list_models_tx,
             Some(&worktree_spawn_tx),
+            &batch_credential_tx,
             request,
         )
         .await;

@@ -541,3 +541,71 @@ pub(crate) fn extract_invested_capital_from_metrics(
         .or_else(|| metrics_entry.get("totalAssets"))
         .and_then(|v| v.as_f64())
 }
+
+// ── Equity-based extraction helpers (financial-sector firms) ───────────────────
+//
+// For financial-sector companies (banks, insurance, investment firms),
+// the ROIC/WACC/invested-capital framework breaks down because debt is
+// raw material, not a source of capital. Damodaran (Applied Corporate
+// Finance, Ch. 4; Investment Valuation, Ch. 21) argues for valuing equity
+// directly using:
+//
+//   Excess Equity Return = (ROE - Cost of Equity) x Book Value of Equity
+//   Value of Equity = BV Equity + PV(Excess Equity Returns)
+//
+// Source: Damodaran, A. (2014). Applied Corporate Finance (4th ed.),
+// Ch. 4: "Equity, Debt and Cost of Capital for Banks" -- "For banks,
+// debt is raw material that is used to generate profits... when banks
+// talk about capital, they mean equity capital."
+//
+// Source: Damodaran, A. (2002). Investment Valuation (2nd ed.),
+// Ch. 21: "Valuing Financial Service Firms" -- "Given the difficulty
+// associated with defining total capital in a financial service firm,
+// it makes far more sense to focus on just equity when using an excess
+// return model to value a financial service firm."
+
+/// Extract ROE from key_metrics data (pre-computed by FMP).
+/// FMP field: `returnOnEquity`.
+pub(crate) fn extract_roe_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
+    metrics_entry
+        .get("returnOnEquity")
+        .and_then(|v| v.as_f64())
+}
+
+/// Compute ROE from net income and book value of equity.
+/// ROE = Net Income / Book Value of Equity (beginning of year).
+pub(crate) fn compute_roe(net_income: f64, book_value: f64) -> Option<f64> {
+    if book_value <= 0.0 {
+        return None;
+    }
+    Some(net_income / book_value)
+}
+
+/// Extract net income from income statement data.
+pub(crate) fn extract_net_income(income_entry: &serde_json::Value) -> Option<f64> {
+    income_entry
+        .get("netIncome")
+        .or_else(|| income_entry.get("netIncomeCommonStockholders"))
+        .and_then(|v| v.as_f64())
+}
+
+/// Compute cost of equity using CAPM.
+/// COE = risk_free_rate + beta x equity_risk_premium.
+/// Defaults: risk_free_rate = 4.25% (10Y Treasury),
+///           equity_risk_premium = 4.5% (Damodaran implied ERP for US).
+/// Source: Damodaran, A. (2024). "Equity Risk Premiums: Determinants,
+/// Estimation and Implications" -- implied ERP for US market.
+pub(crate) fn cost_of_equity(
+    beta: f64,
+    risk_free_rate: Option<f64>,
+    equity_risk_premium: Option<f64>,
+) -> f64 {
+    let rf = risk_free_rate.unwrap_or(0.0425);
+    let erp = equity_risk_premium.unwrap_or(0.045);
+    rf + beta * erp
+}
+
+/// Extract beta from company profile data.
+pub(crate) fn extract_beta(profile_entry: &serde_json::Value) -> Option<f64> {
+    profile_entry.get("beta").and_then(|v| v.as_f64())
+}

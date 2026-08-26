@@ -1253,6 +1253,51 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn ingest_turn_stores_shared_copy_for_zed_agent_turn() {
+        // Non-Curator (e.g. Zed agent) turns must be ingested into the
+        // curator's shared store so the curator can recall what happened
+        // across all agents. Previously, the is_curator_turn filter gated
+        // all three write steps, so Zed agent work was invisible to the
+        // curator — the memory stayed empty.
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "zed-agent-thread".to_string(),
+            user_input: "Fix the memory ingestion bug".to_string(),
+            agent_response: "I narrowed the is_curator_turn filter.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: Some("Memory fix".to_string()),
+            agent_id: Some("Zed Agent".to_string()),
+        };
+
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "zed agent ingest should succeed");
+
+        // The shared copy (curator:thread:...) must be present.
+        let curator_store = port.curator_store.get().expect("curator store");
+        let h_mems = curator_store
+            .query_deduped("curator:thread:zed-agent-thread")
+            .expect("query should succeed");
+        assert_eq!(
+            h_mems.len(),
+            1,
+            "shared copy must be stored for zed agent turns"
+        );
+        assert_eq!(h_mems[0].attribute, "turn");
+
+        // The curator-perspective h_mem (chat:thread:...) must NOT exist —
+        // that's the curator's own memory of its own turn, not a zed agent
+        // turn.
+        let perspective_h_mems = curator_store
+            .query_for_deduped_untouched("chat:thread:zed-agent-thread", port.curator_webid)
+            .expect("query should succeed");
+        assert_eq!(
+            perspective_h_mems.len(),
+            0,
+            "zed agent turns must not get a curator-perspective h_mem"
+        );
+    }
+
+    #[tokio::test]
     async fn ingest_turn_skips_curator_copy_when_store_absent() {
         // Simulate the curator DB being unavailable — the curator store is
         // `None`. Ingestion of a curator turn should still succeed (Ok),

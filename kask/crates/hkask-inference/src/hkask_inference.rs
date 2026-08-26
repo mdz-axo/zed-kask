@@ -231,6 +231,37 @@ impl hkask_types::InferencePort for LazyInferencePort {
             )))
         })
     }
+
+    fn generate_batch<
+        'a,
+    >(
+        &'a self,
+        model: &str,
+        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                Output = Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, hkask_types::InferenceError>,
+            > + Send
+            + 'a,
+        >,
+    > {
+        let model = model.to_string();
+        let prompts = prompts.to_vec();
+        Box::pin(async move {
+            // Batch API requires the IPC bridge — no direct fallback.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .call_generate_batch(&model, &prompts, max_tokens, temperature)
+                    .await;
+            }
+            Err(hkask_types::InferenceError::Connection(format!(
+                "batch inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
 }
 
 /// Inference stub for MCP servers without the IPC bridge. Every method returns

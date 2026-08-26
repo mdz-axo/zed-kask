@@ -38,9 +38,10 @@ pub(crate) struct WriteContext<'a> {
 
 /// Write a completed turn into the curator's memory.
 ///
-/// Only curator turns are ingested. User/zed agent turns are NOT ingested —
-/// the user is human and has their own memory. The kask memory system only
-/// stores the curator's own turns and a shared copy for curator recall.
+/// All agent turns are ingested into the curator's shared store so the
+/// curator can recall what happened across all agents. Curator turns
+/// additionally get a private perspective-scoped h_mem (the curator's own
+/// memory of its own turn).
 ///
 /// Performs, in order:
 /// 1. Curator-store self-heal re-open + consolidation rebuild (if healed).
@@ -49,8 +50,8 @@ pub(crate) struct WriteContext<'a> {
 /// 3. Shared copy to the curator's `curator.db` — every turn, so
 ///    `curator_memory_recall` / `curator_semantic_search` see every turn the
 ///    agent observed.
-/// 4. Embed the user prompt and store it to the curator's store (curator
-///    turns only), for KNN-based recall.
+/// 4. Embed the user prompt and store it to the curator's store, for KNN-based
+///    recall.
 ///
 /// `Ok(())` on success. Curator-side and embedding failures are non-fatal —
 /// they warn and continue.
@@ -66,16 +67,12 @@ pub(crate) async fn write_turn(
     let agent_id = record.agent_id.clone();
     let is_curator_turn = agent_id.as_deref() == Some("Curator");
 
-    // Only ingest curator turns. User/zed agent turns are not stored.
-    if !is_curator_turn {
-        return Ok(());
-    }
-
     let turn_value = serde_json::json!({
         "user_input": user_input,
         "agent_response": agent_response,
         "model": model,
         "title": title,
+        "agent_id": agent_id,
     });
 
     // Resolve the curator stores once per ingestion.
@@ -100,32 +97,36 @@ pub(crate) async fn write_turn(
     let entity = format!("chat:thread:{thread_id}");
     let ontology = HMemOntology::process("chat", "turn", format!("session:{thread_id}"));
 
-    // ── 1. Curator-perspective h_mem (Private) ──────────────────────
-    let curator_h_mem = HMem::new(
-        &entity,
-        "chatted",
-        serde_json::Value::String(turn_value.to_string()),
-        ctx.curator_webid,
-    )
-    .with_perspective(ctx.curator_webid)
-    .with_visibility(Visibility::Private)
-    .with_ontology(ontology);
+    // ── 1. Curator-perspective h_mem (Private, curator turns only) ──
+    // The curator's own memory of its own turn. Non-curators don't get a
+    // perspective-scoped h_mem — they get only the shared copy below.
+    if is_curator_turn {
+        let curator_h_mem = HMem::new(
+            &entity,
+            "chatted",
+            serde_json::Value::String(turn_value.to_string()),
+            ctx.curator_webid,
+        )
+        .with_perspective(ctx.curator_webid)
+        .with_visibility(Visibility::Private)
+        .with_ontology(ontology);
 
-    if let Some(ref curator_store) = curator_store {
-        if let Err(e) = curator_store.store(curator_h_mem) {
-            tracing::warn!(
+        if let Some(ref curator_store) = curator_store {
+            if let Err(e) = curator_store.store(curator_h_mem) {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    error = %e,
+                    "Failed to store curator h_mem"
+                );
+            }
+        } else {
+            tracing::trace!(
                 target: "reg.memory",
                 thread_id = %thread_id,
-                error = %e,
-                "Failed to store curator h_mem"
+                "Curator store unavailable — skipping curator write"
             );
         }
-    } else {
-        tracing::trace!(
-            target: "reg.memory",
-            thread_id = %thread_id,
-            "Curator store unavailable — skipping curator write"
-        );
     }
 
     // ── 2. Shared copy in the curator's DB ──────────────────────────
@@ -207,7 +208,8 @@ pub(crate) async fn write_turn(
         target: "reg.memory",
         thread_id = %thread_id,
         model = %model,
-        "Curator turn ingested into memory"
+        is_curator_turn,
+        "Turn ingested into curator memory"
     );
 
     Ok(())

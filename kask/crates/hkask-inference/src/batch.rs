@@ -120,17 +120,6 @@ pub fn detect_batch_provider(model: &str) -> Option<(BatchProvider, String)> {
     None
 }
 
-/// A single prompt for batch inference.
-#[derive(Debug, Clone)]
-pub struct BatchPrompt {
-    /// Unique identifier for this prompt (returned in results for matching).
-    pub custom_id: String,
-    /// System message content.
-    pub system: String,
-    /// User message content.
-    pub user: String,
-}
-
 /// A single inference result from the batch API.
 #[derive(Debug, Clone)]
 pub struct BatchInferenceResult {
@@ -142,12 +131,22 @@ pub struct BatchInferenceResult {
 
 /// Result of a batch submission.
 pub struct BatchResult {
-    /// Results keyed by `custom_id`. `None` for prompts that failed.
-    pub results: std::collections::HashMap<String, BatchInferenceResult>,
+    /// Results keyed by `custom_id`. `Ok` for successes, `Err(message)` for
+    /// failures. Every prompt in the input batch has an entry here — failures
+    /// are NOT dropped, so the caller can report accurate failure counts.
+    pub results: std::collections::HashMap<String, Result<BatchInferenceResult, String>>,
     /// Number of prompts that succeeded.
     pub succeeded: usize,
     /// Number of prompts that failed.
     pub failed: usize,
+}
+
+/// Shared HTTP client for batch API calls. Reusing a single client avoids
+/// creating a new connection pool per batch submission.
+static BATCH_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn batch_http_client() -> &'static reqwest::Client {
+    BATCH_HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 /// Submit a batch of prompts to the provider's Batch API and wait for results.
@@ -156,15 +155,19 @@ pub struct BatchResult {
 /// bridge reads it from the keychain). `model` is the raw model name (without
 /// provider prefix or `:batch` suffix). `max_tokens` controls the output
 /// length per prompt. `temperature` controls sampling.
+///
+/// Uses `BatchPromptEntry` from `hkask-types::inference_ipc` directly — no
+/// duplicate `BatchPrompt` type. The bridge converts between the IPC protocol
+/// type and this function without an intermediate struct.
 pub async fn submit_batch(
     provider: BatchProvider,
     api_key: &str,
     model: &str,
-    prompts: &[BatchPrompt],
+    prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
     max_tokens: u32,
     temperature: f32,
 ) -> Result<BatchResult, String> {
-    let client = reqwest::Client::new();
+    let client = batch_http_client();
     let base = provider.base_url();
 
     // 1. Format prompts as OpenAI Batch API JSONL
@@ -287,7 +290,7 @@ struct BatchResultError {
 
 fn format_batch_jsonl(
     model: &str,
-    prompts: &[BatchPrompt],
+    prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
     max_tokens: u32,
     temperature: f32,
 ) -> String {
@@ -501,10 +504,14 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
                 let total_tokens = resp.body.usage.map(|u| u.total_tokens).unwrap_or(0);
                 results.insert(
                     result_line.custom_id,
-                    BatchInferenceResult { text, total_tokens },
+                    Ok(BatchInferenceResult { text, total_tokens }),
                 );
                 succeeded += 1;
             } else {
+                results.insert(
+                    result_line.custom_id.clone(),
+                    Err("batch result has no choices".to_string()),
+                );
                 failed += 1;
                 tracing::warn!(
                     target: "hkask.inference.batch",
@@ -513,14 +520,23 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
                 );
             }
         } else if let Some(err) = result_line.error {
+            let err_msg = err.message;
+            results.insert(
+                result_line.custom_id.clone(),
+                Err(err_msg.clone()),
+            );
             failed += 1;
             tracing::warn!(
                 target: "hkask.inference.batch",
                 custom_id = %result_line.custom_id,
-                error = %err.message,
+                error = %err_msg,
                 "Batch result error"
             );
         } else {
+            results.insert(
+                result_line.custom_id.clone(),
+                Err("unknown batch result format".to_string()),
+            );
             failed += 1;
         }
     }

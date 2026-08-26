@@ -22,39 +22,147 @@ use crate::types::ProjectionAssumptionOverrides;
 use crate::providers::CompanyProfile;
 use serde::{Deserialize, Serialize};
 
-/// Check whether a company is in the financial sector and therefore
-/// unsuitable for FCF-based DCF valuation.
-///
-/// Financial companies (banks, insurance, investment firms) have balance
+/// Sector classification source: FMP `company_profile` API, which returns
+/// GICS sector and industry classifications. Verified against COF, JPM, BAC,
+/// ALL, SCHW (Financial Services), PLD, O (Real Estate/REIT), AAPL (Technology).
+/// FMP maps its sector field from the GICS (Global Industry Classification
+/// Standard) taxonomy maintained by S&P Dow Jones Indices and MSCI.
+/// Reference: https://www.msci.com/our-solutions/index-investment-solutions/gics
+//
+/// Detect whether a company is in the financial sector (banks, insurance,
+/// capital markets, diversified financials). These companies have balance
 /// sheets where `totalCurrentLiabilities` includes customer deposits, making
-/// NWC deeply negative relative to revenue. The DCF model's working capital
-/// concept doesn't apply. Returns a structured JSON error value that tool
-/// handlers can return directly.
-pub(crate) fn financial_sector_guard(
-    profile: &CompanyProfile,
-    symbol: &str,
-) -> Option<serde_json::Value> {
+/// NWC, ROIC, invested capital, and working capital cycle meaningless.
+/// Financial companies are valued using P/B, P/TBV, dividend discount models,
+/// and residual income on equity — not FCF-based DCF or economic profit on
+/// invested capital.
+///
+/// Source: Damodaran, A. (2014). "Applied Corporate Finance" (4th ed.),
+/// Chapter 19: "Valuing Financial Service Firms" — banks are valued using
+/// equity-based approaches (excess return on equity, dividend discount models)
+/// rather than firm-based DCF because debt is a raw material, not a source
+/// of capital.
+pub(crate) fn is_financial_sector(profile: &CompanyProfile) -> bool {
     let sector = profile.sector().unwrap_or("");
     let industry = profile.industry().unwrap_or("");
-    let is_financial = sector.eq_ignore_ascii_case("Financial Services")
+    sector.eq_ignore_ascii_case("Financial Services")
         || sector.eq_ignore_ascii_case("Financials")
         || industry.contains("Bank")
         || industry.contains("Credit Services")
         || industry.contains("Insurance")
         || industry.contains("Capital Markets")
-        || industry.contains("Diversified Financial");
-    if is_financial {
-        Some(serde_json::json!({
-            "symbol": symbol,
-            "error": "DCF valuation is not applicable to financial-sector companies",
-            "reason": "Banks and insurance companies have balance sheets where current liabilities include customer deposits, making the working capital concept meaningless. Financial companies are valued using P/B (price-to-book), P/TBV (tangible book value), and dividend discount models, not FCF-based DCF.",
-            "sector": sector,
-            "industry": industry,
-            "suggested_alternatives": ["comparable_analysis", "reverse_dcf with manual overrides", "ep_valuation"]
-        }))
-    } else {
-        None
+        || industry.contains("Diversified Financial")
+}
+
+/// Detect whether a company is a REIT (Real Estate Investment Trust).
+/// REITs have balance sheets dominated by property, with rental revenue
+/// that doesn't map to traditional working capital concepts. DPO/DSO/DIO
+/// and the cash conversion cycle are not meaningful for REITs.
+/// REITs are valued using FFO/AFFO, cap rates, and NAV.
+///
+/// Source: NAREIT (National Association of Real Estate Investment Trusts),
+/// "REIT Industry Operations & Financial Metrics" — REITs report FFO
+/// (Funds From Operations) rather than net income as the primary earnings
+/// metric, and cap rates (NOI / property value) rather than ROIC.
+#[allow(dead_code)]
+fn is_reit(profile: &CompanyProfile) -> bool {
+    let sector = profile.sector().unwrap_or("");
+    let industry = profile.industry().unwrap_or("");
+    sector.eq_ignore_ascii_case("Real Estate")
+        && (industry.contains("REIT") || industry.contains("Real Estate"))
+}
+
+/// Guard for tools that use FCF-based DCF or economic profit on invested
+/// capital. Returns a structured JSON error if the company is in the
+/// financial sector, or `None` if the tool should proceed.
+///
+/// `tool_name` is used to generate a tool-specific error message.
+pub(crate) fn financial_sector_guard(
+    profile: &CompanyProfile,
+    symbol: &str,
+    tool_name: &str,
+) -> Option<serde_json::Value> {
+    if !is_financial_sector(profile) {
+        return None;
     }
+    let sector = profile.sector().unwrap_or("");
+    let industry = profile.industry().unwrap_or("");
+    let (method, alternatives) = match tool_name {
+        "ep_valuation" => (
+            "Economic profit valuation (ROIC - WACC) × Invested Capital",
+            vec!["comparable_analysis", "reverse_dcf with manual overrides", "dividend discount model"],
+        ),
+        _ => (
+            "FCF-based DCF valuation",
+            vec!["comparable_analysis", "reverse_dcf with manual overrides", "ep_valuation (equity-based)"],
+        ),
+    };
+    Some(serde_json::json!({
+        "symbol": symbol,
+        "error": format!("{method} is not applicable to financial-sector companies"),
+        "reason": "Banks and insurance companies have balance sheets where current liabilities include customer deposits, making NWC, ROIC, and invested capital meaningless. Financial companies are valued using P/B (price-to-book), P/TBV (tangible book value), dividend discount models, and residual income on equity — not FCF-based DCF or economic profit on invested capital.",
+        "sector": sector,
+        "industry": industry,
+        "suggested_alternatives": alternatives,
+        "source": "Damodaran, A. (2014). Applied Corporate Finance, Ch. 19: Valuing Financial Service Firms. Sector classification: GICS via FMP company_profile API."
+    }))
+}
+
+/// Guard for tools that compute working capital metrics (DPO, DSO, DIO,
+/// cash conversion cycle, gross margin stability). Returns a structured
+/// JSON error if the company is in the financial sector or is a REIT —
+/// both have balance sheet structures that make these industrial-company
+/// concepts meaningless.
+///
+/// `tool_name` is used to generate a tool-specific error message.
+#[allow(dead_code)]
+pub(crate) fn working_capital_guard(
+    profile: &CompanyProfile,
+    symbol: &str,
+    tool_name: &str,
+) -> Option<serde_json::Value> {
+    let sector = profile.sector().unwrap_or("");
+    let industry = profile.industry().unwrap_or("");
+    let (blocked_reason, alternatives) = if is_financial_sector(profile) {
+        (
+            "Financial-sector companies (banks, insurance) have balance sheets where current liabilities include customer deposits. DPO, DSO, DIO, and the cash conversion cycle are not meaningful — these are industrial-company metrics that measure supplier and customer payment timing, not deposit flows.",
+            vec!["efficiency ratio (bank-specific)", "net interest margin", "ROE"],
+        )
+    } else if is_reit(profile) {
+        (
+            "REITs have balance sheets dominated by property assets. DPO, DSO, DIO, and the cash conversion cycle are not meaningful — REITs collect rent (not receivables) and pay property expenses (not supplier payables). Gross margin is not a meaningful concept for REITs.",
+            vec!["FFO/AFFO", "cap rate (NOI/property value)", "NAV"],
+        )
+    } else {
+        return None;
+    };
+    let (method, source) = match tool_name {
+        "moat_check" => (
+            "Moat analysis (gross margin stability, working capital days)",
+            "Sector classification: GICS via FMP. Moat framework: Mauboussin & Callahan (2014), 'Calculating Return on Invested Capital'. REIT metrics: NAREIT FFO/AFFO guidance.",
+        ),
+        "working_capital_cycle" => (
+            "Working capital cycle (DPO, DSO, DIO, cash conversion cycle)",
+            "Sector classification: GICS via FMP. Working capital cycle: Richards & Laughlin (1980), 'A Cash Conversion Cycle Approach to Liquidity Analysis'. Bank metrics: FDIC Uniform Bank Performance Report.",
+        ),
+        "management_scorecard" => (
+            "Management scorecard (ROIC trend, invested capital allocation)",
+            "Sector classification: GICS via FMP. ROIC framework: Mauboussin & Callahan (2014). Bank metrics: ROE, not ROIC — see Damodaran (2014) Ch. 19.",
+        ),
+        _ => (
+            "Working capital analysis",
+            "Sector classification: GICS via FMP.",
+        ),
+    };
+    Some(serde_json::json!({
+        "symbol": symbol,
+        "error": format!("{method} is not applicable to {sector} companies"),
+        "reason": blocked_reason,
+        "sector": sector,
+        "industry": industry,
+        "suggested_alternatives": alternatives,
+        "source": source
+    }))
 }
 
 // ── Historical data snapshot ───────────────────────────────────────────────
