@@ -527,6 +527,42 @@ impl InferenceIpcClient {
         }
     }
 
+    /// Send a media-generation request and receive the response.
+    ///
+    /// `op` selects the backend method (e.g. "generate_image", "transcribe").
+    /// `params` carries the op-specific fields. The server-side dispatch
+    /// reads only the fields relevant to each op.
+    pub async fn call_media_generate(
+        &self,
+        op: &str,
+        params: &hkask_types::MediaGenerateParams,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::MediaGenerate;
+        let ipc_params = InferenceParams {
+            media_op: Some(op.to_string()),
+            media_prompt: params.prompt.clone(),
+            media_image_url: params.image_url.clone(),
+            media_audio_url: params.audio_url.clone(),
+            media_text: params.text.clone(),
+            media_voice: params.voice.clone(),
+            media_size: params.size.clone(),
+            media_count: params.count,
+            media_strength: params.strength,
+            media_scale: params.scale,
+            media_duration: params.duration,
+            media_language: params.language.clone(),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, ipc_params).await?;
+        match response.outcome {
+            InferenceOutcome::Media { media } => Ok(media),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            _ => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "non-Media"),
+            )),
+        }
+    }
+
     /// Send an embedding request and receive the response.
     async fn call_embed(
         &self,
@@ -854,6 +890,17 @@ impl InferencePort for InferenceIpcClient {
             this.call_generate_batch(&model, &prompts, max_tokens, temperature)
                 .await
         })
+    }
+
+    fn media_generate<'a>(
+        &'a self,
+        op: &str,
+        params: &hkask_types::MediaGenerateParams,
+    ) -> hkask_types::MediaFuture<'a> {
+        let op = op.to_string();
+        let params = params.clone();
+        let this = self;
+        Box::pin(async move { this.call_media_generate(&op, &params).await })
     }
 }
 

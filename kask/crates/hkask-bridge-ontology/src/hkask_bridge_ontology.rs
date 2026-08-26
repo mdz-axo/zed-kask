@@ -3,8 +3,8 @@
 //! Ontology bridge — the single source of truth for ontology vocabulary and
 //! the dual-axis domain-selection logic in hKask.
 //!
-//! Eight ontologies: two universal axes, one upper
-//! ontology, and five domain supplements.
+//! Nine ontologies: two universal axes, one upper
+//! ontology, and six domain supplements.
 //!
 //! Two universal axes (P5.4):
 //! - **State axis** — Dublin Core + BIBO + CiTO (`dc_bibo`): the "what is this"
@@ -25,6 +25,7 @@
 //! - **GOLEM** (`golem`): literature, narrative, persona.
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
 //! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
+//! - **MovieLabs OMC** (`omc`): media production workflows (capture → post → distribution).
 //!
 //! The domain-selection logic (`axis`) maps a domain hint to its axis
 //! anchoring: state axis is always Dublin Core; process axis is the domain

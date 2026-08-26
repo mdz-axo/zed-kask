@@ -105,6 +105,17 @@ impl SqliteDriver {
         Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")))
     }
 
+    /// Create a file-backed pool with WAL mode enabled. Used by MCP servers
+    /// that need an unencrypted SQLite DB (e.g. the media gallery metadata DB)
+    /// — does NOT use `HKASK_DB_PASSPHRASE` / SQLCipher.
+    pub fn file_pool(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            init_wal_pragmas(conn).ok();
+            Ok(())
+        });
+        Pool::builder().build(manager)
+    }
+
     /// Prefix the pool label (if any) to a connection-acquisition error.
     fn map_conn_err(&self, e: impl std::fmt::Display) -> DbError {
         DbError::Connection(self.enrich(&e))

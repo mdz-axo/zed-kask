@@ -105,6 +105,7 @@ skill's artifacts.
 | **PKO** (Procedural Knowledge Ontology) | Industrial processes, procedures | The skill models a procedure with specification/execution separation |
 | **Dublin Core** | Metadata, documentation | The skill produces or manages metadata artifacts |
 | **GOLEM** | Narrative, fiction, storytelling | The skill models narrative structure |
+| **MovieLabs OMC** (Ontology for Media Creation) | Media production workflows | The skill models media creation pipelines (capture → post → distribution) |
 | **ESO** (Event and Implied Situation Ontology) | Event structures, scientific inquiry | The skill models events with pre/post situations |
 | **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain |
 
@@ -149,7 +150,7 @@ Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
    - **Quality criteria**: how does the domain measure success? What
      are the convergence criteria?
    - **Entity types**: what are the domain's objects, events, roles?
-   - **Existing ontologies**: is there a PKO, Dublin Core, GOLEM, ESO,
+   - **Existing ontologies**: is there a PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO,
      or domain-specific ontology that formalizes this domain?
 2. Record the ontological anchors: for each anchor, cite the source
    (author, year, paper/standard) and describe how it shapes the skill.

@@ -393,6 +393,31 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "NEBIUS_CLI_PATH",
         ]),
     },
+    BuiltinMcpServer {
+        id: "media",
+        binary: "hkask-mcp-media",
+        description: "Media — AI media generation (image, video, audio, gallery)",
+        // OPENROUTER_API_KEY is optional — vision LLMs route through the IPC
+        // bridge to zed's LanguageModelRegistry, so the media process does
+        // not read API keys directly. The key is allowlisted here so the
+        // server can be configured to use a direct provider if needed.
+        credentials: Some(&["OPENROUTER_API_KEY"]),
+        config_env: Some(&[
+            // IPC bridge socket — required for vision/chat/media generation
+            // routing through zed's LanguageModelRegistry.
+            "HKASK_INFERENCE_SOCKET",
+            // Data dir — needed for the gallery DB path resolution.
+            "HKASK_DATA_DIR",
+            // Gallery DB override (optional — defaults to
+            // {data_dir}/mcp/media/gallery.db).
+            "HKASK_MEDIA_DB",
+            // Media model overrides (all optional, default to model_constants).
+            "HKASK_MEDIA_TTS_MODEL",
+            "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_VISION_MODEL",
+            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+        ]),
+    },
 ];
 
 /// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].

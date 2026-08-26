@@ -1354,7 +1354,10 @@ mod tests {
 
         // First instance: create gallery, add image, record lineage.
         let image_id = {
-            let driver = SqliteDriver::file_driver(&db_path_str);
+            let driver = Arc::new(SqliteDriver::new_labeled(
+                SqliteDriver::file_pool(&db_path_str).unwrap(),
+                db_path_str.as_str(),
+            ));
             let store = GalleryStore::from_driver(driver).unwrap();
             let gallery = store.create("/tmp/gal", GalleryMode::ReadOnly).unwrap();
             let img = store
@@ -1377,7 +1380,10 @@ mod tests {
         };
         // First driver dropped (WAL checkpoints on close). Reopen the same
         // file with a fresh driver — the lineage must persist.
-        let driver = SqliteDriver::file_driver(&db_path_str);
+        let driver = Arc::new(SqliteDriver::new_labeled(
+            SqliteDriver::file_pool(&db_path_str).unwrap(),
+            db_path_str.as_str(),
+        ));
         let store = GalleryStore::from_driver(driver).unwrap();
         let lineage = store
             .get_generation(&image_id)

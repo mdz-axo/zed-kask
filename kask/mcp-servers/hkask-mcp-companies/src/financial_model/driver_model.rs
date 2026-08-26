@@ -428,12 +428,13 @@ fn project_industrial(
     // We track: cash, AR, inventory, PP&E, AP, debt, equity.
     // Real balance sheets have items we don't model (deferred taxes, goodwill,
     // intangibles, other current/non-current assets and liabilities). These
-    // are captured as "other assets" — a constant residual, NOT a plug.
+    // are captured as "other assets" — a residual computed each period from
+    // the balance sheet identity, NOT a plug for cash.
     // Cash is NOT a plug — it comes from the cash flow statement.
     let starting_total_le = hist.latest_ap() + hist.latest_debt() + hist.latest_equity();
     let starting_tracked_assets =
         hist.latest_cash() + hist.latest_ar() + hist.latest_inventory() + hist.latest_ppe_net();
-    let starting_other_assets = starting_total_le - starting_tracked_assets;
+    let _starting_other_assets = starting_total_le - starting_tracked_assets;
 
     let mut prev_revenue = hist.latest_revenue();
     let mut prev_nwc = hist.latest_ar() + hist.latest_inventory() - hist.latest_ap();
@@ -446,7 +447,6 @@ fn project_industrial(
     // read paid-in capital from the balance sheet API.
     let mut prev_retained_earnings = hist.latest_equity();
     let paid_in_capital = 0.0;
-    let prev_other_assets = starting_other_assets;
 
     // Extract driver values (with fallbacks)
     let growth_rate = assumptions
@@ -749,9 +749,12 @@ fn project_financial_sector(
             accounts_receivable: 0.0,
             inventory: 0.0,
             ppe_net: other_assets,
+            other_assets: 0.0,
             total_assets,
             accounts_payable: 0.0,
             debt,
+            paid_in_capital: 0.0,
+            retained_earnings: equity,
             equity,
             total_liabilities_equity,
             balance_check,
@@ -765,8 +768,7 @@ fn project_financial_sector(
                 - assumptions.debt_repayment
                 + assumptions.equity_issuance
                 - dividends,
-            cash_reconciliation: 0.0, // Simplified model — cash is a fixed ratio
-            debt_plug: 0.0,
+            cash_reconciliation: 0.0,
             free_cash_flow,
             discount_factor,
             present_value,
@@ -952,17 +954,21 @@ pub fn generate_markdown_report(
     md.push('\n');
 
     md.push_str("## Projected Balance Sheet\n\n");
-    md.push_str("| Year | Cash | AR | Inventory | PP&E | Debt | Equity | A=L+E? |\n");
-    md.push_str("|------|------|-----|----------|------|------|--------|--------|\n");
+    md.push_str("| Year | Cash | AR | Inventory | PP&E | Other | AP | Debt | Paid-in | Retained | Equity | A=L+E? |\n");
+    md.push_str("|------|------|-----|----------|------|-------|-----|------|---------|----------|--------|--------|\n");
     for p in &model.periods {
         md.push_str(&format!(
-            "| {} | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | {:.1}M |\n",
+            "| {} | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | ${:.0}M | {:.1}M |\n",
             p.year,
             p.cash / 1e6,
             p.accounts_receivable / 1e6,
             p.inventory / 1e6,
             p.ppe_net / 1e6,
+            p.other_assets / 1e6,
+            p.accounts_payable / 1e6,
             p.debt / 1e6,
+            p.paid_in_capital / 1e6,
+            p.retained_earnings / 1e6,
             p.equity / 1e6,
             p.balance_check / 1e6
         ));
@@ -1151,16 +1157,18 @@ mod tests {
     }
 
     #[test]
-    fn interest_expense_linked_to_debt() {
+    fn interest_expense_uses_average_debt() {
         let hist = synthetic_hist();
-        let assumptions = DriverAssumptions::from_history(&hist);
+        let mut assumptions = DriverAssumptions::from_history(&hist);
+        assumptions.debt_issuance = 100.0;
         let model = project_driver_model(&hist, &assumptions).unwrap();
 
         let p = &model.periods[0];
-        let expected_interest = hist.latest_debt() * assumptions.interest_rate;
+        let avg_debt = (hist.latest_debt() + (hist.latest_debt() + 100.0)) / 2.0;
+        let expected_interest = avg_debt * assumptions.interest_rate;
         assert_eq!(
             p.interest_expense, expected_interest,
-            "Interest expense should be beginning debt × interest rate"
+            "Interest expense should be average debt × interest rate"
         );
     }
 
@@ -1173,10 +1181,14 @@ mod tests {
 
         let p = &model.periods[0];
         let dividends = p.net_income * 0.30;
-        let expected_equity = hist.latest_equity() + p.net_income - dividends;
+        let expected_re = hist.latest_equity() + p.net_income - dividends;
         assert_eq!(
-            p.equity, expected_equity,
-            "Equity should be beginning equity + NI - dividends + issuance"
+            p.retained_earnings, expected_re,
+            "Retained earnings should be beginning RE + NI - dividends"
+        );
+        assert_eq!(
+            p.equity, p.paid_in_capital + p.retained_earnings + assumptions.equity_issuance,
+            "Total equity should be paid-in capital + retained earnings + issuance"
         );
     }
 
@@ -1192,6 +1204,26 @@ mod tests {
             p.ppe_net, expected_ppe,
             "PP&E should roll forward: PP&E[t-1] + Capex - D&A"
         );
+    }
+
+    #[test]
+    fn cash_comes_from_cash_flow_statement() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        // Cash must be derived from the cash flow statement, not from the
+        // balance sheet identity (no plug). cash[t] = cash[t-1] + CFO + CFI + CFF.
+        let mut prev_cash = hist.latest_cash();
+        for p in &model.periods {
+            let expected_cash = prev_cash + p.cfo + p.cfi + p.cff;
+            assert!(
+                (p.cash - expected_cash).abs() < 0.01,
+                "Cash in year {} should come from the cash flow statement, not a balance sheet plug. Expected {}, got {}",
+                p.year, expected_cash, p.cash
+            );
+            prev_cash = p.cash;
+        }
     }
 
     #[test]

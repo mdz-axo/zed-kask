@@ -142,6 +142,12 @@ pub enum InferenceMethod {
     /// `model_override` from `InferenceParams`. The result is returned as
     /// `InferenceOutcome::BatchResults`.
     GenerateBatch,
+    /// Generate media (image, video, speech, transcription) via the
+    /// MediaRouter. Uses `media_op`, `media_prompt`, `media_image_url`,
+    /// `media_text`, `media_size`, `media_count`, `media_strength`,
+    /// `media_duration` from `InferenceParams`. The result is returned as
+    /// `InferenceOutcome::Media`.
+    MediaGenerate,
 }
 
 /// Parameters for an inference request.

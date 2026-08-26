@@ -177,7 +177,7 @@ impl ProviderRegistry {
         // single candidate there is no selection to make — use it directly
         // so single-provider ops don't emit a spurious selection span.
         let ordered: Vec<Arc<dyn MediaProvider>> = if candidates.len() > 1 {
-            let (chosen, scores) = crate::scoring::select_scored(self, op)?;;
+            let (chosen, scores) = crate::scoring::select_scored(self, op)?;
             let chosen_id = chosen.id();
             let mut by_score: Vec<Arc<dyn MediaProvider>> = Vec::with_capacity(candidates.len());
             by_score.push(chosen);

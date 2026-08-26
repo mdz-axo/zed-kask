@@ -1018,6 +1018,36 @@ async fn dispatch(
         }
     }
 
+    // Media generation requests are dispatched via the InferencePort's
+    // `media_generate` method. The zed-side `InferencePort` impl
+    // (`LanguageModelInferencePort`) routes this to the `MediaRouter`.
+    // Returns `InferenceOutcome::Media` (a JSON value), not `Result`.
+    if matches!(request.method, InferenceMethod::MediaGenerate) {
+        let op = params.media_op.as_deref().unwrap_or("");
+        let media_params = hkask_types::MediaGenerateParams {
+            prompt: params.media_prompt.clone(),
+            image_url: params.media_image_url.clone(),
+            audio_url: params.media_audio_url.clone(),
+            text: params.media_text.clone(),
+            voice: params.media_voice.clone(),
+            size: params.media_size.clone(),
+            count: params.media_count,
+            strength: params.media_strength,
+            scale: params.media_scale,
+            duration: params.media_duration,
+            language: params.media_language.clone(),
+        };
+        return match port.media_generate(op, &media_params).await {
+            Ok(media) => InferenceOutcome::Media { media },
+            Err(e) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: e.to_string(),
+                },
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -1065,7 +1095,8 @@ async fn dispatch(
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
         | InferenceMethod::CreateWorktreeThread
-        | InferenceMethod::GenerateBatch => {
+        | InferenceMethod::GenerateBatch
+        | InferenceMethod::MediaGenerate => {
             tracing::error!(
                 target: "reg.inference",
                 method = ?request.method,

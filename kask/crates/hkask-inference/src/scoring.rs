@@ -74,10 +74,8 @@ impl ProviderScore {
 ///
 /// Default scoring is a neutral baseline; provider-specific arms are added
 /// here as media providers are (re-)registered.
-fn score_provider(id: &str, op: MediaOp) -> ProviderScore {
-    match (id, op) {
-        _ => ProviderScore::default(),
-    }
+fn score_provider(_id: &str, _op: MediaOp) -> ProviderScore {
+    ProviderScore::default()
 }
 
 /// Select the best provider for `op` using 7-dimension scored selection.
