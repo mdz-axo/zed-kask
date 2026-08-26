@@ -86,6 +86,9 @@ pub use directive_bridge::BridgeCuratorDirectiveSink;
 mod algedonic_log_bridge;
 pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
 
+mod context_server_health_bridge;
+pub use context_server_health_bridge::BridgeContextServerHealthSource;
+
 mod rollout_event_bridge;
 
 pub use rollout_event_bridge::{

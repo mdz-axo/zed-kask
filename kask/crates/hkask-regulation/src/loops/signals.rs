@@ -40,6 +40,12 @@ pub enum SignalMetric {
     /// Inference energy remaining fraction (Inference Loop 1)
     /// Model availability 0.0/1.0 (Inference Loop 1)
     InferenceModelAvailable,
+    /// Context server health fraction 0.0/1.0 (Cybernetics Loop 6).
+    /// 1.0 = all registered context servers are Running; 0.0 = all are
+    /// stuck in Starting, Error, or AuthRequired. The set-point is 1.0.
+    /// Without this metric the loop reports `signal_count=0` while every
+    /// MCP server is hung on `initialize` — the blind-feedback-loop trap.
+    ContextServerHealth,
     /// Algedonic event count (Cybernetics Loop 6)
     AlgedonicEvents,
     /// Algedonic log approaching cap (Cybernetics Loop 6).
@@ -120,6 +126,7 @@ impl SignalMetric {
             SignalMetric::CircuitBreakerState => "circuit_breaker_state",
             SignalMetric::InferenceAvailable => "inference_available",
             SignalMetric::InferenceModelAvailable => "inference_model_available",
+            SignalMetric::ContextServerHealth => "context_server_health",
             SignalMetric::AlgedonicEvents => "algedonic_events",
             SignalMetric::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             SignalMetric::PendingEscalations => "pending_escalations",
@@ -159,6 +166,7 @@ impl SignalMetric {
             SignalMetric::CircuitBreakerState,
             SignalMetric::InferenceAvailable,
             SignalMetric::InferenceModelAvailable,
+            SignalMetric::ContextServerHealth,
             SignalMetric::AlgedonicEvents,
             SignalMetric::AlgedonicLogApproachingCap,
             SignalMetric::PendingEscalations,

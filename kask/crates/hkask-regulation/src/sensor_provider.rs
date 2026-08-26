@@ -553,6 +553,85 @@ impl Sensor for InferenceHealthSensor {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// CONTEXT SERVER HEALTH SENSOR
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Source of context-server health metrics for the cybernetics loop.
+///
+/// The bridge implements this trait and passes an
+/// `Arc<dyn ContextServerHealthSource>` to
+/// `CyberneticsLoop::set_context_server_health_source`.
+///
+/// Without this sensor, the cybernetics loop reports `signal_count=0`
+/// while every MCP context server is stuck in `Starting` (spawned but
+/// `initialize` never completing) or `Error`. The loop's existing sensors
+/// read ledger/DB state, not context-server process state. This is the
+/// same blind-feedback-loop class as `InferenceHealthSource` but for the
+/// MCP stdio child processes spawned by zed's `ContextServerStore`.
+#[async_trait::async_trait]
+pub trait ContextServerHealthSource: Send + Sync {
+    /// Number of registered context servers currently in a healthy state
+    /// (`Running`). `0` when no servers are registered or none are healthy.
+    async fn healthy_count(&self) -> usize;
+
+    /// Total number of registered context servers (all states).
+    /// `0` when no servers are registered.
+    async fn total_count(&self) -> usize;
+}
+
+/// Senses context-server health from the per-project `ContextServerStore`.
+///
+/// Emits `SignalMetric::ContextServerHealth` with value `0.0` when any
+/// registered server is stuck in `Starting` or `Error`. The set-point is
+/// `1.0` (all registered servers Running); any deviation below `1.0` means
+/// the context-server fleet is degraded.
+///
+/// This closes the blind-feedback-loop gap that caused `signal_count=0`
+/// during the 600s `initialize` timeout storm: the cybernetics loop now
+/// senses context-server health and can act on it (escalate, notify)
+/// instead of reporting "no deviation" while every MCP server is hung.
+pub(crate) struct ContextServerHealthSensor {
+    source: Arc<dyn ContextServerHealthSource>,
+}
+
+impl ContextServerHealthSensor {
+    pub fn new(source: Arc<dyn ContextServerHealthSource>) -> Self {
+        Self { source }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for ContextServerHealthSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let total = self.source.total_count().await;
+        // No servers registered — nothing to report. Return None (not a
+        // signal with value 1.0, which would mask a broken source as
+        // "healthy" — the `.rules` `unwrap_or(0)` trap).
+        if total == 0 {
+            return None;
+        }
+        let healthy = self.source.healthy_count().await;
+
+        // Health ratio: fraction of registered servers in a healthy state.
+        // 1.0 = all Running, 0.0 = none Running.
+        let health_ratio = healthy as f64 / total as f64;
+
+        // Only emit when health is below the set-point (1.0).
+        // Healthy states produce no signal, matching the other sensors.
+        if health_ratio >= 1.0 {
+            return None;
+        }
+
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::ContextServerHealth,
+            health_ratio,
+            1.0, // set-point: all registered servers Running
+        ))
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // MEMORY HEALTH SENSOR
 // ═════════════════════════════════════════════════════════════════════════════
 

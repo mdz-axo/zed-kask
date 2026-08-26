@@ -49,6 +49,7 @@ pub(crate) enum RegulationReason {
     CircuitBreakerOpen,
     InferenceUnavailable,
     ModelUnavailable,
+    ContextServerFleetDegraded,
 }
 
 impl RegulationReason {
@@ -85,6 +86,7 @@ impl RegulationReason {
             Self::CircuitBreakerOpen => "circuit_breaker_open",
             Self::InferenceUnavailable => "inference_unavailable",
             Self::ModelUnavailable => "model_unavailable",
+            Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
         }
     }
 }
@@ -430,6 +432,22 @@ impl RegulationPolicy {
                         reason: ModelUnavailable,
                     }],
                 },
+                // ContextServerHealth (Cybernetics Loop 6) → Escalate
+                //
+                // A degraded context-server fleet (servers stuck in Starting
+                // or Error) is not something the loop can self-heal — it
+                // indicates the foreground executor is starving the stdio
+                // transport tasks, or a credential/config failure prevented
+                // `initialize`. Escalate to Curation for operator attention.
+                RegulationRule {
+                    metric: ContextServerHealth,
+                    direction: BelowSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: ContextServerFleetDegraded,
+                    }],
+                },
             ],
         }
     }
@@ -521,6 +539,7 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::MemoryLife => &[Calibrate, Escalate],
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
+        SignalMetric::ContextServerHealth => &[Escalate, Calibrate],
         // ── Observational (no substitution — Notify is terminal) ──
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount

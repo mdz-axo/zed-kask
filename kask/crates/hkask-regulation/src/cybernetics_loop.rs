@@ -275,6 +275,7 @@ impl CyberneticsLoop {
                 SignalMetric::ToolReliability,
                 SignalMetric::AlgedonicLogApproachingCap,
                 SignalMetric::InferenceAvailable,
+                SignalMetric::ContextServerHealth,
                 SignalMetric::TripleCount,
                 SignalMetric::LowConfidenceCount,
                 SignalMetric::ConsolidationCandidates,
@@ -294,6 +295,7 @@ impl CyberneticsLoop {
                 SignalMetric::CircuitBreakerState,
                 SignalMetric::InferenceAvailable,
                 SignalMetric::InferenceModelAvailable,
+                SignalMetric::ContextServerHealth,
                 SignalMetric::AlgedonicEvents,
                 SignalMetric::AlgedonicLogApproachingCap,
                 SignalMetric::PendingEscalations,
@@ -477,6 +479,43 @@ impl CyberneticsLoop {
     ) {
         self.sensor_registry.register(Arc::new(
             crate::sensor_provider::InferenceHealthSensor::new(source, 3),
+        ));
+    }
+
+    /// Wire a context-server health source so the cybernetics loop can sense
+    /// MCP servers stuck in `Starting` or `Error`.
+    ///
+    /// Without this, the loop reports `signal_count=0` while every context
+    /// server is hung on `initialize` (the 600s timeout storm) because its
+    /// existing sensors read ledger/DB state, not context-server process
+    /// state. The `ContextServerHealthSensor` emits
+    /// `SignalMetric::ContextServerHealth` when the fleet is degraded,
+    /// closing the blind-feedback-loop gap.
+    ///
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_context_server_health_source(
+        self,
+        source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
+    ) -> Self {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::ContextServerHealthSensor::new(source),
+        ));
+        self
+    }
+
+    /// Wire a context-server health source after construction.
+    ///
+    /// Used by the composition root to lazily wire the sensor after the
+    /// per-project `ContextServerStore` is available. The `with_*` builder
+    /// method can't be used there because the loop is already wrapped in
+    /// `Arc<RwLock<...>>` by the time the store exists.
+    pub fn set_context_server_health_source(
+        &mut self,
+        source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
+    ) {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::ContextServerHealthSensor::new(source),
         ));
     }
 

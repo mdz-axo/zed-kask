@@ -847,6 +847,21 @@ fn main() {
                 "seeded swarm-panel call cap (ceiling {SWARM_PANEL_CALL_CAP} calls/tick)"
             );
         }
+        // zed-kask: context-server health source for the cybernetics loop.
+        //
+        // Without this, the loop reports `signal_count=0` while every MCP
+        // context server is hung on `initialize` (the 600s timeout storm).
+        // The source is updated by a foreground poller in the reliability
+        // module (which already polls workspace/project state on a timer).
+        // The source is wired here via the `with_*` builder because the loop
+        // is about to be wrapped in `Arc<RwLock<...>>`; a clone is kept for
+        // the poller to update.
+        let context_server_health_source = std::sync::Arc::new(
+            kask_bridge::BridgeContextServerHealthSource::new(),
+        );
+        let context_server_health_source_for_poller = context_server_health_source.clone();
+        let cybernetics_loop_inner = cybernetics_loop_inner
+            .with_context_server_health_source(context_server_health_source);
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             cybernetics_loop_inner,
         ));
@@ -2403,7 +2418,12 @@ fn main() {
         // installer writes `zed*.app` bundles into `~/.local` and can replace
         // the user's real Zed installation. Updates are CLI-installer-only.
         dap_adapters::init(cx);
-        reliability::init(client.clone(), app_state.workspace_store.clone(), cx);
+        reliability::init(
+            client.clone(),
+            app_state.workspace_store.clone(),
+            context_server_health_source_for_poller.clone(),
+            cx,
+        );
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),

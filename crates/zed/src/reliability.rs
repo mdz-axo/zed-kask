@@ -25,9 +25,15 @@ use workspace::WorkspaceStore;
 
 mod hang_detection;
 
-pub fn init(client: Arc<Client>, workspace_store: Entity<WorkspaceStore>, cx: &mut App) {
+pub fn init(
+    client: Arc<Client>,
+    workspace_store: Entity<WorkspaceStore>,
+    context_server_health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    cx: &mut App,
+) {
     hang_detection::start(client.clone(), cx);
-    start_memory_usage_logging(workspace_store, cx);
+    start_memory_usage_logging(workspace_store.clone(), cx);
+    start_context_server_health_polling(workspace_store, context_server_health_source, cx);
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -155,6 +161,84 @@ fn start_memory_usage_logging(workspace_store: Entity<WorkspaceStore>, cx: &App)
         }
     })
     .detach();
+}
+
+/// Polls all open projects' `ContextServerStore`s on a timer and updates
+/// the shared health snapshot. The cybernetics loop's
+/// `ContextServerHealthSensor` reads this snapshot each tick to detect MCP
+/// servers stuck in `Starting` or `Error` — the signature of the
+/// foreground-executor starvation bug where `initialize` never completes.
+///
+/// Runs on the foreground thread (reads GPUI entities) driven by a
+/// background timer, mirroring `start_memory_usage_logging`'s pattern.
+fn start_context_server_health_polling(
+    workspace_store: Entity<WorkspaceStore>,
+    health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    cx: &App,
+) {
+    let (update_sender, mut update_receiver) = futures::channel::mpsc::unbounded();
+    cx.spawn({
+        let workspace_store = workspace_store.clone();
+        async move |cx| {
+            while update_receiver.next().await.is_some() {
+                cx.update(|cx| {
+                    let snapshot = compute_context_server_health_snapshot(&workspace_store, cx);
+                    health_source.update(snapshot.0, snapshot.1);
+                });
+            }
+        }
+    })
+    .detach();
+
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        loop {
+            if update_sender.unbounded_send(()).is_err() {
+                return;
+            }
+            executor.timer(CONTEXT_SERVER_HEALTH_POLL_INTERVAL).await;
+        }
+    })
+    .detach();
+}
+
+/// How often to poll context-server health. Matches the cybernetics loop's
+/// tick cadence (10s) so the sensor sees a stuck server within one tick.
+const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Compute `(healthy_count, total_count)` across all open projects'
+/// `ContextServerStore`s. A server is "healthy" iff its status is `Running`.
+/// Deduplicates by `ContextServerStore` entity id (a project opened in two
+/// windows shares one store).
+fn compute_context_server_health_snapshot(
+    workspace_store: &Entity<WorkspaceStore>,
+    cx: &App,
+) -> (usize, usize) {
+    use project::context_server_store::ContextServerStatus;
+
+    let workspaces = workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|workspace| workspace.upgrade())
+        .collect::<Vec<_>>();
+    let mut seen_stores = HashSet::new();
+    let mut healthy = 0;
+    let mut total = 0;
+    for workspace in workspaces {
+        let project = workspace.read(cx).project().clone();
+        let context_server_store = project.read(cx).context_server_store();
+        if !seen_stores.insert(context_server_store.entity_id()) {
+            continue;
+        }
+        let store = context_server_store.read(cx);
+        for server_id in store.server_ids() {
+            total += 1;
+            if let Some(ContextServerStatus::Running) = store.status_for_server(server_id) {
+                healthy += 1;
+            }
+        }
+    }
+    (healthy, total)
 }
 
 fn log_worktree_diagnostics(workspace_store: &Entity<WorkspaceStore>, cx: &App) {

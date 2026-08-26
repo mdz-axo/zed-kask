@@ -1298,7 +1298,8 @@ impl super::CyberneticsLoop {
             | RegulationReason::MemoryLifeLow
             | RegulationReason::CircuitBreakerOpen
             | RegulationReason::InferenceUnavailable
-            | RegulationReason::ModelUnavailable => {
+            | RegulationReason::ModelUnavailable
+            | RegulationReason::ContextServerFleetDegraded => {
                 let at = self
                     .try_substitute(dev.signal.metric, proposed.action_type)
                     .await;
@@ -1555,6 +1556,7 @@ mod tests {
                 (CircuitBreakerState, AboveSetPoint, 1.0, 0.0),
                 (InferenceAvailable, BelowSetPoint, 0.0, 1.0),
                 (InferenceModelAvailable, BelowSetPoint, 0.0, 1.0),
+                (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
             ];
 
             for &(metric, direction, value, set_point) in cases {
