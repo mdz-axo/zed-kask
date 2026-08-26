@@ -14,7 +14,7 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 - Refactoring while all tests are GREEN — extracting duplication, deepening modules, strengthening contracts, and applying SOLID principles while preserving contract metadata and verifying tests pass after each step.
 - Verifying TDD cycle completion — checking all tests pass, clippy is clean, no `todo!()`/`unimplemented!()` stubs remain, contract structure is complete, and code entity anchoring is intact.
 - Performing code gap analysis — comparing code entities against tested behaviors, scoring expectation quality (0–3), cross-referencing goal-principle alignment against MDS categories derived from code position, and producing deferral recommendations for `OPEN_QUESTIONS.md`.
-- Strengthening a GREEN tracer bullet — writing the universal test that verifies a contract's `post:`/`inv:` across the full input space with `proptest` directly (a property-test fail is a second source of RED routing back to the tracer or plan).
+- Strengthening a GREEN tracer bullet — writing the universal test that verifies a contract's `post:`/`inv:` across the full input space with the `proptest` crate directly (a property-test fail is a second source of RED routing back to the tracer or plan).
 - Exploring for code blind spots — dispatching to the `bug-hunt` skill with a charter scoped to the slice's code, finding bugs the code structure never surfaced and routing them back as new entities needing tests.
 
 ## Instructions

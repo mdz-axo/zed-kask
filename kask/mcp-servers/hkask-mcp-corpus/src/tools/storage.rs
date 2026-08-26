@@ -593,6 +593,122 @@ fn search_passages(
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IndexedPassage;
+
+    fn make_passage(text: &str, embedding: Vec<f32>) -> IndexedPassage {
+        IndexedPassage {
+            text: text.to_string(),
+            metadata: json!({"entity_ref": "test:chunk:1"}),
+            embedding,
+        }
+    }
+
+    // ── search_passages ──────────────────────────────────────────────────
+
+    #[test]
+    fn search_returns_results_sorted_by_score() {
+        let passages = vec![
+            make_passage("low match", vec![0.1, 0.0]),
+            make_passage("high match", vec![0.9, 0.0]),
+            make_passage("medium match", vec![0.5, 0.0]),
+        ];
+        let query = vec![1.0, 0.0];
+        let results = search_passages(&passages, &query, 3, 0.0, false);
+        assert_eq!(results.len(), 3);
+        // Highest score first
+        assert!(results[0]["score"].as_f64().unwrap() > results[1]["score"].as_f64().unwrap());
+        assert!(results[1]["score"].as_f64().unwrap() > results[2]["score"].as_f64().unwrap());
+    }
+
+    #[test]
+    fn search_top_k_truncates() {
+        let passages = vec![
+            make_passage("a", vec![0.9, 0.0]),
+            make_passage("b", vec![0.8, 0.0]),
+            make_passage("c", vec![0.7, 0.0]),
+        ];
+        let query = vec![1.0, 0.0];
+        let results = search_passages(&passages, &query, 2, 0.0, false);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_min_score_filters() {
+        let passages = vec![
+            make_passage("low", vec![0.3, 0.0]),
+            make_passage("high", vec![0.9, 0.0]),
+        ];
+        let query = vec![1.0, 0.0];
+        let results = search_passages(&passages, &query, 10, 0.5, false);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["metadata"]["entity_ref"], "test:chunk:1");
+    }
+
+    #[test]
+    fn search_include_text_adds_text_field() {
+        let passages = vec![make_passage("secret text", vec![1.0, 0.0])];
+        let query = vec![1.0, 0.0];
+        let with_text = search_passages(&passages, &query, 1, 0.0, true);
+        assert!(with_text[0].get("text").is_some());
+        assert_eq!(with_text[0]["text"], "secret text");
+
+        let without_text = search_passages(&passages, &query, 1, 0.0, false);
+        assert!(without_text[0].get("text").is_none());
+    }
+
+    #[test]
+    fn search_empty_passages_returns_empty() {
+        let results = search_passages(&[], &[1.0, 0.0], 5, 0.0, false);
+        assert!(results.is_empty());
+    }
+
+    // ── parse_lisp_query ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_lisp_query_basic() {
+        let expr = r#'(list (list "query" "investment philosophy") (list "top-k" 3) (list "include-text" t))"#;
+        let (query, k, include_text, min_score, gen_answer) =
+            parse_lisp_query(expr).expect("should parse");
+        assert_eq!(query, "investment philosophy");
+        assert_eq!(k, 3);
+        assert!(include_text);
+        assert_eq!(min_score, 0.0);
+        assert!(!gen_answer);
+    }
+
+    #[test]
+    fn parse_lisp_query_with_min_score() {
+        let expr = r#'(list (list "query" "test") (list "min-score" 0.7) (list "top-k" 10))"#;
+        let (_, k, _, min_score, _) =
+            parse_lisp_query(expr).expect("should parse");
+        assert_eq!(k, 10);
+        assert!((min_score - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_lisp_query_missing_query_returns_error() {
+        let expr = r#'(list (list "top-k" 5))"#;
+        assert!(parse_lisp_query(expr).is_err());
+    }
+
+    #[test]
+    fn parse_lisp_query_unknown_key_returns_error() {
+        let expr = r#'(list (list "query" "test") (list "unknown-key" 42))"#;
+        assert!(parse_lisp_query(expr).is_err());
+    }
+
+    #[test]
+    fn parse_lisp_query_generate_answer() {
+        let expr = r#'(list (list "query" "test") (list "generate-answer" t))"#;
+        let (_, _, _, _, gen_answer) =
+            parse_lisp_query(expr).expect("should parse");
+        assert!(gen_answer);
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ClearIndexRequest {}
 

@@ -999,6 +999,13 @@ async fn dispatch(
                         },
                     })
                     .collect();
+                tracing::info!(
+                    target: "hkask.inference.batch",
+                    batch_id = %batch_id,
+                    succeeded = batch_result.succeeded,
+                    failed = batch_result.failed,
+                    "Batch completed"
+                );
                 return InferenceOutcome::BatchResults { results };
             }
             Err(e) => {

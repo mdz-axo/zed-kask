@@ -309,6 +309,85 @@ pub fn contain_for_read(path: &str) -> Result<std::path::PathBuf, McpToolError> 
     contain(std::path::Path::new(path), false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The containment must accept paths under the CWD (the project root
+    /// when launched per-project). This is the pre-existing behavior the
+    /// multi-root change must preserve.
+    #[test]
+    fn contain_accepts_cwd_relative_path() {
+        // The test binary's CWD is the crate root — a relative path under it
+        // must resolve and be accepted.
+        let result = contain_for_read("Cargo.toml");
+        assert!(result.is_ok(), "relative path under CWD must be accepted");
+    }
+
+    /// The containment must accept absolute paths under the CWD.
+    #[test]
+    fn contain_accepts_absolute_cwd_path() {
+        let cwd = std::env::current_dir().expect("cwd must resolve");
+        let target = cwd.join("Cargo.toml");
+        let result = contain_for_read(target.to_str().expect("utf-8 path"));
+        assert!(result.is_ok(), "absolute path under CWD must be accepted");
+    }
+
+    /// The containment must accept paths under the kask data dir (D28 —
+    /// where MCP server DBs live). This is the new behavior.
+    #[test]
+    fn contain_accepts_data_dir_path() {
+        let data_dir = hkask_types::agent_paths::resolve_data_dir();
+        // The data dir itself may not exist in the test environment; create
+        // a temp marker file to canonicalize against.
+        std::fs::create_dir_all(&data_dir).expect("data dir must be creatable");
+        let marker = data_dir.join(".containment-test-marker");
+        std::fs::write(&marker, b"test").expect("marker must be writable");
+        let result = contain_for_read(marker.to_str().expect("utf-8 path"));
+        std::fs::remove_file(&marker).ok();
+        assert!(result.is_ok(), "path under data dir must be accepted");
+    }
+
+    /// The containment must accept paths under the kask artifacts dir (D28 —
+    /// where user-facing artifacts live). This is the new behavior.
+    #[test]
+    fn contain_accepts_artifacts_dir_path() {
+        let artifacts_dir = hkask_types::agent_paths::resolve_artifacts_dir();
+        std::fs::create_dir_all(&artifacts_dir).expect("artifacts dir must be creatable");
+        let marker = artifacts_dir.join(".containment-test-marker");
+        std::fs::write(&marker, b"test").expect("marker must be writable");
+        let result = contain_for_read(marker.to_str().expect("utf-8 path"));
+        std::fs::remove_file(&marker).ok();
+        assert!(result.is_ok(), "path under artifacts dir must be accepted");
+    }
+
+    /// The containment must reject paths outside all allowed roots —
+    /// e.g. `/etc/passwd` (CWE-22).
+    #[test]
+    fn contain_rejects_etc_passwd() {
+        let result = contain_for_read("/etc/passwd");
+        assert!(result.is_err(), "/etc/passwd must be rejected");
+    }
+
+    /// The containment must reject traversal escapes (CWE-73).
+    #[test]
+    fn contain_rejects_traversal_escape() {
+        // `..` from the CWD lands outside the CWD; unless the parent happens
+        // to be the data dir or artifacts dir (it is not — it's the workspace
+        // root containing all crates), this must be rejected.
+        let result = contain_for_read("../../../etc/passwd");
+        assert!(result.is_err(), "traversal escape must be rejected");
+    }
+
+    /// The containment must reject nonexistent paths (read mode requires
+    /// the target to exist for canonicalization).
+    #[test]
+    fn contain_rejects_nonexistent_read_path() {
+        let result = contain_for_read("/definitely/does/not/exist.txt");
+        assert!(result.is_err(), "nonexistent read path must be rejected");
+    }
+}
+
 /// Read a caller-supplied file with containment and a size cap, so a hostile
 /// or mistaken path cannot exfiltrate arbitrary files (CWE-200) or exhaust
 /// memory (CWE-400). Combines [`contain_for_read`] with a metadata size check

@@ -61,18 +61,15 @@ impl BatchProvider {
         }
     }
 
+    // Both providers use the same auth scheme (Bearer token in the
+    // Authorization header), so these are single expressions rather
+    // than per-variant matches.
     fn auth_header(&self) -> &'static str {
-        match self {
-            Self::OpenRouter => "Authorization",
-            Self::DeepInfra => "Authorization",
-        }
+        "Authorization"
     }
 
     fn auth_value(&self, key: &str) -> String {
-        match self {
-            Self::OpenRouter => format!("Bearer {key}"),
-            Self::DeepInfra => format!("Bearer {key}"),
-        }
+        format!("Bearer {key}")
     }
 }
 
@@ -550,4 +547,137 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
         succeeded,
         failed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── detect_batch_provider ──────────────────────────────────────────────
+
+    #[test]
+    fn detect_openrouter_batch_suffix() {
+        let (provider, model) =
+            detect_batch_provider("z-ai/glm-5.2:batch").expect("should detect");
+        assert_eq!(provider, BatchProvider::OpenRouter);
+        assert_eq!(model, "z-ai/glm-5.2");
+    }
+
+    #[test]
+    fn detect_deepinfra_prefix() {
+        let (provider, model) =
+            detect_batch_provider("DeepInfra/Qwen/Qwen3-Embedding-0.6B").expect("should detect");
+        assert_eq!(provider, BatchProvider::DeepInfra);
+        assert_eq!(model, "Qwen/Qwen3-Embedding-0.6B");
+    }
+
+    #[test]
+    fn detect_non_batch_model_returns_none() {
+        assert!(detect_batch_provider("z-ai/glm-5.2").is_none());
+        assert!(detect_batch_provider("some-random-model").is_none());
+    }
+
+    #[test]
+    fn detect_strips_batch_suffix_from_deepinfra_prefix() {
+        // A model with both DeepInfra prefix AND :batch suffix —
+        // the :batch suffix is checked first (OpenRouter convention),
+        // so this routes to OpenRouter, not DeepInfra.
+        let (provider, model) =
+            detect_batch_provider("DeepInfra/Qwen/Qwen3-Embedding-0.6B:batch").expect("should detect");
+        assert_eq!(provider, BatchProvider::OpenRouter);
+        assert_eq!(model, "DeepInfra/Qwen/Qwen3-Embedding-0.6B");
+    }
+
+    // ── parse_batch_results ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_successful_result() {
+        let jsonl = r#"{"custom_id":"req-1","response":{"body":{"choices":[{"message":{"content":"hello world"}}],"usage":{"total_tokens":42}}}}"#;
+        let result = parse_batch_results(jsonl).expect("should parse");
+        assert_eq!(result.succeeded, 1);
+        assert_eq!(result.failed, 0);
+        let entry = result.results.get("req-1").expect("should have entry");
+        assert!(entry.is_ok());
+        let ok = entry.as_ref().expect("checked is_ok");
+        assert_eq!(ok.text, "hello world");
+        assert_eq!(ok.total_tokens, 42);
+    }
+
+    #[test]
+    fn parse_error_result_includes_error_message() {
+        let jsonl = r#"{"custom_id":"req-2","error":{"message":"rate limited"}}"#;
+        let result = parse_batch_results(jsonl).expect("should parse");
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failed, 1);
+        let entry = result.results.get("req-2").expect("should have entry");
+        assert!(entry.is_err());
+        assert_eq!(entry.as_ref().unwrap_err(), "rate limited");
+    }
+
+    #[test]
+    fn parse_result_with_no_choices_is_failed() {
+        let jsonl = r#"{"custom_id":"req-3","response":{"body":{"choices":[],"usage":null}}}"#;
+        let result = parse_batch_results(jsonl).expect("should parse");
+        assert_eq!(result.failed, 1);
+        let entry = result.results.get("req-3").expect("should have entry");
+        assert!(entry.is_err());
+    }
+
+    #[test]
+    fn parse_empty_lines_skipped() {
+        let jsonl = "\n\n  \n";
+        let result = parse_batch_results(jsonl).expect("should parse");
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failed, 0);
+        assert!(result.results.is_empty());
+    }
+
+    #[test]
+    fn parse_mixed_success_and_failure() {
+        let jsonl = "{\"custom_id\":\"ok\",\"response\":{\"body\":{\"choices\":[{\"message\":{\"content\":\"good\"}}],\"usage\":{\"total_tokens\":10}}}}\n{\"custom_id\":\"bad\",\"error\":{\"message\":\"failed\"}}\n";
+        let result = parse_batch_results(jsonl).expect("should parse");
+        assert_eq!(result.succeeded, 1);
+        assert_eq!(result.failed, 1);
+        assert!(result.results.get("ok").is_some_and(|r| r.is_ok()));
+        assert!(result.results.get("bad").is_some_and(|r| r.is_err()));
+    }
+
+    #[test]
+    fn parse_malformed_line_returns_error() {
+        let jsonl = "not valid json";
+        assert!(parse_batch_results(jsonl).is_err());
+    }
+
+    // ── format_batch_jsonl ────────────────────────────────────────────────
+
+    #[test]
+    fn format_batch_jsonl_produces_valid_jsonl() {
+        let prompts = vec![
+            BatchPrompt {
+                custom_id: "req-1".to_string(),
+                system: "you are helpful".to_string(),
+                user: "say hello".to_string(),
+            },
+            BatchPrompt {
+                custom_id: "req-2".to_string(),
+                system: "you are helpful".to_string(),
+                user: "say goodbye".to_string(),
+            },
+        ];
+        let jsonl = format_batch_jsonl("test-model", &prompts, 100, 0.5);
+        let lines: Vec<&str> = jsonl.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            let parsed: serde_json::Value = serde_json::from_str(line)
+                .unwrap_or_else(|e| panic!("each line must be valid JSON: {e}"));
+            assert_eq!(parsed["method"], "post");
+            assert_eq!(parsed["url"], "/v1/chat/completions");
+            assert_eq!(parsed["body"]["model"], "test-model");
+            assert_eq!(parsed["body"]["max_tokens"], 100);
+            assert_eq!(parsed["body"]["temperature"], 0.5);
+        }
+        // Verify custom IDs are preserved
+        let first: serde_json::Value = serde_json::from_str(lines[0]).expect("valid json");
+        assert_eq!(first["custom_id"], "req-1");
+    }
 }
