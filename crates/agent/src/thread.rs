@@ -5124,9 +5124,7 @@ impl Thread {
                 }
                 let text_lower = text.to_lowercase();
                 for (name, _) in &tools {
-                    if !retained.contains(name)
-                        && text_lower.contains(&name.to_lowercase())
-                    {
+                    if !retained.contains(name) && text_lower.contains(&name.to_lowercase()) {
                         retained.insert(name.clone());
                     }
                 }

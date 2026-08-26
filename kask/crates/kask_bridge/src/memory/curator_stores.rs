@@ -41,9 +41,9 @@ pub fn open_curator_regulation_archive(
 }
 /// The curator's sovereign store, with self-healing open.
 ///
-/// One store holds both the curator's first-person episodic records and the
-/// shared semantic copies — the `HMemOntology` blob on each h_mem
-/// distinguishes them (P5.4), so no second store struct is needed.
+/// One store holds all of the curator's h_mems — the `HMemOntology` blob
+/// on each h_mem carries dual-axis anchoring, so no second store struct
+/// is needed.
 ///
 /// Wraps the `Option<Arc<MemoryStore>>` in an `RwLock` plus the parameters
 /// needed to re-open it (passphrase, embedding dim). When the initial open

@@ -3,7 +3,9 @@
 pub struct ConsolidationRequest {
     pub limit: usize,
     pub confidence_floor: Option<f64>,
-    pub max_semantic_triples: Option<usize>,
+    /// Maximum h_mem count after pruning. When `None`, the store's
+    /// `storage_budget` acts as the default cap.
+    pub max_h_mems: Option<usize>,
 }
 
 impl Default for ConsolidationRequest {
@@ -11,14 +13,13 @@ impl Default for ConsolidationRequest {
         Self {
             limit: 100,
             confidence_floor: None,
-            max_semantic_triples: None,
+            max_h_mems: None,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ConsolidationOutcome {
-    pub consolidated_count: usize,
     pub deleted_count: usize,
     pub failed_count: usize,
 }

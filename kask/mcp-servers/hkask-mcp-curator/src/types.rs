@@ -34,10 +34,29 @@ pub struct RegQueryRequest {
     pub limit: Option<usize>,
 }
 
+/// Recall shape for `curator_memory_recall`.
+///
+/// - `perspective_scoped`: h_mems written by the curator (first-person
+///   turn history). Uses `query_for_deduped` with the curator's WebID.
+/// - `entity_wide`: all h_mems for the entity regardless of perspective.
+///   Uses `query_deduped` (no perspective filter).
+/// - `both`: return both recall shapes in separate JSON keys.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRecallType {
+    PerspectiveScoped,
+    EntityWide,
+    #[default]
+    Both,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemoryRecallRequest {
     pub entity: String,
-    pub memory_type: Option<String>,
+    /// Recall shape: `perspective_scoped` (curator's turns), `entity_wide`
+    /// (all h_mems for the entity), or `both`. Defaults to `both`.
+    #[serde(default)]
+    pub recall_shape: MemoryRecallType,
     /// Optional ontology axis to recall along instead of the entity (P5.4).
     /// One of `dc_type`, `dc_subject`, `pko_procedure`, `ontology_namespace`.
     /// When set, `ontology_value` supplies the term and `entity` is ignored.

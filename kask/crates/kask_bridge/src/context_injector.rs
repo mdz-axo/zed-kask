@@ -219,7 +219,9 @@ impl ContextInjector for BridgeContextInjector {
         Box::pin(async move {
             // Prompt-salient recall: embedding similarity against the user's prompt.
             let prompt_snippets = if curator {
-                memory_port.recall_context_curator(&prompt, prompt_limit).await
+                memory_port
+                    .recall_context_curator(&prompt, prompt_limit)
+                    .await
             } else {
                 memory_port.recall_context(&prompt, prompt_limit).await
             };
@@ -300,7 +302,8 @@ impl ContextInjector for BridgeContextInjector {
                          whether you are operating in an area where you \
                          lack prior experience, and whether you should \
                          seek external information rather than relying \
-                         on your own judgment.".to_string(),
+                         on your own judgment."
+                            .to_string(),
                     )],
                     cache: false,
                     reasoning_details: None,
@@ -347,15 +350,16 @@ mod tests {
     async fn inject_context_recalls_mid_session_ingest() {
         // Use a deterministic embed function that maps text to a simple
         // bag-of-words vector so recall works without a real embedding model.
-        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> =
-            Arc::new(|text: &str| {
-                let mut vec = vec![0.0_f32; 128];
-                for word in text.split_whitespace() {
-                    let hash = word.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-                    vec[(hash as usize) % 128] += 1.0;
-                }
-                vec
-            });
+        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
+            let mut vec = vec![0.0_f32; 128];
+            for word in text.split_whitespace() {
+                let hash = word
+                    .bytes()
+                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+                vec[(hash as usize) % 128] += 1.0;
+            }
+            vec
+        });
         let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
 
         // Ingest a curator turn with a distinctive keyword.
@@ -376,7 +380,9 @@ mod tests {
         // Call inject_context with a prompt that shares keywords with the
         // ingested turn. The prompt is long enough to pass the should_recall gate.
         let prompt = "I need to understand the zephyr protocol reconnection strategy for debugging";
-        let messages = injector.inject_context("convergence-test-thread", prompt).await;
+        let messages = injector
+            .inject_context("convergence-test-thread", prompt)
+            .await;
 
         assert_eq!(
             messages.len(),

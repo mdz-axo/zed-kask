@@ -1,12 +1,10 @@
 //! Unified memory store — one store for all h_mems, ontology-discriminated.
 //!
-//! The episodic/semantic distinction is encoded in the `HMemOntology` blob
-//! (P5.4 dual-axis anchoring), not in separate store structs. A semantic fact
-//! carries DC+BIBO anchoring (`dc_type`, `dc_subject`, `dc_source`) with no
-//! PKO procedure/step. An episodic experience carries PKO anchoring
-//! (`pko_procedure`, `pko_step`) with `dc_type = pko:StepExecution`. The
-//! ontology blob tells you which kind of memory this is — no separate struct
-//! needed.
+//! The ontology blob on each h_mem carries dual-axis anchoring
+//! (PKO process axis + DC state axis). A process-anchored h_mem carries
+//! PKO procedure/step; a state-anchored h_mem carries DC type/subject.
+//! Both are unified h_mems — there is no episodic/semantic type
+//! distinction.
 //!
 //! The `perspective` field is provenance (who wrote the memory), not a
 //! semantic classifier. The intended flow is chat stream → chunks → each
@@ -64,10 +62,10 @@ pub(crate) const DEFAULT_STORAGE_BUDGET: usize = 10_000;
 
 /// Unified memory store — one store for all h_mems.
 ///
-/// The episodic/semantic distinction lives in the `HMemOntology` blob on each
-/// h_mem, not in the store struct. `store()` accepts any h_mem; the ontology
-/// classifies it. Recall queries filter by `perspective` (who wrote this)
-/// when needed — the swarm hive uses this to scope by agent.
+/// The ontology blob on each h_mem carries dual-axis anchoring. `store()`
+/// accepts any h_mem; the ontology classifies it. Recall queries filter by
+/// `perspective` (who wrote this) when needed — the swarm hive uses this
+/// to scope by agent.
 ///
 /// Decay (Wozniak-Gorzelanczyk, 1995) is applied at recall time:
 /// `R(t) = exp(-t/S)` where `t` is days since `recalled_at` and `S` is
@@ -165,7 +163,7 @@ impl MemoryStore {
 
     /// Set the storage budget (max shared h_mems before consolidation prunes).
     /// The budget is enforced inside `MemoryConsolidator::consolidate` as the
-    /// default `max_semantic_triples` cap when the caller omits one — the
+    /// default `max_h_mems` cap when the caller omits one — the
     /// Ashby attenuator for unbounded memory growth. `RealMemoryPort::new`
     /// wires this from `HKASK_MEMORY_STORAGE_BUDGET` (default 10_000).
     pub fn with_storage_budget(mut self, budget: usize) -> Self {
@@ -190,8 +188,8 @@ impl MemoryStore {
 
     /// Store any h_mem. No visibility/perspective invariants — the ontology
     /// blob classifies the memory. The caller is responsible for setting the
-    /// ontology (semantic facts get `HMemOntology::state()`, episodic
-    /// experiences get `HMemOntology::process()`).
+    /// ontology (state-anchored h_mems get `HMemOntology::state()`,
+    /// process-anchored h_mems get `HMemOntology::process()`).
     ///
     /// Emits a `reg.memory.encode` span for observability.
     pub fn store(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
@@ -263,7 +261,7 @@ impl MemoryStore {
     /// Query by entity for a specific perspective (who wrote this), with
     /// deduplication and decay, **without** touching `recalled_at`.
     ///
-    /// This is the recall path for first-person episodic memory: filter to
+    /// This is the recall path for perspective-scoped memory: filter to
     /// the memories written by a specific agent/user. The swarm hive uses
     /// this to scope by agent.
     pub fn query_for_deduped_untouched(
@@ -604,9 +602,7 @@ impl MemoryStore {
         perspective: WebID,
         limit: usize,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
-        let mut h_mems = self
-            .h_mem_store
-            .query_by_perspective(&perspective)?;
+        let mut h_mems = self.h_mem_store.query_by_perspective(&perspective)?;
         h_mems.sort_by(|a, b| {
             let a_effective = a
                 .confidence
@@ -672,9 +668,7 @@ impl MemoryStore {
     }
 
     pub fn low_confidence_count(&self, threshold: f64) -> Result<usize, MemoryStoreError> {
-        Ok(self
-            .h_mem_store
-            .count_below_confidence(threshold)?)
+        Ok(self.h_mem_store.count_below_confidence(threshold)?)
     }
 
     pub fn low_confidence_h_mems(
@@ -682,9 +676,7 @@ impl MemoryStore {
         threshold: f64,
         limit: usize,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
-        Ok(self
-            .h_mem_store
-            .query_below_confidence(threshold, limit)?)
+        Ok(self.h_mem_store.query_below_confidence(threshold, limit)?)
     }
 
     // ── Co-occurrence connectedness (Priority 3) ────────────────────────
@@ -716,7 +708,13 @@ impl MemoryStore {
                            co_count = co_count + 1, \
                            last_linked = datetime('now')";
                 driver
-                    .execute(sql, &[DbValue::Text(sorted[i].to_string()), DbValue::Text(sorted[j].to_string())])
+                    .execute(
+                        sql,
+                        &[
+                            DbValue::Text(sorted[i].to_string()),
+                            DbValue::Text(sorted[j].to_string()),
+                        ],
+                    )
                     .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
             }
         }

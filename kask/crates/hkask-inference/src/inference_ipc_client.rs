@@ -80,8 +80,7 @@ const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 /// `HKASK_INFERENCE_SOCKET` (e.g. after a self-healing reconnect using a
 /// stale `LaunchSpec`).
 fn read_socket_path_from_file() -> Option<String> {
-    let xdg = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| "/run/user/1000".to_string());
+    let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
     std::fs::read_to_string(format!("{xdg}/kask/inference-socket-path"))
         .ok()
         .map(|s| s.trim().to_string())

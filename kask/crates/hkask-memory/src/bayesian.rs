@@ -76,7 +76,7 @@ const LOG_ODDS_EPSILON: f64 = 1e-6;
 /// ln(0) and division-by-zero.
 ///
 /// expect: "The system combines independent confidence estimates using Bayesian evidence pooling"
-/// \[P3\] Motivating: Generative Space — fuses episodic and semantic evidence
+/// \[P3\] Motivating: Generative Space — fuses evidence via Bayesian pooling
 /// \[P8\] Constraining: Semantic Grounding — log-odds pooling is the
 ///         mathematically correct method for combining independent probabilities
 /// pre:  c₁, c₂ are in [0, 1]

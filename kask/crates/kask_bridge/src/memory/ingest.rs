@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use hkask_memory::{MemoryConsolidator};
+use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, MemoryError, TurnRecord, Visibility, WebID};
 use std::sync::RwLock;

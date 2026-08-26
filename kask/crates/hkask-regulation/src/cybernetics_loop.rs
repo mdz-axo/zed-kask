@@ -276,6 +276,12 @@ impl CyberneticsLoop {
                 SignalMetric::MutationScore,
                 SignalMetric::ToolReliability,
                 SignalMetric::AlgedonicLogApproachingCap,
+                SignalMetric::InferenceAvailable,
+                SignalMetric::TripleCount,
+                SignalMetric::LowConfidenceCount,
+                SignalMetric::ConsolidationCandidates,
+                SignalMetric::StorageUsage,
+                SignalMetric::MemoryLife,
             ];
             const ALL_METRICS: &[SignalMetric] = &[
                 SignalMetric::EnergyRemaining,
@@ -473,6 +479,59 @@ impl CyberneticsLoop {
     ) {
         self.sensor_registry.register(Arc::new(
             crate::sensor_provider::InferenceHealthSensor::new(source, 3),
+        ));
+    }
+
+    /// Wire a memory health source at construction time.
+    ///
+    /// The bridge implements `MemoryHealthSource` and passes an
+    /// `Arc<dyn MemoryHealthSource>` here. The `MemoryHealthSensor` emits
+    /// signals for `TripleCount`, `LowConfidenceCount`,
+    /// `ConsolidationCandidates`, `StorageUsage`, and `MemoryLife` —
+    /// closing 5 regulation loops that previously had policy rules but no
+    /// sensor (dead policy).
+    ///
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_memory_health_source(
+        self,
+        source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
+        set_points: &crate::set_points::SetPoints,
+    ) -> Self {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::MemoryHealthSensor::new(
+                source,
+                set_points.triple_count_max,
+                set_points.low_confidence_max,
+                set_points.low_confidence_threshold,
+                set_points.consolidation_floor,
+                set_points.consolidation_candidates_max,
+                set_points.storage_usage_max_ratio,
+                set_points.memory_life_min_days,
+            ),
+        ));
+        self
+    }
+
+    /// Wire a memory health source after construction.
+    ///
+    /// Used by the composition root to lazily wire the sensor after the
+    /// memory store is opened (in the deferred post-login task).
+    pub fn set_memory_health_source(
+        &mut self,
+        source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
+    ) {
+        self.sensor_registry.register(Arc::new(
+            crate::sensor_provider::MemoryHealthSensor::new(
+                source,
+                self.set_points.triple_count_max,
+                self.set_points.low_confidence_max,
+                self.set_points.low_confidence_threshold,
+                self.set_points.consolidation_floor,
+                self.set_points.consolidation_candidates_max,
+                self.set_points.storage_usage_max_ratio,
+                self.set_points.memory_life_min_days,
+            ),
         ));
     }
 

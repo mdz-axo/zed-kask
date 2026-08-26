@@ -23,9 +23,8 @@ fn validate_kind(kind: &str) -> Result<&'static str, McpToolError> {
 
 /// Resolve the artifact directory for a given kind, creating it if needed.
 fn artifact_dir(kind_label: &str) -> Result<std::path::PathBuf, McpToolError> {
-    let dir = resolve_under_artifacts_dir(std::path::Path::new(&format!(
-        "companies-mcp/{kind_label}"
-    )));
+    let dir =
+        resolve_under_artifacts_dir(std::path::Path::new(&format!("companies-mcp/{kind_label}")));
     std::fs::create_dir_all(&dir).map_err(|e| {
         McpToolError::internal(format!(
             "Failed to create artifact directory {}: {e}",
@@ -38,9 +37,7 @@ fn artifact_dir(kind_label: &str) -> Result<std::path::PathBuf, McpToolError> {
 /// Sanitize an artifact name for filesystem use. Prevents path traversal.
 fn sanitize_artifact_name(name: &str) -> Result<String, McpToolError> {
     if name.is_empty() {
-        return Err(McpToolError::invalid_argument(
-            "name must not be empty",
-        ));
+        return Err(McpToolError::invalid_argument("name must not be empty"));
     }
     let sanitized: String = name
         .chars()
@@ -89,10 +86,7 @@ impl CompaniesServer {
     #[tool(
         description = "Persist a JSON artifact (screen or report) produced by the companies server or a skill."
     )]
-    pub async fn report_save(
-        &self,
-        Parameters(req): Parameters<ReportSaveRequest>,
-    ) -> String {
+    pub async fn report_save(&self, Parameters(req): Parameters<ReportSaveRequest>) -> String {
         execute_tool_semantic(
             self,
             "report_save",
@@ -125,10 +119,7 @@ impl CompaniesServer {
     #[tool(
         description = "Load a previously saved JSON artifact (screen or report) by name. Returns the full JSON payload. Returns a not-found error if no artifact with that name exists."
     )]
-    pub async fn report_load(
-        &self,
-        Parameters(req): Parameters<ReportLoadRequest>,
-    ) -> String {
+    pub async fn report_load(&self, Parameters(req): Parameters<ReportLoadRequest>) -> String {
         execute_tool_semantic(
             self,
             "report_load",
@@ -145,9 +136,7 @@ impl CompaniesServer {
                     ))
                 })?;
                 let payload: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-                    McpToolError::internal(format!(
-                        "Artifact {name} is not valid JSON: {e}"
-                    ))
+                    McpToolError::internal(format!("Artifact {name} is not valid JSON: {e}"))
                 })?;
                 Ok(serde_json::json!({
                     "loaded": true,
@@ -163,10 +152,7 @@ impl CompaniesServer {
     #[tool(
         description = "List saved artifact names (without extension) for a kind. Use kind='screen' or kind='report'. Returns a JSON array of names sorted alphabetically."
     )]
-    pub async fn report_list(
-        &self,
-        Parameters(req): Parameters<ReportListRequest>,
-    ) -> String {
+    pub async fn report_list(&self, Parameters(req): Parameters<ReportListRequest>) -> String {
         execute_tool_semantic(
             self,
             "report_list",

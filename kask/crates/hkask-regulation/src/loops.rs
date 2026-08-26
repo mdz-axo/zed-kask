@@ -24,7 +24,7 @@
 //! | 6b | Snapshot | Scheduled CAS snapshots | Meta |
 //!
 //! **Bridge:**
-//! - 2a→2b: Consolidation — episodic → strip perspective → store semantic (one-way)
+//! - 2a→2b: Consolidation — confidence-based cleanup + budget pruning
 //!
 //! **Authority DAG:** Curation → Cybernetics → {Inference, Episodic, Semantic}
 //! No sideways edges. Authority flows downward.

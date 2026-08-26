@@ -29,8 +29,7 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
             Ok(passphrase.to_string())
         }
         "HKASK_SWARM_MEMORY_PASSPHRASE" => {
-            let passphrase =
-                hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
+            let passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
             Ok(passphrase.to_string())
         }
 
@@ -47,15 +46,17 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
                     );
                     Ok(val)
                 }
-                _ => Err(hkask_keystore::KeystoreError::NotFound(hkask_types::NotFound {
-                    entity_type: "credential".to_string(),
-                    id: format!(
-                        "Credential '{}' not set in environment — ensure it is in the \
+                _ => Err(hkask_keystore::KeystoreError::NotFound(
+                    hkask_types::NotFound {
+                        entity_type: "credential".to_string(),
+                        id: format!(
+                            "Credential '{}' not set in environment — ensure it is in the \
                          keychain under kask://credentials/ and that the MCP server was \
                          launched via build_mcp_server_env (not direct-launch)",
-                        env_var
-                    ),
-                })),
+                            env_var
+                        ),
+                    },
+                )),
             }
         }
     }

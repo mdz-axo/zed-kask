@@ -46,8 +46,7 @@ pub fn set_inference_socket_path(path: &str) {
     // processes that were relaunched with a stale LaunchSpec (missing
     // HKASK_INFERENCE_SOCKET in their env) can discover the socket via the
     // file fallback in `InferenceIpcClient::from_env`.
-    let xdg = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| "/run/user/1000".to_string());
+    let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
     let file_path = format!("{xdg}/kask/inference-socket-path");
     if let Err(e) = std::fs::write(&file_path, path) {
         tracing::warn!(

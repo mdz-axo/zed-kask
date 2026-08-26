@@ -27,7 +27,7 @@ const TEST_USER_NAME: &str = "test-user";
 
 /// Default memory retention in days (≈6 months).
 ///
-/// Controls how long episodic and semantic memory entries persist before
+/// Controls how long memory entries persist before
 /// decay. Override: `HKASK_MEMORY_LIFE_DAYS` env var.
 const DEFAULT_MEMORY_LIFE_DAYS: f64 = 180.0;
 
@@ -70,7 +70,7 @@ pub struct ServiceConfig {
     /// for standalone CLI). The 1:1 agent name.
     pub user_name: String,
 
-    /// Path for the memory database (episodic + semantic stores).
+    /// Path for the memory database.
     ///
     /// When `in_memory: false`, memory stores persist to this file.
     /// Defaults to `{db_path}-memory.db` (e.g., `hkask.db` → `hkask-memory.db`)

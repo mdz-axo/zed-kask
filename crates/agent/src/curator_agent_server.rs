@@ -208,9 +208,7 @@ impl AgentServer for CuratorAgentServer {
             // treats it as complete reality. The label explicitly tells the
             // model this is a snapshot, not complete reality — pull
             // `curator_status` for live updates.
-            let state_block = if let Some(provider) =
-                crate::metacognition_provider()
-            {
+            let state_block = if let Some(provider) = crate::metacognition_provider() {
                 match provider.health_snapshot_json().await {
                     Some(snapshot) => format_state_block(&snapshot),
                     None => String::new(),
@@ -228,9 +226,7 @@ impl AgentServer for CuratorAgentServer {
                         None => SharedString::from(CURATOR_STATIC_CONTEXT),
                     };
                     if !state_block.is_empty() {
-                        context = SharedString::from(format!(
-                            "{context}\n\n{state_block}"
-                        ));
+                        context = SharedString::from(format!("{context}\n\n{state_block}"));
                     }
                     agent.set_curator_static_context(context);
                     if let Some(scope) = mcp_server_scope {

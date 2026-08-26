@@ -2,17 +2,17 @@
 #![warn(clippy::let_underscore_future)]
 //! hKask Memory — one unified memory store, ontology-discriminated.
 //!
-//! The episodic/semantic distinction is carried by the `HMemOntology` blob on
-//! each h_mem (P5.4 dual-axis anchoring), not by separate store structs. A
-//! semantic fact anchors to the state axis (Dublin Core + BIBO: `dc_type`,
-//! `dc_subject`, `dc_source`); an episodic experience anchors to the process
-//! axis (PKO: `pko_procedure`, `pko_step`). Both are stored, recalled, and
-//! queried through the single [`MemoryStore`].
+//! The ontology blob on each h_mem carries dual-axis anchoring
+//! (PKO process axis + DC state axis). A process-anchored h_mem
+//! (e.g., a chat turn) carries PKO procedure/step; a state-anchored h_mem
+//! (e.g., a fact) carries DC type/subject. Both are unified h_mems —
+//! there is no episodic/semantic type distinction. All h_mems are stored,
+//! recalled, and queried through the single [`MemoryStore`].
 //!
 //! **Flow:** chat stream → chunks → each chunk tagged with both the best-fit
 //! state axis (Dublin Core) and the best-fit process axis (PKO). The
 //! `HMemOntology` blob is the discriminator; the `perspective` field is
-//! provenance (who wrote the memory), not a semantic classifier.
+//! provenance (who wrote the memory), not a type classifier.
 //!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash
 //! over canonical entity-attribute-value content, first-seen-wins). There is

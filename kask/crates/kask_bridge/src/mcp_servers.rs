@@ -478,8 +478,7 @@ pub async fn build_mcp_server_env(
     //    wins over the keychain (it is inserted first, and the keychain branch
     //    below only runs when the parent env did not provide a non-empty
     //    value), and the governed child receives it.
-    let cred_urls =
-        filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp());
+    let cred_urls = filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp());
     for (env_var, url) in cred_urls {
         if let Ok(value) = std::env::var(&env_var)
             && !value.is_empty()
@@ -1185,10 +1184,7 @@ mod tests {
         //   if parent env has a non-empty value → insert into env, continue
         //   else → read from keychain (simulated as None here)
         let mut env = std::collections::HashMap::<String, String>::new();
-        let cred_urls = filter_credentials_for_server(
-            "swarm",
-            &crate::credential_urls_for_mcp(),
-        );
+        let cred_urls = filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
         for (env_var, _url) in cred_urls {
             if let Ok(value) = std::env::var(&env_var)
                 && !value.is_empty()
@@ -1288,8 +1284,7 @@ mod tests {
         // for its credential URL and assert it lands in the composed env.
         let settings = crate::KaskSettings::default();
         // Collect the (env_var, url) pairs the swarm server would receive.
-        let cred_urls =
-            filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
+        let cred_urls = filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
         // Find the swarm memory passphrase URL; if absent, the test setup is
         // stale relative to the registry and we fail loudly.
         let passphrase_url = cred_urls

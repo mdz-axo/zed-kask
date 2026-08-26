@@ -6,6 +6,6 @@ pub(crate) mod expectations;
 pub(crate) mod financial_data;
 pub(crate) mod portfolio;
 
+pub(crate) mod artifacts;
 pub(crate) mod transcript;
 pub(crate) mod valuation;
-pub(crate) mod artifacts;

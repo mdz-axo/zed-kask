@@ -12,9 +12,9 @@
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
 use hkask_storage::Database;
-use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 #[cfg(test)]
 use hkask_storage::{EmbeddingStore, HMemStore};
+use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -137,7 +137,11 @@ impl RealMemoryPort {
                  clamping to 1024"
             );
         }
-        let embedding_dim = if embedding_dim == 0 { 1024 } else { embedding_dim };
+        let embedding_dim = if embedding_dim == 0 {
+            1024
+        } else {
+            embedding_dim
+        };
 
         let curator_webid = WebID::from_persona(b"curator");
 
@@ -424,7 +428,6 @@ fn fire_curator_consolidation_pass(
             tracing::info!(
                 target: "reg.memory",
                 label = log_label,
-                consolidated = outcome.consolidated_count,
                 deleted = outcome.deleted_count,
                 failed = outcome.failed_count,
                 "Curator consolidation pass complete"
@@ -520,6 +523,23 @@ impl RealMemoryPort {
             "curator_store": curator_up,
             "degraded": !curator_up,
         })
+    }
+
+    /// Get a clone of the curator's `MemoryStore` if available.
+    ///
+    /// Used by the `MemoryHealthSource` implementation to read memory metrics
+    /// for the cybernetics loop. Returns `None` if the store is unavailable
+    /// (self-healing will re-attempt on the next access).
+    pub fn curator_memory_store(&self) -> Option<Arc<MemoryStore>> {
+        self.curator_store.get()
+    }
+
+    /// The configured memory life in days.
+    pub fn memory_life_days(&self) -> f64 {
+        self.curator_store
+            .get()
+            .map(|s| s.memory_life_days())
+            .unwrap_or(180.0)
     }
 
     /// Recall memory snippets from the **curator's** sovereign stores.
@@ -826,9 +846,7 @@ impl RealMemoryPort {
 
         // ── 1. User store: exact entity match, perspective-scoped ────
         let user_entity = format!("chat:thread:{thread_id}");
-        if let Ok(h_mems) =
-            primary_store.query_for_deduped_untouched(&user_entity, perspective)
-        {
+        if let Ok(h_mems) = primary_store.query_for_deduped_untouched(&user_entity, perspective) {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
                 if text.is_empty() {
@@ -879,7 +897,8 @@ impl RealMemoryPort {
         candidates.truncate(limit);
 
         // ── 4. Touch only the injected h_mems ────────────────────────
-        let stores: [&Arc<MemoryStore>; 2] = [primary_store, curator_store.unwrap_or(primary_store)];
+        let stores: [&Arc<MemoryStore>; 2] =
+            [primary_store, curator_store.unwrap_or(primary_store)];
         for c in &candidates {
             let touch_store = stores[c.touch_store_idx];
             let result: Result<(), Box<dyn std::error::Error>> =
@@ -920,6 +939,53 @@ impl RealMemoryPort {
 /// depend on `hkask-types`) and the hKask `MemoryPort` trait.
 pub struct BridgeMemoryPort {
     inner: std::sync::Arc<dyn MemoryPort>,
+}
+
+#[async_trait::async_trait]
+impl hkask_regulation::MemoryHealthSource for RealMemoryPort {
+    async fn h_mem_count(&self) -> Option<usize> {
+        let store = self.curator_store.get()?;
+        match store.h_mem_count() {
+            Ok(count) => Some(count),
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.sensor.memory",
+                    error = %e,
+                    "h_mem_count: store query failed — returning None (not 0)"
+                );
+                None
+            }
+        }
+    }
+
+    async fn low_confidence_count(&self, threshold: f64) -> Option<usize> {
+        let store = self.curator_store.get()?;
+        match store.low_confidence_count(threshold) {
+            Ok(count) => Some(count),
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.sensor.memory",
+                    error = %e,
+                    "low_confidence_count: store query failed — returning None (not 0)"
+                );
+                None
+            }
+        }
+    }
+
+    async fn storage_budget(&self) -> usize {
+        self.curator_store
+            .get()
+            .map(|s| s.storage_budget())
+            .unwrap_or(0)
+    }
+
+    async fn memory_life_days(&self) -> f64 {
+        self.curator_store
+            .get()
+            .map(|s| s.memory_life_days())
+            .unwrap_or(180.0)
+    }
 }
 
 impl BridgeMemoryPort {
@@ -1092,19 +1158,18 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "ingest_turn should succeed");
 
-        // Verify episodic h_mem was stored in the curator's store.
+        // Verify h_mem was stored in the curator's store.
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
             .query_for_deduped_untouched("chat:thread:test-thread", curator_webid)
             .expect("query should succeed");
-        assert_eq!(h_mems.len(), 1, "one episodic h_mem should be stored");
+        assert_eq!(h_mems.len(), 1, "one h_mem should be stored");
         assert_eq!(h_mems[0].attribute, "chatted");
-        // The ontology blob is what classifies this as episodic — not a
-        // separate store struct (P5.4 dual-axis anchoring).
+        // The ontology blob carries process-axis anchoring (PKO).
         let ontology = h_mems[0]
             .ontology
             .as_ref()
-            .expect("episodic h_mem carries an ontology blob");
+            .expect("h_mem carries an ontology blob");
         assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
         assert_eq!(ontology.pko_step.as_deref(), Some("turn"));
     }
@@ -1124,16 +1189,12 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok());
 
-        // Verify semantic (curator) h_mem was stored in the curator's store.
+        // Verify the shared curator copy was stored in the curator's store.
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
-        assert_eq!(
-            h_mems.len(),
-            1,
-            "one curator semantic h_mem should be stored"
-        );
+        assert_eq!(h_mems.len(), 1, "one curator copy h_mem should be stored");
         assert_eq!(h_mems[0].attribute, "turn");
         let ontology = h_mems[0]
             .ontology
@@ -1600,18 +1661,12 @@ pub(crate) mod tests {
             v
         };
         let curator_store = port.curator_store.get().expect("curator store");
-        curator_store.store_embedding(
-            "test:ranking:high",
-            &unit_vec,
-            "test-model",
-        )
-        .expect("store embedding high");
-        curator_store.store_embedding(
-            "test:ranking:low",
-            &unit_vec,
-            "test-model",
-        )
-        .expect("store embedding low");
+        curator_store
+            .store_embedding("test:ranking:high", &unit_vec, "test-model")
+            .expect("store embedding high");
+        curator_store
+            .store_embedding("test:ranking:low", &unit_vec, "test-model")
+            .expect("store embedding low");
 
         curator_store.store(high_conf).expect("store high");
         curator_store.store(low_conf).expect("store low");
@@ -1632,7 +1687,8 @@ pub(crate) mod tests {
 
         // The high-confidence one ("alpha") should rank first.
         assert_eq!(
-            snippets[0].text, "alpha",
+            snippets[0].text,
+            "alpha",
             "higher-confidence memory should rank first, got order: {:?}",
             snippets.iter().map(|s| &s.text).collect::<Vec<_>>()
         );
@@ -1804,11 +1860,11 @@ pub(crate) mod tests {
         // ontology blob distinguishes it from the episodic record above.
         let semantic_h_mems = curator_store
             .query_deduped("curator:thread:curator-thread-1")
-            .expect("curator semantic query should succeed");
+            .expect("curator copy query should succeed");
         assert_eq!(
             semantic_h_mems.len(),
             1,
-            "one curator semantic h_mem should be stored"
+            "one curator copy h_mem should be stored"
         );
         assert_eq!(semantic_h_mems[0].attribute, "turn");
     }

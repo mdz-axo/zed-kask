@@ -115,7 +115,6 @@ hkask_mcp_server::mcp_server!(
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
         pub fibo_cache: Option<fibo_cache::FiboDataCache>,
-
     }
 );
 
@@ -289,7 +288,6 @@ impl CompaniesServer {
             + Self::expectations_router()
             + Self::transcript_router()
             + Self::artifacts_router()
-
     }
 
     /// Map a tool name to its ontology concept URI. The concept is used both

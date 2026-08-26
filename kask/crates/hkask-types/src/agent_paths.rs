@@ -139,7 +139,9 @@ pub fn resolve_artifacts_dir() -> std::path::PathBuf {
         "No artifacts directory resolved (HKASK_ARTIFACTS_DIR, XDG_DOCUMENTS_DIR, HOME all unset) — \
          falling back to CWD. User-facing artifacts may be created in an unpredictable location."
     );
-    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join(ARTIFACTS_DIR_NAME)
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(ARTIFACTS_DIR_NAME)
 }
 
 /// Resolve a relative artifact path against the zed-kask artifacts directory.

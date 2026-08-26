@@ -2909,8 +2909,6 @@ pub trait ContextInjector: Send + Sync {
                 + '_,
         >,
     >;
-
-
 }
 
 /// Global hook for the context injector (D11).

@@ -533,10 +533,7 @@ impl HMemStore {
     /// Count all h_mems.
     #[must_use = "result must be used"]
     pub fn count(&self) -> Result<usize, HMemError> {
-        self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL",
-            &[],
-        )
+        self.count_rows("SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL", &[])
     }
     // ── Ontology query paths (P5.4 dual-axis anchoring) ──────────────────
     //

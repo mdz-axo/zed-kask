@@ -552,6 +552,167 @@ impl Sensor for InferenceHealthSensor {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// MEMORY HEALTH SENSOR
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Source of memory health metrics for the cybernetics loop.
+///
+/// The regulation crate cannot depend on `hkask-memory` (it would create a
+/// cycle), so the bridge implements this trait and passes an
+/// `Arc<dyn MemoryHealthSource>` to `CyberneticsLoop::with_memory_health_source`.
+///
+/// Without this sensor, 5 memory regulation loops are blind — their policy
+/// rules (`TripleCount`, `LowConfidenceCount`, `ConsolidationCandidates`,
+/// `StorageUsage`, `MemoryLife`) can never fire because no signal is produced.
+/// This is the `.rules` broken-feedback-loop pattern at structural scale.
+#[async_trait::async_trait]
+pub trait MemoryHealthSource: Send + Sync {
+    /// Total h_mem count (valid h_mems only). `None` if the store is
+    /// unavailable — the sensor returns `None` (not 0, which would mask a
+    /// broken store as "empty but healthy").
+    async fn h_mem_count(&self) -> Option<usize>;
+
+    /// Count of h_mems at or below the given confidence threshold.
+    async fn low_confidence_count(&self, threshold: f64) -> Option<usize>;
+
+    /// Configured storage budget (max h_mems before consolidation prunes).
+    async fn storage_budget(&self) -> usize;
+
+    /// Configured memory life in days (the retention half-life parameter).
+    async fn memory_life_days(&self) -> f64;
+}
+
+/// Senses memory health metrics from the memory store.
+///
+/// Emits signals for 5 `SignalMetric` variants that previously had policy
+/// rules but no sensor:
+/// - `TripleCount` — h_mem count above the set-point (too many h_mems)
+/// - `LowConfidenceCount` — low-confidence h_mem count above the set-point
+/// - `ConsolidationCandidates` — same count using the consolidation floor
+/// - `StorageUsage` — h_mem count / storage budget ratio above the set-point
+/// - `MemoryLife` — configured memory life days below the set-point (too short)
+///
+/// Each metric is only emitted when it deviates from its set-point. Healthy
+/// states produce no signal, matching the other sensors.
+pub(crate) struct MemoryHealthSensor {
+    source: Arc<dyn MemoryHealthSource>,
+    /// Set-point: max h_mem count before `TripleCount` fires.
+    triple_count_max: usize,
+    /// Set-point: max low-confidence h_mem count before `LowConfidenceCount` fires.
+    low_confidence_max: usize,
+    /// Confidence threshold for `LowConfidenceCount`.
+    low_confidence_threshold: f64,
+    /// Confidence floor for `ConsolidationCandidates` (typically lower than
+    /// `low_confidence_threshold` — these are deletion candidates, not just
+    /// low-confidence).
+    consolidation_floor: f64,
+    /// Set-point: max consolidation candidates before `ConsolidationCandidates` fires.
+    consolidation_candidates_max: usize,
+    /// Set-point: storage usage ratio (h_mem_count / storage_budget) above
+    /// which `StorageUsage` fires. 0.0–1.0.
+    storage_usage_max_ratio: f64,
+    /// Set-point: minimum memory life in days. Below this, `MemoryLife` fires.
+    memory_life_min_days: f64,
+}
+
+impl MemoryHealthSensor {
+    pub fn new(
+        source: Arc<dyn MemoryHealthSource>,
+        triple_count_max: usize,
+        low_confidence_max: usize,
+        low_confidence_threshold: f64,
+        consolidation_floor: f64,
+        consolidation_candidates_max: usize,
+        storage_usage_max_ratio: f64,
+        memory_life_min_days: f64,
+    ) -> Self {
+        Self {
+            source,
+            triple_count_max,
+            low_confidence_max,
+            low_confidence_threshold,
+            consolidation_floor,
+            consolidation_candidates_max,
+            storage_usage_max_ratio,
+            memory_life_min_days,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for MemoryHealthSensor {
+    async fn sense(&self) -> Option<Signal> {
+        // MemoryLife is a configuration check — it doesn't need the store.
+        // Report it first so a misconfigured memory life is caught even when
+        // the store is unavailable.
+        let memory_life = self.source.memory_life_days().await;
+        if memory_life < self.memory_life_min_days {
+            return Some(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::MemoryLife,
+                memory_life,
+                self.memory_life_min_days,
+            ));
+        }
+
+        // The remaining 4 metrics need the store. If it's unavailable,
+        // return None — not a signal with value 0, which would mask a broken
+        // store as "empty but healthy" (the `.rules` `unwrap_or(0)` trap).
+        let count = self.source.h_mem_count().await?;
+
+        // TripleCount — total h_mem count above the set-point.
+        if count as f64 > self.triple_count_max as f64 {
+            return Some(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::TripleCount,
+                count as f64,
+                self.triple_count_max as f64,
+            ));
+        }
+
+        // StorageUsage — h_mem count / storage budget ratio.
+        let budget = self.source.storage_budget().await;
+        if budget > 0 {
+            let usage_ratio = count as f64 / budget as f64;
+            if usage_ratio > self.storage_usage_max_ratio {
+                return Some(Signal::new(
+                    LoopId::Cybernetics,
+                    SignalMetric::StorageUsage,
+                    usage_ratio,
+                    self.storage_usage_max_ratio,
+                ));
+            }
+        }
+
+        // LowConfidenceCount — h_mems at or below the confidence threshold.
+        if let Some(low_count) = self.source.low_confidence_count(self.low_confidence_threshold).await {
+            if low_count as f64 > self.low_confidence_max as f64 {
+                return Some(Signal::new(
+                    LoopId::Cybernetics,
+                    SignalMetric::LowConfidenceCount,
+                    low_count as f64,
+                    self.low_confidence_max as f64,
+                ));
+            }
+        }
+
+        // ConsolidationCandidates — h_mems at or below the consolidation floor.
+        if let Some(candidates) = self.source.low_confidence_count(self.consolidation_floor).await {
+            if candidates as f64 > self.consolidation_candidates_max as f64 {
+                return Some(Signal::new(
+                    LoopId::Cybernetics,
+                    SignalMetric::ConsolidationCandidates,
+                    candidates as f64,
+                    self.consolidation_candidates_max as f64,
+                ));
+            }
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

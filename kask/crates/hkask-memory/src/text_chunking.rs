@@ -78,7 +78,7 @@ pub fn sanitize_text(text: &str) -> String {
 /// Returns (entity_ref, text) pairs with entity_ref formatted as
 /// `{entity_ref_prefix}:{chunk_index}`.
 ///
-/// expect: "I can store shared semantic h_mems for public knowledge"
+/// expect: "I can store shared h_mems for public knowledge"
 /// \[P3\] Motivating: Generative Space — chunks text into passage-sized units for embedding
 /// \[P5\] Constraining: Essentialism — structural/sentence boundary splitting with min/max words
 /// pre:  text is non-empty, entity_ref_prefix is non-empty
@@ -270,7 +270,7 @@ fn split_structural(text: &str) -> Vec<String> {
 ///
 /// Looks for the standard `*** START OF` / `*** END OF` markers.
 ///
-/// expect: "I can store shared semantic h_mems for public knowledge"
+/// expect: "I can store shared h_mems for public knowledge"
 /// \[P3\] Motivating: Generative Space — removes boilerplate for clean corpus ingestion
 /// \[P5\] Constraining: Essentialism — marker-based trim, no regex
 /// pre:  text is a valid &str

@@ -49,12 +49,11 @@ const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 pub struct CuratorStores {
     pub escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
     pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
-    /// The curator's unified memory. One store holds both the curator's
-    /// episodic step-execution records and its semantic facts — the
-    /// `HMemOntology` blob on each h_mem distinguishes them (P5.4), so no
-    /// second store handle is needed. The `curator_memory_recall`
-    /// `memory_type` parameter stays as a recall-shape selector (perspective-
-    /// scoped vs entity-wide), not a store selector.
+    /// The curator's unified memory. One store holds all of the curator's
+    /// h_mems — the `HMemOntology` blob on each h_mem carries dual-axis
+    /// anchoring (PKO process + DC state), so no second store handle is
+    /// needed. The `curator_memory_recall` `recall_shape` parameter selects
+    /// the recall shape (perspective-scoped vs entity-wide), not a store.
     pub memory: Option<Arc<hkask_memory::MemoryStore>>,
 }
 
@@ -164,7 +163,7 @@ impl CuratorDb {
                     target: "hkask.mcp.curator",
                     db_path = ?this.db_path,
                     "Curator DB unavailable — ALL curator stores (escalations, \
-                     regulation archive, episodic, semantic, token registry) \
+                     regulation archive, memory, token registry) \
                      are down. Every tool call re-attempts the open \
                      (self-healing); check that no other process holds the \
                      SQLCipher lock and that HKASK_DB_PASSPHRASE matches the \
@@ -397,7 +396,7 @@ impl CuratorServer {
 
     // ── Memory & Learning ──────────────────────────────────────────────
 
-    #[tool(description = "Query the Curator's semantic memory by entity name")]
+    #[tool(description = "Query the Curator's memory by entity name")]
     pub async fn curator_semantic_search(
         &self,
         Parameters(req): Parameters<SemanticSearchRequest>,
@@ -435,19 +434,14 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Recall the Curator's episodic and semantic memory about an entity. Set `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) plus `ontology_value` to recall along the dual-axis ontology instead of the entity — e.g. every step of a PKO procedure, or every h_mem tagged by a domain ontology namespace."
+        description = "Recall the Curator's memory about an entity. Set `recall_shape` to `perspective_scoped` (curator's own turns) or `entity_wide` (all h_mems for the entity) or `both`. Set `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) plus `ontology_value` to recall along the dual-axis ontology instead of the entity — e.g. every step of a PKO procedure, or every h_mem tagged by a domain ontology namespace."
     )]
     pub async fn curator_memory_recall(
         &self,
         Parameters(req): Parameters<MemoryRecallRequest>,
     ) -> String {
         execute_tool(self, "curator_memory_recall", async {
-            let memory_type = req.memory_type.as_deref().unwrap_or("both");
-            if !matches!(memory_type, "episodic" | "semantic" | "both") {
-                return Err(McpToolError::invalid_argument(format!(
-                    "unknown memory_type '{memory_type}' — expected 'episodic', 'semantic', or 'both'"
-                )));
-            }
+            let recall_shape = req.recall_shape.clone();
             let stores = self.db.get();
 
             // Ontology-axis recall (P5.4): when an axis is named, recall along
@@ -495,7 +489,9 @@ impl CuratorServer {
 
             let mut result = json!({});
 
-            if memory_type == "episodic" || memory_type == "both" {
+            if recall_shape == MemoryRecallType::PerspectiveScoped
+                || recall_shape == MemoryRecallType::Both
+            {
                 match stores.memory() {
                     Ok(ep) => match ep.query_for_deduped(&req.entity, self.webid) {
                         Ok(h_mems) => {
@@ -509,18 +505,20 @@ impl CuratorServer {
                                     })
                                 })
                                 .collect();
-                            result["episodic"] = json!({"count": s.len(), "h_mems": s});
+                            result["perspective_scoped"] = json!({"count": s.len(), "h_mems": s});
                         }
                         Err(e) => {
-                            result["episodic"] = json!({"error": format!("{e}")});
+                            result["perspective_scoped"] = json!({"error": format!("{e}")});
                         }
                     },
                     Err(_) => {
-                        result["episodic"] = json!({"status": "unavailable"});
+                        result["perspective_scoped"] = json!({"status": "unavailable"});
                     }
                 }
             }
-            if memory_type == "semantic" || memory_type == "both" {
+            if recall_shape == MemoryRecallType::EntityWide
+                || recall_shape == MemoryRecallType::Both
+            {
                 match stores.memory() {
                     Ok(sem) => match sem.query_deduped(&req.entity) {
                         Ok(h_mems) => {
@@ -533,14 +531,14 @@ impl CuratorServer {
                                     })
                                 })
                                 .collect();
-                            result["semantic"] = json!({"count": s.len(), "h_mems": s});
+                            result["entity_wide"] = json!({"count": s.len(), "h_mems": s});
                         }
                         Err(e) => {
-                            result["semantic"] = json!({"error": format!("{e}")});
+                            result["entity_wide"] = json!({"error": format!("{e}")});
                         }
                     },
                     Err(_) => {
-                        result["semantic"] = json!({"status": "unavailable"});
+                        result["entity_wide"] = json!({"status": "unavailable"});
                     }
                 }
             }
@@ -553,12 +551,12 @@ impl CuratorServer {
 
     /// Consult the curator's memory with a question. A swarm agent calls
     /// this to get the curator's perspective on a topic, grounded in the
-    /// curator's sovereign semantic + episodic memory.
+    /// curator's sovereign memory.
     ///
     /// This is a memory-grounded consultation, not a full curator agent
     /// turn — the curator MCP server has no inference port, so it cannot
-    /// synthesize a response. It returns the raw memory fragments (semantic
-    /// + episodic) matching the query, structured as a consultation. The
+    /// synthesize a response. It returns the raw memory fragments
+    /// matching the query, structured as a consultation. The
     /// calling agent synthesizes the response from the fragments.
     ///
     /// A full inference-grounded response (where the curator agent itself
@@ -567,7 +565,7 @@ impl CuratorServer {
     /// future enhancement (requires a new IPC method + recursion cap +
     /// gas budget).
     #[tool(
-        description = "Consult the curator's memory with a question. Returns semantic + episodic memory fragments matching the query. Memory-grounded consultation, not a full curator agent turn."
+        description = "Consult the curator's memory with a question. Returns perspective-scoped and entity-wide memory fragments matching the query. Memory-grounded consultation, not a full curator agent turn."
     )]
     pub async fn curator_consult(
         &self,
@@ -581,7 +579,7 @@ impl CuratorServer {
                 "note": "Memory-grounded consultation — raw fragments, not a synthesized response. The calling agent synthesizes."
             });
 
-            // Semantic search — the curator's consolidated knowledge.
+            // Entity-wide search — the curator's consolidated knowledge.
             match stores.memory() {
                 Ok(sem) => match sem.query_deduped(&req.query) {
                     Ok(h_mems) => {
@@ -597,21 +595,21 @@ impl CuratorServer {
                                 })
                             })
                             .collect();
-                        result["semantic_fragments"] = json!({
+                        result["entity_wide_fragments"] = json!({
                             "count": fragments.len(),
                             "h_mems": fragments,
                         });
                     }
                     Err(e) => {
-                        result["semantic_fragments"] = json!({"error": format!("{e}")});
+                        result["entity_wide_fragments"] = json!({"error": format!("{e}")});
                     }
                 },
                 Err(_) => {
-                    result["semantic_fragments"] = json!({"status": "unavailable"});
+                    result["entity_wide_fragments"] = json!({"status": "unavailable"});
                 }
             }
 
-            // Episodic search — the curator's turn history.
+            // Perspective-scoped search — the curator's turn history.
             match stores.memory() {
                 Ok(ep) => match ep.query_for_deduped(&req.query, self.webid) {
                     Ok(h_mems) => {
@@ -628,17 +626,17 @@ impl CuratorServer {
                                 })
                             })
                             .collect();
-                        result["episodic_fragments"] = json!({
+                        result["perspective_scoped_fragments"] = json!({
                             "count": fragments.len(),
                             "h_mems": fragments,
                         });
                     }
                     Err(e) => {
-                        result["episodic_fragments"] = json!({"error": format!("{e}")});
+                        result["perspective_scoped_fragments"] = json!({"error": format!("{e}")});
                     }
                 },
                 Err(_) => {
-                    result["episodic_fragments"] = json!({"status": "unavailable"});
+                    result["perspective_scoped_fragments"] = json!({"status": "unavailable"});
                 }
             }
 
@@ -753,7 +751,7 @@ impl CuratorServer {
 
     /// Report a skill-use issue — submitted by a skill's `on_failure` config
     /// when an MCP tool call fails or produces unexpected output. The report
-    /// is stored as an episodic h_mem in the curator's memory store with
+    /// is stored as an h_mem in the curator's memory store with
     /// entity `skill_use_issue:<skill_name>` so it is queryable via
     /// `curator_memory_recall` and `curator_semantic_search`.
     ///
@@ -834,12 +832,9 @@ impl CuratorServer {
     /// specific episodic h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a new semantic memory into the curator's store. Curator-only. Requires evidence citation (episodic h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
+        description = "Insert a new memory into the curator's store. Curator-only. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
     )]
-    pub async fn memory_insert(
-        &self,
-        Parameters(req): Parameters<MemoryInsertRequest>,
-    ) -> String {
+    pub async fn memory_insert(&self, Parameters(req): Parameters<MemoryInsertRequest>) -> String {
         execute_tool(self, "memory_insert", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -910,10 +905,7 @@ impl CuratorServer {
     #[tool(
         description = "Update an existing memory's confidence via Bayesian combination. Curator-only. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
     )]
-    pub async fn memory_update(
-        &self,
-        Parameters(req): Parameters<MemoryUpdateRequest>,
-    ) -> String {
+    pub async fn memory_update(&self, Parameters(req): Parameters<MemoryUpdateRequest>) -> String {
         execute_tool(self, "memory_update", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1001,9 +993,7 @@ impl CuratorServer {
             // Verify the target exists.
             let target = memory
                 .query_deduped_untouched(&target_id.to_string())
-                .map_err(|e| {
-                    map_memory_store_error(e, "Failed to fetch target h_mem")
-                })?;
+                .map_err(|e| map_memory_store_error(e, "Failed to fetch target h_mem"))?;
             if target.is_empty() {
                 return Err(McpToolError::not_found(format!(
                     "Target h_mem '{id}' not found",
@@ -1015,9 +1005,7 @@ impl CuratorServer {
                 "expire" => {
                     memory
                         .expire_h_mem(&target_id)
-                        .map_err(|e| {
-                            map_memory_store_error(e, "Failed to expire h_mem")
-                        })?;
+                        .map_err(|e| map_memory_store_error(e, "Failed to expire h_mem"))?;
                     RegulationSpan::Curation.emit("contradiction_expired");
                     Ok(json!({
                         "resolved": true,
@@ -1028,23 +1016,17 @@ impl CuratorServer {
                     }))
                 }
                 "update_confidence" => {
-                    let new_confidence = req
-                        .new_confidence
-                        .ok_or_else(|| {
-                            McpToolError::invalid_argument(
-                                "new_confidence is required for 'update_confidence' strategy",
-                            )
-                        })?;
+                    let new_confidence = req.new_confidence.ok_or_else(|| {
+                        McpToolError::invalid_argument(
+                            "new_confidence is required for 'update_confidence' strategy",
+                        )
+                    })?;
                     let target_h_mem = target.into_iter().next().ok_or_else(|| {
                         McpToolError::not_found("Target h_mem disappeared between fetch and update")
                     })?;
                     let confidence = hkask_types::Confidence::new(new_confidence);
                     memory
-                        .update_confidence(
-                            &target_id,
-                            target_h_mem.value,
-                            confidence,
-                        )
+                        .update_confidence(&target_id, target_h_mem.value, confidence)
                         .map_err(|e| {
                             map_memory_store_error(e, "Failed to update h_mem confidence")
                         })?;
@@ -1061,9 +1043,7 @@ impl CuratorServer {
                 "delete" => {
                     memory
                         .delete_h_mem(&target_id)
-                        .map_err(|e| {
-                            map_memory_store_error(e, "Failed to delete h_mem")
-                        })?;
+                        .map_err(|e| map_memory_store_error(e, "Failed to delete h_mem"))?;
                     RegulationSpan::Curation.emit("contradiction_deleted");
                     Ok(json!({
                         "resolved": true,

@@ -159,6 +159,22 @@ pub(crate) const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 /// invoked to review and clear reviewed entries.
 pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
 
+// ── Memory health defaults ──
+/// Default max h_mem count before `TripleCount` fires.
+pub(crate) const DEFAULT_TRIPLE_COUNT_MAX: usize = 10_000;
+/// Default max low-confidence h_mem count before `LowConfidenceCount` fires.
+pub(crate) const DEFAULT_LOW_CONFIDENCE_MAX: usize = 100;
+/// Default confidence threshold for `LowConfidenceCount`.
+pub(crate) const DEFAULT_LOW_CONFIDENCE_THRESHOLD: f64 = 0.3;
+/// Default confidence floor for `ConsolidationCandidates`.
+pub(crate) const DEFAULT_CONSOLIDATION_FLOOR: f64 = 0.1;
+/// Default max consolidation candidates before `ConsolidationCandidates` fires.
+pub(crate) const DEFAULT_CONSOLIDATION_CANDIDATES_MAX: usize = 50;
+/// Default storage usage ratio (h_mem_count / storage_budget).
+pub(crate) const DEFAULT_STORAGE_USAGE_MAX_RATIO: f64 = 0.8;
+/// Default minimum memory life in days.
+pub(crate) const DEFAULT_MEMORY_LIFE_MIN_DAYS: f64 = 30.0;
+
 /// Homeostatic set-points for the Cybernetics Loop.
 ///
 /// These define the reference values against which sensed signals
@@ -248,6 +264,30 @@ pub struct SetPoints {
     /// entries are evicted. Default: 200. When the log approaches this cap,
     /// the cybernetics loop emits an `AlgedonicLogApproachingCap` signal.
     pub max_alerts: usize,
+    // ── Memory health set-points (v0.34.0) ──
+    /// Maximum h_mem count before `TripleCount` fires. Default: 10_000
+    /// (matches `DEFAULT_STORAGE_BUDGET`).
+    pub triple_count_max: usize,
+    /// Maximum low-confidence h_mem count before `LowConfidenceCount` fires.
+    /// Default: 100.
+    pub low_confidence_max: usize,
+    /// Confidence threshold for `LowConfidenceCount`. H_mems at or below this
+    /// value are counted. Default: 0.3.
+    pub low_confidence_threshold: f64,
+    /// Confidence floor for `ConsolidationCandidates`. H_mems at or below this
+    /// value are deletion candidates. Default: 0.1 (lower than
+    /// `low_confidence_threshold` — candidates are near-deletion, not just
+    /// low-confidence).
+    pub consolidation_floor: f64,
+    /// Maximum consolidation candidates before `ConsolidationCandidates` fires.
+    /// Default: 50.
+    pub consolidation_candidates_max: usize,
+    /// Maximum storage usage ratio (h_mem_count / storage_budget) before
+    /// `StorageUsage` fires. 0.0–1.0. Default: 0.8 (80% full).
+    pub storage_usage_max_ratio: f64,
+    /// Minimum memory life in days. Below this, `MemoryLife` fires.
+    /// Default: 30.0 (a memory life shorter than 30 days is too aggressive).
+    pub memory_life_min_days: f64,
 }
 
 /// YAML-configurable set-points. Fields are Optional so partial configs work.
@@ -278,6 +318,13 @@ pub(crate) struct SetPointsConfig {
     pub max_regulation_history: Option<usize>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
+    pub triple_count_max: Option<usize>,
+    pub low_confidence_max: Option<usize>,
+    pub low_confidence_threshold: Option<f64>,
+    pub consolidation_floor: Option<f64>,
+    pub consolidation_candidates_max: Option<usize>,
+    pub storage_usage_max_ratio: Option<f64>,
+    pub memory_life_min_days: Option<f64>,
 }
 
 impl SetPointsConfig {
@@ -323,6 +370,13 @@ impl Default for SetPoints {
             max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
+            triple_count_max: DEFAULT_TRIPLE_COUNT_MAX,
+            low_confidence_max: DEFAULT_LOW_CONFIDENCE_MAX,
+            low_confidence_threshold: DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+            consolidation_floor: DEFAULT_CONSOLIDATION_FLOOR,
+            consolidation_candidates_max: DEFAULT_CONSOLIDATION_CANDIDATES_MAX,
+            storage_usage_max_ratio: DEFAULT_STORAGE_USAGE_MAX_RATIO,
+            memory_life_min_days: DEFAULT_MEMORY_LIFE_MIN_DAYS,
         }
     }
 }
@@ -399,6 +453,13 @@ impl SetPoints {
                 .max_skill_span_history
                 .unwrap_or(defaults.max_skill_span_history),
             max_alerts: config.max_alerts.unwrap_or(defaults.max_alerts),
+            triple_count_max: config.triple_count_max.unwrap_or(defaults.triple_count_max),
+            low_confidence_max: config.low_confidence_max.unwrap_or(defaults.low_confidence_max),
+            low_confidence_threshold: config.low_confidence_threshold.unwrap_or(defaults.low_confidence_threshold),
+            consolidation_floor: config.consolidation_floor.unwrap_or(defaults.consolidation_floor),
+            consolidation_candidates_max: config.consolidation_candidates_max.unwrap_or(defaults.consolidation_candidates_max),
+            storage_usage_max_ratio: config.storage_usage_max_ratio.unwrap_or(defaults.storage_usage_max_ratio),
+            memory_life_min_days: config.memory_life_min_days.unwrap_or(defaults.memory_life_min_days),
         }
     }
 

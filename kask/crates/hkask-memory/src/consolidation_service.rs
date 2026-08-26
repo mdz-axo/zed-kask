@@ -30,14 +30,14 @@ impl MemoryConsolidator {
     /// Execute a consolidation operation — two phases:
     /// 1. Delete h_mems at or below confidence floor (if specified).
     /// 2. Delete lowest-confidence h_mems until within max count (if
-    ///    specified). When the caller omits `max_semantic_triples`, the
-    ///    store's `storage_budget` acts as the default cap.
+    ///    specified). When the caller omits `max_h_mems`, the store's
+    ///    `storage_budget` acts as the default cap.
     pub fn consolidate(
         &self,
         perspective: &WebID,
         request: ConsolidationRequest,
     ) -> anyhow::Result<ConsolidationOutcome> {
-        let max_h_mems = match request.max_semantic_triples {
+        let max_h_mems = match request.max_h_mems {
             Some(max) => Some(max),
             None => {
                 let budget = self.store.storage_budget();
@@ -78,6 +78,7 @@ impl MemoryConsolidator {
         );
 
         let mut deleted_count = 0usize;
+        let mut failed_count = 0usize;
 
         if let Some(floor) = request.confidence_floor {
             match self.store.low_confidence_h_mems(floor, usize::MAX) {
@@ -85,12 +86,15 @@ impl MemoryConsolidator {
                     for h_mem in &candidates {
                         match self.store.delete_h_mem(&h_mem.id) {
                             Ok(()) => deleted_count += 1,
-                            Err(e) => tracing::warn!(
-                                target: "reg.consolidation",
-                                error = %e,
-                                h_mem_id = ?h_mem.id,
-                                "Failed to delete low-confidence h_mem during consolidation cleanup"
-                            ),
+                            Err(e) => {
+                                failed_count += 1;
+                                tracing::warn!(
+                                    target: "reg.consolidation",
+                                    error = %e,
+                                    h_mem_id = ?h_mem.id,
+                                    "Failed to delete low-confidence h_mem during consolidation cleanup"
+                                );
+                            }
                         }
                     }
                 }
@@ -113,12 +117,15 @@ impl MemoryConsolidator {
                             for h_mem in &candidates {
                                 match self.store.delete_h_mem(&h_mem.id) {
                                     Ok(()) => deleted_count += 1,
-                                    Err(e) => tracing::warn!(
-                                        target: "reg.consolidation",
-                                        error = %e,
-                                        h_mem_id = ?h_mem.id,
-                                        "Failed to delete excess h_mem during consolidation cleanup"
-                                    ),
+                                    Err(e) => {
+                                        failed_count += 1;
+                                        tracing::warn!(
+                                            target: "reg.consolidation",
+                                            error = %e,
+                                            h_mem_id = ?h_mem.id,
+                                            "Failed to delete excess h_mem during consolidation cleanup"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -145,13 +152,13 @@ impl MemoryConsolidator {
         tracing::info!(
             target: "reg.consolidation",
             deleted = deleted_count,
+            failed = failed_count,
             "Consolidation complete"
         );
 
         Ok(ConsolidationOutcome {
-            consolidated_count: 0,
             deleted_count,
-            failed_count: 0,
+            failed_count,
         })
     }
 }
