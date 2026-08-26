@@ -28,6 +28,7 @@
 
 pub mod batch;
 pub mod config;
+pub mod scoring;
 pub mod inference_ipc_client;
 pub mod media_router;
 pub mod model_constants;

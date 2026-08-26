@@ -8,6 +8,7 @@
 
 pub(crate) mod core;
 pub mod database;
+pub mod gallery;
 pub mod rotation;
 
 pub use core::DatabaseDriverTrait;

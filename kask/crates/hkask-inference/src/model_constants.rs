@@ -52,6 +52,18 @@ pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 /// Used by `SwarmConfig::default()` and `KaskSwarmSettings::default()`.
 pub const DEFAULT_AGENT_MODEL: &str = "claude-haiku-4-5-20251001";
 
+/// Default TTS model — Kokoro via DeepInfra.
+pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
+
+/// Default STT model — Whisper Large v3 via DeepInfra.
+pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
+
+/// Default vision model for image analysis.
+pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
+
+/// Default image generation model — FLUX-2-klein-4B via DeepInfra.
+pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";
+
 // ── Resolved model accessors (env var → default) ──────────────────────────
 
 /// Resolve the primary classifier: `HKASK_CLASSIFIER_MODEL` → default.
