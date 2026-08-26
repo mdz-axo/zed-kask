@@ -677,6 +677,7 @@ impl KaskSettings {
         crate::mcp_env::emit_training_env(&self.training, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_email_env(&self.curator.email, &mut env);
+        crate::mcp_env::emit_operator_override_env(&mut env);
         env
     }
 }

@@ -11,15 +11,15 @@
 
 mod assertions;
 mod ontology_io;
-mod qa;
+pub(crate) mod qa;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
-    Arc, CorpusServer, IndexedPassage, LLMParameters, McpToolError, Mutex, Parameters,
+    Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters,
     default_embedding_model, default_owner, execute_tool_semantic, extract_json_from_response,
-    json, read_jsonl, render_docproc_template, tool, tool_router,
+    json, read_jsonl, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
@@ -60,56 +60,29 @@ impl CorpusServer {
                 return Err(McpToolError::invalid_argument("chunk_id must not be empty"));
             }
 
-            let levels = bloom_levels
-                .unwrap_or_else(|| vec!["factual".to_string(), "conceptual".to_string()]);
+            let levels = bloom_levels.unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
             let levels_str = levels.join(", ");
 
             let (prompt, template_source) = if is_cross_ref {
                 let passages = _texts.as_ref().unwrap();
-                let mut text = String::new();
-                for (i, p) in passages.iter().enumerate() {
-                    text.push_str(&format!("[Passage {}]\n{}\n\n", i + 1, crate::guard_content(p)));
-                }
-                (
-                    format!(
-                        "{CONTENT_GUARD_INSTRUCTION}You are synthesizing knowledge across {n} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections across sources.\n\nFor each QA, cite which passages support the answer (e.g., 'Per Passage 1, ... while Passage 2 notes ...').\n\nPassages (chunk group {chunk_id}):\n{text}\n\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\", \"sources\": [1, 3]}}]}}",
-                        CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION,
-                        n = passages.len()
-                    ),
-                    "inline-cross-reference",
-                )
+                let formatted = crate::services::qa_pipeline::format_cross_reference_prompt(
+                    &levels_str,
+                    &chunk_id,
+                    passages,
+                );
+                (formatted.text, formatted.template_source)
             } else {
                 let single_text = crate::guard_content(&single_text);
-                let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-                vars.insert("levels", levels_str.clone());
-                vars.insert("chunk_id", chunk_id.clone());
-                vars.insert("text", single_text.clone());
-                let tpl = render_docproc_template("generate-qa", &vars);
-                if tpl.is_empty() {
-                    (
-                        format!(
-                            "{CONTENT_GUARD_INSTRUCTION}Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{single_text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
-                            CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION
-                        ),
-                        "inline-fallback",
-                    )
-                } else {
-                    (tpl, "registry/templates/docproc/generate-qa.j2")
-                }
+                let formatted = crate::services::qa_pipeline::format_single_chunk_prompt(
+                    &levels_str,
+                    &chunk_id,
+                    &single_text,
+                );
+                (formatted.text, formatted.template_source)
             };
             let selected_model = configured_qa_model(model);
 
-            let params = LLMParameters {
-                temperature: 0.3,
-                top_p: 0.95,
-                frequency_penalty: 0.0,
-                presence_penalty: 0.0,
-                top_k: 0,
-                min_p: 0.0,
-                typical_p: 0.0,
-                thinking_allowed: false,
-                ..Default::default()
-            };
+            let params = crate::services::qa_pipeline::qa_llm_parameters();
 
             match self
                 .inference_router
@@ -271,37 +244,16 @@ impl CorpusServer {
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await;
 
-                    let params = LLMParameters {
-                        temperature: 0.3,
-                        top_p: 0.95,
-                        frequency_penalty: 0.0,
-                        presence_penalty: 0.0,
-                        top_k: 0,
-                        min_p: 0.0,
-                        typical_p: 0.0,
-                        thinking_allowed: false,
-                        ..Default::default()
-                    };
+                    let params = crate::services::qa_pipeline::qa_llm_parameters();
 
-                    let levels = prompt.bloom_levels.clone().unwrap_or_else(|| vec!["factual".to_string(), "conceptual".to_string()]);
+                    let levels = prompt.bloom_levels.clone().unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
                     let levels_str = levels.join(", ");
-                    let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-                    vars.insert("levels", levels_str.clone());
-                    vars.insert("chunk_id", prompt.chunk_id.clone());
-                    vars.insert("text", prompt.text.clone());
-                    let tpl = render_docproc_template("generate-qa", &vars);
-                    let (prompt_text, template_source) = if tpl.is_empty() {
-                        (
-                            format!("Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
-                                levels_str = levels_str,
-                                chunk_id = prompt.chunk_id,
-                                text = prompt.text
-                            ),
-                            "inline-fallback",
-                        )
-                    } else {
-                        (tpl, "registry/templates/docproc/generate-qa.j2")
-                    };
+                    let formatted = crate::services::qa_pipeline::format_single_chunk_prompt(
+                        &levels_str,
+                        &prompt.chunk_id,
+                        &prompt.text,
+                    );
+                    let (prompt_text, template_source) = (formatted.text, formatted.template_source);
                     let response = match retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.qa_batch",
@@ -326,32 +278,22 @@ impl CorpusServer {
                             // Write one JSONL line per QA pair in envelope format
                             // (matches what corpus_ingest_qa's parse_qa_record expects)
                             for pair in qa_response.qa_pairs {
-                                let result = json!({
-                                    "chunk_ref": prompt.chunk_id,
-                                    "source": prompt.source,
-                                    "qa_type": pair.bloom_level,
-                                    "response": {
-                                        "instruction": pair.question,
-                                        "output": pair.answer,
-                                        "type": pair.bloom_level,
-                                        "concepts": prompt.concepts,
-                                    },
-                                    "provenance": {
-                                        "generator_model": selected_model.as_deref().unwrap_or("router_default"),
-                                        "prompt_template": template_source,
-                                        "source_chunk_ref": prompt.chunk_id,
-                                    },
-                                    "tokens_used": response.usage.total_tokens,
-                                });
+                                let result = crate::services::qa_pipeline::qa_result_envelope(
+                                    &prompt,
+                                    pair,
+                                    selected_model.as_deref().unwrap_or("router_default"),
+                                    template_source,
+                                    response.usage.total_tokens,
+                                );
                                 write_qa_result(&result, &output_writer, &write_count);
                             }
                         }
                         Err(e) => {
                             failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let result = json!({
-                                "chunk_id": prompt.chunk_id,
-                                "error": format!("QA response rejected: {e}"),
-                            });
+                            let result = crate::services::qa_pipeline::qa_error_envelope(
+                                &prompt.chunk_id,
+                                &format!("QA response rejected: {e}"),
+                            );
                             write_qa_result(&result, &output_writer, &write_count);
                         }
                     }
@@ -416,28 +358,16 @@ impl CorpusServer {
         let batch_prompts: Vec<hkask_types::inference_ipc::BatchPromptEntry> = prompts_vec
             .iter()
             .map(|p| {
-                let levels = p.bloom_levels.clone().unwrap_or_else(|| {
-                    vec!["factual".to_string(), "conceptual".to_string()]
-                });
+                let levels = p.bloom_levels.clone().unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
                 let levels_str = levels.join(", ");
-                let mut vars: std::collections::HashMap<&str, String> =
-                    std::collections::HashMap::new();
-                vars.insert("levels", levels_str.clone());
-                vars.insert("chunk_id", p.chunk_id.clone());
-                vars.insert("text", p.text.clone());
-                let tpl = crate::template::render_docproc_template("generate-qa", &vars);
-                let user_text = if tpl.is_empty() {
-                    format!(
-                        "Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {}):\n{}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
-                        p.chunk_id, p.text
-                    )
-                } else {
-                    tpl
-                };
-                let system_text = "You are a training data generator. Generate ONE question-answer pair grounded in the passage's actual content.";
+                let user_text = crate::services::qa_pipeline::format_batch_user_text(
+                    &levels_str,
+                    &p.chunk_id,
+                    &p.text,
+                );
                 hkask_types::inference_ipc::BatchPromptEntry {
                     custom_id: p.chunk_id.clone(),
-                    system: system_text.to_string(),
+                    system: crate::services::qa_pipeline::BATCH_SYSTEM_PROMPT.to_string(),
                     user: user_text,
                 }
             })
@@ -472,30 +402,17 @@ impl CorpusServer {
         for prompt in &prompts_vec {
             if let Some(result) = result_map.get(&prompt.chunk_id) {
                 if let Some(ref text) = result.text {
-                    let levels = prompt
-                        .bloom_levels
-                        .clone()
-                        .unwrap_or_else(|| vec!["factual".to_string(), "conceptual".to_string()]);
+                    let levels = prompt.bloom_levels.clone().unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
                     match parse_qa_response(&extract_json_from_response(text), &levels, None) {
                         Ok(qa_response) => {
                             for pair in qa_response.qa_pairs {
-                                let result_json = json!({
-                                    "chunk_ref": prompt.chunk_id,
-                                    "source": prompt.source,
-                                    "qa_type": pair.bloom_level,
-                                    "response": {
-                                        "instruction": pair.question,
-                                        "output": pair.answer,
-                                        "type": pair.bloom_level,
-                                        "concepts": prompt.concepts,
-                                    },
-                                    "provenance": {
-                                        "generator_model": model,
-                                        "prompt_template": "batch-api",
-                                        "source_chunk_ref": prompt.chunk_id,
-                                    },
-                                    "tokens_used": result.total_tokens,
-                                });
+                                let result_json = crate::services::qa_pipeline::qa_result_envelope(
+                                    prompt,
+                                    pair,
+                                    model,
+                                    "batch-api",
+                                    result.total_tokens,
+                                );
                                 write_qa_result(&result_json, &output_writer, &write_count);
                             }
                         }

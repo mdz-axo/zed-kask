@@ -336,6 +336,38 @@ pub(crate) fn emit_training_env(
     }
 }
 
+/// Pass through operator shell overrides for server knobs that have no
+/// `KaskSettings` field. These are read by the servers via `std::env::var`
+/// with in-code defaults, but under governed launch the child environment is
+/// cleared (`cmd.env_clear()`), so a shell-set value never reaches the
+/// process unless `mcp_env()` carries it and the server's `config_env`
+/// allowlist admits it. Without this passthrough, the allowlist entries for
+/// these vars advertise a delivery path that nothing sources (RR-0061's
+/// "allowlist entry naming a credential that nothing ever sources", in
+/// config form). Only non-empty parent values are forwarded — an empty shell
+/// var is not a meaningful override.
+const OPERATOR_OVERRIDE_ENV_VARS: &[&str] = &[
+    // swarm — event-store path + retention knobs (hkask_mcp_swarm.rs,
+    // local_tools.rs). Also read by kata-kanban's spawn path so both
+    // processes share one ledger.
+    "HKASK_SWARM_LEDGER_PATH",
+    "HKASK_SWARM_EVENTS_PATH",
+    "HKASK_SWARM_BODY_RETENTION_HOURS",
+    "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
+    // corpus — embedding batch concurrency (tools/semantic.rs)
+    "HKASK_EMBED_CONCURRENCY",
+];
+
+pub(crate) fn emit_operator_override_env(env: &mut std::collections::HashMap<String, String>) {
+    for name in OPERATOR_OVERRIDE_ENV_VARS {
+        if let Ok(value) = std::env::var(name)
+            && !value.trim().is_empty()
+        {
+            env.insert(name.to_string(), value);
+        }
+    }
+}
+
 pub(crate) fn emit_models_env(
     models: &KaskModelsSettings,
     env: &mut std::collections::HashMap<String, String>,

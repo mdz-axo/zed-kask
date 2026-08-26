@@ -117,6 +117,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DATA_DIR",
             "HKASK_EMBEDDING_DIM",
             "HKASK_EMBEDDING_MODEL",
+            // Embedding batch concurrency — read by tools/semantic.rs alongside
+            // HKASK_OCR_CONCURRENCY below; carried by
+            // `emit_operator_override_env`. Without this entry an operator
+            // override is silently dropped under governed launch.
+            "HKASK_EMBED_CONCURRENCY",
             "HKASK_OCR_CONCURRENCY",
             "HKASK_OCR_SIMPLE_MAX",
             "HKASK_OCR_MODERATE_MAX",
@@ -203,6 +208,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // config; moved from `credentials` to align with the pattern used
             // by every other DB-path env var in the registry.
             "HKASK_KANBAN_DB",
+            // Local-swarm delegation surface (`kanban_task_spawn`) — the spawn
+            // path mirrors hkask-mcp-swarm's `run()` so both processes share
+            // the same ledger/agent-registry. Without these entries, a
+            // settings-derived `HKASK_ABW_MAX_CREDITS` (emitted by `mcp_env()`
+            // when `swarm.max_credits_per_dispatch` is overridden) and the
+            // swarm-root-derived `HKASK_LOCAL_AGENTS_DIR` are silently dropped
+            // by `filter_config_env_for_server`, and spawned agents fall back
+            // to defaults that diverge from the swarm server's.
+            "HKASK_ABW_MAX_CREDITS",
+            "HKASK_LOCAL_AGENTS_DIR",
         ]),
     },
     BuiltinMcpServer {
@@ -318,6 +333,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (hkask_mcp_swarm.rs:264). Unallowlisted, an operator could not
             // enable or disable the listener.
             "HKASK_A2A_HTTP_ENABLE",
+            // Event-store path + retention knobs — read via `std::env::var`
+            // (hkask_mcp_swarm.rs events store; local_tools.rs retention
+            // sweep). Carried by `emit_operator_override_env`; without these
+            // entries an operator override is silently dropped under governed
+            // launch (`cmd.env_clear()`).
+            "HKASK_SWARM_LEDGER_PATH",
+            "HKASK_SWARM_EVENTS_PATH",
+            "HKASK_SWARM_BODY_RETENTION_HOURS",
+            "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
         ]),
     },
     BuiltinMcpServer {

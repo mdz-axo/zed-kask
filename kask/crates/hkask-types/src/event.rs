@@ -180,6 +180,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.memory.budget",
     "reg.memory.decay",
     "reg.memory.encode",
+    // ── Regulation sensors (loop sense inputs; e.g. memory health) ──
+    "reg.sensor",
+    "reg.sensor.memory",
+    "reg.memory.health",
     // ── Multi-agent ──
     "reg.multi.invite.accepted",
     "reg.multi.invite.sent",

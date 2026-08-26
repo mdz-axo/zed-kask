@@ -10992,4 +10992,405 @@ mod tests {
             "terminal must NOT be in NO_COMPRESS_TOOLS — it is the condenser's intended use case"
         );
     }
+
+    // ── Phase 0 pinning tests for the thread divergence refactor ──────
+    //
+    // These tests pin the CURRENT behavior of kask-specific Thread fields
+    // and turn-loop branches that were previously untested in thread.rs.
+    // They must pass before AND after the KaskThreadState extraction.
+    // See kask/docs/plans/thread-hooks-refactor-2026-08-26.md §2 (gaps).
+
+    /// Pin B6: `is_curator_memory_edit_tool` classifies exactly the three
+    /// curator memory-edit tools. Non-curator threads cannot edit curator
+    /// memory — therapy sessions must be run from a curator agent panel
+    /// session so the curator remembers the act of therapy. Read-only
+    /// curator tools are NOT restricted.
+    #[test]
+    fn test_curator_memory_edit_tool_classification() {
+        // The three restricted tools.
+        assert!(is_curator_memory_edit_tool("memory_insert"));
+        assert!(is_curator_memory_edit_tool("memory_update"));
+        assert!(is_curator_memory_edit_tool("memory_resolve_contradiction"));
+
+        // Read-only curator tools are NOT restricted.
+        assert!(!is_curator_memory_edit_tool("curator_memory_recall"));
+        assert!(!is_curator_memory_edit_tool("curator_semantic_search"));
+        assert!(!is_curator_memory_edit_tool("curator_consult"));
+        assert!(!is_curator_memory_edit_tool("curator_status"));
+        assert!(!is_curator_memory_edit_tool("curator_directive"));
+
+        // Non-curators tools are never restricted by this predicate.
+        assert!(!is_curator_memory_edit_tool("read_file"));
+        assert!(!is_curator_memory_edit_tool("edit_file"));
+        assert!(!is_curator_memory_edit_tool("terminal"));
+        assert!(!is_curator_memory_edit_tool("swarm_hire"));
+    }
+
+    /// Pin B9/B10: `last_completion_truncated` distinguishes MaxTokens
+    /// truncation from user cancel. When the flag is set (via
+    /// `handle_completion_event` on `StopReason::MaxTokens`),
+    /// `flush_pending_message` inserts `TOOL_TRUNCATED_MESSAGE` for
+    /// incomplete tool uses. When the flag is false (user cancel),
+    /// it inserts `TOOL_CANCELED_MESSAGE`.
+    #[gpui::test]
+    async fn test_last_completion_truncated_distinguishes_max_tokens_from_cancel(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        // ── Case 1: truncation flag set (MaxTokens) ───────────────────
+        // Simulate what handle_completion_event does on StopReason::MaxTokens:
+        // set the flag, then flush_pending_message reads it.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.last_completion_truncated = true;
+
+                // Set up a pending message with an incomplete ToolUse
+                // (no tool_result) so flush_pending_message inserts the
+                // cancel/truncated message.
+                let tool_use = LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("truncated-tool-id"),
+                    name: Arc::from("test_tool"),
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::Value::Object(serde_json::Map::new()),
+                    ),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let mut agent_message = AgentMessage::default();
+                agent_message
+                    .content
+                    .push(AgentMessageContent::ToolUse(tool_use));
+                thread.pending_message = Some(agent_message);
+
+                thread.flush_pending_message(cx);
+            });
+        });
+
+        let result_text = thread.read_with(cx, |thread, _| {
+            let last = thread.messages.last().expect("message was flushed");
+            let agent_msg = last.as_agent_message().expect("should be agent message");
+            let result = agent_msg
+                .tool_results
+                .get(&LanguageModelToolUseId::from("truncated-tool-id"))
+                .expect("should have inserted a tool result");
+            match &result.content[0] {
+                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                _ => "not text".to_string(),
+            }
+        });
+        assert_eq!(
+            result_text, TOOL_TRUNCATED_MESSAGE,
+            "truncated completion should produce TOOL_TRUNCATED_MESSAGE, not TOOL_CANCELED_MESSAGE"
+        );
+
+        // ── Case 2: truncation flag NOT set (user cancel) ──────────────
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.last_completion_truncated = false;
+
+                let tool_use = LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("canceled-tool-id"),
+                    name: Arc::from("test_tool"),
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::Value::Object(serde_json::Map::new()),
+                    ),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let mut agent_message = AgentMessage::default();
+                agent_message
+                    .content
+                    .push(AgentMessageContent::ToolUse(tool_use));
+                thread.pending_message = Some(agent_message);
+
+                thread.flush_pending_message(cx);
+            });
+        });
+
+        let result_text = thread.read_with(cx, |thread, _| {
+            let last = thread.messages.last().expect("message was flushed");
+            let agent_msg = last.as_agent_message().expect("should be agent message");
+            let result = agent_msg
+                .tool_results
+                .get(&LanguageModelToolUseId::from("canceled-tool-id"))
+                .expect("should have inserted a tool result");
+            match &result.content[0] {
+                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                _ => "not text".to_string(),
+            }
+        });
+        assert_eq!(
+            result_text, TOOL_CANCELED_MESSAGE,
+            "non-truncated completion should produce TOOL_CANCELED_MESSAGE"
+        );
+    }
+
+    /// Pin B4: `system_prompt_override` bypasses template rendering entirely.
+    /// When set (by the Curator agent), `render_system_prompt` returns the
+    /// override string directly — no handlebars template, no project context,
+    /// no tools list. The override IS the complete system prompt.
+    #[gpui::test]
+    async fn test_system_prompt_override_bypasses_template(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+        });
+
+        // Render the default system prompt (no override) — should contain
+        // the template's standard sections.
+        let default_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+        assert!(
+            default_prompt.contains("## Tool Use") || default_prompt.contains("## Task Execution"),
+            "default system prompt should contain template sections, got: {default_prompt}"
+        );
+
+        // Set the override — render should return it verbatim.
+        let override_prompt: SharedString = "You are the Curator. Override is active.".into();
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_system_prompt_override(override_prompt.clone(), cx);
+            });
+        });
+
+        let overridden = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+        assert_eq!(
+            overridden.as_str(),
+            override_prompt.as_ref(),
+            "system_prompt_override should be returned verbatim, not template-rendered"
+        );
+        assert!(
+            !overridden.contains("## Tool Use"),
+            "override should NOT contain template sections"
+        );
+    }
+
+    /// Pin B16: `cached_filtered_context` reuses the filtered ProjectContext
+    /// when the filtering inputs (open-file paths + mentioned paths) haven't
+    /// changed between renders. The cache is populated on the first render
+    /// and reused on the second — avoiding the `ProjectContext::clone` +
+    /// `filter_conditional_rules` cost.
+    #[gpui::test]
+    async fn test_cached_filtered_context_reuses_on_unchanged_inputs(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+        });
+
+        // First render — should populate the cache.
+        let first_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // Verify the cache was populated.
+        let cache_after_first =
+            thread.read_with(cx, |thread, _| thread.cached_filtered_context.is_some());
+        assert!(
+            cache_after_first,
+            "cached_filtered_context should be populated after first render"
+        );
+
+        // Second render with no input changes — should reuse the cache.
+        let second_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // The rendered prompt must be byte-identical (cache hit).
+        assert_eq!(
+            first_prompt, second_prompt,
+            "system prompt must be byte-stable when filtered-context inputs are unchanged"
+        );
+
+        // The cache should still be populated (not cleared by the second render).
+        let cache_after_second =
+            thread.read_with(cx, |thread, _| thread.cached_filtered_context.is_some());
+        assert!(
+            cache_after_second,
+            "cached_filtered_context should still be populated after second render"
+        );
+    }
+
+    /// Pin B8: `tool_retry_tracker` integration in `handle_tool_use_event`.
+    /// After 3 identical failures, the next `check()` returns
+    /// `AllowWithWarning`. After 5, it returns `Refuse`. This is the
+    /// agent-loop retry cap that prevents the zero-gain retry death spiral.
+    #[gpui::test]
+    async fn test_tool_retry_tracker_integration_in_thread(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_name = "failing_tool";
+        let input = serde_json::json!({"path": "/some/path"});
+
+        // First 3 failures — check should return Allow each time (below
+        // WARN_THRESHOLD of 3).
+        for i in 0..3 {
+            let verdict = thread.read_with(cx, |thread, _| {
+                thread.tool_retry_tracker.borrow().check(tool_name, &input)
+            });
+            assert!(
+                matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
+                "check {} should return Allow (below WARN_THRESHOLD), got {:?}",
+                i + 1,
+                verdict
+            );
+            thread.update(cx, |thread, _cx| {
+                thread
+                    .tool_retry_tracker
+                    .borrow()
+                    .record_failure(tool_name, &input);
+            });
+        }
+
+        // 4th check — after 3 failures, should return AllowWithWarning.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+        });
+        match verdict {
+            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning {
+                attempt,
+                consecutive,
+                probability,
+            } => {
+                assert_eq!(attempt, 3, "attempt should be 3 (per-input count)");
+                assert_eq!(consecutive, 3, "consecutive should be 3");
+                // Bayesian: P(success) = 1/(N+2) = 1/5 = 0.2
+                assert!(
+                    (probability - 0.2).abs() < 0.001,
+                    "probability should be 1/(3+2) = 0.2, got {probability}"
+                );
+            }
+            other => panic!(
+                "4th check should return AllowWithWarning, got {:?}",
+                other
+            ),
+        }
+
+        // Record one more failure (total 4).
+        thread.update(cx, |thread, _cx| {
+            thread
+                .tool_retry_tracker
+                .borrow()
+                .record_failure(tool_name, &input);
+        });
+
+        // 5th check — still allowed (4 < HARD_CAP of 5), but with warning.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+        });
+        assert!(
+            matches!(verdict, crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { .. }),
+            "5th check should return AllowWithWarning (4 < HARD_CAP), got {:?}",
+            verdict
+        );
+
+        // Record one more failure (total 5).
+        thread.update(cx, |thread, _cx| {
+            thread
+                .tool_retry_tracker
+                .borrow()
+                .record_failure(tool_name, &input);
+        });
+
+        // 6th check — after 5 failures, should return Refuse.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+        });
+        match verdict {
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
+                assert_eq!(attempt, 5, "attempt should be 5 (per-input count)");
+                assert!(
+                    matches!(
+                        reason,
+                        crate::tool_retry_tracker::RefuseReason::IdenticalInput
+                    ),
+                    "reason should be IdenticalInput, got {:?}",
+                    reason
+                );
+            }
+            other => panic!("6th check should return Refuse, got {:?}", other),
+        }
+
+        // Verify that a successful call resets the tracker.
+        thread.update(cx, |thread, _cx| {
+            thread
+                .tool_retry_tracker
+                .borrow()
+                .record_success(tool_name, &input);
+        });
+
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+        });
+        assert!(
+            matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
+            "check after record_success should return Allow (reset), got {:?}",
+            verdict
+        );
+    }
 }
