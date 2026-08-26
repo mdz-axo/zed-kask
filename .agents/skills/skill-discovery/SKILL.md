@@ -23,7 +23,7 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 
 1. Map every task pattern to determine if an existing skill covers it fully, partially, or not at all.
 2. Classify partial matches as Feature gaps rather than Coverage gaps.
-3. Detect latent gaps where a quality or governance rule exists in `docs/architecture/PRINCIPLES.md` but no skill enforces it, classifying these as Governance gaps.
+3. Detect latent gaps where a quality or governance rule exists in `kask/docs/architecture/core/PRINCIPLES.md` but no skill enforces it, classifying these as Governance gaps.
 4. Score the impact of each gap on agent effectiveness as `critical`, `high`, `medium`, or `low`.
 5. Prioritize gaps by impact, then by frequency of the associated task pattern.
 6. Recommend an action per gap: `create_skill` (coverage gap), `extend_skill` (feature gap, needs new templates), `route_to_skill_router` (feature gap, existing skill not yet routed), `discover_external` (external crate), `automate` (automation gap), or `ignore` (low-impact only).

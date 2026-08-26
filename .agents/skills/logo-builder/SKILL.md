@@ -5,6 +5,16 @@ description: "Pragmatic logo design using LLM-assisted generation. Three-phase p
 
 # Logo Builder
 
+> **Status: dormant.** This skill was built against the `hkask-mcp-media`
+> server's image-generation tools, which are currently deferred (media-type
+> handling is out of scope until text/number/logic domains stabilize). The
+> discovery and formal-prompt templates (`media/logo-discovery-map`,
+> `media/logo-formal-prompt`) are restored and render fine; the generation
+> and gallery steps require the media server's return. Until then, the
+> skill produces text-based specifications and prompts usable with any
+> external image-generation tool — steps that call media tools directly
+> will not execute.
+
 Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Produces text-based logo design specifications and detailed prompts that can be used with any image generation tool.
 
 

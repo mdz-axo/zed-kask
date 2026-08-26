@@ -67,13 +67,13 @@ never surfaced (Weinberg: absent tests = quality threat). Each must become a new
 {% endif %}
 
 {% if surviving_mutants %}
-## Surviving Mutants (from harness-evolve-cycle)
+## Surviving Mutants (from a prior mutation-testing run)
 
-These are mutants that survived the test suite (from a prior mutation-testing
-run via `harness-optimize` / `harness-evolve-cycle`). A surviving mutant on a
+These are mutants that survived the test suite (operator-supplied mutation
+report, e.g. `cargo-mutants`). A surviving mutant on a
 code-covered entity means the universal test is missing or weak — the
 entity has a tracer bullet but its contract is not verified across the input
-space. Each is a gap recommending a proptest universal test (step 3 strengthen).
+space. Each is a gap recommending a universal property test (step 3 strengthen).
 
 ```json
 {{ surviving_mutants | tojson }}

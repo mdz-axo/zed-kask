@@ -115,7 +115,7 @@ async fn system_end_to_end_workflow() {
 }
 ```
 
-System tests use `hkask-test-harness` for database/filesystem fixtures. The test verifies observable outcomes at the system boundary, not internal intermediate states.
+System tests exercise the full vertical slice through its public seams (real stores/drivers; prefer in-memory drivers over mocks). The test verifies observable outcomes at the system boundary, not internal intermediate states.
 
 {% elif test_style == "property" %}
 ## Test Style: Property (contract spans an input space)
@@ -123,13 +123,13 @@ System tests use `hkask-test-harness` for database/filesystem fixtures. The test
 For contracts whose `post:` or `inv:` specifies a guarantee over an input space
 (not a single fixed output). The tracer bullet writes ONE representative case
 (hardcoded oracle) to reach GREEN fast — the **universal test** covering the
-full input space is delegated to the `proptest` skill in step 3 (strengthen).
+full input space is written in step 3 (strengthen) with the `proptest` crate.
 
-This is the HarnessLLM "prefer programmatic generators" constraint: the
-representative test is a hardcoded oracle (one case, TBR decays); the universal
-test (step 3) uses `oracle_reference` or `oracle_invariant` (scales with case
-count). Do NOT inline a `proptest!` block here — set `oracle_type` and let step
-3 dispatch to proptest.
+Oracle constraint: the representative test is a hardcoded oracle (one case, TBR
+decays); the universal test (step 3) uses a programmatic oracle — reference
+comparison or invariant predicate (scales with case count). Do NOT inline a
+`proptest!` block here — set `oracle_type` and let step 3 write the universal
+test.
 
 ```rust
 // Representative case — one input/output pair verifying the contract
@@ -189,29 +189,28 @@ Default: integration test through public API.
 
    **Constraining-principle annotation rule** (`PRINCIPLES.md` §1.5): After `pre:` and `post:`, contracts must list `/// [P{N}] Constraining: <rationale>` for each constraining principle that shapes how the goal is delivered. At minimum, every Magna Carta principle (P1-P4) that applies must be annotated. To determine applicability: "Would implementing this contract without respecting this principle violate it?" If yes, the principle must appear as a constraining annotation.
 
-## Oracle Selection (HarnessLLM)
+## Oracle Selection
 
 Select the oracle type for the contract — this drives whether step 3 (strengthen)
-dispatches to proptest for a universal test:
+writes a universal property test:
 
 | Contract shape | `oracle_type` | Universal test? |
 |----------------|--------------|-----------------|
 | `post:` is a single fixed output for a single input | `hardcoded` | No — representative test covers it; step 3 skips |
-| `post:` is an input→output guarantee with a reference implementation | `reference` | Yes — step 3 dispatches to proptest with `oracle_reference` |
-| `inv:` or `post:` is a predicate over (input, output) | `invariant` | Yes — step 3 dispatches to proptest with `oracle_invariant` |
-| `prob:` (probabilistic, non-deterministic) | `invariant` | Yes — step 3 dispatches to proptest with a statistical threshold |
+| `post:` is an input→output guarantee with a reference implementation | `reference` | Yes — step 3 writes the universal test with a reference-comparison oracle |
+| `inv:` or `post:` is a predicate over (input, output) | `invariant` | Yes — step 3 writes the universal test with an invariant-predicate oracle |
+| `prob:` (probabilistic, non-deterministic) | `invariant` | Yes — step 3 writes the universal test with a statistical threshold |
 
 Set `oracle_type` in the output. The representative test (this step) is always
 a hardcoded oracle (one case). The universal test (step 3) uses the programmatic
-oracle. This is the HarnessLLM constraint: programmatic generators scale; hardcoded
-pairs do not.
+oracle: programmatic generators scale; hardcoded pairs do not.
 
 ## Rust Conventions
 
 - Use `#[cfg(test)]` module for unit tests, `tests/` directory for integration tests.
 - Use `#[tokio::test]` for async code.
 - Use `assert!` with diagnostic messages.
-- Use `tempfile` for filesystem tests. Use `hkask-test-harness` (provides `TestDb`) for database/persistence tests.
+- Use `tempfile` for filesystem tests. For database/persistence tests, prefer the crate's in-memory driver over mocks.
 - For error paths, test the error variant, not just "it failed".
 - **No `todo!()` or `unimplemented!()`**. If a stub is needed, return a sensible default or `Err(...)`.
 

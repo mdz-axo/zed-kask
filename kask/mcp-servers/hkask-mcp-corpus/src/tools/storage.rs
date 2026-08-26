@@ -212,65 +212,26 @@ impl CorpusServer {
                         "In-memory index hydrated from DB"
                     );
                     // Search the hydrated passages in-memory.
-                    let mut scored: Vec<(f32, &IndexedPassage)> = hydrated
-                        .iter()
-                        .map(|p| (cosine_similarity(&query_embedding, &p.embedding), p))
-                        .collect();
-                    scored.sort_by(|a, b| {
-                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    // Filter by min_score if set, then truncate to top-k.
-                    if min_score_val > 0.0 {
-                        scored.retain(|(score, _)| *score >= min_score_val);
-                    }
-                    scored.truncate(k);
-                    let results: Vec<serde_json::Value> = scored
-                        .iter()
-                        .map(|(score, p)| {
-                            let mut entry = json!({
-                                "metadata": p.metadata.clone(),
-                                "score": score,
-                            });
-                            if include_text_flag {
-                                entry["text"] = json!(p.text.clone());
-                            }
-                            entry
-                        })
-                        .collect();
+                    let results = search_passages(
+                        &hydrated,
+                        &query_embedding,
+                        k,
+                        min_score_val,
+                        include_text_flag,
+                    );
                     // Move hydrated passages into the persistent in-memory index
                     // so subsequent queries skip the DB hydration pass.
-                    drop(scored);
                     let hydrated_count = hydrated.len();
                     index.extend(hydrated);
                     (results, hydrated_count)
                 } else {
-                    let mut scored: Vec<(f32, &IndexedPassage)> = index
-                        .iter()
-                        .map(|p| (cosine_similarity(&query_embedding, &p.embedding), p))
-                        .collect();
-
-                    scored.sort_by(|a, b| {
-                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    // Filter by min_score if set, then truncate to top-k.
-                    if min_score_val > 0.0 {
-                        scored.retain(|(score, _)| *score >= min_score_val);
-                    }
-                    scored.truncate(k);
-
-                    let results: Vec<serde_json::Value> = scored
-                        .iter()
-                        .map(|(score, p)| {
-                            let mut entry = json!({
-                                "metadata": p.metadata.clone(),
-                                "score": score,
-                            });
-                            if include_text_flag {
-                                entry["text"] = json!(p.text.clone());
-                            }
-                            entry
-                        })
-                        .collect();
+                    let results = search_passages(
+                        &index,
+                        &query_embedding,
+                        k,
+                        min_score_val,
+                        include_text_flag,
+                    );
 
                     (results, index.len())
                 }
@@ -593,6 +554,43 @@ fn parse_lisp_query(
     }
 
     Ok((nl_query, top_k, include_text, min_score, generate_answer))
+}
+
+/// Search a slice of indexed passages by cosine similarity to a query
+/// embedding, with optional min-score filtering and text inclusion.
+///
+/// Extracted from `corpus_query` where the same score → sort → filter →
+/// truncate → serialize logic was duplicated between the hydrated-from-DB
+/// path and the in-memory-index path.
+fn search_passages(
+    passages: &[IndexedPassage],
+    query_embedding: &[f32],
+    k: usize,
+    min_score: f32,
+    include_text: bool,
+) -> Vec<serde_json::Value> {
+    let mut scored: Vec<(f32, &IndexedPassage)> = passages
+        .iter()
+        .map(|p| (cosine_similarity(query_embedding, &p.embedding), p))
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if min_score > 0.0 {
+        scored.retain(|(score, _)| *score >= min_score);
+    }
+    scored.truncate(k);
+    scored
+        .iter()
+        .map(|(score, p)| {
+            let mut entry = json!({
+                "metadata": p.metadata.clone(),
+                "score": score,
+            });
+            if include_text {
+                entry["text"] = json!(p.text.clone());
+            }
+            entry
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

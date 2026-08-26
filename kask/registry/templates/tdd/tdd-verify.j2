@@ -81,10 +81,9 @@ Where contracts lack `expect:`, severity is `critical` with violation type `miss
 - [ ] `cargo clippy -p <crate> -- -D warnings` passes
 - [ ] `cargo check -p <crate>` passes
 
-### Harness Integration
-- [ ] The verification run uses `./scripts/test --trace` (not bare `cargo test`) so the run is captured in the trace filesystem (`kask/traces/<run-id>/nextest-output.json`) and is visible to the suite-level `harness-optimize` loop
+### Universal Test Integration
 - [ ] If `proptest_verdict` is `pass` or `fail`, a universal test file exists at `universal_test_file_path` — a property contract (`reference`/`invariant` oracle) with no universal test is a high-severity gap (the representative test alone does not cover the input space)
-- [ ] If `proptest_verdict` is `fail`, `all_tests_pass` MUST be `false` — a proptest failure is a RED signal that must not be masked by a passing representative test
+- [ ] If `proptest_verdict` is `fail`, `all_tests_pass` MUST be `false` — a property-test failure is a RED signal that must not be masked by a passing representative test
 - [ ] If `proptest_verdict` is `skipped`, the contract is `hardcoded` (fixed-value) — no universal test is expected; this is not a gap
 
 ## Output Requirements

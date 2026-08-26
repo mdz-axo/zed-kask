@@ -20,8 +20,6 @@ visibility: Public
      (e.g. raise the rJoule cap for a skill that keeps hitting hard_limit)
    - skill-maintenance: refine a skill's manifest or templates (e.g. fix
      a template that produces malformed JSON)
-   - validate_golden_outputs: run golden-output validation for a skill
-     with deterministic-ish output contracts
    - direct_edit: fix a manifest or template directly (e.g. correct a
      typo in a template_ref)
    - no_action: observe further — the signal is not strong enough to act
@@ -57,7 +55,7 @@ of recommendation objects:
 [
   {
     "skill_id": "...",
-    "action_type": "curator_directive | skill-maintenance | validate_golden_outputs | direct_edit | no_action",
+    "action_type": "curator_directive | skill-maintenance | direct_edit | no_action",
     "target": "What to change (e.g. 'rJoule cap for superforecasting', 'template_ref in step 3 of scenario-builder')",
     "rationale": "Why this action — grounded in the briefing signals (issue count, failure patterns, health classification)",
     "specific_change": "The concrete change proposed (e.g. 'raise rjoule.cap from 2 to 5', 'fix the JSON schema in synthesize-briefing.j2')",
@@ -78,10 +76,6 @@ of recommendation objects:
   a structural issue (e.g. a template produces malformed JSON, a step
   references a non-existent MCP tool, the convergence config is too
   tight). The maintenance refines the artifact.
-- **validate_golden_outputs**: Propose when a skill has
-  golden_outputs declared in its manifest and the briefing shows
-  inconsistent outputs. The validation runs the process against the
-  fixtures and reports pass/fail.
 - **direct_edit**: Propose when a specific, small fix is clear (e.g. a
   typo in a template_ref, a missing input_mapping field). Reserve for
   surgical fixes that don't warrant a full skill-maintenance cycle.

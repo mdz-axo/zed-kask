@@ -263,7 +263,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
   spans when training completes/fails or the operator reacts to a recommendation.
   These become `prior_outcome` (τ_t) and `prior_operator_feedback` (e_t) on
   subsequent invocations.
-- `kali-audit` owns security findings; `tdd` owns training-loop code correctness;
+- Security review of training infrastructure is a separate concern owned by
+  security-audit practice; `tdd` owns training-loop code correctness;
   this skill owns training-configuration recommendation and contract evidence.
 
 ## Source References

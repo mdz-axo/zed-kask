@@ -1430,79 +1430,27 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
-    /// Tool retry tracker — hard-enforces the agent-loop retry cap. After 3
-    /// identical failures, warns the agent to switch tools. After 5, hard-refuses.
-    /// Prevents the zero-gain retry death spiral (Ashby variety-deficit).
-    /// Never persisted — lives and dies with this thread.
-    tool_retry_tracker: Rc<RefCell<crate::tool_retry_tracker::ToolRetryTracker>>,
-    /// Cached rendered system prompt and its input digest. The system prompt is
-    /// re-rendered on every `build_request_messages_until` call, but its inputs
-    /// (available_tools, model_name, date, user_agents_md, sandboxing, project
-    /// context) rarely change between consecutive requests within a turn. When
-    /// the digest matches, the cached string is reused — avoiding both the
-    /// handlebars render cost and, more importantly, keeping the system-prompt
-    /// bytes identical so the provider's prefix cache hits. When the digest
-    /// changes, the new render is stored and a telemetry event is emitted so
-    /// cache-bust events are observable.
-    cached_system_prompt: Option<CachedSystemPrompt>,
-    /// Cached filtered `ProjectContext` and a digest of its filtering inputs
-    /// (open-file paths + mentioned paths). Avoids re-cloning and re-filtering
-    /// `ProjectContext` on every `render_system_prompt` call when the inputs
-    /// haven't changed.
-    cached_filtered_context: Option<CachedFilteredContext>,
-    /// Static context set by the agent (e.g., Curator overlay, Steer
-    /// panel overlay). Rendered in the system prompt's `## Session Context`
-    /// section. Included in the system-prompt digest so cache busts on change.
-    /// When set, overrides the default system prompt template. Used by the
-    /// Curator agent to inject its own persona/system prompt instead of the
-    /// default Zed Agent prompt. When `None`, the standard `system_prompt.hbs`
-    /// template is rendered.
-    system_prompt_override: Option<SharedString>,
-    /// Static context set by the agent (e.g., Curator overlay). Rendered in
-    /// the system prompt's `## Session Context` section.
-    agent_static_context: Option<SharedString>,
-    /// The agent ID that owns this thread (e.g., `CURATOR_AGENT_ID`, `ZED_AGENT_ID`).
-    /// `None` for threads created before agent identity was tracked (upstream-zed
-    /// compatibility) and for subagent threads that inherit from their parent.
-    /// Used by the memory ingestion path (D6) to route Curator turns to the
-    /// curator's sovereign DB, and by the context injector dispatch (D11) to
-    /// select the correct per-agent recall store.
-    agent_id: Option<AgentId>,
-    /// When set, `enabled_tools` filters context-server (MCP) tools to only
-    /// the named server — the kask panel's per-tab scoping enforcement.
-    /// `None` (upstream Zed and non-kask threads) means all servers pass.
-    /// The name matches the server's `ContextServerId` (e.g. `"companies"`).
-    mcp_server_scope: Option<SharedString>,
-    /// Tool results that are delivered asynchronously, after the immediate
-    /// tool-result slot has been flushed. The outer turn loop drains completed
-    /// entries at the top of each iteration and injects them as a synthetic
-    /// user message before `build_completion_request`. See
-    /// `DeferredToolResult`.
-    deferred_tool_results: Vec<DeferredToolResult>,
-    /// Set when the last completion ended with `StopReason::MaxTokens`,
-    /// indicating the model's output was truncated before it finished.
-    /// `flush_pending_message` reads this to distinguish stream-truncated
-    /// tool calls (where the model never sent `is_input_complete: true`)
-    /// from genuine user cancellations, so the model gets an accurate
-    /// reason instead of the misleading `TOOL_CANCELED_MESSAGE`.
-    /// Reset to `false` at the start of each completion request.
-    last_completion_truncated: bool,
+    // zed-kask: D2/D6/D25 — all kask-specific per-thread state grouped
+    // into one field so upstream rebases touch one struct init instead
+    // of nine field inits. See kask_thread_state.rs for the methods that
+    // encapsulate the kask-specific turn-loop behaviors.
+    pub(crate) kask: crate::kask_thread_state::KaskThreadState,
 }
 
 /// A rendered system prompt cached alongside a digest of its inputs. The
 /// digest is computed from the same fields that feed `SystemPromptTemplate`; if
 /// it matches on the next render request, the cached string is reused.
-struct CachedSystemPrompt {
-    digest: [u8; 32],
-    prompt: SharedString,
+pub(crate) struct CachedSystemPrompt {
+    pub(crate) digest: [u8; 32],
+    pub(crate) prompt: SharedString,
 }
 
 /// Cached filtered `ProjectContext` with a digest of the filtering inputs.
 /// When the digest matches, the cached context is reused — avoiding the
 /// `ProjectContext::clone` + `filter_conditional_rules` cost on every render.
-struct CachedFilteredContext {
-    filter_digest: [u8; 32],
-    context: ProjectContext,
+pub(crate) struct CachedFilteredContext {
+    pub(crate) filter_digest: [u8; 32],
+    pub(crate) context: ProjectContext,
 }
 
 impl Thread {
@@ -1541,7 +1489,9 @@ impl Thread {
         // this, a curator subagent's turns are ingested as user-perspective
         // records and the curator has no first-person memory of the
         // delegated work.
-        thread.agent_id = parent_thread.read(cx).agent_id.clone();
+        thread.kask = crate::kask_thread_state::KaskThreadState::inherit_from(
+            &parent_thread.read(cx).kask,
+        );
         thread.inherit_parent_settings(parent_thread, cx);
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
             thread.inherits_parent_model_settings = false;
@@ -1641,17 +1591,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
-            tool_retry_tracker: Rc::new(RefCell::new(
-                crate::tool_retry_tracker::ToolRetryTracker::default(),
-            )),
-            cached_system_prompt: None,
-            cached_filtered_context: None,
-            system_prompt_override: None,
-            agent_static_context: None,
-            agent_id: None,
-            mcp_server_scope: None,
-            deferred_tool_results: Vec::new(),
-            last_completion_truncated: false,
+            kask: crate::kask_thread_state::KaskThreadState::new(),
         }
     }
 
@@ -2047,17 +1987,7 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
-            tool_retry_tracker: Rc::new(RefCell::new(
-                crate::tool_retry_tracker::ToolRetryTracker::default(),
-            )),
-            cached_system_prompt: None,
-            cached_filtered_context: None,
-            system_prompt_override: None,
-            agent_static_context: None,
-            agent_id: None,
-            mcp_server_scope: None,
-            deferred_tool_results: Vec::new(),
-            last_completion_truncated: false,
+            kask: crate::kask_thread_state::KaskThreadState::new(),
         }
     }
 
@@ -2249,8 +2179,7 @@ impl Thread {
     /// and other dynamic sections are NOT included — the override is the
     /// complete system prompt.
     pub fn set_system_prompt_override(&mut self, prompt: SharedString, cx: &mut Context<Self>) {
-        self.system_prompt_override = Some(prompt);
-        self.cached_system_prompt = None; // bust the cache
+        self.kask.set_system_prompt_override(prompt);
         cx.notify();
     }
 
@@ -2263,8 +2192,7 @@ impl Thread {
     /// Set agent static context (e.g., Curator overlay). Rendered in the
     /// system prompt's `## Session Context` section.
     pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
-        self.agent_static_context = Some(context);
-        self.cached_system_prompt = None; // bust the cache
+        self.kask.set_static_context(context);
         cx.notify();
     }
 
@@ -2280,14 +2208,14 @@ impl Thread {
     /// fragment. The memory port (D6) and context injector dispatch (D11) both
     /// read it to select the correct perspective-scoped store.
     pub fn set_agent_id(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
-        self.agent_id = Some(agent_id);
+        self.kask.set_agent_id(agent_id);
         cx.notify();
     }
 
     /// The agent ID that owns this thread, if set. `None` for the default
     /// (Zed Agent) and for subagent threads that inherit from their parent.
     pub fn agent_id(&self) -> Option<&AgentId> {
-        self.agent_id.as_ref()
+        self.kask.agent_id()
     }
 
     /// Restrict this thread's context-server (MCP) tools to a single server.
@@ -2298,7 +2226,7 @@ impl Thread {
     /// is enforced rather than advisory. `None` (the default) disables the
     /// filter — upstream Zed threads are unaffected.
     pub fn set_mcp_server_scope(&mut self, server: Option<SharedString>, cx: &mut Context<Self>) {
-        self.mcp_server_scope = server;
+        self.kask.set_mcp_server_scope(server);
         cx.notify();
     }
 
@@ -2306,13 +2234,13 @@ impl Thread {
     /// base + per-tab prompt), if any. Distinct from the memory-injected
     /// `static_context` — this is the agent's own contribution.
     pub fn agent_static_context(&self) -> Option<&SharedString> {
-        self.agent_static_context.as_ref()
+        self.kask.static_context()
     }
 
     /// The MCP server this thread is scoped to, if any. `None` for upstream
     /// Zed threads and non-kask threads (all servers pass `enabled_tools`).
     pub fn mcp_server_scope(&self) -> Option<&SharedString> {
-        self.mcp_server_scope.as_ref()
+        self.kask.mcp_server_scope()
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
@@ -2571,8 +2499,9 @@ impl Thread {
         }
 
         // Drop deferred tool results — their tasks are cancelled when dropped.
-        let deferred_count = self.deferred_tool_results.len();
-        self.deferred_tool_results.clear();
+        // zed-kask: deferred results live on KaskThreadState
+        let deferred_count = self.kask.deferred_result_count();
+        self.kask.clear_deferred_results();
         if deferred_count > 0 {
             log::debug!("Cancelled {deferred_count} deferred tool results");
         }
@@ -3210,7 +3139,7 @@ impl Thread {
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
-                this.last_completion_truncated = false;
+                this.kask.reset_truncation_flag(); // zed-kask: D25
                 anyhow::Ok((model, request))
             })??;
 
@@ -3222,8 +3151,9 @@ impl Thread {
                 intent,
                 CompletionIntent::UserPrompt | CompletionIntent::Subagent
             ) {
+                // zed-kask: D6 — context injection dispatches by agent_id
                 let agent_id = this
-                    .read_with(cx, |this, _| this.agent_id.clone())
+                    .read_with(cx, |this, _| this.kask.agent_id().cloned())
                     .ok()
                     .unwrap_or(None);
                 if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
@@ -3694,7 +3624,7 @@ impl Thread {
         log::debug!(
             "Enqueued deferred tool result for {tool_use_id} at message {owning_message_ix}"
         );
-        self.deferred_tool_results.push(DeferredToolResult {
+        self.kask.enqueue_deferred_result(DeferredToolResult {
             receiver: Some(Box::pin(receiver)),
             tool_use_id,
             owning_message_ix,
@@ -3707,42 +3637,7 @@ impl Thread {
     /// noop waker to poll receivers non-blockingly — incomplete tasks stay
     /// in the queue for the next iteration.
     fn drain_completed_deferred_results(&mut self) -> Vec<CompletedDeferredResult> {
-        if self.deferred_tool_results.is_empty() {
-            return Vec::new();
-        }
-        let waker = futures::task::noop_waker();
-        let mut context = std::task::Context::from_waker(&waker);
-        let mut completed = Vec::new();
-        let mut remaining = Vec::with_capacity(self.deferred_tool_results.len());
-        for mut deferred in self.deferred_tool_results.drain(..) {
-            // Poll the receiver in place without consuming it. If ready, take
-            // it out and extract the result. If pending, keep it for the next
-            // poll cycle.
-            let Some(receiver) = deferred.receiver.as_mut() else {
-                remaining.push(deferred);
-                continue;
-            };
-            match receiver.as_mut().poll(&mut context) {
-                std::task::Poll::Ready(result) => {
-                    deferred.receiver = None;
-                    let result = match result {
-                        Ok(result) => result.map_err(|err| anyhow!(err)),
-                        Err(err) => Err(anyhow!(err)),
-                    };
-                    completed.push(CompletedDeferredResult {
-                        tool_use_id: deferred.tool_use_id,
-                        owning_message_ix: deferred.owning_message_ix,
-                        tool_name: deferred.tool_name,
-                        result,
-                    });
-                }
-                std::task::Poll::Pending => {
-                    remaining.push(deferred);
-                }
-            }
-        }
-        self.deferred_tool_results = remaining;
-        completed
+        self.kask.drain_completed_deferred_results()
     }
 
     /// Inject completed deferred tool results into the original agent
@@ -4005,7 +3900,7 @@ impl Thread {
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => {
-                self.last_completion_truncated = true;
+                self.kask.on_max_tokens(); // zed-kask: D25
                 return Err(CompletionError::MaxTokens.into());
             }
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
@@ -4181,11 +4076,11 @@ impl Thread {
         // per-tool consecutive (trivially different inputs, same tool). Prevents
         // the zero-gain retry death spiral (Ashby variety-deficit).
         let tool_name_str = tool_use.name.as_ref();
-        let retry_warning: Option<String> = match self
-            .tool_retry_tracker
-            .borrow()
-            .check(tool_name_str, &input)
-        {
+        // zed-kask: .rules — tool retry death spiral prevention
+        let retry_warning: Option<String> = match self.kask.check_tool_retry(
+            tool_name_str,
+            &input,
+        ) {
             crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
                 let content =
                     crate::tool_retry_tracker::format_refusal(tool_name_str, attempt, reason);
@@ -4306,7 +4201,7 @@ impl Thread {
         );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
-        let retry_tracker = self.tool_retry_tracker.clone();
+        let retry_tracker = self.kask.retry_tracker_handle(); // zed-kask: .rules
         let tool_name_for_tracking = tool_name.clone();
         cx.foreground_executor().spawn(async move {
             let (is_error, output) = match tool_result.await {
@@ -4789,7 +4684,7 @@ impl Thread {
             };
 
             if !message.tool_results.contains_key(&tool_use.id) {
-                let cancel_message = if self.last_completion_truncated {
+                let cancel_message = if self.kask.last_completion_truncated() { // zed-kask: D25
                     TOOL_TRUNCATED_MESSAGE
                 } else {
                     TOOL_CANCELED_MESSAGE
@@ -4986,7 +4881,8 @@ impl Thread {
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
             // Kask panel per-tab scoping: when the thread is scoped to a
             // specific MCP server, skip all other servers' tools.
-            if !mcp_server_in_scope(self.mcp_server_scope.as_deref(), server_id.0.as_ref()) {
+            // zed-kask: D2 — per-tab MCP server scoping
+            if !self.kask.mcp_server_in_scope(server_id.0.as_ref()) {
                 continue;
             }
             // Curator memory edit tools (memory_insert, memory_update,
@@ -4997,10 +4893,7 @@ impl Thread {
             // Read-only curator tools (curator_memory_recall,
             // curator_semantic_search, curator_consult, etc.) remain
             // available to all threads.
-            let is_curator_thread = self
-                .agent_id
-                .as_ref()
-                .is_some_and(|id| id.as_ref() == crate::CURATOR_AGENT_ID.as_ref());
+            let is_curator_thread = self.kask.is_curator_thread(); // zed-kask: D6
             for (tool_name, tool) in server_tools {
                 if !is_curator_thread
                     && server_id.0.as_ref() == "curator"
@@ -5229,7 +5122,8 @@ impl Thread {
     ) -> SharedString {
         // If a system prompt override is set (e.g., by the Curator agent),
         // return it directly — no template rendering.
-        if let Some(ref override_prompt) = self.system_prompt_override {
+        // zed-kask: D2 — system prompt override bypasses template
+        if let Some(override_prompt) = self.kask.system_prompt_override() {
             return override_prompt.clone();
         }
 
@@ -5244,7 +5138,7 @@ impl Thread {
         // Agent static context (e.g., Curator overlay, Steer panel overlay)
         // is rendered in the system prompt's "Session Context" section.
         // Memory recall is per-turn via `inject_context` (Role::System message).
-        let static_context = self.agent_static_context.clone();
+        let static_context = self.kask.static_context().cloned(); // zed-kask: D2
 
         // Apply conditional-rules scoping: filter out rules files whose
         // frontmatter specifies `alwaysApply: false` with globs that don't
@@ -5260,16 +5154,10 @@ impl Thread {
         let open_paths = self.collect_open_file_paths(cx);
         let mentioned_paths = self.collect_mentioned_paths();
         let filter_digest = filter_inputs_digest(&open_paths, &mentioned_paths);
-        let filtered_project_context = if self
-            .cached_filtered_context
-            .as_ref()
-            .is_some_and(|cached| cached.filter_digest == filter_digest)
+        let filtered_project_context = if let Some(cached) =
+            self.kask.cached_filtered_context(&filter_digest)
         {
-            self.cached_filtered_context
-                .as_ref()
-                .expect("checked above")
-                .context
-                .clone()
+            cached.clone()
         } else {
             let context = self.project_context.read(cx);
             let all_paths: Vec<&str> = open_paths
@@ -5278,10 +5166,8 @@ impl Thread {
                 .chain(mentioned_paths.iter().map(|s| s.as_str()))
                 .collect();
             let filtered = filter_conditional_rules(context.clone(), &all_paths);
-            self.cached_filtered_context = Some(CachedFilteredContext {
-                filter_digest,
-                context: filtered.clone(),
-            });
+            self.kask
+                .cache_filtered_context(filter_digest, filtered.clone());
             filtered
         };
 
@@ -5299,10 +5185,8 @@ impl Thread {
             is_windows,
         );
 
-        if let Some(cached) = &self.cached_system_prompt
-            && cached.digest == digest
-        {
-            return cached.prompt.clone();
+        if let Some(cached) = self.kask.cached_system_prompt(&digest) {
+            return cached;
         }
 
         // Digest changed (or first render): re-render and cache.
@@ -5335,10 +5219,7 @@ impl Thread {
             prompt_bytes = system_prompt.len(),
         );
 
-        self.cached_system_prompt = Some(CachedSystemPrompt {
-            digest,
-            prompt: system_prompt.clone(),
-        });
+        self.kask.cache_system_prompt(digest, system_prompt.clone());
 
         system_prompt
     }
@@ -5976,11 +5857,54 @@ pub(crate) struct DeferredToolResult {
 
 /// A deferred tool result that has completed and is ready to be injected into
 /// the conversation as a synthetic user message.
-struct CompletedDeferredResult {
-    tool_use_id: LanguageModelToolUseId,
-    owning_message_ix: usize,
-    tool_name: Arc<str>,
-    result: Result<LanguageModelToolResult, anyhow::Error>,
+pub(crate) struct CompletedDeferredResult {
+    pub(crate) tool_use_id: LanguageModelToolUseId,
+    pub(crate) owning_message_ix: usize,
+    pub(crate) tool_name: Arc<str>,
+    pub(crate) result: Result<LanguageModelToolResult, anyhow::Error>,
+}
+
+/// Poll all deferred tool results and return those that have completed.
+/// Completed entries are removed from the queue; incomplete tasks stay
+/// for the next poll cycle. Extracted as a free function so
+/// `KaskThreadState::drain_completed_deferred_results` can call it
+/// without needing access to `Thread`.
+pub(crate) fn drain_completed_deferred_results(
+    deferred_results: &mut Vec<DeferredToolResult>,
+) -> Vec<CompletedDeferredResult> {
+    if deferred_results.is_empty() {
+        return Vec::new();
+    }
+    let waker = futures::task::noop_waker();
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut completed = Vec::new();
+    let mut remaining = Vec::with_capacity(deferred_results.len());
+    for mut deferred in deferred_results.drain(..) {
+        let Some(receiver) = deferred.receiver.as_mut() else {
+            remaining.push(deferred);
+            continue;
+        };
+        match receiver.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(result) => {
+                deferred.receiver = None;
+                let result = match result {
+                    Ok(result) => result.map_err(|err| anyhow!(err)),
+                    Err(err) => Err(anyhow!(err)),
+                };
+                completed.push(CompletedDeferredResult {
+                    tool_use_id: deferred.tool_use_id,
+                    owning_message_ix: deferred.owning_message_ix,
+                    tool_name: deferred.tool_name,
+                    result,
+                });
+            }
+            std::task::Poll::Pending => {
+                remaining.push(deferred);
+            }
+        }
+    }
+    *deferred_results = remaining;
+    completed
 }
 
 /// Describes where a streamed compaction summary should land in the thread
@@ -10769,7 +10693,7 @@ mod tests {
         });
 
         // The deferred result should still be in the queue.
-        let queue_len = thread.read_with(cx, |thread, _| thread.deferred_tool_results.len());
+        let queue_len = thread.read_with(cx, |thread, _| thread.kask.deferred_result_count());
         assert_eq!(queue_len, 1, "pending deferred result should stay in queue");
     }
 
@@ -10782,10 +10706,10 @@ mod tests {
 
         thread.update(cx, |thread, cx| {
             thread.enqueue_deferred_tool_result(tool_use_id, 0, Arc::from("test_tool"), rx);
-            assert_eq!(thread.deferred_tool_results.len(), 1);
+            assert_eq!(thread.kask.deferred_result_count(), 1);
             thread.cancel(cx).detach();
             assert_eq!(
-                thread.deferred_tool_results.len(),
+                thread.kask.deferred_result_count(),
                 0,
                 "cancel should clear deferred results"
             );
@@ -11043,7 +10967,7 @@ mod tests {
         // set the flag, then flush_pending_message reads it.
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.last_completion_truncated = true;
+                thread.kask.on_max_tokens();
 
                 // Set up a pending message with an incomplete ToolUse
                 // (no tool_result) so flush_pending_message inserts the
@@ -11088,7 +11012,7 @@ mod tests {
         // ── Case 2: truncation flag NOT set (user cancel) ──────────────
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.last_completion_truncated = false;
+                thread.kask.reset_truncation_flag();
 
                 let tool_use = LanguageModelToolUse {
                     id: LanguageModelToolUseId::from("canceled-tool-id"),
@@ -11162,7 +11086,7 @@ mod tests {
             })
         });
         assert!(
-            default_prompt.contains("## Tool Use") || default_prompt.contains("## Task Execution"),
+            default_prompt.contains("## Communication"),
             "default system prompt should contain template sections, got: {default_prompt}"
         );
 
@@ -11237,7 +11161,7 @@ mod tests {
 
         // Verify the cache was populated.
         let cache_after_first =
-            thread.read_with(cx, |thread, _| thread.cached_filtered_context.is_some());
+            thread.read_with(cx, |thread, _| thread.kask.has_cached_filtered_context());
         assert!(
             cache_after_first,
             "cached_filtered_context should be populated after first render"
@@ -11269,7 +11193,7 @@ mod tests {
 
         // The cache should still be populated (not cleared by the second render).
         let cache_after_second =
-            thread.read_with(cx, |thread, _| thread.cached_filtered_context.is_some());
+            thread.read_with(cx, |thread, _| thread.kask.has_cached_filtered_context());
         assert!(
             cache_after_second,
             "cached_filtered_context should still be populated after second render"
@@ -11291,7 +11215,7 @@ mod tests {
         // WARN_THRESHOLD of 3).
         for i in 0..3 {
             let verdict = thread.read_with(cx, |thread, _| {
-                thread.tool_retry_tracker.borrow().check(tool_name, &input)
+                thread.kask.check_tool_retry(tool_name, &input)
             });
             assert!(
                 matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
@@ -11300,16 +11224,13 @@ mod tests {
                 verdict
             );
             thread.update(cx, |thread, _cx| {
-                thread
-                    .tool_retry_tracker
-                    .borrow()
-                    .record_failure(tool_name, &input);
+                thread.kask.record_tool_failure(tool_name, &input);
             });
         }
 
         // 4th check — after 3 failures, should return AllowWithWarning.
         let verdict = thread.read_with(cx, |thread, _| {
-            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+            thread.kask.check_tool_retry(tool_name, &input)
         });
         match verdict {
             crate::tool_retry_tracker::RetryVerdict::AllowWithWarning {
@@ -11333,15 +11254,12 @@ mod tests {
 
         // Record one more failure (total 4).
         thread.update(cx, |thread, _cx| {
-            thread
-                .tool_retry_tracker
-                .borrow()
-                .record_failure(tool_name, &input);
+            thread.kask.record_tool_failure(tool_name, &input);
         });
 
         // 5th check — still allowed (4 < HARD_CAP of 5), but with warning.
         let verdict = thread.read_with(cx, |thread, _| {
-            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+            thread.kask.check_tool_retry(tool_name, &input)
         });
         assert!(
             matches!(verdict, crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { .. }),
@@ -11351,15 +11269,12 @@ mod tests {
 
         // Record one more failure (total 5).
         thread.update(cx, |thread, _cx| {
-            thread
-                .tool_retry_tracker
-                .borrow()
-                .record_failure(tool_name, &input);
+            thread.kask.record_tool_failure(tool_name, &input);
         });
 
         // 6th check — after 5 failures, should return Refuse.
         let verdict = thread.read_with(cx, |thread, _| {
-            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+            thread.kask.check_tool_retry(tool_name, &input)
         });
         match verdict {
             crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
@@ -11378,14 +11293,11 @@ mod tests {
 
         // Verify that a successful call resets the tracker.
         thread.update(cx, |thread, _cx| {
-            thread
-                .tool_retry_tracker
-                .borrow()
-                .record_success(tool_name, &input);
+            thread.kask.record_tool_success(tool_name, &input);
         });
 
         let verdict = thread.read_with(cx, |thread, _| {
-            thread.tool_retry_tracker.borrow().check(tool_name, &input)
+            thread.kask.check_tool_retry(tool_name, &input)
         });
         assert!(
             matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),

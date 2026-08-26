@@ -132,26 +132,27 @@ input that feeds the step-16 compute (`apply_calibration_adjustment`) to
 close the Brier feedback loop. Before re-invoking superforecasting on a prior
 iteration's forecast, the invoking agent should:
 
-1. Run the `eqm` skill on the prior iteration's rationale (stage_7_record
-   output) to score it against the Explanation Quality Markers (Karvetski et
-   al. 2026).
-2. Extract the `overconfidence_bias` field from the `eqm` skill's feedback
-   output. The signal is signed: positive = overconfident (red flags dominate,
-   especially `extreme_confidence` and `forecast_rationale_misalign`), negative
-   = underconfident (excessive `speculative_terms` without grounding).
+1. Score the prior iteration's rationale (stage_7_record output) against the
+   Explanation Quality Markers (Karvetski et al. 2026): check for red flags
+   (`extreme_confidence`, `forecast_rationale_misalign`) and grounding failures
+   (excessive `speculative_terms` without evidence).
+2. Derive the `overconfidence_bias` value from that scoring. The signal is
+   signed: positive = overconfident (red flags dominate), negative =
+   underconfident (speculation without grounding).
 3. Pass the `overconfidence_bias` value when re-invoking superforecasting.
 
-The process does not run `eqm` itself — the invoking agent does, because the
-process is a single skill invocation and should not reach out to other skills
-mid-process (per the existing `market_context` and `expert_prior` pattern). If
-`eqm` is not run, `overconfidence_bias` defaults to 0.0 (no adjustment). Do
-not fabricate the bias value.
+The process does not score the rationale itself — the invoking agent does,
+because the process is a single skill invocation and should not reach out to
+other skills mid-process (per the existing `market_context` and
+`expert_prior` pattern). If the scoring is not performed,
+`overconfidence_bias` defaults to 0.0 (no adjustment). Do not fabricate the
+bias value.
 
-For rationale-level improvement (not just calibration feedback), invoke the
-`eqm-improvement` skill on the rationale before re-invoking superforecasting.
-`eqm-improvement` reverse-engineers the reasoning patterns the EQM definitions
-specify, producing an improved rationale with a higher EQM passage rate while
-preserving the forecast probability (alignment invariant).
+For rationale-level improvement (not just calibration feedback), have the
+invoking agent apply the EQM definitions directly to the prior rationale —
+score it against each marker, identify which red flags dominate, and rewrite
+the rationale to raise its EQM passage rate while preserving the forecast
+probability (alignment invariant) — before re-invoking superforecasting.
 
 ## Registry Templates
 

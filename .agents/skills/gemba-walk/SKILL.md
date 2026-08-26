@@ -61,7 +61,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 ### RECOMMEND — Propose actions (step 4)
 
 1. Render the `gemba-walk/recommend-actions` template to propose refinement actions for operator approval.
-2. For each skill with a "watch" or "intervene" classification, propose one of: `curator_directive`, `skill-maintenance`, `validate_golden_outputs`, `direct_edit`, or `no_action`.
+2. For each skill with a "watch" or "intervene" classification, propose one of: `curator_directive`, `skill-maintenance`, `direct_edit`, or `no_action`.
 3. The proposals are recommendations, not autonomous actions — the operator reviews and decides which to execute in the regular conversation.
 
 ### CONVERGE — Deterministic check (step 5) and loop (step 6)
@@ -75,7 +75,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 |----------|---------|
 | `synthesize-briefing.j2` | Structure the three signal channels (algedonic, escalations, memory) into a coherent briefing with per-skill health classification (healthy / watch / intervene). |
 | `present-briefing.j2` | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
-| `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Recommendations, not autonomous actions. |
+| `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, direct_edit, or no_action. Recommendations, not autonomous actions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

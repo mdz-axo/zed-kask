@@ -1,5 +1,6 @@
 mod curator_agent_server;
 mod db;
+mod kask_thread_state;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;

@@ -74,14 +74,13 @@ slice:
 - `charter_focus`: "code blind spots — behaviors the code structure did not
   surface but the code exhibits" (not a broad expedition; a focused probe)
 - `crate_scope`: {{ crate_scope }}
-- `mutation_report`: omit (TDD does not consume mutation reports here; that is
-  harness-optimize's role)
+- `mutation_report`: omit (TDD does not consume mutation reports here;
+  operator-supplied reports feed gap-check instead)
 
 bug-hunt will: charter → probe (read code, run cargo check/test/clippy, static
 pattern search) → oracle (Weinberg tiering, file:line citation, no-fiction) →
-taxonomize (Beizer) → report. It writes its expedition report to the trace
-filesystem (`kask/traces/<run-id>/bug-hunt-report.json`) via
-`hkask_test_harness::write_trace`, so harness-optimize can also see it.
+taxonomize (Beizer) → report. Its expedition report is the durable record that
+later expeditions consume via `prior_expedition`.
 
 Collect bug-hunt's findings: each finding has `id`, `summary`, `location`
 (file:line), `verdict` (BUG/POTENTIAL_BUG/OBSERVATION), `confidence`,

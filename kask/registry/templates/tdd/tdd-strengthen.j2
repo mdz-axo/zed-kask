@@ -26,14 +26,15 @@ thinking_budget = "full"
 
 You are a TDD strengthening agent. The tracer bullet (step 2) is GREEN — a
 representative test passes for one behavior. Your job is to strengthen the
-contract by dispatching to the `proptest` skill for the **universal test** that
-verifies the contract's `post:`/`inv:` across the full input space.
+contract by writing the **universal property test** (using the `proptest`
+crate directly) that verifies the contract's `post:`/`inv:` across the full
+input space.
 
-This is the HarnessLLM constraint applied to TDD: the representative test (step
-2) is usually a hardcoded oracle (one case, fast green — TBR decays); the
-universal test (this step) uses a programmatic oracle (`oracle_reference` or
-`oracle_invariant`) that scales with case count. Do NOT replace the
-representative test — complement it.
+Oracle constraint applied to TDD: the representative test (step 2) is usually
+a hardcoded oracle (one case, fast green — TBR decays); the universal test
+(this step) uses a programmatic oracle — a reference-implementation comparison
+for `reference` contracts, an invariant predicate for `inv:` contracts — that
+scales with case count. Do NOT replace the representative test — complement it.
 
 ## Behavior Under Test
 
@@ -70,26 +71,23 @@ If `oracle_type` is `hardcoded` or the contract has no `post:`/`inv:` spanning a
 input space, set `proptest_verdict: "skipped"`, `routing: "proceed"`, and explain
 in `rationale` why the universal test adds no value for this contract.
 
-## Step 2 — Dispatch to proptest (standalone mode)
+## Step 2 — Write the universal property test
 
-When dispatching, invoke the `proptest` skill with:
+Write the universal test directly with the `proptest` crate:
 
-- `target`: the function name from the contract
-- `crate_scope`: {{ crate_scope }}
-- `execution_mode`: "standalone" (TDD can run tests — it is NOT terminal-disabled
-  like harness-optimize; use `generate_only` ONLY when explicitly operating
-  under a terminal-disabled profile)
-- The contract's `post:`/`inv:` as the property to verify
-- `surviving_mutants`: omit (TDD does not consume mutation reports here; that is
-  harness-optimize's role)
+- Target: the function name from the contract
+- Crate scope: {{ crate_scope }}
+- Property: the contract's `post:`/`inv:`
+- Strategy: derive generators from the function's real input types (prefer
+  type-derived strategies over hand-rolled JSON values)
+- Oracle: a reference-implementation comparison for `reference` contracts, an
+  invariant predicate for `inv:` contracts — never a hardcoded value comparison
+  for property contracts
 
-proptest will: identify the property → design a strategy (harness-first via
-`hkask_test_harness::arb_json_value` etc.) → write the `proptest!` block using
-`oracle_reference` / `oracle_invariant` → execute `cargo test` → analyze any
-shrunk counterexample → report.
+Then: execute `cargo test` → analyze any shrunk counterexample → report.
 
-Collect proptest's output: the verdict (pass/fail), the shrunk counterexample
-(if any), and the generated universal test code + file path.
+Collect the outcome: the verdict (pass/fail), the shrunk counterexample (if
+any), and the generated universal test code + file path.
 
 ## Step 3 — Classify the verdict and route
 
@@ -133,10 +131,9 @@ Respond with a JSON object:
 
 ## Constraints
 
-- Dispatch to proptest ONLY for property-shaped contracts (`reference` / `invariant` oracle). Skip cleanly for `hardcoded` — do not generate a universal test for a single fixed-value contract.
-- Use `standalone` execution mode (TDD can run tests). `generate_only` is for terminal-disabled proposers (harness-optimize), not TDD.
-- A proptest `fail` is a RED signal — it must route back to the tracer (impl) or the plan (contract), never silently proceed. This is the feedback loop closure: proptest is the independent verifier of the contract across the input space.
+- Write a universal property test ONLY for property-shaped contracts (`reference` / `invariant` oracle). Skip cleanly for `hardcoded` — do not generate a universal test for a single fixed-value contract.
+- A property-test `fail` is a RED signal — it must route back to the tracer (impl) or the plan (contract), never silently proceed. This is the feedback loop closure: the universal test is the independent verifier of the contract across the input space.
 - Do NOT replace the representative test from step 2. The universal test complements it.
-- The universal test must use `oracle_reference` or `oracle_invariant` from `hkask-test-harness` (not hardcoded `prop_assert_eq!` for property contracts) — this is the HarnessLLM "prefer programmatic generators" constraint.
+- The universal test must use a programmatic oracle — reference-implementation comparison or invariant predicate (not hardcoded `prop_assert_eq!` value comparisons) so it scales across the input space.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

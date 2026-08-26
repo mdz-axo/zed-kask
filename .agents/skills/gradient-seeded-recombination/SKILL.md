@@ -17,7 +17,7 @@ Substrate-analysis process for interdisciplinary concept generation. Finds **whe
 
 - For gradient analysis within a codebase or telemetry field — use `gradient-hunter` (different substrate).
 - For the actual concept recast — use `constraint-forces-recast` (GSR finds sites, CFR recasts).
-- For evidence assembly or literature review — use Elicit or `web-deep-research`.
+- For evidence assembly or literature review — use a web-research tool or service (e.g. Elicit); GSR assumes evidence is already gathered.
 
 ## Ontological Anchors
 

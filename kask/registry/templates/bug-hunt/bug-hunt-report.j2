@@ -136,21 +136,15 @@ back to the charter as `prior_expedition.lessons_learned` and
 Without these fields, each expedition is a one-shot and cannot learn from prior
 iterations. Treat them as first-class outputs, not afterthoughts.
 
-: Trace Emission (harness-optimize integration)
+: Report Persistence
 
 After producing the report JSON, write it to the trace filesystem as
-`bug-hunt-report.json` in the current run's trace directory. The trace
-filesystem schema is defined at
-`kask/docs/architecture/test-harness-trace-schema.md` — write the JSON
-matching the `bug-hunt-report.json` shape defined there (fixed filename,
+`bug-hunt-report.json` in the current run's trace directory (fixed filename,
 expedition_id inside the JSON). Use the `write_file` tool to write the file.
 
-This makes the expedition's findings visible to the `harness-optimize` skill
-(the suite-level proposer), which reads the trace filesystem on its next
-iteration and proposes tests for the bugs found.
-
-This closes the loop: bug-hunt finds bugs → trace filesystem → harness-optimize
-proposes tests → CI evaluates → mutation score improves.
+The report is the durable record of the expedition: later expeditions consume
+it via `prior_expedition`, and an operator can read it to target test gaps at
+the found locations.
 
 ## Constraints
 

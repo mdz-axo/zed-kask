@@ -30,7 +30,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 1. Build a lightweight `crate_model` first (Good Regulator compliance — Conant-Ashby): read `Cargo.toml`, `lib.rs`/`main.rs`, and module structure; describe architecture, data_flow, critical_paths, dependency_surface, and observed_characteristics (async, unsafe, trait_objects, concurrency, ffi, macros, proc_macros).
 2. If `prior_expedition` is present, consume it: distill `lessons_learned` into 1-3 probe-strategy adjustments, extend the probe pattern list with `pattern_signatures`, and (if present) make `next_charter_focus` the primary `target_area` unless already exhausted.
-3. If `mutation_report` is present (from the `harness-optimize` skill's mutation testing output in the trace filesystem), prioritize `target_area` toward functions with surviving mutants — those are the concrete locations where the test suite is blind. Mutation testing finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt finds semantic blind spots (the suite doesn't test the error path, the race condition). Mutation-guided chartering focuses exploratory probing exactly where the suite is weakest.
+3. If `mutation_report` is present (e.g. from a `cargo mutants` or `cargo-mutants`-style run supplied by the operator), prioritize `target_area` toward functions with surviving mutants — those are the concrete locations where the test suite is blind. Mutation testing finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt finds semantic blind spots (the suite doesn't test the error path, the race condition). Mutation-guided chartering focuses exploratory probing exactly where the suite is weakest.
 4. Generate a Hendrickson-format charter: "Explore [target] using [strategy] to discover [quality threat]."
 5. Pick the most promising strategy from Bach's HTSM (Project Environment, Product Elements, Quality Criteria), justified against the crate model — not generic categories.
 6. Select 2-3 Beizer categories given the crate model and quality criteria (e.g., heavy async usage → `timing` overrides `requirements` regardless of generic prevalence).
@@ -78,7 +78,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 4. Emit `lessons_learned` — concrete, actionable lessons the next expedition's charter should consume (e.g., "async lock held across .await at 3 sites; next charter should target all .await points in lock scope"). Not generic platitudes.
 5. Emit `pattern_signatures` — derived from actual findings (signature, beizer_category, derived_from, notes on how to apply in the next probe). Not fabricated.
 6. Note whether this is a first pass or iteration N+1 (consumed `prior_expedition`).
-7. Write the expedition report to the trace filesystem as `bug-hunt-report.json` in the run trace dir per the schema at `kask/docs/architecture/test-harness-trace-schema.md` so the findings are visible to the `harness-optimize` skill (the suite-level proposer). This closes the loop: bug-hunt finds bugs → traces → harness-optimize proposes tests → CI evaluates → mutation score improves.
+7. Write the expedition report to the trace filesystem as `bug-hunt-report.json` in the run trace dir. The report is the durable record of the expedition — later expeditions consume it via `prior_expedition`, and an operator (or a future suite-level proposer) can read it to target test gaps.
 8. Respond with the complete expedition report as JSON.
 
 ### bug-hunt-expedition (legacy)
@@ -91,8 +91,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 ## Relationship to Other Skills
 
-- **proptest**: systematically verifies known properties of a single function. Bug-hunt explores for unknown bugs across a crate. Bug-hunt's `pattern_signatures` feed into proptest's Identify phase; bug-hunt's trace emissions feed into `harness-optimize` which dispatches to proptest for specific under-tested functions.
-- **harness-optimize**: the suite-level proposer. Reads bug-hunt's trace emissions and proposes tests for the bugs found. Bug-hunt runs independently (with `terminal` enabled — it can run tests); `harness-optimize` runs as a proposer (with `terminal` disabled). They communicate asynchronously through the trace filesystem.
+- **tdd**: systematically verifies known properties of a single function (property/contract tests). Bug-hunt explores for unknown bugs across a crate. Bug-hunt's `pattern_signatures` and confirmed findings are natural inputs to tdd's gap-check phase — a found bug becomes a regression test.
 - **diagnose**: when bug-hunt finds a confirmed bug, the `evidence` and `location` fields are a pre-minimized reproducer for diagnose's Phase 2.
 
 ## Registry Templates

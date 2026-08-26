@@ -77,7 +77,7 @@ No code entity context was provided. Use `grep` to find the entities in scope be
 {% endif %}
 
 {% if surviving_mutants %}
-## Surviving Mutants (from harness-evolve-cycle)
+## Surviving Mutants (from a prior mutation-testing run)
 
 A prior mutation-testing run found mutants that survived the test suite — these
 are functions with surviving mutants that the test suite does NOT adequately
@@ -95,7 +95,7 @@ tracer bullet (and a proptest universal test in step 3) for each.
 1. Use `#[cfg(test)]` module for unit tests alongside the code they test.
 2. Use `tests/` directory for integration tests that exercise crate public APIs.
 3. Use `#[tokio::test]` for async tests.
-4. Use `tempfile` for tests needing filesystem — never write to the project tree. Use `hkask-test-harness` (provides `TestDb`) for database and persistence tests.
+4. Use `tempfile` for tests needing filesystem — never write to the project tree. For database/persistence tests, prefer the crate's in-memory driver (e.g. an in-memory SQLite pool) over mocks.
 5. Prefer `assert!` with meaningful messages over `assert_eq!` when the message adds diagnostic value.
 6. Test error paths — verify error variants, not just happy paths.
 7. **No `todo!()` or `unimplemented!()`** — write minimal stubs that return sensible defaults or errors, not panics.

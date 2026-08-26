@@ -16,7 +16,7 @@ Core generative process for interdisciplinary concept generation. Recasts a seed
 ## When NOT to Use
 
 - For finding where to recast — use `gradient-seeded-recombination` (GSR finds sites, CFR recasts).
-- For evidence assembly or literature review — use Elicit or `web-deep-research`.
+- For evidence assembly or literature review — use a web-research tool or service (e.g. Elicit); CFR assumes evidence is already gathered.
 - For translational research (moving insights into the target vocabulary) — CFR keeps the mutant in the source vocabulary; translation moves it to the target. CFR operates within translational steps but does not constitute translation.
 
 ## Ontological Anchors
