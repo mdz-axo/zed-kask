@@ -70,6 +70,34 @@ pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
 /// conservative default — never to zero.
 pub const INFERENCE_TIMEOUT_ENV: &str = "HKASK_INFERENCE_TIMEOUT_SECS";
 
+/// A single prompt entry for `InferenceMethod::GenerateBatch`.
+///
+/// Carries the `custom_id` (for matching results to prompts), the system
+/// message, and the user message. The zed side formats these as OpenAI
+/// Batch API JSONL and submits them to the provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPromptEntry {
+    /// Unique identifier for this prompt (returned in results for matching).
+    pub custom_id: String,
+    /// System message content.
+    pub system: String,
+    /// User message content.
+    pub user: String,
+}
+
+/// A single result from a batch inference call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResultEntry {
+    /// The `custom_id` from the corresponding `BatchPromptEntry`.
+    pub custom_id: String,
+    /// The generated text (on success).
+    pub text: Option<String>,
+    /// Total tokens used (on success).
+    pub total_tokens: u64,
+    /// Error message (on failure).
+    pub error: Option<String>,
+}
+
 /// A request from the MCP server to the zed inference bridge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceRequest {
@@ -107,6 +135,13 @@ pub enum InferenceMethod {
     /// isolate spawned agents in a separate worktree (P1: worktree/terminal
     /// model).
     CreateWorktreeThread,
+    /// Submit a batch of prompts to the provider's Batch API (OpenRouter
+    /// `/api/beta/batches` or DeepInfra `/v1/openai/batches`). The zed side
+    /// holds the API keys and handles submission, polling, and download —
+    /// the MCP server never sees the credentials. Uses `batch_prompts` and
+    /// `model_override` from `InferenceParams`. The result is returned as
+    /// `InferenceOutcome::BatchResults`.
+    GenerateBatch,
 }
 
 /// Parameters for an inference request.
@@ -122,6 +157,11 @@ pub struct InferenceParams {
     pub embed_model: Option<String>,
     /// Texts to embed for `InferenceMethod::Embed`.
     pub embed_texts: Option<Vec<String>>,
+    /// Batch prompts for `InferenceMethod::GenerateBatch`. Each entry is a
+    /// `(custom_id, system, user)` tuple. The zed side submits these to the
+    /// provider's Batch API and returns results keyed by `custom_id`.
+    #[serde(default)]
+    pub batch_prompts: Option<Vec<BatchPromptEntry>>,
     pub media_op: Option<String>,
     /// Text prompt for image/video generation.
     pub media_prompt: Option<String>,
@@ -224,6 +264,14 @@ pub enum InferenceOutcome {
     WorktreeThread {
         #[serde(rename = "worktree_thread")]
         thread: WorktreeThreadInfo,
+    },
+    /// Batch inference results from `InferenceMethod::GenerateBatch`.
+    /// The zed side submits all prompts to the provider's Batch API,
+    /// polls until completion, downloads results, and returns them here.
+    /// The MCP server never sees the API keys.
+    BatchResults {
+        #[serde(rename = "batch_results")]
+        results: Vec<BatchResultEntry>,
     },
     /// Error from the inference port.
     Error {

@@ -269,6 +269,29 @@ pub trait InferencePort: Send + Sync {
             Ok(models.into_iter().filter(|m| m.supports_vision).collect())
         })
     }
+
+    /// Submit a batch of prompts to the provider's Batch API via the IPC
+    /// bridge. The zed side holds the API keys and handles submission,
+    /// polling, and download — the MCP server never sees the credentials.
+    ///
+    /// `model` is the model name (e.g. `z-ai/glm-5.2:batch` or
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The zed side detects the
+    /// provider from the model name and routes to the appropriate Batch API.
+    ///
+    /// Default: returns an error — only `InferenceIpcClient` implements this.
+    fn generate_batch<'a>(
+        &'a self,
+        _model: &str,
+        _prompts: &[crate::inference_ipc::BatchPromptEntry],
+        _max_tokens: u32,
+        _temperature: f32,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<crate::inference_ipc::BatchResultEntry>, InferenceError>> + Send + 'a>> {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "batch inference not supported by this InferencePort".into(),
+            ))
+        })
+    }
 }
 
 impl From<InferenceResult> for InferenceStreamChunk {

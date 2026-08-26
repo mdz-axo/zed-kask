@@ -467,16 +467,55 @@ impl RegulationPolicy {
 }
 
 /// Extract (deficit, threshold) from a `RegulationData` variant.
-/// Returns (0, 0) when the variant doesn't carry deficit/threshold.
+/// Extract the metric value and threshold from a `RegulationData` variant.
 ///
-/// This ensures the `error_context` JSON in the escalation queue carries
-/// meaningful values, not (0, 0) which looks like a bug.
-pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
+/// Returns `Some((value, threshold))` for variants that carry a quantitative
+/// value/threshold pair, `None` for `NoData` and variants without quantitative
+/// data. The caller uses the `None` case to fall back to the action's reason
+/// string for the alert message — avoiding the misleading "Variety deficit 0
+/// exceeds threshold 0" message that the previous `(0, 0)` fallback produced
+/// for non-variety alerts.
+pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u64)> {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
-            (*deficit as u64, *threshold as u64)
+            Some((*deficit as u64, *threshold as u64))
         }
-        _ => (0, 0),
+        RegulationData::ErrorRateExceeded { error_rate, threshold } => {
+            Some((*error_rate as u64, *threshold as u64))
+        }
+        RegulationData::ConnectorLatencyExceeded { latency_secs, threshold } => {
+            Some((*latency_secs as u64, *threshold as u64))
+        }
+        RegulationData::CommunicationBackpressure { queue_depth, threshold } => {
+            Some((*queue_depth as u64, *threshold as u64))
+        }
+        RegulationData::WalletBalanceLow { balance_ratio, threshold, .. } => {
+            Some((*balance_ratio as u64, *threshold as u64))
+        }
+        RegulationData::ToolReliabilityDegraded { reliability, threshold } => {
+            Some((*reliability as u64, *threshold as u64))
+        }
+        RegulationData::EnergyBudgetLow { remaining_ratio, set_point } => {
+            Some((*remaining_ratio as u64, *set_point as u64))
+        }
+        RegulationData::BudgetGuardEscalation { remaining_ratio, set_point, .. } => {
+            Some((*remaining_ratio as u64, *set_point as u64))
+        }
+        RegulationData::EnergyDepletionAutoAdjust { remaining_ratio, set_point } => {
+            Some((*remaining_ratio as u64, *set_point as u64))
+        }
+        RegulationData::SeamCoverageDegraded { coverage_pct, previous_coverage, .. } => {
+            Some((*coverage_pct as u64, *previous_coverage as u64))
+        }
+        RegulationData::SeamCoverageImproved { coverage_pct, previous_coverage, .. } => {
+            Some((*coverage_pct as u64, *previous_coverage as u64))
+        }
+        RegulationData::WalletKeyUnhealthy { threshold, .. } => {
+            Some((0, *threshold as u64))
+        }
+        RegulationData::CuratorBudgetOverride { .. }
+        | RegulationData::RolloutImpactCheck { .. }
+        | RegulationData::NoData => None,
     }
 }
 

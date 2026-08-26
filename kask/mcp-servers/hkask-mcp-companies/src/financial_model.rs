@@ -19,7 +19,43 @@
 //!  11. Tax rate                   incomeTaxExpense / incomeBeforeTax
 
 use crate::types::ProjectionAssumptionOverrides;
+use crate::providers::CompanyProfile;
 use serde::{Deserialize, Serialize};
+
+/// Check whether a company is in the financial sector and therefore
+/// unsuitable for FCF-based DCF valuation.
+///
+/// Financial companies (banks, insurance, investment firms) have balance
+/// sheets where `totalCurrentLiabilities` includes customer deposits, making
+/// NWC deeply negative relative to revenue. The DCF model's working capital
+/// concept doesn't apply. Returns a structured JSON error value that tool
+/// handlers can return directly.
+pub(crate) fn financial_sector_guard(
+    profile: &CompanyProfile,
+    symbol: &str,
+) -> Option<serde_json::Value> {
+    let sector = profile.sector().unwrap_or("");
+    let industry = profile.industry().unwrap_or("");
+    let is_financial = sector.eq_ignore_ascii_case("Financial Services")
+        || sector.eq_ignore_ascii_case("Financials")
+        || industry.contains("Bank")
+        || industry.contains("Credit Services")
+        || industry.contains("Insurance")
+        || industry.contains("Capital Markets")
+        || industry.contains("Diversified Financial");
+    if is_financial {
+        Some(serde_json::json!({
+            "symbol": symbol,
+            "error": "DCF valuation is not applicable to financial-sector companies",
+            "reason": "Banks and insurance companies have balance sheets where current liabilities include customer deposits, making the working capital concept meaningless. Financial companies are valued using P/B (price-to-book), P/TBV (tangible book value), and dividend discount models, not FCF-based DCF.",
+            "sector": sector,
+            "industry": industry,
+            "suggested_alternatives": ["comparable_analysis", "reverse_dcf with manual overrides", "ep_valuation"]
+        }))
+    } else {
+        None
+    }
+}
 
 // ── Historical data snapshot ───────────────────────────────────────────────
 

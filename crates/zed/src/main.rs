@@ -2421,7 +2421,7 @@ fn main() {
         reliability::init(
             client.clone(),
             app_state.workspace_store.clone(),
-            context_server_health_source_for_poller.clone(),
+            context_server_health_source_for_poller,
             cx,
         );
         extension_host::init(

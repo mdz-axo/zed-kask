@@ -221,6 +221,25 @@ impl CorpusServer {
             let selected_model = configured_qa_model(model);
             let total = prompts_vec.len();
 
+            // When the model is batch-eligible (OpenRouter `:batch` suffix or
+            // DeepInfra prefix), route through the shared batch API in
+            // `hkask-inference::batch` instead of N concurrent synchronous
+            // IPC calls. This gives a 20–50% cost discount and no rate limits.
+            if let Some(ref model_str) = selected_model {
+                if let Some((provider, clean_model)) =
+                    hkask_inference::batch::detect_batch_provider(model_str)
+                {
+                    return self.generate_qa_via_batch_api(
+                        prompts_vec,
+                        provider,
+                        &clean_model,
+                        &output,
+                        total,
+                    )
+                    .await;
+                }
+            }
+
             // Concurrent processing with configurable semaphore
             let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
             let router = Arc::clone(&self.inference_router);
@@ -369,6 +388,151 @@ impl CorpusServer {
             outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
             Ok(result)
         }).await
+    }
+
+    /// Generate QA pairs via the batch API through the IPC bridge.
+    ///
+    /// Sends all prompts as a single `GenerateBatch` IPC request to the zed
+    /// process, which holds the API keys and handles submission to the
+    /// provider's Batch API (OpenRouter or DeepInfra). The corpus server
+    /// never sees the credentials. OpenRouter offers a 50% cost discount;
+    /// DeepInfra offers 20%.
+    async fn generate_qa_via_batch_api(
+        &self,
+        prompts_vec: Vec<BatchQaPrompt>,
+        _provider: hkask_inference::batch::BatchProvider,
+        model: &str,
+        output: &str,
+        total: usize,
+    ) -> Result<serde_json::Value, McpToolError> {
+        // Format prompts as IPC batch entries
+        let batch_prompts: Vec<hkask_types::inference_ipc::BatchPromptEntry> = prompts_vec
+            .iter()
+            .map(|p| {
+                let levels = p.bloom_levels.clone().unwrap_or_else(|| {
+                    vec!["factual".to_string(), "conceptual".to_string()]
+                });
+                let levels_str = levels.join(", ");
+                let mut vars: std::collections::HashMap<&str, String> =
+                    std::collections::HashMap::new();
+                vars.insert("levels", levels_str.clone());
+                vars.insert("chunk_id", p.chunk_id.clone());
+                vars.insert("text", p.text.clone());
+                let tpl = crate::template::render_docproc_template("generate-qa", &vars);
+                let user_text = if tpl.is_empty() {
+                    format!(
+                        "Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {}):\n{}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
+                        p.chunk_id, p.text
+                    )
+                } else {
+                    tpl
+                };
+                let system_text = "You are a training data generator. Generate ONE question-answer pair grounded in the passage's actual content.";
+                hkask_types::inference_ipc::BatchPromptEntry {
+                    custom_id: p.chunk_id.clone(),
+                    system: system_text.to_string(),
+                    user: user_text,
+                }
+            })
+            .collect();
+
+        // Send through the IPC bridge — zed holds the API keys
+        let batch_results = self
+            .inference_router
+            .generate_batch(model, &batch_prompts, 2000, 0.3)
+            .await
+            .map_err(|e| McpToolError::internal(format!("Batch API IPC failed: {e}")))?;
+
+        // Write results to the output file in the same format as the
+        // synchronous path.
+        let output_path = crate::path_safety::contain_for_write(output)?;
+        let file = std::fs::File::create(&output_path).map_err(|e| {
+            map_corpus_io_error(e, &format!("Cannot create output file '{}'", output))
+        })?;
+        let output_writer = std::sync::Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file)));
+        let write_count = std::sync::atomic::AtomicUsize::new(0);
+
+        // Build a lookup map from custom_id to result
+        let result_map: std::collections::HashMap<String, &hkask_types::inference_ipc::BatchResultEntry> =
+            batch_results.iter().map(|r| (r.custom_id.clone(), r)).collect();
+
+        for prompt in &prompts_vec {
+            if let Some(result) = result_map.get(&prompt.chunk_id) {
+                if let Some(ref text) = result.text {
+                    let levels = prompt.bloom_levels.clone().unwrap_or_else(|| {
+                        vec!["factual".to_string(), "conceptual".to_string()]
+                    });
+                    match parse_qa_response(
+                        &extract_json_from_response(text),
+                        &levels,
+                        None,
+                    ) {
+                        Ok(qa_response) => {
+                            for pair in qa_response.qa_pairs {
+                                let result_json = json!({
+                                    "chunk_ref": prompt.chunk_id,
+                                    "source": prompt.source,
+                                    "qa_type": pair.bloom_level,
+                                    "response": {
+                                        "instruction": pair.question,
+                                        "output": pair.answer,
+                                        "type": pair.bloom_level,
+                                        "concepts": prompt.concepts,
+                                    },
+                                    "provenance": {
+                                        "generator_model": model,
+                                        "prompt_template": "batch-api",
+                                        "source_chunk_ref": prompt.chunk_id,
+                                    },
+                                    "tokens_used": result.total_tokens,
+                                });
+                                write_qa_result(&result_json, &output_writer, &write_count);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.batch_api",
+                                chunk_id = %prompt.chunk_id,
+                                error = %e,
+                                "QA response rejected"
+                            );
+                        }
+                    }
+                } else if let Some(ref err) = result.error {
+                    tracing::warn!(
+                        target: "hkask.mcp.docproc.batch_api",
+                        chunk_id = %prompt.chunk_id,
+                        error = %err,
+                        "Batch result error"
+                    );
+                }
+            }
+        }
+
+        // Flush
+        {
+            let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = w.flush() {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.batch_api",
+                    error = %e,
+                    "Failed to flush batch API output writer"
+                );
+            }
+        }
+
+        let written = write_count.load(std::sync::atomic::Ordering::Relaxed);
+        let failed = batch_results.iter().filter(|r| r.error.is_some()).count();
+        let result = json!({
+            "total": total,
+            "written": written,
+            "failed": failed,
+            "output": output,
+            "batch_api": true,
+        });
+        let outcome = BatchOutcome::from_counts(failed, total);
+        outcome.log_if_degraded("hkask.mcp.docproc.batch_api", "QA batch API");
+        Ok(result)
     }
 
     #[tool(

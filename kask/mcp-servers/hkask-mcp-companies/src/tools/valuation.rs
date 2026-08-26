@@ -265,6 +265,11 @@ impl CompaniesServer {
                         return Ok(serde_json::json!({"error": "insufficient historical data"}));
                     }
 
+                    let overlay_profile = CompanyProfile::from_raw(profile_data.clone());
+                    if let Some(err) = financial_model::financial_sector_guard(&overlay_profile, &req.symbol) {
+                        return Ok(err);
+                    }
+
                     let assumptions =
                         financial_model::ProjectionAssumptions::from_history_with_overrides(
                             &hist,
@@ -405,6 +410,10 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+                return Ok(err);
+            }
+
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
@@ -504,6 +513,10 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+                return Ok(err);
+            }
+
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
@@ -582,6 +595,10 @@ impl CompaniesServer {
 
             if hist.revenue.len() < 2 {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+            }
+
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+                return Ok(err);
             }
 
             let current_price = profile.price().unwrap_or(0.0);
@@ -681,6 +698,10 @@ impl CompaniesServer {
 
             if hist.revenue.len() < 2 {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+            }
+
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+                return Ok(err);
             }
 
             let current_price = profile.price().unwrap_or(0.0);
@@ -851,6 +872,10 @@ impl CompaniesServer {
 
             if hist.revenue.len() < 2 {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+            }
+
+            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol) {
+                return Ok(err);
             }
 
             let current_price = profile.price().unwrap_or(0.0);

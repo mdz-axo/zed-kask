@@ -26,6 +26,7 @@
 //! provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
 //! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`).
 
+pub mod batch;
 pub mod config;
 pub mod inference_ipc_client;
 pub mod model_constants;

@@ -515,33 +515,41 @@ impl super::CyberneticsLoop {
             if efferent_action.is_some() { " — efferent not wired" } else { "" }
         );
 
-        // Build the alert. For native Escalate actions (variety deficit,
-        // wallet balance, etc.), extract the deficit/threshold from the
-        // typed data. For converted efferent actions, synthesize a
-        // deficit of 1 and threshold of 1 — the alert's purpose is
-        // advisory, not quantitative.
-        let (deficit, threshold) = if is_native_escalate {
-            extract_deficit_threshold(&action.parameters.data)
+        // Build the alert. For native Escalate actions, extract the
+        // deficit/threshold from the typed data when available. For converted
+        // efferent actions, synthesize a deficit of 1 and threshold of 1 — the
+        // alert's purpose is advisory, not quantitative.
+        let (deficit, threshold, message) = if is_native_escalate {
+            match extract_deficit_threshold(&action.parameters.data) {
+                Some((d, t)) => {
+                    let msg = format!(
+                        "{} — value {} exceeds threshold {}",
+                        action.parameters.reason, d, t
+                    );
+                    (d, t, msg)
+                }
+                None => {
+                    // No quantitative data (NoData or non-threshold variant) —
+                    // use the reason string as the message. This avoids the
+                    // misleading "Variety deficit 0 exceeds threshold 0"
+                    // message that the previous (0, 0) fallback produced.
+                    let msg = format!("{} — regulatory escalation", action.parameters.reason);
+                    (0, 0, msg)
+                }
+            }
         } else {
-            (1, 1)
+            let msg = format!(
+                "Efferent action {} (target: {}) recommended but not wired — reason: {}",
+                action.action_type.as_str(),
+                action.target,
+                action.parameters.reason
+            );
+            (1, 1, msg)
         };
         let domain = if is_native_escalate {
             String::new()
         } else {
             format!("efferent:{}", action.action_type.as_str())
-        };
-        let message = if is_native_escalate {
-            format!(
-                "Variety deficit {} exceeds threshold {}",
-                deficit, threshold
-            )
-        } else {
-            format!(
-                "Efferent action {} (target: {}) recommended but not wired — reason: {}",
-                action.action_type.as_str(),
-                action.target,
-                action.parameters.reason
-            )
         };
         let alert = RuntimeAlert {
             domain,

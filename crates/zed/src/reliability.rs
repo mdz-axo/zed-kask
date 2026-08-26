@@ -178,7 +178,6 @@ fn start_context_server_health_polling(
 ) {
     let (update_sender, mut update_receiver) = futures::channel::mpsc::unbounded();
     cx.spawn({
-        let workspace_store = workspace_store.clone();
         async move |cx| {
             while update_receiver.next().await.is_some() {
                 cx.update(|cx| {

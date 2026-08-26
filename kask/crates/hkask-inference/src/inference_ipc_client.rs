@@ -402,6 +402,43 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
+            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
+            )),
+        }
+    }
+
+    /// Send a batch generation request and receive the results.
+    ///
+    /// The zed side holds the API keys and handles submission to the
+    /// provider's Batch API (OpenRouter or DeepInfra). The MCP server
+    /// never sees the credentials.
+    pub async fn call_generate_batch(
+        &self,
+        model: &str,
+        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, InferenceError> {
+        let method = InferenceMethod::GenerateBatch;
+        let params = InferenceParams {
+            model_override: Some(model.to_string()),
+            batch_prompts: Some(prompts.to_vec()),
+            parameters: LLMParameters {
+                temperature,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::BatchResults { results } => Ok(results),
+            InferenceOutcome::Error { error } => Err(InferenceError::Connection(
+                format!("{}: {}", error.code, error.message),
+            )),
+            _ => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "unexpected outcome"),
+            )),
         }
     }
 
@@ -437,6 +474,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
+            )),
+            InferenceOutcome::BatchResults { .. } => Err(EmbeddingGenerationError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
             )),
         }
     }
@@ -483,6 +523,9 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
+            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
+            )),
         }
     }
 
@@ -527,6 +570,9 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
+            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
+            )),
         }
     }
 
@@ -568,6 +614,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
+            )),
+            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
             )),
         }
     }
@@ -693,6 +742,31 @@ impl InferencePort for InferenceIpcClient {
                     }
                 })
                 .collect())
+        })
+    }
+
+    fn generate_batch<
+        'a,
+    >(
+        &'a self,
+        model: &str,
+        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                Output = Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, InferenceError>,
+            > + Send
+            + 'a,
+        >,
+    > {
+        let this = self.clone();
+        let model = model.to_string();
+        let prompts = prompts.to_vec();
+        Box::pin(async move {
+            this.call_generate_batch(&model, &prompts, max_tokens, temperature)
+                .await
         })
     }
 }
