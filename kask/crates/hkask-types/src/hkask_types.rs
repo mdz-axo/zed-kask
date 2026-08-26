@@ -28,6 +28,10 @@ pub mod time;
 pub mod tool_response;
 pub mod tool_schema;
 
+pub mod voice;
+
+pub use voice::VoiceDesign;
+
 #[cfg(feature = "sql")]
 pub mod sql_impls;
 pub mod url_utils;

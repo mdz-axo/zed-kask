@@ -60,6 +60,7 @@ pub mod eso;
 pub mod fibo;
 pub mod golem;
 pub mod ml_schema;
+pub mod omc;
 pub mod pko;
 pub mod sdmx;
 pub mod sumo;

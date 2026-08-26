@@ -12,7 +12,8 @@ pub mod regulation;
 
 pub use embedding::EmbeddingGenerationError;
 pub use inference_port::{
-    EmbedFuture, InferencePort, ModelEntry, ToolDispatchPort, WorktreeSpawnPort,
+    EmbedFuture, InferencePort, MediaFuture, MediaGenerateParams, ModelEntry, ToolDispatchPort,
+    WorktreeSpawnPort,
 };
 pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,

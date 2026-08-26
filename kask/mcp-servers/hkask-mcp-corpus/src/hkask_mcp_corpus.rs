@@ -5,7 +5,7 @@
 //! Combines the former `hkask-mcp-docproc` and `hkask-mcp-replica` servers into
 //! a single server organized by corpus flow stage:
 //!
-//!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
 //! Tools (27):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
@@ -14,8 +14,7 @@
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
 //! - QA output:  corpus_build_prompts, corpus_generate_qa, corpus_generate_qa_batch,
 //!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
-//! - Persona:    corpus_build_persona, corpus_compose, corpus_rewrite, corpus_mashup,
-//!   corpus_compare, corpus_registry, corpus_explain
+//! - Compose:    corpus_compose, corpus_rewrite (prose generation)
 //! - Manage:     corpus_cache, corpus_query, corpus_clear_index
 //!
 //! Supersedes `hkask-mcp-markitdown`, `hkask-mcp-doc-knowledge`, and `hkask-mcp-replica`.
@@ -622,7 +621,6 @@ impl CorpusServer {
             + Self::storage_router()
             + Self::corpus_router()
             + Self::tagging_router()
-            + Self::persona_router()
             + Self::gather_router()
     }
 
@@ -649,12 +647,9 @@ impl CorpusServer {
             | "corpus_generate_qa"
             | "corpus_generate_qa_batch"
             | "corpus_ingest_qa" => Some(eso::HAS_EVIDENCE),
-            // Persona/narrative → creative works.
-            "corpus_build_persona"
-            | "corpus_compose"
-            | "corpus_rewrite"
-            | "corpus_compare"
-            | "corpus_mashup" => Some(golem::CREATIVE_WORK),
+            // Compose/rewrite → creative works.
+            "corpus_compose"
+            | "corpus_rewrite" => Some(golem::CREATIVE_WORK),
             // Gather → discovery actions.
             "corpus_discover" | "corpus_discover_company" => Some(pko::ACTION),
             // Storage/query/registry → dataset operations.

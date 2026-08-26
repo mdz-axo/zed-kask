@@ -29,8 +29,10 @@
 pub mod batch;
 pub mod config;
 pub mod inference_ipc_client;
+pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
+pub mod provider;
 
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderId};
