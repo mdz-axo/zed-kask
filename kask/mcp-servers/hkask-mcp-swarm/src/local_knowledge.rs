@@ -103,6 +103,7 @@ impl LazyLocalMemory {
                 LocalSwarmError::Database(format!("failed to open swarm memory store: {e}"))
             })
     }
+}
 
 /// A knowledge fragment returned by `swarm_search_knowledge_local`. Mirrors
 /// the ABW envelope (matching knowledge fragments) but in kask terms: the
