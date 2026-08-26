@@ -394,6 +394,31 @@ impl CuratorServer {
         .await
     }
 
+    #[tool(description = "Dismiss all pending escalations matching an exact output string. Used to clear runaway escalation floods from a single broken feedback loop in one operation. Returns the count of dismissed escalations.")]
+    pub async fn curator_escalation_dismiss_by_pattern(
+        &self,
+        Parameters(req): Parameters<EscalationDismissByPatternRequest>,
+    ) -> String {
+        execute_tool(self, "curator_escalation_dismiss_by_pattern", async {
+            let stores = self.db.get();
+            let queue = stores.escalation_queue()?;
+            let events_store = stores.regulation_store()?;
+            let events: Arc<dyn RegulationSink> =
+                Arc::clone(events_store) as Arc<dyn RegulationSink>;
+            match governance::dismiss_by_pattern_direct(
+                queue,
+                &events,
+                &req.output,
+                "curator",
+                Some(&req.reason),
+            ) {
+                Ok(count) => Ok(json!({"dismissed": true, "count": count, "output": req.output})),
+                Err(e) => Err(to_tool_error(e)),
+            }
+        })
+        .await
+    }
+
     // ── Memory & Learning ──────────────────────────────────────────────
 
     #[tool(description = "Query the Curator's memory by entity name")]

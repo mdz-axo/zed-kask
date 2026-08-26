@@ -792,20 +792,30 @@ impl CyberneticsLoop {
             "Loop-quality telemetry recorded"
         );
 
-        self.emit_regulation_span(
-            SpanKind::LoopMetricsTelemetry,
-            serde_json::json!({
-                "delay_ms": quality.delay_ms,
-                "gain": quality.gain,
-                "fidelity_score": quality.fidelity_score,
-                "effectiveness_score": quality.effectiveness_score,
-                "trigger": format!("{:?}", quality.trigger),
-                "deviations": deviations.len(),
-                "actions": actions.len(),
-                "impact_reports": impact_reports.len(),
-            }),
-        )
-        .await;
+        // Skip emitting LoopMetricsTelemetry regulation span when the cycle
+        // was empty (no deviations, no actions, no impact reports). An empty
+        // cycle is a heartbeat, not a signal — emitting it every 10s floods
+        // the regulation archive and the algedonic log with identical
+        // no-op observations that displace useful signal. The tracing::debug!
+        // above already provides heartbeat observability at debug level.
+        let cycle_had_signal =
+            !deviations.is_empty() || !actions.is_empty() || !impact_reports.is_empty();
+        if cycle_had_signal {
+            self.emit_regulation_span(
+                SpanKind::LoopMetricsTelemetry,
+                serde_json::json!({
+                    "delay_ms": quality.delay_ms,
+                    "gain": quality.gain,
+                    "fidelity_score": quality.fidelity_score,
+                    "effectiveness_score": quality.effectiveness_score,
+                    "trigger": format!("{:?}", quality.trigger),
+                    "deviations": deviations.len(),
+                    "actions": actions.len(),
+                    "impact_reports": impact_reports.len(),
+                }),
+            )
+            .await;
+        }
     }
 }
 

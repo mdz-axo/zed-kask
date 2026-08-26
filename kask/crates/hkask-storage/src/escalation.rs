@@ -291,6 +291,64 @@ impl EscalationQueue {
         }
         Ok(())
     }
+    /// Check whether any pending escalation shares the given `output` string.
+    ///
+    /// Used for deduplication at the source: the regulation loop can sense the
+    /// same deficit every cycle and would otherwise flood the queue with
+    /// identical alerts. Calling this before `add` prevents runaway escalation
+    /// floods when an efferent action is unwired or a deficit is persistent.
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// post: returns true if at least one pending escalation has this output
+    #[must_use = "result must be used"]
+    pub fn has_pending_with_output(&self, output: &str) -> Result<bool, EscalationError> {
+        let rows = self
+            .driver
+            .query(
+                "SELECT COUNT(*) as cnt FROM escalations WHERE status = 'pending' AND output = ?1",
+                &[DbValue::Text(output.to_string())],
+            )
+            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
+        let count = rows
+            .first()
+            .and_then(|row| row.get(0).ok())
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(0);
+        Ok(count > 0)
+    }
+
+    /// Dismiss all pending escalations matching a given `output` string.
+    ///
+    /// Returns the number of escalations dismissed. Used by the
+    /// `curator_escalation_dismiss_by_pattern` MCP tool to clear runaway
+    /// floods from a single broken feedback loop in one operation, rather
+    /// than dismissing each duplicate individually.
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// pre:  output is non-empty, resolved_by is non-empty
+    /// post: all pending escalations with this output are set to Dismissed
+    #[must_use = "result must be used"]
+    pub fn dismiss_pending_by_output(
+        &self,
+        output: &str,
+        resolved_by: &str,
+    ) -> Result<usize, EscalationError> {
+        let now = now_rfc3339();
+        let affected = self
+            .driver
+            .execute(
+                r#"UPDATE escalations SET status = 'dismissed', resolved_at = ?1, resolved_by = ?2
+             WHERE status = 'pending' AND output = ?3"#,
+                &[
+                    DbValue::Text(now),
+                    DbValue::Text(resolved_by.to_string()),
+                    DbValue::Text(output.to_string()),
+                ],
+            )
+            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
+        Ok(affected)
+    }
+
     /// Dismiss an escalation.
     ///
     /// expect: "The system provides durable storage for escalation data"

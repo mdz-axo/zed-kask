@@ -553,6 +553,25 @@ impl super::CyberneticsLoop {
             message,
         };
 
+        // Source-level dedup: if there is already a pending escalation with
+        // this output, skip the entire routing (persist, live channel, archive).
+        // The regulation loop senses the same deficit every cycle; without
+        // this check it re-escalates every tick, flooding the queue, the live
+        // channel, and the archive with identical alerts. The operator reviews
+        // the first one; when they resolve/dismiss it, the next cycle
+        // escalates again.
+        if let Some(ref sink) = self.alert_escalation_sink {
+            if sink.has_pending_alert(&alert.message) {
+                tracing::debug!(
+                    target: "reg.cybernetics",
+                    action_type = ?action.action_type,
+                    target_loop = %action.target,
+                    "Suppressing duplicate efferent alert — pending escalation already in queue"
+                );
+                return;
+            }
+        }
+
         // Persist to the reviewable escalation queue unconditionally —
         // the queue is the primary durable path for alert review, not
         // a fallback. The RegulationArchive below remains as a

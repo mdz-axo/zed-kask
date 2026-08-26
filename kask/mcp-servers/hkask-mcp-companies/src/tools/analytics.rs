@@ -466,6 +466,32 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
+            // Financial-sector companies (banks, insurance, investment firms)
+            // have balance sheets where totalCurrentLiabilities includes
+            // customer deposits — making NWC deeply negative relative to
+            // revenue. The FCF-based DCF model's working capital concept
+            // doesn't apply. Return an honest sector-specific error instead
+            // of a cryptic validation failure on the NWC constraint.
+            let sector = profile.sector().unwrap_or("");
+            let industry = profile.industry().unwrap_or("");
+            let is_financial = sector.eq_ignore_ascii_case("Financial Services")
+                || sector.eq_ignore_ascii_case("Financials")
+                || industry.contains("Bank")
+                || industry.contains("Credit Services")
+                || industry.contains("Insurance")
+                || industry.contains("Capital Markets")
+                || industry.contains("Diversified Financial");
+            if is_financial {
+                return Ok(serde_json::json!({
+                    "symbol": req.symbol,
+                    "error": "DCF valuation is not applicable to financial-sector companies",
+                    "reason": "Banks and insurance companies have balance sheets where current liabilities include customer deposits, making the working capital concept meaningless. Financial companies are valued using P/B (price-to-book), P/TBV (tangible book value), and dividend discount models, not FCF-based DCF.",
+                    "sector": sector,
+                    "industry": industry,
+                    "suggested_alternatives": ["comparable_analysis", "reverse_dcf with manual overrides", "ep_valuation"]
+                }));
+            }
+
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),

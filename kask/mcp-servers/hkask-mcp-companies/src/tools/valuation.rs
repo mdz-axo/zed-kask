@@ -121,18 +121,41 @@ impl CompaniesServer {
                 (peers, "user-provided".to_string())
             };
 
-            // 3. Fetch peer profiles and metrics as typed views. A failed peer
+            // 3. Fetch peer profiles and metrics concurrently. A failed peer
             //    fetch yields an empty `CompanyProfile` (raw `Null`), so its
             //    accessors return `None` and the peer row carries no multiples.
-            let mut peer_data: Vec<(String, CompanyProfile, KeyMetrics)> = Vec::new();
+            //    Concurrent fetch keeps the total wall-clock time under the
+            //    MCP 60s cap (sequential = 8 peers × 2 calls × ~1s = 16s+;
+            //    concurrent = max single fetch ≈ 2s).
+            let mut peer_tasks = tokio::task::JoinSet::new();
             for peer_sym in &peers {
-                let pp = self.fetch_profile(peer_sym).await.unwrap_or_else(|_| {
-                    CompanyProfile::from_raw(serde_json::Value::Null)
+                let peer_sym = peer_sym.clone();
+                let client = self.client.clone();
+                let fmp_key = self.fmp_api_key.clone();
+                let eodhd_key = self.eodhd_api_key.clone();
+                peer_tasks.spawn(async move {
+                    let profile_resp = providers::companies_get(
+                        &client, "company_profile", &peer_sym, &fmp_key, &eodhd_key, &[], None,
+                    )
+                    .await
+                    .unwrap_or_else(|_| providers::ProviderResponse {
+                        value: serde_json::Value::Null,
+                        provider: providers::Provider::Fmp,
+                    });
+                    let pp = CompanyProfile::from_raw(profile_resp.value);
+                    let metrics_resp = providers::fetch_key_metrics(
+                        &client, &peer_sym, 1, &fmp_key, &eodhd_key, None,
+                    )
+                    .await
+                    .unwrap_or_else(|_| KeyMetrics::from_raw(serde_json::Value::Array(vec![])));
+                    (peer_sym, pp, metrics_resp)
                 });
-                let pm = self.fetch_key_metrics(peer_sym, 1).await.unwrap_or_else(|_| {
-                    KeyMetrics::from_raw(serde_json::Value::Array(vec![]))
-                });
-                peer_data.push((peer_sym.clone(), pp, pm));
+            }
+            let mut peer_data: Vec<(String, CompanyProfile, KeyMetrics)> = Vec::new();
+            while let Some(result) = peer_tasks.join_next().await {
+                if let Ok(entry) = result {
+                    peer_data.push(entry);
+                }
             }
 
             // 4. Build comparison table. Field-name knowledge lives in the

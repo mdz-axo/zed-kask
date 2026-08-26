@@ -18,6 +18,22 @@ pub struct EscalationDismissRequest {
     pub reason: String,
 }
 
+/// Dismiss all pending escalations matching a given output string.
+///
+/// Used to clear runaway escalation floods from a single broken feedback
+/// loop (e.g. an unwired efferent action that the regulation loop senses
+/// every cycle) in one operation, rather than dismissing each duplicate
+/// individually. Only pending escalations with an exact `output` match are
+/// dismissed — this will not collapse distinct alerts that happen to share
+/// a prefix.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EscalationDismissByPatternRequest {
+    /// The exact `output` string to match against pending escalations.
+    pub output: String,
+    /// The dismissal reason recorded for each dismissed escalation.
+    pub reason: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SemanticSearchRequest {
     pub query: String,

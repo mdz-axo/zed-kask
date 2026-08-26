@@ -92,6 +92,22 @@ pub trait AlertEscalationSink: Send + Sync {
     /// Errors are logged by the caller and never propagated — alert
     /// persistence is best-effort, never a correctness path.
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str);
+
+    /// Check whether a pending alert with the given `output` already exists
+    /// in the escalation queue.
+    ///
+    /// Used for deduplication at the source: the regulation loop senses the
+    /// same deficit every cycle (e.g. an unwired efferent action) and would
+    /// otherwise re-escalate every tick. The caller checks this before
+    /// routing an alert — if a pending alert with the same output exists, the
+    /// entire routing (log, live channel, persist, archive) is skipped. When
+    /// the operator resolves or dismisses the original, the next cycle
+    /// escalates again.
+    ///
+    /// Default returns `false` (no dedup). Implementations backed by a
+    /// durable queue should query for pending alerts with this output.
+    /// Errors are logged by the caller and never propagated.
+    fn has_pending_alert(&self, _output: &str) -> bool { false }
 }
 
 impl RuntimeAlert {

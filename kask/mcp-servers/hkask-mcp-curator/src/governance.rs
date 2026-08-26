@@ -146,6 +146,51 @@ pub(crate) fn resolve_direct(
     })
 }
 
+/// Dismiss all pending escalations matching a given output string.
+///
+/// Returns the count of escalations dismissed. Used to clear runaway
+/// escalation floods from a single broken feedback loop in one operation.
+/// Emits a single Regulation regulation record for the batch (not one per
+/// escalation) so the audit trail records the batch dismissal without
+/// flooding the regulation event log.
+///
+/// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
+/// post: all pending escalations with matching output are dismissed; returns count
+#[must_use = "result must be used"]
+pub(crate) fn dismiss_by_pattern_direct(
+    queue: &EscalationQueue,
+    events: &Arc<dyn RegulationSink>,
+    output: &str,
+    dismissed_by: &str,
+    reason: Option<&str>,
+) -> Result<usize, ServiceError> {
+    let count = queue
+        .dismiss_pending_by_output(output, dismissed_by)
+        .map_err(|e| ServiceError::Domain {
+            domain: DomainKind::Curator,
+            kind: ErrorKind::ServiceUnavailable,
+            source: None,
+            message: e.to_string(),
+        })?;
+
+    // Emit a single batch dismissal event (not one per escalation) so the
+    // audit trail records the batch operation without flooding the event log.
+    if count > 0 {
+        let detail = reason.map(|r| {
+            format!("{r} (dismissed {count} pending escalations matching output: {output})")
+        });
+        emit_escalation_event(
+            events,
+            "escalation_batch_dismissed",
+            "dismissed_by",
+            "batch",
+            dismissed_by,
+            detail.as_deref(),
+        );
+    }
+    Ok(count)
+}
+
 /// Dismiss an escalation by ID.
 ///
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"

@@ -152,6 +152,181 @@ async fn dismiss_nonexistent_id_returns_not_found() {
     );
 }
 
+// ── Escalation dedup at source ──────────────────────────────────────────────
+
+/// `EscalationQueue::has_pending_with_output` returns false for a fresh queue
+/// and true after an escalation with that output is added. This is the
+/// dedup primitive that prevents runaway escalation floods.
+#[tokio::test]
+async fn escalation_queue_has_pending_with_output_detects_duplicates() {
+    let driver = SqliteDriver::in_memory_driver();
+    let queue =
+        EscalationQueue::from_driver(driver).expect("escalation queue init");
+
+    let output = "Efferent action Throttle (target: inference) recommended but not wired";
+
+    // Fresh queue — no pending escalations.
+    assert_eq!(
+        queue.has_pending_with_output(output).unwrap(),
+        false,
+        "fresh queue must have no pending escalations with this output"
+    );
+
+    // Add one escalation.
+    let template_id = hkask_types::TemplateID::new();
+    let bot_id = hkask_types::BotID::new();
+    queue
+        .add(template_id, bot_id, output.to_string(), 1.0, 0, "{}".to_string())
+        .unwrap();
+
+    // Now the dedup check must find it.
+    assert_eq!(
+        queue.has_pending_with_output(output).unwrap(),
+        true,
+        "after adding an escalation, dedup check must find it"
+    );
+
+    // A different output string must not match.
+    assert_eq!(
+        queue
+            .has_pending_with_output("completely different output")
+            .unwrap(),
+        false,
+        "a different output string must not match"
+    );
+}
+
+// ── Pattern-based batch dismiss ─────────────────────────────────────────────
+
+/// `curator_escalation_dismiss_by_pattern` dismisses all pending escalations
+/// matching an exact output string and returns the count. This is the escape
+/// hatch for clearing runaway floods from a single broken feedback loop.
+#[tokio::test]
+async fn dismiss_by_pattern_clears_matching_escalations() {
+    let driver = SqliteDriver::in_memory_driver();
+    let queue =
+        Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
+    let regulation_store =
+        Arc::new(RegulationArchive::from_driver(driver.clone()).expect("regulation archive init"));
+    let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
+    let memory = Arc::new(
+        hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store)
+            .expect("memory store init"),
+    );
+
+    let stores = CuratorStores {
+        escalation_queue: Some(queue.clone()),
+        regulation_store: Some(regulation_store),
+        memory: Some(memory),
+    };
+    let database = Arc::new(CuratorDb::from_stores(stores));
+    let server = CuratorServer::new(WebID::new(), database);
+
+    let flood_output =
+        "Efferent action Throttle (target: inference) recommended but not wired";
+    let other_output = "Variety deficit in domain: reasoning";
+
+    // Seed: 5 identical flood escalations + 1 unrelated escalation.
+    for _ in 0..5 {
+        let template_id = hkask_types::TemplateID::new();
+        let bot_id = hkask_types::BotID::new();
+        queue
+            .add(
+                template_id,
+                bot_id,
+                flood_output.to_string(),
+                1.0,
+                0,
+                "{\"domain\":\"efferent:Throttle\"}".to_string(),
+            )
+            .unwrap();
+    }
+    let template_id = hkask_types::TemplateID::new();
+    let bot_id = hkask_types::BotID::new();
+    queue
+        .add(
+            template_id,
+            bot_id,
+            other_output.to_string(),
+            0.5,
+            0,
+            "{\"domain\":\"reasoning\"}".to_string(),
+        )
+        .unwrap();
+
+    // Verify 6 pending before dismissal.
+    let before = parse(&server.curator_escalations(Parameters(PingRequest {})).await);
+    assert_eq!(
+        before["count"].as_u64(),
+        Some(6),
+        "must have 6 pending escalations before batch dismiss — got: {before}"
+    );
+
+    // Dismiss all 5 flood escalations by pattern.
+    let response = parse(
+        &server
+            .curator_escalation_dismiss_by_pattern(Parameters(
+                EscalationDismissByPatternRequest {
+                    output: flood_output.to_string(),
+                    reason: "runaway flood from unwired Throttle action".to_string(),
+                },
+            ))
+            .await,
+    );
+
+    assert_eq!(
+        response["dismissed"].as_bool(),
+        Some(true),
+        "batch dismiss must return dismissed: true — got: {response}"
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(5),
+        "must dismiss exactly 5 matching escalations — got: {response}"
+    );
+
+    // The unrelated escalation must remain pending.
+    let after = parse(&server.curator_escalations(Parameters(PingRequest {})).await);
+    assert_eq!(
+        after["count"].as_u64(),
+        Some(1),
+        "only the unrelated escalation must remain — got: {after}"
+    );
+    assert_eq!(
+        after["escalations"][0]["output"].as_str(),
+        Some(other_output),
+        "the remaining escalation must be the unrelated one — got: {after}"
+    );
+}
+
+/// `curator_escalation_dismiss_by_pattern` on an empty queue returns count: 0,
+/// not an error. The no-match boundary.
+#[tokio::test]
+async fn dismiss_by_pattern_no_matches_returns_zero() {
+    let server = make_server();
+    let response = parse(
+        &server
+            .curator_escalation_dismiss_by_pattern(Parameters(
+                EscalationDismissByPatternRequest {
+                    output: "nothing matches this".to_string(),
+                    reason: "testing no-match boundary".to_string(),
+                },
+            ))
+            .await,
+    );
+
+    assert_eq!(
+        response["dismissed"].as_bool(),
+        Some(true),
+        "dismissed must be true even with zero matches — got: {response}"
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(0),
+        "count must be zero when no escalations match — got: {response}"
+    );
+}
+
 // ── Memory recall — invalid input ──────────────────────────────────────────
 
 /// Naming an `ontology_axis` without an `ontology_value` is a contract

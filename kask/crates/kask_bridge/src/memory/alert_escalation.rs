@@ -75,6 +75,31 @@ impl BridgeAlertEscalationSink {
 
 impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
+        // Dedup at the source: if there is already a pending escalation with
+        // the same output string, skip the insert. The regulation loop senses
+        // the same deficit every cycle (e.g. an unwired efferent action), and
+        // without this check it floods the queue with identical alerts every
+        // tick. The operator reviews the first one; duplicates add no signal.
+        match self.queue.has_pending_with_output(output) {
+            Ok(true) => {
+                tracing::debug!(
+                    target: "reg.alert",
+                    "Skipping duplicate escalation — pending alert with same output already in queue"
+                );
+                return;
+            }
+            Ok(false) => {} // no duplicate — proceed to insert
+            Err(e) => {
+                // Dedup check failed — don't block the insert. Best-effort:
+                // a failing dedup query is preferable to losing the alert.
+                tracing::warn!(
+                    target: "reg.alert",
+                    error = %e,
+                    "Dedup check failed — proceeding to insert without dedup"
+                );
+            }
+        }
+
         // `EscalationQueue::add` requires `template_id` and `bot_id` args that
         // don't map from a `RuntimeAlert` — use auto-generated defaults (the
         // same defaults `EscalationEntry::pending` uses). The structured alert
@@ -102,6 +127,21 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                     error = %e,
                     "Failed to persist algedonic alert to escalation queue"
                 );
+            }
+        }
+    }
+
+    fn has_pending_alert(&self, output: &str) -> bool {
+        match self.queue.has_pending_with_output(output) {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(e) => {
+                tracing::debug!(
+                    target: "reg.alert",
+                    error = %e,
+                    "Dedup query failed — assuming no pending alert"
+                );
+                false
             }
         }
     }
