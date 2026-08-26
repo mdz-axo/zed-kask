@@ -266,12 +266,11 @@ impl KaskThreadState {
 
     /// Inherit state from a parent thread's KaskThreadState (for subagents).
     /// Only `agent_id` is inherited — curator-spawned subagents route their
-    /// turns to the curator's sovereign DB.
+    /// turns to the curator's sovereign DB. All other state starts fresh.
     pub fn inherit_from(parent: &KaskThreadState) -> Self {
-        Self {
-            agent_id: parent.agent_id.clone(),
-            ..Self::new()
-        }
+        let mut state = Self::new();
+        state.agent_id = parent.agent_id.clone();
+        state
     }
 }
 

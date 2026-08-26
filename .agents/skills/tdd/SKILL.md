@@ -14,7 +14,7 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 - Refactoring while all tests are GREEN — extracting duplication, deepening modules, strengthening contracts, and applying SOLID principles while preserving contract metadata and verifying tests pass after each step.
 - Verifying TDD cycle completion — checking all tests pass, clippy is clean, no `todo!()`/`unimplemented!()` stubs remain, contract structure is complete, and code entity anchoring is intact.
 - Performing code gap analysis — comparing code entities against tested behaviors, scoring expectation quality (0–3), cross-referencing goal-principle alignment against MDS categories derived from code position, and producing deferral recommendations for `OPEN_QUESTIONS.md`.
-- Strengthening a GREEN tracer bullet — writing the universal test that verifies a contract's `post:`/`inv:` across the full input space with the `proptest` crate directly (a property-test fail is a second source of RED routing back to the tracer or plan).
+- Strengthening a GREEN tracer bullet — writing the universal test that verifies a contract's `post:`/`inv:` across the full input space with the proptest crate directly (a property-test fail is a second source of RED routing back to the tracer or plan).
 - Exploring for code blind spots — dispatching to the `bug-hunt` skill with a charter scoped to the slice's code, finding bugs the code structure never surfaced and routing them back as new entities needing tests.
 
 ## Instructions
@@ -52,7 +52,7 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 
 1. Receive the contract + `oracle_type` from the tracer bullet (step 2 is GREEN).
 2. Decide whether a universal property test is warranted: only for property-shaped contracts (`reference` or `invariant` oracle — `post:`/`inv:` spans an input space). Skip cleanly for `hardcoded` (fixed-value) contracts.
-3. Write the universal test with the `proptest` crate directly (TDD can run tests). Pass the contract's `post:`/`inv:` as the property and the oracle type.
+3. Write the universal test with the proptest crate directly (TDD can run tests). Pass the contract's `post:`/`inv:` as the property and the oracle type.
 4. Collect the property test's verdict: `pass`, `fail` (with shrunk counterexample), `inconclusive`, or `skipped`.
 5. Route: `pass` → proceed to refactor; `fail` with a real bug → `retracer` (fix the impl — the contract is correct); `fail` with a wrong contract → `replan` (revise the contract — contract evolution requiring P2 consent); `inconclusive` → `retracer` (fix the test setup, treat as RED).
 6. The universal test uses a programmatic oracle — a reference implementation comparison for `reference` contracts, an invariant predicate for `inv:`/`prob:` contracts (not hardcoded `prop_assert_eq!` value comparisons) — so the property scales across the input space.
@@ -158,7 +158,7 @@ graph TD
 ```
 
 - **proptest (crate)**: per-function property test generator. TDD writes the
-  universal test with the `proptest` crate directly at step 3 (strengthen) for
+  universal test with the proptest crate directly at step 3 (strengthen) for
   property-shaped contracts (`reference`/`invariant` oracle). The tracer (step
   2) writes the representative test (one case, fast green); strengthen writes
   the universal test (full input space). A property-test fail is a second

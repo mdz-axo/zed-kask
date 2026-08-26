@@ -198,7 +198,7 @@ Each instruction step should be concrete and tool-oriented:
 ### Phase 3 — Analyze
 
 1. Call `render_template` to render the analysis template:
-   template: `my-skill/analyze.j2`
+   template: my-skill/analyze.j2 (the new skill's own template)
    variables: { "target": "{{ target }}", "prior_results": <step 2 output> }
 
 2. Following the template's output schema, analyze the research from

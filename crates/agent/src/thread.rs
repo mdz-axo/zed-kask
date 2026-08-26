@@ -2204,16 +2204,17 @@ impl Thread {
     /// the user agent and writes to the user's `memory.db`.
     ///
     /// This is stored separately from `system_prompt_override` and
-    /// `agent_static_context` because it is a routing key, not a prompt
-    /// fragment. The memory port (D6) and context injector dispatch (D11) both
-    /// read it to select the correct perspective-scoped store.
+    /// `agent_static_context` (both on `KaskThreadState`) because it is a
+    /// routing key, not a prompt fragment. The memory port (D6) and context
+    /// injector dispatch (D11) both read it to select the correct
+    /// perspective-scoped store.
     pub fn set_agent_id(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
         self.kask.set_agent_id(agent_id);
         cx.notify();
     }
 
     /// The agent ID that owns this thread, if set. `None` for the default
-    /// (Zed Agent) and for subagent threads that inherit from their parent.
+    /// (Zed Agent); subagents inherit from their parent (D6/D34).
     pub fn agent_id(&self) -> Option<&AgentId> {
         self.kask.agent_id()
     }
@@ -3632,14 +3633,6 @@ impl Thread {
         });
     }
 
-    /// Poll all deferred tool results and return those that have completed.
-    /// Completed entries are removed from `deferred_tool_results`. Uses a
-    /// noop waker to poll receivers non-blockingly — incomplete tasks stay
-    /// in the queue for the next iteration.
-    fn drain_completed_deferred_results(&mut self) -> Vec<CompletedDeferredResult> {
-        self.kask.drain_completed_deferred_results()
-    }
-
     /// Inject completed deferred tool results into the original agent
     /// message that contains the corresponding `ToolUse` block. This keeps
     /// the `tool_use` and `tool_result` in the same `AgentMessage`, which
@@ -3652,7 +3645,7 @@ impl Thread {
         event_stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) -> bool {
-        let completed = self.drain_completed_deferred_results();
+        let completed = self.kask.drain_completed_deferred_results();
         if completed.is_empty() {
             return false;
         }
@@ -5617,24 +5610,6 @@ fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) 
     context
 }
 
-/// Compute a SHA-256 digest of the inputs that determine the rendered system
-/// prompt. If this digest is stable across consecutive requests, the rendered
-/// system-prompt bytes are identical and the provider's prefix cache hits.
-///
-/// The digest covers every field of `SystemPromptTemplate` that varies at
-/// runtime: the project context (worktrees, rules files, skills), the available
-/// tools list, the model name, the date, the user's global AGENTS.md, the
-/// sandboxing flag, and the platform flags. Stable across Rust versions
-/// (SHA-256, not `DefaultHasher`).
-/// Whether a context-server id passes the kask panel's per-tab MCP scope.
-/// `None` (upstream Zed and non-kask threads) passes every server; `Some`
-/// passes only the exact server id (case-sensitive — server ids are
-/// registry keys, not display names). Extracted as a free function so the
-/// contract is testable without constructing a `Thread`.
-fn mcp_server_in_scope(scope: Option<&str>, server_id: &str) -> bool {
-    scope.is_none_or(|s| s == server_id)
-}
-
 /// Check if a tool name is a curator memory edit tool. These tools are
 /// restricted to curator threads only — non-curator threads cannot edit
 /// curator memory. Read-only curator tools (curator_memory_recall,
@@ -5646,6 +5621,15 @@ fn is_curator_memory_edit_tool(tool_name: &str) -> bool {
     )
 }
 
+/// Compute a SHA-256 digest of the inputs that determine the rendered system
+/// prompt. If this digest is stable across consecutive requests, the rendered
+/// system-prompt bytes are identical and the provider's prefix cache hits.
+///
+/// The digest covers every field of `SystemPromptTemplate` that varies at
+/// runtime: the project context (worktrees, rules files, skills), the available
+/// tools list, the model name, the date, the user's global AGENTS.md, the
+/// sandboxing flag, and the platform flags. Stable across Rust versions
+/// (SHA-256, not `DefaultHasher`).
 fn system_prompt_digest(
     project: &ProjectContext,
     available_tools: &[SharedString],
@@ -8118,17 +8102,25 @@ mod tests {
     /// makes that true in `enabled_tools`.
     #[test]
     fn mcp_server_scope_filters_to_named_server() {
+        use crate::kask_thread_state::KaskThreadState;
+
         // No scope — upstream Zed behavior, everything passes.
-        assert!(mcp_server_in_scope(None, "companies"));
-        assert!(mcp_server_in_scope(None, "curator"));
-        assert!(mcp_server_in_scope(None, "anything-else"));
+        let unscoped = KaskThreadState::new();
+        assert!(unscoped.mcp_server_in_scope("companies"));
+        assert!(unscoped.mcp_server_in_scope("curator"));
+        assert!(unscoped.mcp_server_in_scope("anything-else"));
 
         // Scoped — exact match only.
-        assert!(mcp_server_in_scope(Some("companies"), "companies"));
-        assert!(!mcp_server_in_scope(Some("companies"), "curator"));
-        assert!(!mcp_server_in_scope(Some("companies"), "Companies")); // case-sensitive
-        assert!(!mcp_server_in_scope(Some("companies"), "company"));
-        assert!(!mcp_server_in_scope(Some("kata-kanban"), "kata_kanban"));
+        let mut scoped = KaskThreadState::new();
+        scoped.set_mcp_server_scope(Some("companies".into()));
+        assert!(scoped.mcp_server_in_scope("companies"));
+        assert!(!scoped.mcp_server_in_scope("curator"));
+        assert!(!scoped.mcp_server_in_scope("Companies")); // case-sensitive
+        assert!(!scoped.mcp_server_in_scope("company"));
+
+        let mut kanban_scoped = KaskThreadState::new();
+        kanban_scoped.set_mcp_server_scope(Some("kata-kanban".into()));
+        assert!(!kanban_scoped.mcp_server_in_scope("kata_kanban"));
     }
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {

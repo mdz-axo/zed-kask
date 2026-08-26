@@ -611,9 +611,9 @@ mod tests {
     #[test]
     fn search_returns_results_sorted_by_score() {
         let passages = vec![
-            make_passage("low match", vec![0.1, 0.0]),
-            make_passage("high match", vec![0.9, 0.0]),
-            make_passage("medium match", vec![0.5, 0.0]),
+            make_passage("low match", vec![0.0, 1.0]),      // orthogonal → 0.0
+            make_passage("high match", vec![1.0, 0.0]),      // parallel → 1.0
+            make_passage("medium match", vec![1.0, 1.0]),    // 45° → ~0.707
         ];
         let query = vec![1.0, 0.0];
         let results = search_passages(&passages, &query, 3, 0.0, false);
@@ -638,8 +638,8 @@ mod tests {
     #[test]
     fn search_min_score_filters() {
         let passages = vec![
-            make_passage("low", vec![0.3, 0.0]),
-            make_passage("high", vec![0.9, 0.0]),
+            make_passage("orthogonal", vec![0.0, 1.0]),  // score 0.0
+            make_passage("parallel", vec![1.0, 0.0]),      // score 1.0
         ];
         let query = vec![1.0, 0.0];
         let results = search_passages(&passages, &query, 10, 0.5, false);
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn parse_lisp_query_basic() {
-        let expr = r#'(list (list "query" "investment philosophy") (list "top-k" 3) (list "include-text" t))"#;
+        let expr = r#"(list (list "query" "investment philosophy") (list "top-k" 3) (list "include-text" t))"#;
         let (query, k, include_text, min_score, gen_answer) =
             parse_lisp_query(expr).expect("should parse");
         assert_eq!(query, "investment philosophy");
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn parse_lisp_query_with_min_score() {
-        let expr = r#'(list (list "query" "test") (list "min-score" 0.7) (list "top-k" 10))"#;
+        let expr = r#"(list (list "query" "test") (list "min-score" 0.7) (list "top-k" 10))"#;
         let (_, k, _, min_score, _) =
             parse_lisp_query(expr).expect("should parse");
         assert_eq!(k, 10);
@@ -690,19 +690,19 @@ mod tests {
 
     #[test]
     fn parse_lisp_query_missing_query_returns_error() {
-        let expr = r#'(list (list "top-k" 5))"#;
+        let expr = r#"(list (list "top-k" 5))"#;
         assert!(parse_lisp_query(expr).is_err());
     }
 
     #[test]
     fn parse_lisp_query_unknown_key_returns_error() {
-        let expr = r#'(list (list "query" "test") (list "unknown-key" 42))"#;
+        let expr = r#"(list (list "query" "test") (list "unknown-key" 42))"#;
         assert!(parse_lisp_query(expr).is_err());
     }
 
     #[test]
     fn parse_lisp_query_generate_answer() {
-        let expr = r#'(list (list "query" "test") (list "generate-answer" t))"#;
+        let expr = r#"(list (list "query" "test") (list "generate-answer" t))"#;
         let (_, _, _, _, gen_answer) =
             parse_lisp_query(expr).expect("should parse");
         assert!(gen_answer);

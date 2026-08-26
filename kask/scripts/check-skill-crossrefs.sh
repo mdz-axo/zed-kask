@@ -88,10 +88,11 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
   done < <(grep -n '`' "$skill_md" || true)
 done
 
-# ── Check 2: `<skill>/<file>` template refs must resolve on disk ──
+# ── Check 2: `<skill>/<file>.j2` / `<skill>/<file>.yaml` template refs must
+# resolve on disk. Only refs carrying an explicit template extension are
+# checked — bare `a/b` backticks are usually git refs, file paths, or prose.
 for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
-  # Refs written as `skill-dir/file` (with or without .j2) inside backticks.
-  grep -noE '`[a-z0-9-]+/[a-z0-9._-]+(\.j2|\.yaml)?`' "$skill_md" 2>/dev/null | while IFS=: read -r line_no match; do
+  grep -noE '`[a-z0-9-]+/[a-z0-9._-]+\.(j2|yaml)`' "$skill_md" 2>/dev/null | while IFS=: read -r line_no match; do
     ref="${match//\`/}"
     ref="${ref%.j2}"
     ref="${ref%.yaml}"

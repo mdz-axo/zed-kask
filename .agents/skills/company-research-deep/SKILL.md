@@ -174,7 +174,7 @@ The fact_score (from verify-late-gate) feeds the quality gate as additional evid
 
 ## Cross-Skill Composition
 
-- Step 3 (FALSTAFFIAN) reuses `metacognition/falstaffian-perspective-engine` shapes and decision tree (via `company-research/falstaffian-competitive-rotation`).
+- Step 3 (FALSTAFFIAN) reuses the falstaffian perspective-engine shapes and decision tree (via `company-research/falstaffian-competitive-rotation`).
 - Step 4 (WARDLEY) compresses `wardley-mapper`'s 6-step process via the `company-research/wardley-anchor` adapter. Conditionally upgrades to full `wardley-mapper` when choke_point score < 60.
 - Step 5 (ECONOMIC TRAJECTORY) includes a strategy-literature-probe via Exa semantic search for IO/competition economics grounding.
 - Step 6 reuses `capabilities-reasoner/capability-reason` (via `company-research/gorilla-capability-reason` adapter) — types each GORILLA dimension against a capability registry with floor/ceiling/maturity-gate limits. Dimensions with maturity blocks are nil'd by the `lisp_eval` scoring call.
