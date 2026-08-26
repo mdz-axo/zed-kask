@@ -140,7 +140,7 @@ The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curato
 
 The last is the only existing write path. There is no general `memory_insert` / `memory_update` / `memory_delete`.
 
-> **Broken feedback loop found**: the system prompt's "Curator Role" section advertises a `curator_directive` tool (with an `evolve_mcp_tool_schema` variant) for issuing directives and evolving MCP schemas. **This tool does not exist anywhere in the codebase** (grep for `curator_directive|CuratorDirective` across `crates/` and `kask/` returns zero matches). The curator is told it can issue directives but has no tool to do so. This must be resolved — either implement the tool or remove the claim from the system prompt.
+> **Note**: The `curator_directive` agent tool exists (`crates/agent/src/tools/curator_tools.rs:626-713`, registered at `crates/agent/src/agent.rs:891`) and can issue directives including `EvolveMcpToolSchema`. The gap is not a missing directive tool — it's the missing **memory edit** tools (`memory_insert`, `memory_update`, `memory_resolve_contradiction`) on the curator MCP server.
 
 ### What's missing vs. MemGPT
 
@@ -183,7 +183,7 @@ This is the external calibration loop Dunning's framework requires: confidence i
 | Evidence-grounding filter | **No** | — | New: reject inserts without episodic citation |
 | Confidence floor (start at 0.5) | **No** | — | New: inserted memories start at 0.5 |
 | Permission boundary (curator-only) | **No** | — | New: MCP tools registered on curator threads only |
-| `curator_directive` tool | **No** (advertised in system prompt but unimplemented) | — | Either implement or remove the claim |
+| `curator_directive` tool | Yes (agent tool, `crates/agent/src/tools/curator_tools.rs:626-713`) | — | No change — the gap is memory edit tools, not directive tools |
 
 ---
 
@@ -262,4 +262,4 @@ The therapy process makes contradictions explicit, resolves them (by confidence 
 
 3. **Therapy trigger**: operator-initiated (manual), scheduled (timer), or signal-triggered (when contradiction count exceeds a threshold)? Signal-triggered is most cybernetic (it closes the loop automatically) but risks running without operator oversight; operator-initiated is safest but relies on the operator noticing.
 
-4. **`curator_directive` resolution**: implement the advertised tool (which would give the curator a directive-issuing + MCP-schema-evolution surface) or remove the claim from the system prompt? This is a separate decision but blocks the curator's ability to self-adjust thresholds.
+4. **Therapy trigger**: operator-initiated (manual), scheduled (timer), or signal-triggered (when contradiction count exceeds a threshold)? Signal-triggered is most cybernetic (it closes the loop automatically) but risks running without operator oversight; operator-initiated is safest but relies on the operator noticing.

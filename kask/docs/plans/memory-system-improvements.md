@@ -1,61 +1,158 @@
-# Memory System Improvements — To-Do List
+# Memory System Improvements — Implementation Plan
 
-Status doc for the two deferred improvements from the context/memory injection refactor (2026-08-25).
+Status doc for the memory system improvements, grounded in Dunning's self-knowledge/calibration research and Tetlock's superforecasting framework. RAG synthesis of the John Brooks corpus is in `rag-synthesis-dunning-memory-design.md`.
 
 ## Completed (2026-08-25)
 
-- **Q4 (G12)** — Log pre-login ingest no-ops. `crates/agent/src/thread.rs` now emits `log::warn!` when `memory_port()` returns `None`, naming the thread ID. Closes the feedback gap (Dunning, *Self-Insight*, 2005).
+- **Q4 (G12)** — Log pre-login ingest no-ops. `crates/agent/src/thread.rs` now emits `log::warn!` when `memory_port()` returns `None`, naming the thread ID. Closes the feedback gap (Dunning, 2011, pp. 264–265).
 - **Q1 (convergence test)** — Mid-session ingest → next-turn recall test. `kask/crates/kask_bridge/src/context_injector.rs` now has `inject_context_recalls_mid_session_ingest` and `inject_context_returns_empty_when_no_match`. Pins the per-turn freshness property.
-- **Q2 (S6)** — Compact, labeled state block in curator context. `crates/agent/src/curator_agent_server.rs` now fetches a regulation health snapshot at `connect` time and appends it to the curator context with an explicit "snapshot at session start — pull curator_status for live updates" label. Breaks the naive-realist trap.
+- **Q2 (S6)** — Compact, labeled state block in curator context. `crates/agent/src/curator_agent_server.rs` now fetches a regulation health snapshot at `connect` time and appends it to the curator context with an explicit "snapshot at session start — pull curator_status for live updates" label. Breaks the naive-realist trap (Ehrlinger & Dunning, 2003).
 
-## Pending
+## Prioritized Implementation Plan
 
-### Q1 — Importance weighting at retrieval
+Seven changes, ordered by leverage and dependency. Priorities 1–4 are the "Q1" recall ranking improvements (confidence + Brier + connectedness). Priorities 5–7 are the "Q3/Q5" writable memory and therapy improvements. Q6 (swarm recall) is independent.
+
+| Priority | Change | Effort | Depends on | Evidence (corpus entity_ref) |
+|---|---|---|---|---|
+| 1 | Confidence in recall ranking | Low (few lines) | None | Double curse `138299529:5`; Brier scoring `Superforecasting_tetlock:71` |
+| 2 | Absence signaling (hypocognition guard) | Low (few lines) | None | Hypocognition `138299529:11`; experts attend to missing info `138299529:13` |
+| 3 | Connectedness tracking (co-occurrence links) | Medium (new table) | None | Dilution effect `Superforecasting_tetlock:178`; A-MEM |
+| 4 | Brier loop → memory confidence | High (bridge subsystems) | #3 | Feedback gap `Superforecasting_tetlock:273`; fuzzy thinking `Superforecasting_tetlock:274` |
+| 5 | Curator memory edit tools | Medium (expose existing methods) | None | Cassandra quandary `138299529:16-17`; MemGPT |
+| 6 | Therapy process (skill) | Medium (SKILL.md + templates) | #5 | Three dissonance strategies `Universal_Principles_of_Design:39`; no red teams `Superforecasting_tetlock:94` |
+| 7 | Q3 reflection pass | Medium (extend consolidation timer) | #4, #5 | Fuzzy thinking `Superforecasting_tetlock:274`; informed practice `Superforecasting_tetlock:195` |
+
+**Parallelism**: Priorities 1, 2, 3, and 5 have no dependencies and can proceed in parallel. Priority 5 should start early because 6 and 7 depend on it. Priority 4 is the long pole but can proceed in parallel with 5.
+
+---
+
+### Priority 1 — Confidence in recall ranking ✅ DONE
+
+**Status**: Complete (2026-08-25).
+
+**What**: The recall path sorted by `relevance_score` only (`memory.rs:1016-1021`). A memory with confidence 0.51 and one with confidence 0.99 were ranked identically if their embedding similarity was the same. Changed the sort key to `relevance_score × confidence`, using the already-decayed confidence value.
+
+**Evidence**: Dunning's double curse (`138299529:5`) — the model can't self-evaluate, but confidence calibrated by outcomes IS a meaningful signal. Tetlock (`Superforecasting_tetlock:71`) — confidence is a forecast of relevance/truth. Throwing it away at ranking time discards the calibration signal.
+
+**Anchors**:
+- Sort: `kask/crates/kask_bridge/src/memory.rs:1026-1032` (changed from `relevance_score` to `relevance_score × confidence`)
+- `MemorySnippet.confidence`: `kask/crates/hkask-types/src/ports/memory_port.rs:86`
+- Decay applied at: `kask/crates/hkask-memory/src/memory_store.rs:258-280`
+- Test: `recall_context_ranks_by_confidence_weighted_relevance` in `kask/crates/kask_bridge/src/memory.rs`
+
+---
+
+### Priority 2 — Absence signaling (hypocognition guard) ✅ DONE
+
+**Status**: Complete (2026-08-25).
+
+**What**: When recall returned zero results, the context injector returned an empty `Vec` (`context_injector.rs:283-285`) — the model got silence. Changed to inject a system message: "No relevant memory found for this query. This may indicate a knowledge gap."
+
+**Evidence**: Dunning (`138299529:13`) — "people who are expert are better at attending to information that is missing... Blatantly pointing out to people that there is information they miss... prompts them to be less overconfident." Dunning (`138299529:11`) — hypocognition is "lacking a linguistic or cognitive representation." Silence is hypocognition.
+
+**Anchors**:
+- Zero-count path: `kask/crates/kask_bridge/src/context_injector.rs:283-308` (now injects an absence message instead of returning empty)
+- Test: `inject_context_returns_empty_when_no_match` in `kask/crates/kask_bridge/src/context_injector.rs` (updated to expect absence message)
+
+---
+
+### Priority 3 — Connectedness tracking (co-occurrence links)
 
 **Status**: Not started.
 
-**What**: Score each memory at ingest time with an importance score (1-10). At retrieval, combine: `score = relevance × importance × recency_decay`.
+**What**: Add a co-occurrence link table: when two memories are recalled in the same `inject_context` call, record a link between them. Over time, frequently co-recalled memories become more connected. The link count becomes the `connectedness` term in the ranking: `relevance × confidence × connectedness`.
 
-**Why**: Generative Agents (Park et al., 2023, arXiv:2304.03442) uses a three-dimensional retrieval function (recency × importance × relevance). zed-kask's `recall_context` uses only relevance (embedding similarity). Without importance weighting, a high-importance memory from 50 turns ago is ranked the same as a low-importance memory from 50 turns ago (if they have similar embedding similarity).
+**Design decision**: Co-occurrence links (derived from recall behavior) rather than explicit semantic links (which would require LLM judgment — Dunning's double curse applies). Co-occurrence is structural and free.
 
-**Design questions**:
-- How to generate the importance score at ingest time? Options: (a) a lightweight LLM call per turn (cost), (b) a heuristic based on turn content (code changes > chat > tool results), (c) operator-configurable per-skill importance.
-- Where to store the score? The `HMem` struct (`hkask-storage/src/hmem.rs:41-59`) has a `confidence: Confidence` field but no `importance` field. Adding one is a schema change.
-- How to apply `recency_decay`? The existing `Confidence::memory_decay` (`hkask-types/src/visibility.rs:198-202`) decays confidence by time-since-recall. The same function can be applied to importance.
-
-**Dependencies**: None (can be done independently). This is a prerequisite for Q3 (reflection pass), which needs importance scores to trigger reflection.
+**Evidence**: Tetlock's dilution effect (`Superforecasting_tetlock:178`) — irrelevant information weakens judgment. Connectedness is the structural guard: a memory with high connectedness has been tested against many contexts; one with low connectedness but high similarity is a dilution candidate.
 
 **Anchors**:
-- `recall_context`: `kask/crates/kask_bridge/src/memory.rs` (the `RealMemoryPort::recall_context` method)
-- `HMem` struct: `kask/crates/hkask-storage/src/hmem.rs:41-59`
-- `Confidence::memory_decay`: `kask/crates/hkask-types/src/visibility.rs:198-202`
-- Reference: Generative Agents (Park et al., 2023, arXiv:2304.03442) — three-dimensional retrieval
+- `HMem` struct (no link field): `kask/crates/hkask-storage/src/hmem.rs:41-59`
+- Recall path (where co-occurrence is observed): `kask/crates/kask_bridge/src/context_injector.rs:216-300`
+- Sort (where connectedness would be applied): `kask/crates/kask_bridge/src/memory.rs:1015-1021`
+
+---
+
+### Priority 4 — Brier loop → memory confidence
+
+**Status**: Not started. Design analysis in `q3-q5-reflection-writable-memory.md`.
+
+**What**: Bridge the scenarios widget's Brier scoring to memory confidence. When a forecast is resolved, find memories recalled in that context (via co-occurrence table from #3), and update their confidence via `combine_confidences` (`bayesian.rs:86-96`). Low Brier error → confidence increases; high Brier error → decreases.
+
+**Evidence**: Tetlock (`Superforecasting_tetlock:273`) — "effective learning from experience can't happen without clear feedback, and you can't have clear feedback unless your forecasts are unambiguous and scorable." Dunning's feedback gap (Dunning 2011, pp. 264–265) — without feedback, incorrect self-assessments persist.
+
+**Anchors**:
+- Brier scoring (not yet wired to memory): `kask/crates/hkask-scenarios-widget/src/block.rs:12-16`, `view.rs:206-247`
+- `combine_confidences` (Bayesian): `kask/crates/hkask-memory/src/bayesian.rs:86-96`
+- `update_confidence`: `kask/crates/hkask-memory/src/memory_store.rs:599-615`
+
+---
+
+### Priority 5 — Curator memory edit tools ✅ DONE
+
+**Status**: Complete (2026-08-25).
+
+**What**: Added three MCP tools to the curator server: `memory_insert` (curator-only, requires evidence citation, confidence floor 0.5), `memory_update` (curator-only, Bayesian combine via `combine_confidences`), `memory_resolve_contradiction` (curator-only, strategies: expire / update_confidence / delete). Made `find_existing_by_eav`, `update_confidence`, `expire_h_mem`, and `combine_confidences` public so the curator MCP server (a separate crate) can access them.
+
+**Correction**: An earlier version claimed `curator_directive` was "advertised but unimplemented." That was wrong — `curator_directive` exists as an agent tool (`crates/agent/src/tools/curator_tools.rs:626-713`), registered on curator threads (`crates/agent/src/agent.rs:891`). The gap was memory edit tools, not directive tools.
+
+**Evidence**: Dunning's Cassandra quandary (`138299529:16-17`) — poor performers can't evaluate which memories are worth writing. MemGPT (Packer et al., 2023) — OS-style memory management with permission boundaries.
+
+**Anchors**:
+- New tools: `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs` (`memory_insert`, `memory_update`, `memory_resolve_contradiction`)
+- New request types: `kask/mcp-servers/hkask-mcp-curator/src/types.rs` (`MemoryInsertRequest`, `MemoryUpdateRequest`, `MemoryResolveContradictionRequest`)
+- Visibility changes: `find_existing_by_eav`, `update_confidence`, `expire_h_mem` changed from `pub(crate)` to `pub` in `kask/crates/hkask-memory/src/memory_store.rs`
+- `combine_confidences` changed from `pub(crate)` to `pub` and re-exported from `kask/crates/hkask-memory/src/hkask_memory.rs`
+
+---
+
+### Priority 6 — Therapy process (skill)
+
+**Status**: Not started. Design analysis in `q3-q5-reflection-writable-memory.md`.
+
+**What**: A skill (SKILL.md + .j2 templates) that the curator runs to detect and resolve contradictions in the memory store. Uses Festinger's three dissonance resolution strategies: reduce importance (lower confidence), add consonant (insert reconciling memory), remove dissonant (expire/update).
+
+**Evidence**: Festinger's three strategies (`Universal_Principles_of_Design:39`). Tetlock's "no red teams" (`Superforecasting_tetlock:94`) — the IC "was wrong when it said it couldn't be wrong" because it "never seriously explored the idea that it could be wrong." Dunning's hypocognition (`138299529:11`) — therapy must name contradictions explicitly.
+
+**Anchors**:
+- EAV match detection: `memory_store.rs:566-597` (`find_existing_by_eav`)
+- Depends on: Priority 5 (edit tools)
+
+---
+
+### Priority 7 — Q3 reflection pass
+
+**Status**: Not started. Design analysis in `q3-q5-reflection-writable-memory.md`.
+
+**What**: Extend `start_consolidation_timer` to fire a reflection pass when contradiction density exceeds a threshold. The reflection prompt forces evidence citation (each insight cites specific h_mem IDs). Insights stored via `memory_insert` at confidence 0.5.
+
+**Evidence**: Tetlock (`Superforecasting_tetlock:274`) — "fuzzy thinking can never be proven wrong." Tetlock (`Superforecasting_tetlock:195`) — "not all practice improves skill. It needs to be informed practice."
+
+**Anchors**:
+- Consolidation timer: `kask/crates/kask_bridge/src/memory.rs::start_consolidation_timer`
+- `promote_episodic_to_semantic`: `consolidation_service.rs:196-280`
+- Depends on: Priorities 4, 5
 
 ---
 
 ### Q6 (C7) — Swarm→bridge cross-DB recall
 
-**Status**: Not started.
+**Status**: Not started. Independent of priorities 1–7.
 
 **What**: Add a cross-DB recall path so the curator's `inject_context` can recall from `swarm_memory.db` alongside `curator.db`.
 
-**Why**: Swarm turns ingest to `swarm_memory.db` (D6), retrievable only via `swarm_recall_local` MCP tool. The curator regulating swarm health has no automatic recall of swarm history — it must pull manually. Dunning's naive realism (Dunning, *Self-Insight*, 2005) predicts: without swarm memory, the curator assumes it knows what's happening in the swarm and treats its own (incomplete) model as objective reality.
-
-**Design questions**:
-- Is concurrent read access to `swarm_memory.db` safe with SQLCipher? The swarm MCP server process owns the DB; the bridge would need read access. Need to verify SQLCipher supports concurrent readers across processes.
-- Should this be curator-only or also available to user threads? The resolution says curator-only (the curator is the swarm's regulator; user threads don't need swarm memory).
-- How to label the recalled fragments? The resolution says: `--- Swarm Memory (data from delegated agents) ---` so the model treats them as external observations, not its own direct experience.
-
-**Dependencies**: None (can be done independently). The cross-DB query is the main implementation question.
+**Evidence**: Dunning's naive realism (Ehrlinger & Dunning, 2003) — without swarm memory, the curator treats its own incomplete model as objective reality.
 
 **Anchors**:
 - `BridgeContextInjector::inject_context`: `kask/crates/kask_bridge/src/context_injector.rs:216-285`
 - `swarm_memory.db`: owned by `hkask-mcp-swarm` process (D6)
-- `local_knowledge::ingest_turn` / `recall_turns`: `kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs`
-- Reference: Generative Agents (Park et al., 2023) — agents observe each other and incorporate those observations into their own memory
 
 ---
 
-## Sequencing
+## What the evidence says we should NOT do
 
-Q1 (importance weighting) should be done before Q3 (reflection pass), because the reflection trigger depends on importance scores. Q6 (swarm recall) is independent and can be done in parallel with either.
+- **Don't let the model self-assign confidence** — Dunning's double curse (`138299529:5`). Confidence must start at a floor (0.5) and be calibrated by outcomes.
+- **Don't let user threads write to memory** — Dunning's Cassandra quandary (`138299529:16-17`). Only the curator (with its feedback loop) should write.
+- **Don't do unstructured reflection** — Tetlock (`Superforecasting_tetlock:274`): "fuzzy thinking can never be proven wrong." Reflection must force evidence citation.
+- **Don't silently swallow zero-result recall** — Dunning (`138299529:13`): experts attend to missing information. Silence is hypocognition.
+- **Don't use "importance" as a ranking signal** — it's either LLM self-assessment (miscalibrates) or a heuristic (loses nuance). Confidence (outcome-calibrated) and connectedness (structural) replace it.

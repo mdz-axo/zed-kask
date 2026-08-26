@@ -28,6 +28,7 @@
 
 use std::sync::Arc;
 
+use hkask_storage::database::value::DbValue;
 use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SimilarityResult};
 use hkask_types::RegulationSink;
 use hkask_types::WebID;
@@ -560,10 +561,11 @@ impl MemoryStore {
 
     /// Find an existing h_mem with the same EAV as the given h_mem.
     ///
-    /// Used by the consolidation bridge to detect when a memory being
-    /// promoted matches a fact already in the store, enabling Bayesian
-    /// evidence combination rather than duplicate insertion.
-    pub(crate) fn find_existing_by_eav(&self, h_mem: &HMem) -> Option<HMem> {
+    /// Used by the consolidation bridge and the curator's therapy process
+    /// to detect when a memory being promoted or examined matches a fact
+    /// already in the store, enabling Bayesian evidence combination rather
+    /// than duplicate insertion, and contradiction detection for therapy.
+    pub fn find_existing_by_eav(&self, h_mem: &HMem) -> Option<HMem> {
         let candidate_hash = crate::recall_dedup::eav_hash(h_mem);
         let existing = match self
             .h_mem_store
@@ -597,7 +599,7 @@ impl MemoryStore {
     }
 
     /// Update an existing h_mem's confidence via the bitemporal update path.
-    pub(crate) fn update_confidence(
+    pub fn update_confidence(
         &self,
         existing_id: &hkask_storage::HMemId,
         current_value: serde_json::Value,
@@ -614,11 +616,9 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Identify episodic h_mems eligible for consolidation (oldest, lowest
+    /// Identify h_mems eligible for consolidation (oldest, lowest
     /// effective confidence) written by a given perspective. Uses recall-time
-    /// decayed confidence. The episodic/semantic distinction is carried by the
-    /// `HMemOntology` blob (P5.4) — only h_mems with a PKO procedure are
-    /// candidates for promotion to semantic memory.
+    /// decayed confidence.
     pub(crate) fn consolidation_candidates(
         &self,
         perspective: WebID,
@@ -626,7 +626,7 @@ impl MemoryStore {
     ) -> Result<Vec<HMem>, MemoryStoreError> {
         let mut h_mems = self
             .h_mem_store
-            .query_episodic_by_perspective(&perspective)?;
+            .query_by_perspective(&perspective)?;;
         h_mems.sort_by(|a, b| {
             let a_effective = a
                 .confidence
@@ -652,7 +652,7 @@ impl MemoryStore {
     }
 
     /// Expire a h_mem by setting its `valid_to` (soft-delete).
-    pub(crate) fn expire_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
+    pub fn expire_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
         self.h_mem_store.close_by_id(id)?;
         tracing::debug!(
             target: "hkask.memory",
@@ -679,7 +679,7 @@ impl MemoryStore {
     // ── Budget / cleanup ──────────────────────────────────────────────────
 
     pub fn h_mem_count(&self) -> Result<usize, MemoryStoreError> {
-        Ok(self.h_mem_store.count_semantic()?)
+        Ok(self.h_mem_store.count()?)
     }
 
     pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
@@ -688,13 +688,13 @@ impl MemoryStore {
     }
 
     pub fn lowest_confidence_h_mems(&self, limit: usize) -> Result<Vec<HMem>, MemoryStoreError> {
-        Ok(self.h_mem_store.query_semantic_lowest_confidence(limit)?)
+        Ok(self.h_mem_store.query_lowest_confidence(limit)?)
     }
 
     pub fn low_confidence_count(&self, threshold: f64) -> Result<usize, MemoryStoreError> {
         Ok(self
             .h_mem_store
-            .count_semantic_below_confidence(threshold)?)
+            .count_below_confidence(threshold)?)
     }
 
     pub fn low_confidence_h_mems(
@@ -704,6 +704,60 @@ impl MemoryStore {
     ) -> Result<Vec<HMem>, MemoryStoreError> {
         Ok(self
             .h_mem_store
-            .query_semantic_below_confidence(threshold, limit)?)
+            .query_below_confidence(threshold, limit)?)
+    }
+
+    // ── Co-occurrence connectedness (Priority 3) ────────────────────────
+    //
+    // When memories are recalled together, their entities are linked.
+    // The link count is the `connectedness` signal for recall ranking:
+    // a memory referenced by many others has been tested against more
+    // contexts. Grounding: Tetlock's dilution effect — connectedness
+    // down-weights similar-but-isolated memories (dilution candidates).
+
+    /// Record co-occurrence links between a set of entities recalled in
+    /// the same context. For each pair (a, b) where a < b lexicographically,
+    /// increment the co-occurrence count.
+    ///
+    /// Called by the context injector after a successful recall.
+    pub fn record_co_occurrence(&self, entities: &[String]) -> Result<(), MemoryStoreError> {
+        if entities.len() < 2 {
+            return Ok(());
+        }
+        let driver = self.h_mem_store.driver();
+        let mut sorted: Vec<&str> = entities.iter().map(|s| s.as_str()).collect();
+        sorted.sort();
+        sorted.dedup();
+        for i in 0..sorted.len() {
+            for j in (i + 1)..sorted.len() {
+                let sql = "INSERT INTO memory_links (entity_a, entity_b, co_count, last_linked) \
+                           VALUES (?1, ?2, 1, datetime('now')) \
+                           ON CONFLICT(entity_a, entity_b) DO UPDATE SET \
+                           co_count = co_count + 1, \
+                           last_linked = datetime('now')";
+                driver
+                    .execute(sql, &[DbValue::Text(sorted[i].to_string()), DbValue::Text(sorted[j].to_string())])
+                    .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Get the connectedness score for an entity — the total co-occurrence
+    /// count across all links. Higher = more connected = more salient.
+    ///
+    /// Returns 0 for entities with no links (new or isolated memories).
+    pub fn connectedness(&self, entity: &str) -> Result<u64, MemoryStoreError> {
+        let driver = self.h_mem_store.driver();
+        let sql = "SELECT COALESCE(SUM(co_count), 0) FROM memory_links \
+                   WHERE entity_a = ?1 OR entity_b = ?1";
+        let rows = driver
+            .query(sql, &[DbValue::Text(entity.to_string())])
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let count = rows[0].get_int(0).unwrap_or(0) as u64;
+        Ok(count)
     }
 }

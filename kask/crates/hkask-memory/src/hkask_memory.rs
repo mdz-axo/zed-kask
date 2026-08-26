@@ -32,6 +32,8 @@ pub use memory_store::CentroidResult;
 pub use memory_store::{MemoryStore, MemoryStoreError};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
+pub use bayesian::combine_confidences;
+
 // ── Canonical span namespace (hoisted from 5 per-call .expect() sites) ──
 //
 // `SpanNamespace::try_from` is not `const fn` (it validates against the

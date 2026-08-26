@@ -15,3 +15,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_registry_kind ON agent_registry(agent_kind)
 CREATE TABLE IF NOT EXISTS loop_cursors (key TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TEXT NOT NULL);
 -- Pod metadata — webid, pod_kind, created_at for passphrase derivation and discovery
 CREATE TABLE IF NOT EXISTS pod_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Memory co-occurrence links — tracks how often two entities are recalled
+-- together. The link count is the `connectedness` signal for recall ranking:
+-- a memory referenced by many others has been tested against more contexts.
+-- Grounding: Tetlock's dilution effect — connectedness down-weights
+-- similar-but-isolated memories (dilution candidates).
+CREATE TABLE IF NOT EXISTS memory_links (
+    entity_a TEXT NOT NULL,
+    entity_b TEXT NOT NULL,
+    co_count INTEGER NOT NULL DEFAULT 1,
+    last_linked TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (entity_a, entity_b)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_memory_links_a ON memory_links(entity_a);
+CREATE INDEX IF NOT EXISTS idx_memory_links_b ON memory_links(entity_b);

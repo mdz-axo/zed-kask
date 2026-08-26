@@ -129,20 +129,6 @@ impl HMem {
         self.ontology = Some(ont.with_dimension(d));
         self
     }
-    /// Check if this is an episodic h_mem (carries a PKO procedure in its
-    /// ontology blob). The episodic/semantic distinction is carried by the
-    /// `HMemOntology` blob (P5.4 dual-axis anchoring): an episodic experience
-    /// carries PKO anchoring (`pko_procedure`, `pko_step`); a semantic fact
-    /// carries DC+BIBO anchoring with no PKO procedure.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — predicate for episodic
-    /// post: returns true iff the ontology blob has a PKO procedure
-    pub fn is_episodic(&self) -> bool {
-        self.ontology
-            .as_ref()
-            .is_some_and(|o| o.pko_procedure.is_some())
-    }
 }
 /// HMem store — backed by a provider-agnostic DatabaseDriver.
 #[derive(Clone)]
@@ -177,23 +163,6 @@ impl HMemStore {
 }
 
 const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
-
-/// SQL predicate selecting semantic h_mems: those whose ontology blob carries no
-/// PKO procedure (`$.pko_procedure IS NULL`). This replaces the deprecated
-/// `perspective IS NULL` discriminator — the episodic/semantic distinction is
-/// now carried by the `HMemOntology` blob (P5.4 dual-axis anchoring), not by the
-/// `perspective` field. A semantic fact anchors to the state axis (DC+BIBO);
-/// an episodic experience anchors to the process axis (PKO). The predicate
-/// tolerates rows with no ontology blob (`json_valid(ontology)` is false) by
-/// treating them as unanchored — the same reading `row_to_h_mem` gives them.
-const SEMANTIC_PREDICATE: &str =
-    "(json_valid(ontology) AND json_extract(ontology, '$.pko_procedure') IS NULL)";
-
-/// SQL predicate selecting episodic h_mems: those whose ontology blob carries
-/// a PKO procedure (`$.pko_procedure IS NOT NULL`). See `SEMANTIC_PREDICATE` for
-/// the discriminator rationale.
-const EPISODIC_PREDICATE: &str =
-    "(json_valid(ontology) AND json_extract(ontology, '$.pko_procedure') IS NOT NULL)";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -410,25 +379,6 @@ impl HMemStore {
             &[DbValue::Text(perspective.to_string())],
         )
     }
-    /// Query episodic h_mems (ontology blob carries a PKO procedure) written by
-    /// a given perspective. This is the consolidation-candidate selector: the
-    /// episodic/semantic distinction is carried by the `HMemOntology` blob
-    /// (P5.4), not by `perspective` — `perspective` scopes by who wrote the
-    /// memory, while the ontology blob classifies it.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — query episodic by perspective
-    /// pre:  perspective is valid
-    /// post: returns Vec of episodic h_mems for this perspective
-    pub fn query_episodic_by_perspective(
-        &self,
-        perspective: &WebID,
-    ) -> Result<Vec<HMem>, HMemError> {
-        self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {EPISODIC_PREDICATE} AND perspective = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
-            &[DbValue::Text(perspective.to_string())],
-        )
-    }
     /// Query all h_mems with a given attribute, regardless of entity.
     /// Query h_mems by attribute.
     ///
@@ -555,59 +505,36 @@ impl HMemStore {
         )?;
         Ok(())
     }
-    /// Semantic h_mems with lowest confidence, ordered ASC. Used by consolidation.
-    /// Query lowest-confidence semantic h_mems.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — low-confidence semantic h_mems
-    /// pre:  limit > 0
-    /// post: returns up to limit h_mems ordered by confidence ascending
-    pub fn query_semantic_lowest_confidence(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
+    /// Query h_mems with lowest confidence, ordered ASC. Used by consolidation.
+    pub fn query_lowest_confidence(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL ORDER BY confidence ASC, valid_from ASC LIMIT ?1"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE valid_to IS NULL ORDER BY confidence ASC, valid_from ASC LIMIT ?1"),
             &[DbValue::Integer(limit as i64)],
         )
     }
-    /// Count semantic h_mems below confidence threshold. Used by consolidation.
-    /// Count semantic h_mems below a confidence threshold.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — count below threshold
-    /// pre:  threshold in [0.0, 1.0]
-    /// post: returns count of h_mems with confidence ≤ threshold
-    pub fn count_semantic_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
+    /// Count h_mems below confidence threshold. Used by consolidation.
+    pub fn count_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
         self.count_rows(
-            &format!("SELECT COUNT(*) FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND confidence <= ?1"),
+            &format!("SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL AND confidence <= ?1"),
             &[DbValue::Real(threshold)],
         )
     }
-    /// Semantic h_mems below confidence threshold, ordered ASC. Used by consolidation.
-    /// Query semantic h_mems below a confidence threshold.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — query below threshold
-    /// pre:  threshold in [0.0, 1.0], limit > 0
-    /// post: returns up to limit h_mems with confidence ≤ threshold
-    pub fn query_semantic_below_confidence(
+    /// Query h_mems below a confidence threshold, ordered ASC. Used by consolidation.
+    pub fn query_below_confidence(
         &self,
         threshold: f64,
         limit: usize,
     ) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE valid_to IS NULL AND confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
             &[DbValue::Real(threshold), DbValue::Integer(limit as i64)],
         )
     }
-    /// Count semantic h_mems (perspective IS NULL, valid_to IS NULL).
-    /// Count all semantic h_mems.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P8\] Motivating: Semantic Grounding — count semantic h_mems
-    /// post: returns total count of semantic h_mems
+    /// Count all h_mems.
     #[must_use = "result must be used"]
-    pub fn count_semantic(&self) -> Result<usize, HMemError> {
+    pub fn count(&self) -> Result<usize, HMemError> {
         self.count_rows(
-            &format!("SELECT COUNT(*) FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL"),
+            "SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL",
             &[],
         )
     }

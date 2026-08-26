@@ -1,8 +1,8 @@
 //! `MemoryPort` adapter — bridges zed's thread completion to hKask memory (D6).
 //!
 //! `RealMemoryPort` — full hKask memory stack. Stores completed turns as
-//! episodic h_mems (Private, perspective = user WebID, PKO-anchored ontology)
-//! and semantic h_mems (Shared, DC-anchored ontology, for curator access).
+//! h_mems (Private, perspective = user WebID, process-axis anchored ontology)
+//! and a shared copy for curator access.
 //! Embeds the user prompt for future retrieval. Used when `HKASK_DB_PATH` +
 //! `HKASK_DB_PASSPHRASE` are configured.
 //!
@@ -47,7 +47,7 @@ pub use alert_escalation::{BridgeAlertEscalationSink, open_curator_escalation_qu
 
 // ── Ingest write path — extracted to `memory/ingest.rs` ────────────────────
 // Deep-module split (bridge-audit BD-04 continuation): the turn write path
-// (episodic + semantic h_mem writes + embedding) is independent of the port
+// (h_mem writes + embedding) is independent of the port
 // orchestration and the recall path that remain here. `write_turn` borrows the
 // port's fields via `WriteContext`; `ingest_turn` keeps only the semaphore permit.
 mod ingest;
@@ -58,13 +58,13 @@ pub(crate) use ingest::WriteContext;
 /// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
 /// Stores each completed turn as:
-/// 1. An episodic h_mem (Private, perspective = user WebID) — the user's
-///    first-person experience record, in the user's own `memory.db`.
-/// 2. A semantic h_mem (Shared) — a curator-accessible copy written to the
-///    **curator's** sovereign `curator.db`, not the user's memory DB. The curator
-///    MCP server reads from the same `curator.db`, so `curator_memory_recall` and
-///    `curator_semantic_search` see turns the agent has observed.
-/// 3. An embedding of the user prompt — for future semantic retrieval and
+/// 1. A user-perspective h_mem (Private) — the user's record in the
+///    user's own `memory.db`.
+/// 2. A shared copy written to the **curator's** sovereign `curator.db`,
+///    not the user's memory DB. The curator
+///    `curator_memory_recall` / `curator_semantic_search` see turns the
+///    agent has observed.
+/// 3. An embedding of the user prompt — for future retrieval and
 ///    context injection, stored in the user's `memory.db`.
 ///
 /// Construction requires a SQLCipher database path and passphrase. When these
@@ -83,15 +83,14 @@ pub struct RealMemoryPort {
     embedding_model: String,
     user_webid: WebID,
     curator_webid: WebID,
-    /// Consolidation service — promotes the user's episodic h_mems to the
-    /// user's semantic memory. `None` when consolidation is disabled
+    /// Consolidation service — prunes low-confidence h_mems and enforces
+    /// the storage budget. `None` when consolidation is disabled
     /// (`consolidation_cadence_secs == 0`).
     consolidation: Option<Arc<MemoryConsolidator>>,
-    /// Consolidation service for the curator's stores — promotes the
-    /// curator's episodic h_mems (curator-perspective first-person turns) to the
-    /// curator's semantic memory, mirroring the user's consolidation loop.
-    /// Rebuilt when the curator stores heal after an open failure; `None`
-    /// when consolidation is disabled OR the curator stores are unavailable.
+    /// Consolidation service for the curator's stores — mirrors the user's
+    /// consolidation loop. Rebuilt when the curator stores heal after an
+    /// open failure; `None` when consolidation is disabled OR the curator
+    /// stores are unavailable.
     ///
     /// Behind an `Arc` so the production consolidation timer can hold a clone
     /// and re-read the current value on each tick — picks up the rebuild that
@@ -103,7 +102,7 @@ pub struct RealMemoryPort {
     /// Consolidation cadence in seconds. `0` disables the trigger for both
     /// the user and curator consolidation services.
     consolidation_cadence_secs: u64,
-    /// Confidence floor for semantic cleanup during consolidation.
+    /// Confidence floor for cleanup during consolidation.
     confidence_floor: f64,
     /// Timestamp of the last consolidation pass. Shared by the test-only
     /// `maybe_consolidate` method and the production timer (via
@@ -132,7 +131,7 @@ pub struct RealMemoryPort {
 impl RealMemoryPort {
     /// Construct a new `RealMemoryPort` from a database path and passphrase.
     ///
-    /// Opens a SQLCipher database, creates episodic and semantic memory stores,
+    /// Opens a SQLCipher database, creates memory stores,
     /// and initializes an embedding router for prompt embedding.
     ///
     /// Returns `Err` if the database cannot be opened.
@@ -261,7 +260,7 @@ impl RealMemoryPort {
     }
 
     /// Check whether the consolidation cadence has elapsed and, if so, fire
-    /// a consolidation pass (episodic → semantic promotion + semantic cleanup).
+    /// a consolidation pass (confidence cleanup + budget pruning).
     ///
     /// This is the test entry point. The cadence-elapsed check lives here (it
     /// reads `self.last_consolidation` under the mutex and fires when
@@ -608,8 +607,7 @@ fn cadence_should_fire(
     }
 }
 
-/// Fire one consolidation pass: user episodic→semantic promotion, then the
-/// curator's mirror pass.
+/// Fire one consolidation pass: user cleanup, then the curator's mirror pass.
 ///
 /// Shared by `maybe_consolidate` (test entry, fires when never-consolidated)
 /// and `start_consolidation_timer` (production, skips the first tick) so the
@@ -705,8 +703,8 @@ impl MemoryPort for RealMemoryPort {
             };
 
             // Delegate the writes to the extracted write path. The semaphore
-            // permit is held across the full write (episodic + semantic +
-            // embedding); `write_turn` borrows the port's fields via `WriteContext`.
+            // permit is held across the full write (h_mem + embedding);
+            // `write_turn` borrows the port's fields via `WriteContext`.
             let ctx = WriteContext {
                 store: &self.store,
                 curator_store: &self.curator_store,
@@ -745,11 +743,9 @@ impl MemoryPort for RealMemoryPort {
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            // The semantic copy of a user turn is written to the curator's
-            // sovereign DB under entity `curator:thread:{id}` — not to the
-            // user's own store, which holds consolidated facts rather than
-            // per-turn records. So the semantic leg queries the curator
-            // store, not `self.store`.
+            // The shared copy of a user turn is written to the curator's
+            // sovereign DB under entity `curator:thread:{id}`. The thread
+            // recall queries both the user's store and the curator's store.
             let curator_store = self.curator_store.get();
             self.recall_thread_from(
                 &self.store,
@@ -785,7 +781,7 @@ impl RealMemoryPort {
     ///
     /// This mirrors `recall_context` but reads from the curator's `MemoryStore`
     /// (`agents/curator/curator.db`) using the
-    /// curator's WebID for perspective-scoped episodic queries. Used by the
+    /// curator's WebID for perspective-scoped queries. Used by the
     /// curator context injector (`BridgeContextInjector::new_curator`) so the
     /// Curator recalls its own memory — a parallel of the user agent's
     /// `BridgeContextInjector`.
@@ -843,10 +839,9 @@ impl RealMemoryPort {
 
     /// Shared recall implementation for both the user and curator stores.
     ///
-    /// `episodic_perspective` scopes the episodic keyword search to the owning
-    /// agent's WebID; `None` skips the episodic leg entirely. `log_label` is
-    /// used in tracing so the user and curator paths are distinguishable in
-    /// logs.
+    /// `perspective` scopes the keyword search to the owning agent's WebID;
+    /// `None` skips the keyword leg entirely. `log_label` is used in tracing
+    /// so the user and curator paths are distinguishable in logs.
     ///
     /// This was previously duplicated verbatim between `recall_context` and
     /// `recall_context_curator`; the duplication was a maintenance hazard
@@ -854,7 +849,7 @@ impl RealMemoryPort {
     async fn recall_from<'a>(
         &'a self,
         store: &'a Arc<MemoryStore>,
-        episodic_perspective: Option<WebID>,
+        perspective: Option<WebID>,
         query: &'a str,
         limit: usize,
         log_label: &'static str,
@@ -866,10 +861,11 @@ impl RealMemoryPort {
         struct Candidate {
             snippet: MemorySnippet,
             h_mem_id: hkask_storage::HMemId,
+            entity: String,
         }
         let mut candidates: Vec<Candidate> = Vec::new();
 
-        // ── 1. Semantic search (embedding KNN) ───────────────────────
+        // ── 1. Embedding search (KNN) ────────────────────────────────
         //
         // Embed the query and search for similar stored embeddings.
         // This finds turns where the user asked similar questions.
@@ -885,8 +881,8 @@ impl RealMemoryPort {
             .await;
 
         // A failed embed degrades recall to keyword-only — surface it so
-        // the operator can distinguish "no semantic memory" from "embedding
-        // endpoint down". Mirrors the ingest_turn failure branches above.
+        // the operator can distinguish "no memory found" from "embedding
+        // endpoint down".
         let vectors = match vectors {
             Ok(Ok(vectors)) => vectors,
             Ok(Err(e)) => {
@@ -894,7 +890,7 @@ impl RealMemoryPort {
                     target: "reg.memory",
                     error = %e,
                     label = log_label,
-                    "Failed to embed recall query — semantic recall skipped for this turn"
+                    "Failed to embed recall query — embedding search skipped for this turn"
                 );
                 Vec::new()
             }
@@ -903,7 +899,7 @@ impl RealMemoryPort {
                     target: "reg.memory",
                     error = %e,
                     label = log_label,
-                    "Embedding task panicked — semantic recall skipped for this turn"
+                    "Embedding task panicked — embedding search skipped for this turn"
                 );
                 Vec::new()
             }
@@ -923,11 +919,11 @@ impl RealMemoryPort {
                                     candidates.push(Candidate {
                                         snippet: MemorySnippet {
                                             text,
-                                            source: "semantic".to_string(),
                                             confidence: h_mem.confidence.value(),
                                             relevance_score: 1.0 - result.distance,
                                         },
                                         h_mem_id: h_mem.id,
+                                        entity: entity_ref.clone(),
                                     });
                                 }
                             }
@@ -939,15 +935,15 @@ impl RealMemoryPort {
                         target: "reg.memory",
                         error = %e,
                         label = log_label,
-                        "Semantic search failed during recall"
+                        "Embedding search failed during recall"
                     );
                 }
             }
         }
 
-        // ── 2. Episodic search (keyword overlap) ─────────────────────
+        // ── 2. Keyword search (entity prefix + word overlap) ────────
         //
-        // Load episodic h_mems for the agent's chat threads ONCE, then
+        // Load h_mems for the agent's chat threads ONCE, then
         // filter by keyword overlap in memory. The previous implementation
         // re-queried the store for each query word (5x) using the same
         // fixed entity string "chat:thread:" — a redundant N+1 scan that
@@ -963,13 +959,13 @@ impl RealMemoryPort {
             .collect();
 
         if !query_words.is_empty()
-            && let Some(episodic_perspective) = episodic_perspective
+            && let Some(perspective) = perspective
         {
-            // Use a prefix query to load all chat:thread:* episodic h_mems
+            // Use a prefix query to load all chat:thread:* h_mems
             // in a single SQL call. The previous implementation queried
             // the exact entity "chat:thread:" (no thread_id suffix), which
             // never matched stored entities "chat:thread:<thread_id>" —
-            // so the episodic keyword search was dead code. Combined with
+            // so the keyword search was dead code. Combined with
             // the N+1 loop (one query per query word), this was both broken
             // and a write storm.
             //
@@ -982,7 +978,7 @@ impl RealMemoryPort {
             let recall_budget = limit.saturating_mul(10).max(50);
             if let Ok(h_mems) = store.query_for_deduped_untouched_by_prefix(
                 &entity_prefix,
-                episodic_perspective,
+                perspective,
                 recall_budget,
             ) {
                 for h_mem in h_mems {
@@ -1002,21 +998,32 @@ impl RealMemoryPort {
                     candidates.push(Candidate {
                         snippet: MemorySnippet {
                             text,
-                            source: "episodic".to_string(),
                             confidence: h_mem.confidence.value(),
                             relevance_score: 0.5, // Base relevance for keyword match
                         },
                         h_mem_id: h_mem.id,
+                        entity: h_mem.entity.clone(),
                     });
                 }
             }
         }
 
-        // ── 3. Sort by relevance and truncate ─────────────────────────
+        // ── 3. Sort by combined relevance × confidence and truncate ─────
+        //
+        // Confidence is the outcome-calibrated signal (Dunning's double
+        // curse: the model can't self-evaluate, but confidence that's been
+        // calibrated by outcomes IS meaningful). Using it as a ranking
+        // multiplier — not just a threshold filter — means a memory that
+        // has been recalled many times and never contradicted outranks a
+        // fresh, untested memory with similar embedding similarity.
+        //
+        // Corpus evidence: Dunning `138299529:5` (double curse), Tetlock
+        // `Superforecasting_tetlock:71` (Brier = forecast accuracy).
         candidates.sort_by(|a, b| {
-            b.snippet
-                .relevance_score
-                .partial_cmp(&a.snippet.relevance_score)
+            let a_score = a.snippet.relevance_score * a.snippet.confidence;
+            let b_score = b.snippet.relevance_score * b.snippet.confidence;
+            b_score
+                .partial_cmp(&a_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates.truncate(limit);
@@ -1057,37 +1064,28 @@ impl RealMemoryPort {
     /// stores. Mirrors `recall_from` but uses exact-entity queries instead of
     /// content-similarity / keyword overlap.
     ///
-    /// The episodic entity is `chat:thread:{thread_id}` (scoped by `perspective`),
-    /// and the semantic entity is `curator:thread:{thread_id}`. This is the
-    /// correct recall path for `inject_context`'s thread-scoped half — the
-    /// previous implementation passed the `thread_id` UUID as the query to
-    /// `recall_context`, which never matched stored turn text (the stored
-    /// embeddings are of `user_input`, not the thread_id), so thread-scoped
-    /// recall was dead code for both the user and curator injectors.
+    /// The user entity is `chat:thread:{thread_id}` (scoped by `perspective`),
+    /// and the curator copy entity is `curator:thread:{thread_id}`.
     async fn recall_thread_from<'a>(
         &'a self,
-        episodic_store: &'a Arc<MemoryStore>,
-        semantic_store: Option<&'a Arc<MemoryStore>>,
+        primary_store: &'a Arc<MemoryStore>,
+        curator_store: Option<&'a Arc<MemoryStore>>,
         perspective: WebID,
         thread_id: &'a str,
         limit: usize,
         log_label: &'static str,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
-        enum RecallSource {
-            Episodic,
-            Semantic,
-        }
         struct Candidate {
             snippet: MemorySnippet,
             h_mem_id: hkask_storage::HMemId,
-            source: RecallSource,
+            touch_store_idx: usize, // 0 = primary, 1 = curator
         }
         let mut candidates: Vec<Candidate> = Vec::new();
 
-        // ── 1. Episodic: exact entity match, perspective-scoped ─────
-        let episodic_entity = format!("chat:thread:{thread_id}");
+        // ── 1. User store: exact entity match, perspective-scoped ────
+        let user_entity = format!("chat:thread:{thread_id}");
         if let Ok(h_mems) =
-            episodic_store.query_for_deduped_untouched(&episodic_entity, perspective)
+            primary_store.query_for_deduped_untouched(&user_entity, perspective)
         {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
@@ -1097,60 +1095,51 @@ impl RealMemoryPort {
                 candidates.push(Candidate {
                     snippet: MemorySnippet {
                         text,
-                        source: "episodic".to_string(),
                         confidence: h_mem.confidence.value(),
                         relevance_score: 1.0,
                     },
                     h_mem_id: h_mem.id,
-                    source: RecallSource::Episodic,
+                    touch_store_idx: 0,
                 });
             }
         }
 
-        // ── 2. Semantic: exact entity match (shared copy in curator DB) ─
-        // The `curator:thread:{thread_id}` entity is written to the
-        // curator's sovereign DB by both user and curator ingestion paths.
-        // `semantic_store` here is the curator store for both callers — see
-        // the `recall_thread` and `recall_thread_curator` wrappers.
-        let semantic_entity = format!("curator:thread:{thread_id}");
-        if let Some(semantic) = semantic_store
-            && let Ok(h_mems) = semantic.query_deduped_untouched(&semantic_entity)
+        // ── 2. Curator store: exact entity match (shared copy) ──────
+        let curator_entity = format!("curator:thread:{thread_id}");
+        if let Some(curator) = curator_store
+            && let Ok(h_mems) = curator.query_deduped_untouched(&curator_entity)
         {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
                 if text.is_empty() {
                     continue;
                 }
-                // Dedup against episodic by text
+                // Dedup against user store by text
                 if candidates.iter().any(|c| c.snippet.text == text) {
                     continue;
                 }
                 candidates.push(Candidate {
                     snippet: MemorySnippet {
                         text,
-                        source: "semantic".to_string(),
                         confidence: h_mem.confidence.value(),
                         relevance_score: 1.0,
                     },
                     h_mem_id: h_mem.id,
-                    source: RecallSource::Semantic,
+                    touch_store_idx: 1,
                 });
             }
         }
 
         // ── 3. Truncate to limit ────────────────────────────────────
-        // `query_for_deduped_untouched` and `query_deduped_untouched`
-        // both return most-recent-first, so the candidates are already in
-        // recency order. All candidates have relevance_score 1.0 (exact
-        // entity match), so no sort is needed — just truncate.
+        // Both queries return most-recent-first, so the candidates are
+        // already in recency order. All candidates have relevance_score 1.0
+        // (exact entity match), so no sort is needed — just truncate.
         candidates.truncate(limit);
 
         // ── 4. Touch only the injected h_mems ────────────────────────
+        let stores: [&Arc<MemoryStore>; 2] = [primary_store, curator_store.unwrap_or(primary_store)];
         for c in &candidates {
-            let touch_store: &Arc<MemoryStore> = match c.source {
-                RecallSource::Episodic => episodic_store,
-                RecallSource::Semantic => semantic_store.unwrap_or(episodic_store),
-            };
+            let touch_store = stores[c.touch_store_idx];
             let result: Result<(), Box<dyn std::error::Error>> =
                 touch_store.touch_recall(&c.h_mem_id).map_err(Into::into);
             if let Err(e) = result {
@@ -1881,7 +1870,108 @@ pub(crate) mod tests {
         );
     }
 
-    /// Pin that `recall_context` touches `recalled_at` only on h_mems that
+    /// Confidence-weighted ranking test (Priority 1): when two memories
+    /// have similar embedding relevance but different confidence scores,
+    /// the higher-confidence memory should rank first. Before the fix,
+    /// the sort used `relevance_score` only — confidence was a threshold
+    /// filter, not a ranking signal.
+    ///
+    /// Grounding: Dunning's double curse (`138299529:5`) — the model
+    /// can't self-evaluate, but confidence calibrated by outcomes IS
+    /// meaningful. Tetlock (`Superforecasting_tetlock:71`) — confidence
+    /// is a forecast. Using it as a ranking multiplier means a
+    /// well-calibrated memory outranks an untested one.
+    #[tokio::test]
+    async fn recall_context_ranks_by_confidence_weighted_relevance() {
+        // Constant embedding: both h_mems map to the same unit vector, so
+        // they have identical relevance_score (1.0 - distance = 1.0). The
+        // only differentiator is confidence.
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+        let webid = port.user_webid;
+
+        // Store embeddings under the same entity_ref the recall path uses
+        // for KNN lookup. `search_similar` returns entity_refs, then
+        // `query_deduped_untouched(entity_ref)` looks up h_mems by entity.
+        // Both h_mems share the same entity, so both embeddings point to
+        // "test:ranking" — but we need two distinct embedding entries for
+        // KNN to return both. Use the h_mem IDs as distinct embedding keys
+        // but set the entity on the h_mem to match.
+        //
+        // Actually, the embedding store uses entity_ref as the key, and
+        // query_deduped_untouched queries by entity. So we need the
+        // embedding's entity_ref to equal the h_mem's entity. But two
+        // embeddings can't share the same key. Instead, store each h_mem
+        // under a distinct entity and embed both entities.
+        let high_conf = hkask_storage::HMem::new(
+            "test:ranking:high",
+            "fact",
+            serde_json::json!("alpha"),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.99));
+        let low_conf = hkask_storage::HMem::new(
+            "test:ranking:low",
+            "fact",
+            serde_json::json!("beta"),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.51));
+
+        // Store embeddings under the entity strings (the recall path
+        // queries by entity_ref from KNN results). Both use the same
+        // unit vector so both have identical relevance_score (distance 0).
+        let unit_vec = {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        };
+        port.store.store_embedding(
+            "test:ranking:high",
+            &unit_vec,
+            "test-model",
+        )
+        .expect("store embedding high");
+        port.store.store_embedding(
+            "test:ranking:low",
+            &unit_vec,
+            "test-model",
+        )
+        .expect("store embedding low");
+
+        // Store the h_mems.
+        port.store.store(high_conf).expect("store high");
+        port.store.store(low_conf).expect("store low");
+
+        // Recall with a query that matches both (constant embedding →
+        // both at distance 0 → both have relevance_score 1.0).
+        let snippets = port
+            .recall_context("matching query", 10)
+            .await
+            .expect("recall succeeds");
+
+        // Both should be recalled.
+        assert_eq!(
+            snippets.len(),
+            2,
+            "both h_mems should be recalled, got: {snippets:?}"
+        );
+
+        // The high-confidence one ("alpha") should rank first.
+        assert_eq!(
+            snippets[0].text, "alpha",
+            "higher-confidence memory should rank first, got order: {:?}",
+            snippets.iter().map(|s| &s.text).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            snippets[1].text, "beta",
+            "lower-confidence memory should rank second"
+        );
+    }
     /// survive the limit, not on every recalled candidate. The previous
     /// implementation touched every deduped h_mem inside `query_for_deduped`,
     /// even ones filtered out by `recall_min_confidence` in the injector.

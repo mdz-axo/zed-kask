@@ -96,3 +96,93 @@ pub struct ReportSkillUseIssueRequest {
     /// "schema_mismatch").
     pub failure_type: Option<String>,
 }
+
+// ── Curator memory edit tools (Priority 5) ───────────────────────────────
+//
+// These tools give the curator agent write access to its own memory, with
+// evidence-grounding and confidence-floor constraints. User threads cannot
+// write to memory directly — only the curator (the one agent with a feedback
+// loop). See `kask/docs/plans/memory-system-improvements.md` Priority 5.
+//
+// Grounding: Dunning's Cassandra quandary (`138299529:16-17`) — poor
+// performers can't evaluate which memories are worth writing. MemGPT (Packer
+// et al., 2023) — OS-style memory management with permission boundaries.
+
+/// Insert a new semantic memory into the curator's store.
+///
+/// The memory starts at confidence 0.5 (the floor — NOT the model's
+/// self-assessed confidence). Confidence is calibrated by subsequent
+/// Brier-scored outcomes, not by self-assessment.
+///
+/// Evidence-grounding: the `evidence_h_mem_id` field must cite a specific
+/// episodic h_mem ID that supports this memory. The tool rejects inserts
+/// without a citation. This is Dunning's structured-reflection principle:
+/// the model must ground its assertion in evidence, not free-associate.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryInsertRequest {
+    /// The entity (subject) of the memory — e.g. "company:AAPL", "skill:superforecasting".
+    pub entity: String,
+    /// The attribute (predicate) of the memory — e.g. "revenue_trend", "calibration_gap".
+    pub attribute: String,
+    /// The value (object) of the memory, as a JSON string.
+    pub value: serde_json::Value,
+    /// The episodic h_mem ID that supports this memory (evidence-grounding
+    /// requirement). The tool rejects inserts without a citation.
+    pub evidence_h_mem_id: String,
+    /// Optional: a human-readable note explaining the reasoning behind this
+    /// memory. Stored in the h_mem's value as a `_note` field.
+    pub note: Option<String>,
+}
+
+/// Update an existing memory's confidence via Bayesian combination.
+///
+/// The new confidence is combined with the existing confidence using
+/// log-odds (Bayesian) pooling — not replacement. This means:
+/// - Two independent sources saying p=0.8 → combined ≈ 0.94 (consensus strengthens)
+/// - One saying p=0.8 and another p=0.2 → combined = 0.5 (conflict dampens)
+///
+/// This is the calibration mechanism: confidence is adjusted by outcome
+/// feedback, not by self-assessment.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryUpdateRequest {
+    /// The h_mem ID to update.
+    pub h_mem_id: String,
+    /// The new confidence value (0.0–1.0). Will be Bayesian-combined with
+    /// the existing confidence, not replaced.
+    pub new_confidence: f64,
+    /// Optional: a new value to replace the existing one (bitemporal update —
+    /// the old version is closed, a new version is inserted).
+    pub new_value: Option<serde_json::Value>,
+    /// Optional: reason for the confidence update (e.g. "Brier score 0.12 on
+    /// resolved forecast", "contradicted by newer observation").
+    pub reason: Option<String>,
+}
+
+/// Resolve a contradiction between two or more memories.
+///
+/// This is the therapy process tool — it resolves cognitive dissonance in
+/// the memory store by expiring, updating, or deleting contradictory h_mems.
+/// Requires operator approval (the curator proposes; the operator approves).
+///
+/// Grounding: Festinger's three dissonance resolution strategies
+/// (`Universal_Principles_of_Design:39`): reduce importance (lower
+/// confidence), add consonant (insert reconciling memory), remove dissonant
+/// (expire/delete).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryResolveContradictionRequest {
+    /// The h_mem IDs involved in the contradiction.
+    pub h_mem_ids: Vec<String>,
+    /// The resolution strategy: "expire" (soft-delete the lower-confidence
+    /// one), "update_confidence" (lower confidence on the contradicted one),
+    /// or "delete" (hard-delete — use sparingly).
+    pub strategy: String,
+    /// The h_mem ID to act on (the one to expire/update/delete). For
+    /// "update_confidence", the new confidence value must be provided.
+    pub target_h_mem_id: String,
+    /// For "update_confidence": the new confidence value. Ignored for other
+    /// strategies.
+    pub new_confidence: Option<f64>,
+    /// Evidence-grounding: the reason for this resolution (must cite the
+    /// contradiction observed).
+    pub reason: String,
+}

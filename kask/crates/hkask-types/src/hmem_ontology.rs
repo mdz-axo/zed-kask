@@ -27,10 +27,10 @@ use crate::Dimension;
 /// `ontology_tags` map lets domain ontologies annotate h_mems without schema
 /// changes — the same pattern as `corpus::TaggedChunk::ontology_tags`.
 ///
-/// Semantic h_mems (facts) anchor primarily to the state axis (DC+BIBO):
-/// `dc_type`, `dc_subject`, `dc_source`. Episodic h_mems (experiences) anchor
-/// primarily to the process axis (PKO): `pko_procedure`, `pko_step`. Both
-/// carry 5W1H dimensions as universal ground.
+/// Every h_mem carries both a state identity (DC+BIBO — the noun) and a
+/// process identity (PKO — the verb). Both axes are optional — a chat turn
+/// anchors primarily to the process axis (PKO); a fact anchors primarily to
+/// the state axis (DC+BIBO). The 5W1H dimensions are universal ground.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct HMemOntology {
     /// 5W1H interrogatory dimensions (Who/What/When/Where/Why/How).
@@ -46,9 +46,8 @@ pub struct HMemOntology {
     #[serde(default)]
     pub dc_type: String,
 
-    /// Dublin Core subject — the concepts as ontology terms. The state-axis
-    /// subject classification. For semantic facts, this is the topic; for
-    /// episodic experiences, this is what the experience was about.
+    /// Dublin Core subject — the concepts as ontology terms. The topic of
+    /// this h_mem.
     #[serde(default)]
     pub dc_subject: Vec<String>,
 
@@ -60,15 +59,14 @@ pub struct HMemOntology {
 
     // ── Process axis: PKO (the verb — "how did this come to be?") ────────
     /// PKO procedure identifier — which procedure this h_mem is a step of.
-    /// For episodic h_mems, this is the process the experience belongs to
-    /// (e.g., "diagnose-bug-123", "corpus_ingest_qa"). `None` for semantic
-    /// facts that aren't part of a procedure.
+    /// For a chat turn, this is the process the turn belongs to
+    /// (e.g., "chat"). `None` for h_mems that aren't part of a procedure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pko_procedure: Option<String>,
 
     /// PKO step identifier — which step of the procedure this h_mem is.
-    /// For episodic h_mems, this is the specific step (e.g., "reproduce",
-    /// "hypothesize", "fix"). `None` for semantic facts.
+    /// For a chat turn, this is the specific step (e.g., "turn").
+    /// `None` for h_mems that aren't part of a procedure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pko_step: Option<String>,
 
@@ -85,33 +83,9 @@ pub struct HMemOntology {
 }
 
 impl HMemOntology {
-    /// Create a semantic-fact ontology (state-axis anchored).
-    ///
-    /// Semantic h_mems are facts: Dublin Core type + subject + source, with
-    /// 5W1H dimensions as universal ground. No PKO procedure/step (facts
-    /// aren't steps in a process).
-    pub fn semantic(
-        dc_type: impl Into<String>,
-        dc_subject: Vec<String>,
-        dc_source: impl Into<String>,
-    ) -> Self {
-        Self {
-            dimensions: vec![Dimension::What.as_str().to_string()],
-            dc_type: dc_type.into(),
-            dc_subject,
-            dc_source: dc_source.into(),
-            pko_procedure: None,
-            pko_step: None,
-            ontology_tags: HashMap::new(),
-        }
-    }
-
-    /// Create an episodic-experience ontology (process-axis anchored).
-    ///
-    /// Episodic h_mems are experiences: PKO procedure + step, with 5W1H
-    /// dimensions as universal ground. The DC type defaults to
-    /// `pko:StepExecution`; the DC source carries the session/provenance.
-    pub fn episodic(
+    /// Create a process-axis anchored ontology (PKO procedure + step).
+    /// Used for chat turns and other process steps.
+    pub fn process(
         pko_procedure: impl Into<String>,
         pko_step: impl Into<String>,
         dc_source: impl Into<String>,
@@ -126,6 +100,24 @@ impl HMemOntology {
             dc_source: dc_source.into(),
             pko_procedure: Some(pko_procedure.into()),
             pko_step: Some(pko_step.into()),
+            ontology_tags: HashMap::new(),
+        }
+    }
+
+    /// Create a state-axis anchored ontology (DC+BIBO type + subject).
+    /// Used for facts and documents.
+    pub fn state(
+        dc_type: impl Into<String>,
+        dc_subject: Vec<String>,
+        dc_source: impl Into<String>,
+    ) -> Self {
+        Self {
+            dimensions: vec![Dimension::What.as_str().to_string()],
+            dc_type: dc_type.into(),
+            dc_subject,
+            dc_source: dc_source.into(),
+            pko_procedure: None,
+            pko_step: None,
             ontology_tags: HashMap::new(),
         }
     }
@@ -150,27 +142,6 @@ impl HMemOntology {
             .or_default()
             .push(concept.into());
         self
-    }
-
-    /// Convert an episodic ontology (PKO-anchored) to a semantic ontology
-    /// (DC+BIBO state-axis anchored). Drops the PKO procedure/step and
-    /// shifts the 5W1H dimension from `How`/`When` to `What`. Retains any
-    /// DC fields and open-world tags from the source ontology so provenance
-    /// and domain annotations survive the promotion.
-    ///
-    /// The consolidator calls this when promoting an episodic h_mem to a
-    /// semantic fact: the ontology blob is re-tagged from process-axis to
-    /// state-axis anchoring, and visibility is set to Shared separately.
-    pub fn to_semantic(&self) -> Self {
-        Self {
-            dimensions: vec![Dimension::What.as_str().to_string()],
-            dc_type: self.dc_type.clone(),
-            dc_subject: self.dc_subject.clone(),
-            dc_source: self.dc_source.clone(),
-            pko_procedure: None,
-            pko_step: None,
-            ontology_tags: self.ontology_tags.clone(),
-        }
     }
 
     /// Serialize to a JSON string for storage in the `ontology` column.

@@ -8,9 +8,7 @@
 //! The `TurnRecord` schema (`{"user_input": ..., "agent_response": ...}`)
 //! is the write-side contract for the h_mem `value` field. The read side
 //! (recall) reads `h_mem.value` as a raw JSON value — there is no typed
-//! projection struct on the read side. The episodic/semantic distinction is
-//! carried by the `HMemOntology` blob on each h_mem (P5.4 dual-axis anchoring),
-//! not by a separate read-side type.
+//! projection struct on the read side.
 //!
 //! The initial bridge implementation is a logging no-op — the full hKask
 //! memory stack (SQLCipher storage, consolidation) is deferred until the
@@ -57,8 +55,6 @@ impl TurnRecord {
     /// becomes the h_mem `entity`, and `"chatted"` is the h_mem `attribute`.
     /// `agent_id` is included when set so the stored record identifies which
     /// agent produced the turn — useful for the curator's own memory recall.
-    /// The episodic/semantic distinction is carried by the `HMemOntology` blob
-    /// on the h_mem (P5.4), not by this value's shape.
     pub fn to_chat_turn_value(&self) -> serde_json::Value {
         let mut v = serde_json::json!({
             "user_input": self.user_input,
@@ -74,14 +70,11 @@ impl TurnRecord {
 /// A recalled memory snippet for context injection.
 ///
 /// Lightweight representation of a stored memory — just enough to format
-/// into a prompt. The `source` field identifies where the memory came from
-/// (e.g., "episodic", "semantic", "embedding_search") for debugging.
+/// into a prompt.
 #[derive(Debug, Clone)]
 pub struct MemorySnippet {
     /// The text content of the memory (e.g., a chat turn, a fact, a summary).
     pub text: String,
-    /// Where the memory was recalled from (e.g., "episodic", "semantic").
-    pub source: String,
     /// The memory's confidence score (0.0–1.0), decayed by time since recall.
     pub confidence: f64,
     /// Relevance score to the query (0.0–1.0), computed by the recall method.
@@ -106,12 +99,13 @@ pub(crate) type MemoryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// (standalone or first-run), ingestion is a no-op.
 ///
 /// The ingestion pattern mirrors hKask's `DaemonHandler::store_experience`:
-/// - Episodic: stored as a private, perspective-scoped h_mem with entity=thread_id,
+/// - Stored as a private, perspective-scoped h_mem with entity=thread_id,
 ///   attribute="chatted", value=`TurnRecord::to_chat_turn_value()`
-/// - Semantic: stored as a shared h_mem (requires consolidation capability)
+/// - A shared copy is written to the curator's DB so the curator can recall
+///   all turns it observed.
 /// - Confidence: derived from experience classification (deferred)
 pub trait MemoryPort: Send + Sync {
-    /// Ingest a completed turn into episodic (and optionally semantic) memory.
+    /// Ingest a completed turn into memory.
     ///
     /// This is fire-and-forget from the caller's perspective — the memory system
     /// handles classification, confidence scoring, and consolidation asynchronously.
@@ -120,10 +114,10 @@ pub trait MemoryPort: Send + Sync {
     /// Recall memory snippets relevant to a query for context injection.
     ///
     /// The implementation should:
-    /// 1. Embed the query and search semantic memory (KNN)
-    /// 2. Query episodic memory by entity/keyword overlap
-    /// 3. Merge, dedup, and score results by relevance
-    /// 4. Return up to `limit` snippets, sorted by relevance descending
+    /// 1. Embed the query and search by embedding similarity (KNN)
+    /// 2. Query by entity/keyword overlap
+    /// 3. Merge, dedup, and score results by relevance × confidence
+    /// 4. Return up to `limit` snippets, sorted by score descending
     ///
     /// The default implementation returns an empty vec — graceful degradation
     /// when no memory store is configured.
@@ -139,10 +133,9 @@ pub trait MemoryPort: Send + Sync {
     ///
     /// Unlike `recall_context` (which recalls by content similarity / keyword
     /// overlap), this recalls by exact entity match — returning every h_mem
-    /// stored under the thread's entity (`chat:thread:{thread_id}` for episodic,
-    /// `curator:thread:{thread_id}` for the semantic copy). Used by the
-    /// context injector's `inject_context` to load a thread's prior
-    /// turns per turn (fresh, not session-cached).
+    /// stored under the thread's entity. Used by the context injector's
+    /// `inject_context` to load a thread's prior turns per turn (fresh, not
+    /// session-cached).
     ///
     /// The default implementation returns an empty vec — graceful degradation
     /// when no memory store is configured.

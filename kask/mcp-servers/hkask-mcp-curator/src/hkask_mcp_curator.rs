@@ -811,6 +811,275 @@ impl CuratorServer {
         })
         .await
     }
+
+    // ── Curator memory edit tools (Priority 5) ───────────────────────────
+    //
+    // These tools give the curator agent write access to its own memory,
+    // with evidence-grounding and confidence-floor constraints. User
+    // threads cannot write to memory directly — only the curator (the one
+    // agent with a feedback loop).
+    //
+    // Grounding: Dunning's Cassandra quandary (`138299529:16-17`) — poor
+    // performers can't evaluate which memories are worth writing. MemGPT
+    // (Packer et al., 2023) — OS-style memory management with permission
+    // boundaries.
+
+    /// Insert a new semantic memory into the curator's store.
+    ///
+    /// The memory starts at confidence 0.5 (the floor — NOT the model's
+    /// self-assessed confidence). Confidence is calibrated by subsequent
+    /// Brier-scored outcomes, not by self-assessment.
+    ///
+    /// Evidence-grounding: the `evidence_h_mem_id` field must cite a
+    /// specific episodic h_mem ID that supports this memory. The tool
+    /// rejects inserts without a citation.
+    #[tool(
+        description = "Insert a new semantic memory into the curator's store. Curator-only. Requires evidence citation (episodic h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
+    )]
+    pub async fn memory_insert(
+        &self,
+        Parameters(req): Parameters<MemoryInsertRequest>,
+    ) -> String {
+        execute_tool(self, "memory_insert", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            // Parse the evidence h_mem ID.
+            let evidence_id = req
+                .evidence_h_mem_id
+                .parse::<hkask_storage::HMemId>()
+                .map_err(|e| {
+                    McpToolError::invalid_argument(format!(
+                        "Invalid evidence_h_mem_id '{id}': {e}",
+                        id = req.evidence_h_mem_id
+                    ))
+                })?;
+
+            // Verify the evidence h_mem exists.
+            let evidence = memory
+                .query_deduped_untouched(&evidence_id.to_string())
+                .map_err(|e| {
+                    map_memory_store_error(e, "Failed to verify evidence h_mem")
+                })?;
+            if evidence.is_empty() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Evidence h_mem '{id}' not found — memory_insert requires an existing episodic citation",
+                    id = req.evidence_h_mem_id
+                )));
+            }
+
+            // Build the h_mem with confidence floor 0.5.
+            let mut value = req.value;
+            if let Some(note) = &req.note {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
+                }
+            }
+            let h_mem = hkask_storage::HMem::new(
+                &req.entity,
+                &req.attribute,
+                value,
+                self.webid,
+            )
+            .with_confidence(hkask_types::Confidence::new(0.5));
+
+            memory
+                .store(h_mem)
+                .map_err(|e| {
+                    map_memory_store_error(e, "Failed to store curator memory")
+                })?;
+
+            RegulationSpan::Curation.emit("memory_inserted");
+
+            Ok(json!({
+                "inserted": true,
+                "entity": req.entity,
+                "attribute": req.attribute,
+                "confidence": 0.5,
+                "evidence_h_mem_id": req.evidence_h_mem_id,
+                "guidance": "Memory stored at confidence 0.5. Use memory_update to adjust confidence after outcome observation. Use curator_memory_recall with this entity to retrieve."
+            }))
+        })
+        .await
+    }
+
+    /// Update an existing memory's confidence via Bayesian combination.
+    ///
+    /// The new confidence is combined with the existing confidence using
+    /// log-odds (Bayesian) pooling — not replacement.
+    #[tool(
+        description = "Update an existing memory's confidence via Bayesian combination. Curator-only. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
+    )]
+    pub async fn memory_update(
+        &self,
+        Parameters(req): Parameters<MemoryUpdateRequest>,
+    ) -> String {
+        execute_tool(self, "memory_update", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            let h_mem_id = req
+                .h_mem_id
+                .parse::<hkask_storage::HMemId>()
+                .map_err(|e| {
+                    McpToolError::invalid_argument(format!(
+                        "Invalid h_mem_id '{id}': {e}",
+                        id = req.h_mem_id
+                    ))
+                })?;
+
+            // Fetch the existing h_mem to get its current value and confidence.
+            let existing = memory
+                .query_deduped_untouched(&h_mem_id.to_string())
+                .map_err(|e| {
+                    map_memory_store_error(e, "Failed to fetch h_mem for update")
+                })?;
+            let existing_h_mem = existing.into_iter().next().ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "h_mem '{id}' not found",
+                    id = req.h_mem_id
+                ))
+            })?;
+
+            // Bayesian-combine the new confidence with the existing one.
+            let new_confidence_raw = hkask_types::Confidence::new(req.new_confidence);
+            let combined = hkask_memory::combine_confidences(
+                existing_h_mem.confidence,
+                new_confidence_raw,
+            );
+
+            // Use the new value if provided, otherwise keep the existing.
+            let value = req.new_value.unwrap_or_else(|| existing_h_mem.value.clone());
+
+            memory
+                .update_confidence(&h_mem_id, value, combined)
+                .map_err(|e| {
+                    map_memory_store_error(e, "Failed to update h_mem confidence")
+                })?;
+
+            RegulationSpan::Curation.emit("memory_updated");
+
+            Ok(json!({
+                "updated": true,
+                "h_mem_id": req.h_mem_id,
+                "previous_confidence": existing_h_mem.confidence.value(),
+                "input_confidence": req.new_confidence,
+                "combined_confidence": combined.value(),
+                "reason": req.reason,
+                "guidance": "Confidence updated via Bayesian combination. Use curator_memory_recall to verify."
+            }))
+        })
+        .await
+    }
+
+    /// Resolve a contradiction between two or more memories.
+    ///
+    /// This is the therapy process tool — it resolves cognitive dissonance
+    /// in the memory store by expiring, updating, or deleting contradictory
+    /// h_mems.
+    #[tool(
+        description = "Resolve a contradiction between memories. Curator-only. Strategies: 'expire' (soft-delete), 'update_confidence' (lower confidence), 'delete' (hard-delete). Requires a reason citing the contradiction."
+    )]
+    pub async fn memory_resolve_contradiction(
+        &self,
+        Parameters(req): Parameters<MemoryResolveContradictionRequest>,
+    ) -> String {
+        execute_tool(self, "memory_resolve_contradiction", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            let target_id = req
+                .target_h_mem_id
+                .parse::<hkask_storage::HMemId>()
+                .map_err(|e| {
+                    McpToolError::invalid_argument(format!(
+                        "Invalid target_h_mem_id '{id}': {e}",
+                        id = req.target_h_mem_id
+                    ))
+                })?;
+
+            // Verify the target exists.
+            let target = memory
+                .query_deduped_untouched(&target_id.to_string())
+                .map_err(|e| {
+                    map_memory_store_error(e, "Failed to fetch target h_mem")
+                })?;
+            if target.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "Target h_mem '{id}' not found",
+                    id = req.target_h_mem_id
+                )));
+            }
+
+            match req.strategy.as_str() {
+                "expire" => {
+                    memory
+                        .expire_h_mem(&target_id)
+                        .map_err(|e| {
+                            map_memory_store_error(e, "Failed to expire h_mem")
+                        })?;
+                    RegulationSpan::Curation.emit("contradiction_expired");
+                    Ok(json!({
+                        "resolved": true,
+                        "strategy": "expire",
+                        "target_h_mem_id": req.target_h_mem_id,
+                        "contradicting_h_mem_ids": req.h_mem_ids,
+                        "reason": req.reason
+                    }))
+                }
+                "update_confidence" => {
+                    let new_confidence = req
+                        .new_confidence
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(
+                                "new_confidence is required for 'update_confidence' strategy",
+                            )
+                        })?;
+                    let target_h_mem = target.into_iter().next().ok_or_else(|| {
+                        McpToolError::not_found("Target h_mem disappeared between fetch and update")
+                    })?;
+                    let confidence = hkask_types::Confidence::new(new_confidence);
+                    memory
+                        .update_confidence(
+                            &target_id,
+                            target_h_mem.value,
+                            confidence,
+                        )
+                        .map_err(|e| {
+                            map_memory_store_error(e, "Failed to update h_mem confidence")
+                        })?;
+                    RegulationSpan::Curation.emit("contradiction_confidence_lowered");
+                    Ok(json!({
+                        "resolved": true,
+                        "strategy": "update_confidence",
+                        "target_h_mem_id": req.target_h_mem_id,
+                        "new_confidence": new_confidence,
+                        "contradicting_h_mem_ids": req.h_mem_ids,
+                        "reason": req.reason
+                    }))
+                }
+                "delete" => {
+                    memory
+                        .delete_h_mem(&target_id)
+                        .map_err(|e| {
+                            map_memory_store_error(e, "Failed to delete h_mem")
+                        })?;
+                    RegulationSpan::Curation.emit("contradiction_deleted");
+                    Ok(json!({
+                        "resolved": true,
+                        "strategy": "delete",
+                        "target_h_mem_id": req.target_h_mem_id,
+                        "contradicting_h_mem_ids": req.h_mem_ids,
+                        "reason": req.reason
+                    }))
+                }
+                other => Err(McpToolError::invalid_argument(format!(
+                    "Unknown strategy '{other}' — must be one of: expire, update_confidence, delete"
+                ))),
+            }
+        })
+        .await
+    }
 }
 
 // ── Server startup ─────────────────────────────────────────────────────

@@ -281,7 +281,30 @@ impl ContextInjector for BridgeContextInjector {
             );
 
             if total_count == 0 {
-                return Vec::new();
+                // Hypocognition guard: signal the absence to the model.
+                //
+                // Dunning (`138299529:13`): "people who are expert are
+                // better at attending to information that is missing...
+                // Blatantly pointing out to people that there is
+                // information they miss... prompts them to be less
+                // overconfident in their decisions."
+                //
+                // Silence is hypocognition (Dunning `138299529:11`) —
+                // the model doesn't know it's missing something. An
+                // explicit absence message makes the gap visible.
+                return vec![LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(
+                        "No relevant memory found for this query. \
+                         This may indicate a knowledge gap — consider \
+                         whether you are operating in an area where you \
+                         lack prior experience, and whether you should \
+                         seek external information rather than relying \
+                         on your own judgment.".to_string(),
+                    )],
+                    cache: false,
+                    reasoning_details: None,
+                }];
             }
 
             let mut context_text = String::new();
@@ -371,11 +394,16 @@ mod tests {
         );
     }
 
-    /// Zero-count logging test (S4): when recall finds nothing, inject_context
-    /// returns an empty vec (no injection), and the recall is logged. This
-    /// test verifies the empty-return path doesn't panic and produces no
-    /// messages — the zero-count log is verified by the tracing infrastructure,
-    /// not by this test, but the path must be exercised.
+    /// Zero-count absence-signaling test (Priority 2): when recall finds
+    /// nothing, inject_context now returns a System message signaling the
+    /// absence — the hypocognition guard. This test verifies the
+    /// absence-message path doesn't panic and produces one message with
+    /// the gap-signaling content.
+    ///
+    /// Grounding: Dunning (`138299529:13`) — "Blatantly pointing out to
+    /// people that there is information they miss... prompts them to be
+    /// less overconfident." Silence is hypocognition; an explicit absence
+    /// message makes the gap visible.
     #[tokio::test]
     async fn inject_context_returns_empty_when_no_match() {
         let port = Arc::new(in_memory_port());
@@ -385,9 +413,19 @@ mod tests {
         let prompt = "this prompt has no matching content in the empty memory store";
         let messages = injector.inject_context("no-match-thread", prompt).await;
 
+        assert_eq!(
+            messages.len(),
+            1,
+            "inject_context should return one absence-signaling message when no memories match"
+        );
+
+        let content = match &messages[0].content[0] {
+            MessageContent::Text(t) => t.as_str(),
+            _ => panic!("expected text content"),
+        };
         assert!(
-            messages.is_empty(),
-            "inject_context should return empty vec when no memories match"
+            content.contains("No relevant memory found"),
+            "absence message should signal the knowledge gap, got: {content}"
         );
     }
 }

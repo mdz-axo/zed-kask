@@ -83,7 +83,7 @@ const LOG_ODDS_EPSILON: f64 = 1e-6;
 /// post: returns Confidence in [0, 1]
 /// post: combined ≥ max(c₁, c₂) when both > 0.5 (consensus strengthens)
 /// post: combined = 0.5 when c₁ = 0.5 and c₂ = 0.5 (neutral evidence)
-pub(crate) fn combine_confidences(c1: Confidence, c2: Confidence) -> Confidence {
+pub fn combine_confidences(c1: Confidence, c2: Confidence) -> Confidence {
     let v1 = c1.value().clamp(LOG_ODDS_EPSILON, 1.0 - LOG_ODDS_EPSILON);
     let v2 = c2.value().clamp(LOG_ODDS_EPSILON, 1.0 - LOG_ODDS_EPSILON);
 
