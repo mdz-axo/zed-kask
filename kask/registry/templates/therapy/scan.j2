@@ -1,0 +1,69 @@
+{# therapy/scan.j2 — Guide the scan phase of memory therapy #}
+{# Variables: target (string), target_type (string: curator|corpus|swarm) #}
+{# Output: a findings list as JSON #}
+
+You are scanning the {{ target_type }} memory database "{{ target }}" for therapy issues.
+
+## Scan instructions
+
+Query the memory database and collect findings in four categories:
+
+### 1. Contradictions
+
+Query by entity and compare values. For {{ target_type }} memory:
+{% if target_type == "curator" %}
+- Use `curator_memory_recall` with each entity to retrieve all h_mems.
+- Use `curator_semantic_search` to find related entities that may contradict.
+- Compare h_mems with the same entity+attribute for divergent values or confidence.
+{% elif target_type == "corpus" %}
+- Use `corpus_query` to search for chunks by entity or keyword.
+- Compare chunks with the same entity for divergent assertions or tags.
+{% elif target_type == "swarm" %}
+- Use `swarm_recall_local` to recall turns by query similarity.
+- Compare turns from different agents that address the same topic for contradictions.
+{% endif %}
+
+### 2. Fragmentation
+
+Look for isolated h_mems (low connectedness) that are semantically similar to well-connected clusters:
+- Query by embedding similarity to find near-duplicates.
+- Check if the near-duplicates are connected (co-occur in recall) or isolated.
+- Isolated near-duplicates are dilution candidates.
+
+### 3. Miscalibrated confidence
+
+Look for confidence values that don't match evidence:
+- High-confidence h_mems with no evidence citation.
+- Low-confidence h_mems recalled many times without contradiction.
+- Confidence values that diverge significantly from related h_mems.
+
+### 4. Reification candidates
+
+Look for clusters of episodic memories that share a common pattern or lesson:
+- Repeated patterns across multiple entities (e.g., skill-use issues that share a root cause).
+- Accumulated experience that could inform a rule or template.
+- Episodic detail superseded by an existing skill or rule (purge candidates).
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+  "target": "{{ target }}",
+  "target_type": "{{ target_type }}",
+  "findings": [
+    {
+      "id": "F001",
+      "h_mem_id": "<h_mem ID>",
+      "entity": "<entity>",
+      "attribute": "<attribute>",
+      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate",
+      "description": "<what the issue is>",
+      "contradicting_h_mem_ids": ["<ID>", "<ID>"],
+      "source_h_mem_ids": ["<ID>", "<ID>"],
+      "evidence": "<values/confidence/connectedness data>"
+    }
+  ]
+}
+```

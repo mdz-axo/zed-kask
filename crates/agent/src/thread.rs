@@ -5016,7 +5016,25 @@ impl Thread {
             if !mcp_server_in_scope(self.mcp_server_scope.as_deref(), server_id.0.as_ref()) {
                 continue;
             }
+            // Curator memory edit tools (memory_insert, memory_update,
+            // memory_resolve_contradiction) are restricted to curator threads
+            // only. Non-curator threads (including the zed agent) cannot edit
+            // curator memory — therapy sessions must be run from a curator
+            // agent panel session so the curator remembers the act of therapy.
+            // Read-only curator tools (curator_memory_recall,
+            // curator_semantic_search, curator_consult, etc.) remain
+            // available to all threads.
+            let is_curator_thread = self
+                .agent_id
+                .as_ref()
+                .is_some_and(|id| id.as_ref() == crate::CURATOR_AGENT_ID.as_ref());
             for (tool_name, tool) in server_tools {
+                if !is_curator_thread
+                    && server_id.0.as_ref() == "curator"
+                    && is_curator_memory_edit_tool(tool_name.as_ref())
+                {
+                    continue;
+                }
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
                     let tool_name: SharedString =
                         provider_compatible_tool_name(tool_name.as_ref()).into();
@@ -5821,6 +5839,17 @@ fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) 
 /// contract is testable without constructing a `Thread`.
 fn mcp_server_in_scope(scope: Option<&str>, server_id: &str) -> bool {
     scope.is_none_or(|s| s == server_id)
+}
+
+/// Check if a tool name is a curator memory edit tool. These tools are
+/// restricted to curator threads only — non-curator threads cannot edit
+/// curator memory. Read-only curator tools (curator_memory_recall,
+/// curator_semantic_search, curator_consult, etc.) are NOT restricted.
+fn is_curator_memory_edit_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "memory_insert" | "memory_update" | "memory_resolve_contradiction"
+    )
 }
 
 fn system_prompt_digest(

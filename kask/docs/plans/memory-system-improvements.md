@@ -130,17 +130,25 @@ Seven changes, ordered by leverage and dependency. Priorities 1–4 are the reca
 
 ---
 
-### Priority 6 — Therapy process (skill)
+### Priority 6 — Therapy process (skill) ✅ DONE
 
-**Status**: Not started. Design analysis in `q3-q5-reflection-writable-memory.md`.
+**Status**: Complete (2026-08-25). Skill created at `.agents/skills/therapy/SKILL.md` with templates at `kask/registry/templates/therapy/scan.j2`, `classify.j2`, `report.j2`.
 
-**What**: A skill (SKILL.md + .j2 templates) that the curator runs to detect and resolve contradictions in the memory store. Uses Festinger's three dissonance resolution strategies: reduce importance (lower confidence), add consonant (insert reconciling memory), remove dissonant (expire/update).
+**What**: A skill that runs therapy sessions on any memory database (curator, replica/corpus, or swarm). Two concrete goals: (1) memory hygiene — resolve contradictions, fragmentation, miscalibrated confidence; (2) reification — extract lessons from memory into skills/templates/rules, then purge or condense the source memories (cognitive load shedding).
 
-**Evidence**: Festinger's three strategies (`Universal_Principles_of_Design:39`). Tetlock's "no red teams" (`Superforecasting_tetlock:94`) — the IC "was wrong when it said it couldn't be wrong" because it "never seriously explored the idea that it could be wrong." Dunning's hypocognition (`138299529:11`) — therapy must name contradictions explicitly.
+**Grounding**: Cox & Shiffrin (2026, OECS) — memory traces can be altered once retrieved; distorted traces produce retrieval noise. Festinger — three dissonance resolution strategies. Dunning — double curse (agent can't self-evaluate, user judgment required). Goldfish principle (Vardy, 2020) — forgetting is a feature; once a lesson is reified into proactive guidance, the episodic memory can be shed.
 
-**Anchors**:
-- EAV match detection: `memory_store.rs:566-597` (`find_existing_by_eav`)
-- Depends on: Priority 5 (edit tools)
+**Phases**: Target selection → Scan (contradictions, fragmentation, miscalibrated confidence, reification candidates) → Classify and propose (Festinger strategies + reification proposals) → User review and approval → Execute (memory modifications + skill/template/rule creation + purge/condense) → Report.
+
+**Key design decisions**:
+- **Therapy on curator memory must run from a Curator agent panel session.** The curator must remember the act of therapy — the forgetting, the reification, the lessons learned. Therapy run from the zed agent modifies curator memory without the curator's awareness, breaking the cybernetic loop. Forgetting works as long as it is done with awareness and has a purpose.
+- User approval required for all modifications — no autonomous memory modification.
+- Two distinct processes: memory hygiene (forgetting — NOT learning) and reification (learning — closes the learning loop). Do not conflate.
+- The learning loop: experience → memory → therapy (extract meaning + reify) → proactive guidance → new experience. Therapy is the extraction-and-reification step that closes the loop.
+- Forgetting (purging/condensing source memories after reification) is a hygiene side-effect, not part of the learning loop.
+- Reification proposals include the proposed skill/template/rule content for user review.
+- Post-reification forgetting requires separate approval — user may reify but keep source memories.
+- Applicable to curator memory (from curator panel), replica/corpus memory, and swarm memory.
 
 ---
 

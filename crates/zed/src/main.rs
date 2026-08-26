@@ -1430,7 +1430,7 @@ fn main() {
 
                 match provision_result {
                     Ok(provisioned) => {
-                        let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
+                        let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: _user_webid } = provisioned;
 
                         // zed-kask: D8 — F14: embedding credentials (deferred task).
                         // Resolve embedding credentials by reading the API key
@@ -1563,15 +1563,12 @@ fn main() {
                         }
 
                         match kask_bridge::RealMemoryPort::new(
-                            &db_path,
                             &passphrase,
-                            user_webid,
                             embedding_model,
                             embedding_dim,
                             embedding_port,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
-                            kask_settings.memory.memory_life_days,
                             gpui_tokio::Tokio::handle_async(&*cx),
                         ) {
                             Ok(real) => {

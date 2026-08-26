@@ -1,7 +1,7 @@
 //! `MemoryPort` adapter — bridges zed's thread completion to hKask memory (D6).
 //!
 //! `RealMemoryPort` — full hKask memory stack. Stores completed turns as
-//! h_mems (Private, perspective = user WebID, process-axis anchored ontology)
+//! h_mems (Private, perspective = curator WebID, process-axis anchored ontology)
 //! and a shared copy for curator access.
 //! Embeds the user prompt for future retrieval. Used when `HKASK_DB_PATH` +
 //! `HKASK_DB_PASSPHRASE` are configured.
@@ -121,15 +121,12 @@ impl RealMemoryPort {
     ///
     /// Returns `Err` if the curator database cannot be opened.
     pub fn new(
-        _db_path: &str,
         passphrase: &str,
-        _user_webid: WebID,
         embedding_model: String,
         embedding_dim: usize,
         embedding_port: LanguageModelEmbeddingPort,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
-        _memory_life_days: f64,
         tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self, String> {
         if embedding_dim == 0 {
@@ -285,10 +282,9 @@ const DEFAULT_INGEST_CONCURRENCY: usize = 1;
 
 /// Parse a raw env-var value into an ingestion concurrency (`usize`), falling
 /// back to [`DEFAULT_INGEST_CONCURRENCY`] on malformed/zero values. Same
-/// startup-failure-signal trap as `parse_storage_budget` — a malformed value
-/// must warn naming the value, not silently fall back (the `.rules`
-/// "Numeric env vars that fail to parse" trap). Previously this was inlined in
-/// `RealMemoryPort::new` with a silent `.unwrap_or(1)`.
+/// startup-failure-signal trap — a malformed value must warn naming the value,
+/// not silently fall back (the `.rules` "Numeric env vars that fail to parse"
+/// trap).
 fn parse_ingest_concurrency(raw: &str) -> usize {
     match raw.trim().parse::<usize>() {
         Ok(n) if n > 0 => n,

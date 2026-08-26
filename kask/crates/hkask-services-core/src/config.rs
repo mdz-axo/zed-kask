@@ -125,8 +125,7 @@ impl ServiceConfig {
 
         // A malformed numeric env var must warn, not silently fall back — an
         // operator cannot distinguish "not configured" from "configured but
-        // broken" otherwise (`.rules` failure-signal trap). Mirrors the
-        // canonical `parse_memory_life_days` in `kask_bridge/src/memory.rs`.
+        // broken" otherwise (`.rules` failure-signal trap).
         let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
             Ok(raw) => match raw.parse::<f64>() {
                 Ok(days) => days,
@@ -172,8 +171,7 @@ impl ServiceConfig {
         let inference_config = InferenceConfig::from_env();
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         // A malformed numeric env var must warn, not silently fall back (`.rules`
-        // failure-signal trap). Mirrors `from_env` and the canonical
-        // `parse_memory_life_days` in `kask_bridge/src/memory.rs`.
+        // failure-signal trap).
         let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
             Ok(raw) => match raw.parse::<f64>() {
                 Ok(days) => days,

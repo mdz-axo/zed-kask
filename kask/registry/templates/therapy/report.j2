@@ -1,0 +1,46 @@
+{# therapy/report.j2 — Guide the report phase #}
+{# Variables: target (string), findings (list), proposals (list), executions (list) #}
+{# Output: a therapy session report #}
+
+You are producing the therapy session report for "{{ target }}".
+
+## Report structure
+
+### Memory hygiene summary (forgetting — not learning)
+
+- Contradictions found: {{ findings | selectattr("issue_type", "equalto", "contradiction") | list | length }}
+- Contradictions resolved: <count of approved + executed contradiction proposals>
+- Fragmented memories found: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | list | length }}
+- Fragmented memories resolved: <count>
+- Miscalibrated confidence found: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | list | length }}
+- Confidence recalibrated: <count>
+- Source memories purged (post-reification): <count>
+- Source memories condensed (post-reification): <count>
+
+### Reification summary (learning — closes the learning loop)
+
+- Reification candidates found: {{ findings | selectattr("issue_type", "equalto", "reification_candidate") | list | length }}
+- Skills created: <count>
+- Templates created: <count>
+- Rules created: <count>
+
+### Per-issue detail
+
+For each finding, report:
+- **Finding**: ID, issue type, entity, description.
+- **Process**: hygiene | reification | post-reification hygiene.
+- **Proposal**: strategy, action, reason.
+- **User decision**: approved / modified / rejected.
+- **Execution**: success / failure, outcome.
+- **Reification** (if applicable): what skill/template/rule was created.
+
+### Recommendations
+
+- Follow-up therapy sessions (e.g., "run another session after the next consolidation cycle").
+- Skill effectiveness review (e.g., "review the new skill's effectiveness after N invocations").
+- Remaining reification candidates (e.g., "3 reification candidates were not addressed — consider a follow-up session").
+- Memory database health (e.g., "memory database is now at N h_mems, down from M — within storage budget").
+
+## Output format
+
+Produce a markdown report with the sections above. Be honest — report failures, report when nothing was found, do not fabricate success.
