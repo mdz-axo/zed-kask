@@ -136,8 +136,8 @@ struct CalibratedThresholds {
 /// The Cybernetics Loop — homeostatic self-regulation.
 ///
 /// Implements the sense→compare→compute→act regulation cycle.
-/// The Cybernetic Loop regulates all three domain loops (Inference,
-/// Episodic, Semantic) and may signal the Curation Loop via algedonic
+/// The Cybernetic Loop regulates all domain loops (Inference, Memory)
+/// and may signal the Curation Loop via algedonic
 /// alerts. It may NOT regulate the Curation Loop.
 pub struct CyberneticsLoop {
     ledger: Arc<RwLock<RegulationLedger>>,

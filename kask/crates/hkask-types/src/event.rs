@@ -180,7 +180,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.memory.budget",
     "reg.memory.decay",
     "reg.memory.encode",
-    "reg.memory.episodic",
     // ── Multi-agent ──
     "reg.multi.invite.accepted",
     "reg.multi.invite.sent",
@@ -530,8 +529,8 @@ pub enum SpanCategory {
     Curation,
     /// `reg.inference*` — the inference loop.
     Inference,
-    /// `reg.pod*`, `reg.connector*` — episodic memory.
-    Episodic,
+    /// `reg.pod*`, `reg.connector*` — agent pod / connector operations (Memory loop).
+    Memory,
     /// `reg.wallet*` — wallet operations (balance, keys, deposits, withdrawals).
     Wallet,
     /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, rJoule, outcome).
@@ -550,7 +549,7 @@ impl SpanCategory {
             "variety" | "outcome" | "alert" => Self::Cybernetics,
             "curation" | "spec" => Self::Curation,
             "inference" => Self::Inference,
-            "pod" | "connector" => Self::Episodic,
+            "pod" | "connector" => Self::Memory,
             "wallet" => Self::Wallet,
             "skill" => Self::Skill,
             _ => Self::Unknown,
@@ -564,7 +563,7 @@ impl std::fmt::Display for SpanCategory {
             SpanCategory::Cybernetics => "cybernetics",
             SpanCategory::Curation => "curation",
             SpanCategory::Inference => "inference",
-            SpanCategory::Episodic => "episodic",
+            SpanCategory::Memory => "memory",
             SpanCategory::Wallet => "wallet",
             SpanCategory::Skill => "skill",
             SpanCategory::Unknown => "unknown",

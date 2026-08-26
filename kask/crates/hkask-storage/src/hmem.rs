@@ -317,7 +317,7 @@ impl HMemStore {
     /// Query h_mems by entity prefix (LIKE 'prefix%'), bounded by `limit`.
     ///
     /// Used by recall paths that need to load h_mems for a family of
-    /// entities (e.g. all `chat:thread:*` entities for episodic keyword
+    /// entities (e.g. all `chat:thread:*` entities for keyword
     /// search). The prefix must not contain SQL LIKE wildcards (`%` or `_`)
     /// — they would be interpreted as wildcards.
     ///

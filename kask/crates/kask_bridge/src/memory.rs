@@ -1374,15 +1374,13 @@ pub(crate) mod tests {
             "second call within cadence should not re-fire consolidation"
         );
 
-        // After consolidation, the episodic h_mem may have been promoted
-        // to semantic and expired in episodic (consolidation is a one-way
-        // episodic → semantic promotion).
+        // After consolidation, low-confidence h_mems may have been
+        // pruned. The h_mem may or may not survive depending on
+        // confidence decay — we just verify the query succeeds.
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
             .query_for_deduped_untouched("chat:thread:consolidation-test", curator_webid)
             .expect("query should succeed");
-        // The h_mem may or may not have been consolidated depending on
-        // confidence decay — we just verify the query succeeds.
         let _ = h_mems;
     }
 
@@ -1825,10 +1823,10 @@ pub(crate) mod tests {
 
     /// Curator turns must be ingested into the curator's sovereign DB with the
     /// curator's WebID (Private, curator perspective), mirroring the user
-    /// agent's episodic loop. This is the core of the curator memory mirror —
-    /// without it, the curator has no first-person experiential memory.
+    /// agent's memory loop. This is the core of the curator memory mirror —
+    /// without it, the curator has no first-person memory.
     #[tokio::test]
-    async fn ingest_curator_turn_stores_curator_perspective_episodic() {
+    async fn ingest_curator_turn_stores_curator_perspective() {
         let port = in_memory_port();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
@@ -2011,15 +2009,13 @@ pub(crate) mod tests {
             .expect("mutex not poisoned")
             .expect("consolidation should have fired");
 
-        // After consolidation, the curator's episodic h_mem may have been
-        // promoted to the curator's semantic store and expired in episodic
-        // (consolidation is a one-way episodic → semantic promotion). We
-        // verify the query succeeds — whether the h_mem was promoted depends
+        // After consolidation, low-confidence h_mems may have been pruned.
+        // We verify the query succeeds — whether the h_mem survived depends
         // on confidence decay, but the consolidation pass itself must not error.
         let h_mems_after = curator_store
             .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
-            .expect("curator episodic query should succeed after consolidation");
-        // The h_mem may or may not have been consolidated depending on
+            .expect("curator memory query should succeed after consolidation");
+        // The h_mem may or may not have been pruned depending on
         // confidence decay — we just verify the query succeeds and the
         // curator consolidation pass didn't panic.
         let _ = h_mems_after;

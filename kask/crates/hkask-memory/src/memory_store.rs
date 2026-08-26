@@ -3,11 +3,9 @@
 //! The ontology blob on each h_mem carries dual-axis anchoring
 //! (PKO process axis + DC state axis). A process-anchored h_mem carries
 //! PKO procedure/step; a state-anchored h_mem carries DC type/subject.
-//! Both are unified h_mems — there is no episodic/semantic type
-//! distinction.
 //!
 //! The `perspective` field is provenance (who wrote the memory), not a
-//! semantic classifier. The intended flow is chat stream → chunks → each
+//! type classifier. The intended flow is chat stream → chunks → each
 //! chunk tagged with both the best-fit state axis (Dublin Core) and the
 //! best-fit process axis (PKO), so the `HMemOntology` blob is the discriminator.
 //!

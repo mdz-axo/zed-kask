@@ -5,8 +5,7 @@
 //! The ontology blob on each h_mem carries dual-axis anchoring
 //! (PKO process axis + DC state axis). A process-anchored h_mem
 //! (e.g., a chat turn) carries PKO procedure/step; a state-anchored h_mem
-//! (e.g., a fact) carries DC type/subject. Both are unified h_mems —
-//! there is no episodic/semantic type distinction. All h_mems are stored,
+//! (e.g., a fact) carries DC type/subject. All h_mems are stored,
 //! recalled, and queried through the single [`MemoryStore`].
 //!
 //! **Flow:** chat stream → chunks → each chunk tagged with both the best-fit
@@ -20,8 +19,8 @@
 //! HTTP API, TUI) joins and serializes recalled memories in the shape its own
 //! consumer needs. See ADR-060 for the decision and rationale.
 
-pub(crate) mod bayesian; // Loop 2b (semantic confidence combination)
-pub mod consolidation_service; // Memory consolidator (perspective-bound → shared)
+pub(crate) mod bayesian; // Confidence combination via log-odds pooling
+pub mod consolidation_service; // Memory consolidator (cleanup + budget pruning)
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;

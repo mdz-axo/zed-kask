@@ -390,12 +390,12 @@ impl RegulationPolicy {
                     }],
                 },
                 // ── Category C: Domain-specific regulation ──
-                // MemoryLife (Episodic Loop 2a) → Calibrate
+                // MemoryLife (Memory Loop 2) → Calibrate
                 RegulationRule {
                     metric: MemoryLife,
                     direction: BelowSetPoint,
                     proposed: &[ProposedAction {
-                        target: Episodic,
+                        target: Memory,
                         action_type: Calibrate,
                         reason: MemoryLifeLow,
                     }],

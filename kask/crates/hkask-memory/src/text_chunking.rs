@@ -1,9 +1,8 @@
 //! Pure text-chunking helpers — no database access, no store handle.
 //!
-//! These were methods on the deleted `SemanticMemory` struct. They never
-//! touched the store, so they are free functions here. `MemoryStore` exposes
-//! `chunk_text` / `strip_gutenberg_headers` as associated functions that
-//! delegate to these, so existing call sites keep their shape.
+//! `MemoryStore` exposes `chunk_text` / `strip_gutenberg_headers` as
+//! associated functions that delegate to these, so existing call sites
+//! keep their shape.
 
 /// Threshold: if control characters exceed 0.5% of total characters, the
 /// PDF font encoding is corrupted and the text should be re-extracted via

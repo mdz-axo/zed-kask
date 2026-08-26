@@ -17,16 +17,14 @@
 //! | Loop | Name | VSM Role | Category |
 //! |------|------|----------|----------|
 //! | 1 | Inference | Implementation | Domain |
-//! | 2a | Episodic Memory | Coordination (private) | Domain |
-//! | 2b | Semantic Memory | Coordination (shared) | Domain |
+//! | 2 | Memory | Coordination (unified store) | Domain |
 //! | 5 | Curation | Metasystem (observer) | Meta |
 //! | 6 | Cybernetics | Homeostatic regulation | Meta |
-//! | 6b | Snapshot | Scheduled CAS snapshots | Meta |
 //!
 //! **Bridge:**
-//! - 2a→2b: Consolidation — confidence-based cleanup + budget pruning
+//! - Memory consolidation: confidence-based cleanup + budget pruning
 //!
-//! **Authority DAG:** Curation → Cybernetics → {Inference, Episodic, Semantic}
+//! **Authority DAG:** Curation → Cybernetics → {Inference, Memory}
 //! No sideways edges. Authority flows downward.
 
 // Channel types stay in hkask-regulation (depend on RuntimeAlert).

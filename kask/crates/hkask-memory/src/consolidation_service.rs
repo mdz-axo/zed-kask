@@ -4,9 +4,8 @@
 //! 1. Deleting h_mems at or below the confidence floor (if specified).
 //! 2. Deleting lowest-confidence h_mems until within the storage budget.
 //!
-//! There is no episodic→semantic promotion. All h_mems are unified — the
-//! ontology blob carries dual-axis anchoring (PKO process + DC state) but
-//! there is no type distinction that requires promotion.
+//! All h_mems are unified — the ontology blob carries dual-axis anchoring
+//! (PKO process + DC state) but there is no type distinction.
 
 use std::sync::Arc;
 

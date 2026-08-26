@@ -20,8 +20,8 @@ pub struct DecayConfig {
     pub curation_lambda: f64,
     /// Inference decay constant (1/s). Default: ln(2)/120 ≈ 0.00578 (2min half-life)
     pub inference_lambda: f64,
-    /// Episodic decay constant (1/s). Default: ln(2)/600 ≈ 0.00116 (10min half-life)
-    pub episodic_lambda: f64,
+    /// Memory decay constant (1/s). Default: ln(2)/600 ≈ 0.00116 (10min half-life)
+    pub memory_lambda: f64,
     /// Minimum weight threshold — events below this are not replayed. Default: 0.001
     pub weight_threshold: f64,
 }
@@ -32,7 +32,7 @@ impl Default for DecayConfig {
             cybernetics_lambda: std::f64::consts::LN_2 / 300.0,
             curation_lambda: std::f64::consts::LN_2 / 900.0,
             inference_lambda: std::f64::consts::LN_2 / 120.0,
-            episodic_lambda: std::f64::consts::LN_2 / 600.0,
+            memory_lambda: std::f64::consts::LN_2 / 600.0,
             weight_threshold: 0.001,
         }
     }
@@ -113,7 +113,7 @@ impl RegulationArchive {
     /// - "variety" → cybernetics_lambda
     /// - "curation", "spec" → curation_lambda
     /// - "inference" → inference_lambda
-    /// - "agent_pod", "connector" → episodic_lambda
+    /// - "agent_pod", "connector" → memory_lambda
     /// - everything else → cybernetics_lambda (safe default)
     ///
     /// Replay events with temporal decay weighting.
@@ -162,7 +162,7 @@ impl RegulationArchive {
             SpanCategory::Cybernetics => config.cybernetics_lambda,
             SpanCategory::Curation => config.curation_lambda,
             SpanCategory::Inference => config.inference_lambda,
-            SpanCategory::Episodic => config.episodic_lambda,
+            SpanCategory::Memory => config.memory_lambda,
             SpanCategory::Wallet => config.cybernetics_lambda, // wallet ops are cybernetic (energy budget)
             SpanCategory::Skill => config.cybernetics_lambda,  // skill ops are cybernetic
             SpanCategory::Unknown => config.cybernetics_lambda, // safe default

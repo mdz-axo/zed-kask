@@ -77,7 +77,7 @@ pub struct ServiceConfig {
     /// when not explicitly set. Ignored when `in_memory: true`.
     pub memory_db_path: Option<String>,
 
-    /// Episodic memory life in days — configurable, default 180 (6 months × 30).
+    /// Memory life in days — configurable, default 180 (6 months × 30).
     ///
     /// Sets S in Wozniak & Gorzelanczyk (1995) forgetting curve: R(t) = exp(-t/S).
     /// After S days without recall, confidence decays to exp(-1) ≈ 36.8%.
