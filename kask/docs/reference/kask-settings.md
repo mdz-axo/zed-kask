@@ -308,6 +308,49 @@ deferred post-login task before governed MCP server launch, so the primary
 `ctx.credentials` tier works on first run (no longer relies on the env/keychain
 fallback). The ordering dependency is explicit.
 
+On first run, the DB passphrase defaults to `"allostery"` (matching
+`SwarmConfig::default()` and `KaskSwarmSettings::default()`). The user can
+change it later via the settings UI (Security page), which triggers atomic
+DB rotation before saving the new passphrase. The swarm memory passphrase
+is provisioned the same way via `provision_swarm_memory_passphrase`.
+
+### Passphrase rotation
+
+Changing a SQLCipher passphrase requires re-encrypting the entire database —
+there is no in-place `PRAGMA rekey` that survives a crash. The rotation is
+handled by `hkask_storage::rotate_passphrase` (`rotation.rs:121`), which:
+
+1. Opens the source DB with the old passphrase (verifies it).
+2. Creates `<db>.new` encrypted with the new passphrase.
+3. Copies all user tables + `sqlite_sequence` in a single transaction.
+4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`, same for
+   `.salt` files. Deletes `.old` on success.
+
+If any step fails, the original DB is untouched — the old passphrase remains
+in effect. The caller writes the new passphrase to the keychain ONLY after
+rotation returns `Ok(())`.
+
+The bridge layer wraps this in two functions (`kask_bridge/src/identity.rs`):
+
+- `rotate_curator_db_passphrase(new_passphrase)` — rotates the curator DB
+  (also covers corpus and kata-kanban, which share the same
+  `HKASK_DB_PASSPHRASE`).
+- `rotate_swarm_memory_db_passphrase(new_passphrase)` — rotates the swarm
+  memory DB (`mcp/swarm/memory.db`).
+
+Both resolve the old passphrase from the keychain and the DB path from
+env/data-dir. The settings UI calls these on a background spawn before
+writing the new passphrase to the keychain and nudging MCP servers to
+restart.
+
+**From the settings UI**:
+- **Security page**: change the DB passphrase (curator/corpus/kata-kanban).
+- **Swarm page**: change the swarm memory passphrase.
+
+Both pages show a "Configured" card if the passphrase exists, or an input
+field to set one. On confirm, rotation runs on the background executor; on
+failure, a `log::warn!` is emitted and the old passphrase remains.
+
 ## Storage Backend
 
 hKask supports two storage backends, selected at startup via environment

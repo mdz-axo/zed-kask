@@ -40,6 +40,8 @@ their store modules' `init_schema` methods.
 | `check_passphrase` | `kask/crates/hkask-storage/src/core/database.rs:413-419` |
 | `open_or_repair` (passphrase-safe) | `kask/crates/hkask-storage/src/core/database.rs:427-431` |
 | `open_database` dispatcher | `kask/crates/hkask-storage/src/core/database.rs:433-439` |
+| `rotate_passphrase` (atomic re-encryption) | `kask/crates/hkask-storage/src/rotation.rs:121` |
+| `RotationError` enum | `kask/crates/hkask-storage/src/rotation.rs:58` |
 | `embedding_dim` / `DEFAULT_EMBEDDING_DIM` | `kask/crates/hkask-storage/src/core/database.rs:20-37` |
 | `init_sqlite_vec_on` (per-connection vec0) | `kask/crates/hkask-storage/src/core/database.rs:56-76` |
 | `SQLCIPHER_SALT_SIZE` | `kask/crates/hkask-storage/src/core/database.rs:78` |
@@ -357,6 +359,32 @@ concept was deprecated; `pod.db` is gone). MCP server DBs follow
 `mcp/{server_id}/{purpose}.db` (e.g. `mcp/kata-kanban/kanban.db`,
 `mcp/swarm/ledger.db`). The `pod_meta` table
 in `schema.sql:22` is the in-DB metadata mirror, not a path component.
+
+## Passphrase rotation
+
+`rotate_passphrase` (`rotation.rs:121`) atomically re-encrypts a SQLCipher
+DB under a new passphrase without data loss. The process:
+
+1. Opens the source DB with the old passphrase (verifies it via the probe
+   connection in `file_pool`).
+2. Creates `<db>.new` encrypted with the new passphrase (new salt file).
+3. Copies all user tables + `sqlite_sequence` via row-by-row `INSERT INTO ...`
+   in a single transaction. `vec0` shadow tables are NOT copied — they are
+   rebuilt from `schema.sql` on first open of the new DB.
+4. Drops both pools (releases file locks), then atomically renames:
+   `<db>` → `<db>.old`, `<db>.new` → `<db>`, same for `.salt` files.
+5. Deletes `.old` and `.salt.old` on success.
+
+**Failure safety**: if any step before the rename fails, the `.new` artifacts
+are deleted and the original DB is untouched. If the rename itself fails after
+`<db>` → `<db>.old` succeeds, the code attempts to restore `<db>.old` back
+to `<db>`. The caller (the settings UI) writes the new passphrase to the
+keychain ONLY after rotation returns `Ok(())` — a failed rotation leaves the
+old passphrase in effect.
+
+The bridge layer wraps this in `rotate_curator_db_passphrase` and
+`rotate_swarm_memory_db_passphrase` (`kask_bridge/src/identity.rs`), which
+resolve the old passphrase from the keychain and the DB path from env/data-dir.
 
 ## See also
 

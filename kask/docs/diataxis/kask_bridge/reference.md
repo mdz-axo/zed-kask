@@ -63,10 +63,13 @@ loops the SKILL.md bodies describe.
 | `filter_credentials_for_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:469-490` |
 | `build_mcp_server_env` | `kask/crates/kask_bridge/src/mcp_servers.rs:514-559` |
 | `filter_config_env_for_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:571-592` |
-| `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:217-257` |
-| `agent_name_from_username` | `kask/crates/kask_bridge/src/identity.rs:50-57` |
-| `ProvisionedAgent` | `kask/crates/kask_bridge/src/identity.rs:187-194` |
-| `ProvisionError` | `kask/crates/kask_bridge/src/identity.rs:30-40` |
+| `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:95-135` |
+| `agent_name_from_username` | `kask/crates/kask_bridge/src/identity.rs:54-61` |
+| `ProvisionedAgent` | `kask/crates/kask_bridge/src/identity.rs:65-72` |
+| `ProvisionError` | `kask/crates/kask_bridge/src/identity.rs:35-44` |
+| `rotate_curator_db_passphrase` | `kask/crates/kask_bridge/src/identity.rs:447` |
+| `rotate_swarm_memory_db_passphrase` | `kask/crates/kask_bridge/src/identity.rs:494` |
+| `BridgeRotationError` | `kask/crates/kask_bridge/src/identity.rs:374` |
 | `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
 | `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:128-253` |
 | `MemoryPort` impl | `kask/crates/kask_bridge/src/memory.rs:628-956` |
@@ -369,23 +372,42 @@ curator memory mid-session without an app restart.
 
 ## Identity and provisioning
 
-`provision_agent` (`identity.rs:217-257`) handles first-run setup as a set
+`provision_agent` (`identity.rs:95-135`) handles first-run setup as a set
 of lookups and directory creation — no interactive onboarding:
 
 1. Derive the agent name from the Zed username via `agent_name_from_username`
-   (`identity.rs:50-57`), which sanitizes for filesystem use and returns
+   (`identity.rs:54-61`), which sanitizes for filesystem use and returns
    `None` for empty/`unnamed` results.
 2. Create the agent directory structure under the hKask data dir
-   (`identity.rs:230-232`). D28: scaffolding subdirs removed — only the
+   (`identity.rs:108-110`). D28: scaffolding subdirs removed — only the
    agent root is created; DBs create their own parent dir on open.
-3. Resolve the DB passphrase from the keychain; if none exists, generate a
-   random 8+ letter English word and store it (`identity.rs:264-283`).
+3. Resolve the DB passphrase from the keychain; if none exists, use the
+   default `"allostery"` and store it (`identity.rs:217-236`). The user
+   can change it later via the settings UI (Security page), which triggers
+   atomic DB rotation.
 4. Compute the absolute `memory.db` path under the agent root
-   (`identity.rs:234`).
+   (`identity.rs:112`).
 
-The result is a `ProvisionedAgent` (`identity.rs:187-194`) carrying
+The result is a `ProvisionedAgent` (`identity.rs:65-72`) carrying
 `db_path`, `passphrase`, and `webid` — everything needed to construct a
 `RealMemoryPort` directly.
+
+`provision_swarm_memory_passphrase` (`identity.rs:262-289`) mirrors this
+pattern for the swarm memory DB, also defaulting to `"allostery"` on first
+run.
+
+### Passphrase rotation
+
+`rotate_curator_db_passphrase` (`identity.rs:447`) and
+`rotate_swarm_memory_db_passphrase` (`identity.rs:494`) wrap
+`hkask_storage::rotate_passphrase` to re-encrypt the DB under a new
+passphrase. Both resolve the old passphrase from the keychain and the DB
+path from env/data-dir, then call the storage-layer rotation. The caller
+writes the new passphrase to the keychain ONLY after `Ok(())` — a failed
+rotation leaves the old passphrase in effect.
+
+`BridgeRotationError` (`identity.rs:374`) wraps `RotationError` with
+context about which DB was being rotated.
 
 ## Inference ports
 

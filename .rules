@@ -94,6 +94,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * MCP server credentials/config are scoped per-server via allowlists. New servers use `Some(&[])` for both, never `None`. Allowlists must align with actual env-var reads.
 * After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_servers` again so servers restart with updated env.
 * `kask_bridge::identity::mirror_provisioned_db_passphrase` must `.await` to completion in the deferred post-login task **before** governed MCP server launch. Reordering the deferred task breaks first-run provisioning — the primary `ctx.credentials` tier reads the mirrored `kask://credentials/hkask_db_passphrase` entry, and a missing mirror falls back to the env/keychain tier silently (broken feedback loop).
+* **Passphrase rotation ordering invariant.** `rotate_curator_db_passphrase` / `rotate_swarm_memory_db_passphrase` MUST complete before the new passphrase is written to the keychain or settings.json. If rotation fails and the new passphrase is already saved, the system is in an inconsistent state — settings show the new passphrase but the DB uses the old one (broken feedback loop). The settings UI (`security.rs`, `swarm.rs`) follows this ordering: rotation → `Ok(())` → write keychain → `nudge_mcp_servers`. A failed rotation logs `warn` and does NOT save the new passphrase. Both passphrases default to `"allostery"` on first run (provisioning + `KaskSwarmSettings::default()` + `SwarmConfig::default()`).
 
 ## MCP server patterns
 

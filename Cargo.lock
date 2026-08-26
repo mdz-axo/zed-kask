@@ -8917,6 +8917,7 @@ dependencies = [
  "docx-rs",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-lisp",
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-services-core",

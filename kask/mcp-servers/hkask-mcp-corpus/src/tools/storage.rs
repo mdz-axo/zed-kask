@@ -100,6 +100,8 @@ impl CorpusServer {
             query,
             top_k,
             generate_answer,
+            include_text,
+            min_score,
             db_path,
             passphrase,
         }): Parameters<QueryRequest>,
@@ -111,13 +113,28 @@ impl CorpusServer {
                 ));
             }
 
-            let k = top_k.unwrap_or(5).clamp(1, 50);
+            // Parse the query string. When it starts with `(list`, it's a
+            // Lisp S-expression specifying query options. Otherwise it's a
+            // plain natural-language query (backward compatible).
+            let (nl_query, k, include_text_flag, min_score_val, gen_answer) =
+                if query.trim_start().starts_with("(list") {
+                    parse_lisp_query(&query)?
+                } else {
+                    (
+                        query.clone(),
+                        top_k.unwrap_or(5).clamp(1, 50),
+                        include_text.unwrap_or(false),
+                        min_score.unwrap_or(0.0),
+                        generate_answer.unwrap_or(false),
+                    )
+                };
 
+            let k = k.clamp(1, 50);
             let model_name = crate::default_embedding_model().to_string();
 
             let query_embedding = match self
                 .inference_router
-                .embed(&model_name, std::slice::from_ref(&query))
+                .embed(&model_name, std::slice::from_ref(&nl_query))
                 .await
             {
                 Ok(v) => v.into_iter().next().unwrap_or_default(),
@@ -202,15 +219,22 @@ impl CorpusServer {
                     scored.sort_by(|a, b| {
                         b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
                     });
+                    // Filter by min_score if set, then truncate to top-k.
+                    if min_score_val > 0.0 {
+                        scored.retain(|(score, _)| *score >= min_score_val);
+                    }
                     scored.truncate(k);
                     let results: Vec<serde_json::Value> = scored
                         .iter()
                         .map(|(score, p)| {
-                            json!({
-                                "text": p.text.clone(),
+                            let mut entry = json!({
                                 "metadata": p.metadata.clone(),
                                 "score": score,
-                            })
+                            });
+                            if include_text_flag {
+                                entry["text"] = json!(p.text.clone());
+                            }
+                            entry
                         })
                         .collect();
                     // Move hydrated passages into the persistent in-memory index
@@ -228,16 +252,23 @@ impl CorpusServer {
                     scored.sort_by(|a, b| {
                         b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
                     });
+                    // Filter by min_score if set, then truncate to top-k.
+                    if min_score_val > 0.0 {
+                        scored.retain(|(score, _)| *score >= min_score_val);
+                    }
                     scored.truncate(k);
 
                     let results: Vec<serde_json::Value> = scored
                         .iter()
                         .map(|(score, p)| {
-                            json!({
-                                "text": p.text.clone(),
+                            let mut entry = json!({
                                 "metadata": p.metadata.clone(),
                                 "score": score,
-                            })
+                            });
+                            if include_text_flag {
+                                entry["text"] = json!(p.text.clone());
+                            }
+                            entry
                         })
                         .collect();
 
@@ -246,13 +277,13 @@ impl CorpusServer {
             }; // guard dropped here
 
             let mut result = json!({
-                "query": query,
+                "query": nl_query,
                 "results": results,
                 "total_indexed": total_indexed,
             });
 
             // Optionally generate an LLM-augmented answer
-            if generate_answer.unwrap_or(false) && !results.is_empty() {
+            if gen_answer && !results.is_empty() {
                 let context: String = results
                     .iter()
                     .map(|r| r["text"].as_str().unwrap_or(""))
@@ -413,14 +444,49 @@ pub(crate) struct CacheRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct QueryRequest {
-    /// Natural language question to search for.
+    /// Natural language question to search for, OR a Lisp S-expression
+    /// specifying query options.
+    ///
+    /// When the string starts with `(list`, it is parsed as a Lisp
+    /// S-expression via `hkask_lisp::eval_sandboxed_with_budget`.
+    /// The result is an association list (alist) of key-value pairs:
+    ///
+    /// ```lisp
+    /// (list (list "query" "investment philosophy")
+    ///       (list "top-k" 5)
+    ///       (list "include-text" t)
+    ///       (list "min-score" 0.6))
+    /// ```
+    ///
+    /// Supported keys:
+    /// - `"query"` (string, required) — the natural language query
+    /// - `"top-k"` (int, default 5) — number of top results to return
+    /// - `"include-text"` (bool, default false) — include passage text in results
+    /// - `"min-score"` (float, default 0.0) — only return matches with score >= this
+    /// - `"generate-answer"` (bool, default false) — generate LLM answer from results
+    ///
+    /// When the string does NOT start with `(list`, it is treated as a
+    /// plain natural-language query (backward compatible with the original
+    /// `query` + `top_k` + `generate_answer` parameters).
     pub query: String,
-    /// Number of top results to return (default 5).
+    /// Number of top results to return (default 5). Ignored when `query`
+    /// is a Lisp S-expression (use `"top-k"` in the expression instead).
     #[serde(default)]
     pub top_k: Option<usize>,
     /// If true, generate an LLM-augmented answer from retrieved passages.
+    /// Ignored when `query` is a Lisp S-expression.
     #[serde(default)]
     pub generate_answer: Option<bool>,
+    /// If true, include passage text in results. Only valid when `query`
+    /// is a Lisp S-expression (use `"include-text"` in the expression).
+    /// When `query` is a plain string, text is included by default when
+    /// the index is hydrated from the DB.
+    #[serde(default)]
+    pub include_text: Option<bool>,
+    /// Minimum score threshold (0.0–1.0). Only return matches with score
+    /// >= this value. Only valid when `query` is a Lisp S-expression.
+    #[serde(default)]
+    pub min_score: Option<f32>,
     /// Path to the memory DB for vector search when the in-memory index is empty
     /// (e.g. after server restart). The in-memory index is populated by `corpus_embed`.
     #[serde(default)]
@@ -428,6 +494,105 @@ pub(crate) struct QueryRequest {
     /// Passphrase for the memory DB. Defaults to `HKASK_DB_PASSPHRASE`.
     #[serde(default)]
     pub passphrase: Option<String>,
+}
+
+/// Parse a Lisp S-expression query string into query options.
+///
+/// The input must start with `(list` and evaluate to an association list
+/// (alist) — a JSON array of 2-element arrays. Each pair is `(key, value)`.
+///
+/// Supported keys:
+/// - `"query"` (string, required) — the natural language query
+/// - `"top-k"` (int, default 5) — number of top results to return
+/// - `"include-text"` (bool, default false) — include passage text in results
+/// - `"min-score"` (float, default 0.0) — only return matches with score >= this
+/// - `"generate-answer"` (bool, default false) — generate LLM answer from results
+///
+/// Returns `(query, top_k, include_text, min_score, generate_answer)`.
+fn parse_lisp_query(
+    expr: &str,
+) -> Result<(String, usize, bool, f32, bool), McpToolError> {
+    let result = hkask_lisp::eval_sandboxed_with_budget(expr, &serde_json::Value::Null, 100_000, 100)
+        .map_err(|e| McpToolError::invalid_argument(format!(
+            "Invalid Lisp query expression: {e}"
+        )))?;
+
+    // The result can be either a JSON object (when `list` of pairs is
+    // evaluated — the interpreter converts 2-element lists to key-value pairs)
+    // or a JSON array of pairs. Handle both.
+    let alist: Vec<serde_json::Value> = if result.is_object() {
+        let obj = result.as_object().unwrap();
+        obj.iter().map(|(k, v)| json!([k, v])).collect()
+    } else if let Some(arr) = result.as_array() {
+        arr.to_vec()
+    } else {
+        return Err(McpToolError::invalid_argument(
+            "Lisp query expression must evaluate to an association list (array of pairs) or object"
+        ));
+    };
+
+    let mut nl_query = String::new();
+    let mut top_k = 5usize;
+    let mut include_text = false;
+    let mut min_score = 0.0f32;
+    let mut generate_answer = false;
+
+    for pair in &alist {
+        let arr = pair.as_array().ok_or_else(|| McpToolError::invalid_argument(
+            "Each element in the Lisp query alist must be a 2-element array"
+        ))?;
+        if arr.len() != 2 {
+            return Err(McpToolError::invalid_argument(format!(
+                "Each element in the Lisp query alist must be a 2-element array, got {} elements",
+                arr.len()
+            )));
+        }
+        let key = arr[0].as_str().ok_or_else(|| McpToolError::invalid_argument(
+            "First element of each query alist pair must be a string key"
+        ))?;
+        let value = &arr[1];
+        match key {
+            "query" => {
+                nl_query = value.as_str().ok_or_else(|| McpToolError::invalid_argument(
+                    "\"query\" value must be a string"
+                ))?.to_string();
+            }
+            "top-k" => {
+                top_k = value.as_u64().ok_or_else(|| McpToolError::invalid_argument(
+                    "\"top-k\" value must be an integer"
+                ))? as usize;
+            }
+            "include-text" => {
+                include_text = value.as_bool().ok_or_else(|| McpToolError::invalid_argument(
+                    "\"include-text\" value must be a boolean (t or nil)"
+                ))?;
+            }
+            "min-score" => {
+                min_score = value.as_f64().ok_or_else(|| McpToolError::invalid_argument(
+                    "\"min-score\" value must be a number"
+                ))? as f32;
+            }
+            "generate-answer" => {
+                generate_answer = value.as_bool().ok_or_else(|| McpToolError::invalid_argument(
+                    "\"generate-answer\" value must be a boolean (t or nil)"
+                ))?;
+            }
+            _ => {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Unknown query option key: '{key}'. Supported keys: \
+                     query, top-k, include-text, min-score, generate-answer"
+                )));
+            }
+        }
+    }
+
+    if nl_query.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "Lisp query expression must include a \"query\" key with a string value"
+        ));
+    }
+
+    Ok((nl_query, top_k, include_text, min_score, generate_answer))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

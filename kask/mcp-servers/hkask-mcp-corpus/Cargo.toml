@@ -10,6 +10,7 @@ tempfile.workspace = true
 # Shared infrastructure
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+hkask-lisp.workspace = true
 
 # Ontology bridges — vocabulary constants for metadata, provenance, and domain predicates
 hkask-bridge-ontology.workspace = true

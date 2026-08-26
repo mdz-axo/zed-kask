@@ -145,6 +145,46 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
   connection to avoid the deprecated `sqlite3_auto_extension` teardown
   segfault (`core/database.rs:39-76`).
 
+## Rotate a DB passphrase
+
+To re-encrypt a SQLCipher DB under a new passphrase (e.g., after a key
+compromise or routine rotation), use `rotate_passphrase`
+(`rotation.rs:121`). The bridge layer wraps this in
+`rotate_curator_db_passphrase` and `rotate_swarm_memory_db_passphrase`
+(`kask_bridge/src/identity.rs`), which resolve the old passphrase from the
+keychain and the DB path from env/data-dir.
+
+The rotation is atomic and fail-safe:
+
+1. Opens the source DB with the old passphrase (verifies it).
+2. Creates `<db>.new` with the new passphrase.
+3. Copies all user tables + `sqlite_sequence` in a single transaction.
+4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`.
+5. Deletes `.old` on success.
+
+If any step fails, the original DB is untouched. The caller (settings UI)
+writes the new passphrase to the keychain ONLY after `Ok(())` — a failed
+rotation leaves the old passphrase in effect.
+
+**From the settings UI**: use the Security sub-page (for the curator/corpus/
+kata-kanban DB passphrase) or the Swarm page (for the swarm memory DB
+passphrase). Both trigger rotation before saving the new passphrase.
+
+**From code**:
+
+```rust
+use kask_bridge::rotate_curator_db_passphrase;
+
+// Rotate the curator DB passphrase. The old passphrase is resolved
+// from the keychain; the new passphrase must be >=8 chars.
+rotate_curator_db_passphrase("new-passphrase")?;
+
+// After rotation succeeds, write the new passphrase to the keychain
+// and nudge MCP servers to restart.
+```
+
+Run the rotation tests with `cargo test -p hkask-storage rotation`.
+
 ## See also
 
 - [hkask-storage Reference](./reference.md): ERD of the full schema and the

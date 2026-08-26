@@ -206,14 +206,8 @@ fn start_context_server_health_polling(
 const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Compute `(healthy_count, total_count)` across all open projects'
-/// `ContextServerStore`s. A server is "healthy" iff its status is `Running`.
-///
-/// Only servers expected to be running count toward `total`: `Starting`,
-/// `Running`, and `Error`. Servers in `Stopped` (deliberately stopped or
-/// disabled), `AuthRequired`, `ClientSecretRequired`, and `Authenticating`
-/// (OAuth-waiting) are excluded — they are legitimate non-running states,
-/// not fleet degradation. Counting them produced constant false-positive
-/// `ContextServerFleetDegraded` alerts every tick.
+/// `ContextServerStore`s. Delegates the status-classification logic to
+/// [`classify_fleet_health`], which is unit-tested separately.
 ///
 /// Deduplicates by `ContextServerStore` entity id (a project opened in two
 /// windows shares one store).
@@ -221,16 +215,13 @@ fn compute_context_server_health_snapshot(
     workspace_store: &Entity<WorkspaceStore>,
     cx: &App,
 ) -> (usize, usize) {
-    use project::context_server_store::ContextServerStatus;
-
     let workspaces = workspace_store
         .read(cx)
         .workspaces()
         .filter_map(|workspace| workspace.upgrade())
         .collect::<Vec<_>>();
     let mut seen_stores = HashSet::new();
-    let mut healthy = 0;
-    let mut total = 0;
+    let mut statuses: Vec<project::context_server_store::ContextServerStatus> = Vec::new();
     for workspace in workspaces {
         let project = workspace.read(cx).project().clone();
         let context_server_store = project.read(cx).context_server_store();
@@ -239,24 +230,48 @@ fn compute_context_server_health_snapshot(
         }
         let store = context_server_store.read(cx);
         for server_id in store.server_ids() {
-            let Some(status) = store.status_for_server(server_id) else {
-                continue;
-            };
-            match status {
-                ContextServerStatus::Starting
-                | ContextServerStatus::Running
-                | ContextServerStatus::Error(_) => {
-                    total += 1;
-                    if let ContextServerStatus::Running = status {
-                        healthy += 1;
-                    }
-                }
-                // Deliberately not running — not fleet degradation.
-                ContextServerStatus::Stopped
-                | ContextServerStatus::AuthRequired
-                | ContextServerStatus::ClientSecretRequired { .. }
-                | ContextServerStatus::Authenticating => {}
+            if let Some(status) = store.status_for_server(server_id) {
+                statuses.push(status);
             }
+        }
+    }
+    classify_fleet_health(&statuses)
+}
+
+/// Classify context-server fleet health from a slice of server statuses.
+///
+/// Only servers expected to be running count toward `total`: `Starting`,
+/// `Running`, and `Error`. Servers in `Stopped` (deliberately stopped or
+/// disabled), `AuthRequired`, `ClientSecretRequired`, and `Authenticating`
+/// (OAuth-waiting) are excluded — they are legitimate non-running states,
+/// not fleet degradation. Counting them produced constant false-positive
+/// `ContextServerFleetDegraded` alerts every tick.
+///
+/// Returns `(healthy_count, total_count)` where `healthy_count` is the
+/// number of `Running` servers and `total_count` is the number of servers
+/// expected to be running (`Starting` + `Running` + `Error`).
+fn classify_fleet_health(
+    statuses: &[project::context_server_store::ContextServerStatus],
+) -> (usize, usize) {
+    use project::context_server_store::ContextServerStatus;
+
+    let mut healthy = 0;
+    let mut total = 0;
+    for status in statuses {
+        match status {
+            ContextServerStatus::Starting
+            | ContextServerStatus::Running
+            | ContextServerStatus::Error(_) => {
+                total += 1;
+                if let ContextServerStatus::Running = status {
+                    healthy += 1;
+                }
+            }
+            // Deliberately not running — not fleet degradation.
+            ContextServerStatus::Stopped
+            | ContextServerStatus::AuthRequired
+            | ContextServerStatus::ClientSecretRequired { .. }
+            | ContextServerStatus::Authenticating => {}
         }
     }
     (healthy, total)
@@ -629,5 +644,131 @@ impl FormExt for Form {
             Some(value) => self.text(label.into(), value.into()),
             None => self,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_fleet_health;
+    use project::context_server_store::ContextServerStatus;
+    use std::sync::Arc;
+
+    #[test]
+    fn all_running_is_fully_healthy() {
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 3);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn starting_counts_toward_total_but_not_healthy() {
+        // A server stuck in Starting is the real degradation signal — it must
+        // count toward total so the ratio drops below 1.0 and the alert fires.
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Starting,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn error_counts_toward_total_but_not_healthy() {
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Error("spawn failed".into()),
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn stopped_servers_are_excluded_from_total() {
+        // Stopped is a deliberate state (disabled, AI off) — not fleet
+        // degradation. It must NOT count toward total, or the alert fires
+        // every tick as a false positive.
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Stopped,
+            ContextServerStatus::Stopped,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn oauth_waiting_states_are_excluded_from_total() {
+        // AuthRequired, ClientSecretRequired, and Authenticating are
+        // OAuth-waiting states, not broken servers.
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::AuthRequired,
+            ContextServerStatus::ClientSecretRequired { error: None },
+            ContextServerStatus::Authenticating,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn all_stopped_produces_zero_total_no_alert() {
+        // When every server is deliberately stopped, total is 0 and the
+        // sensor returns None (no signal) — no false-positive alert.
+        let statuses = vec![
+            ContextServerStatus::Stopped,
+            ContextServerStatus::Stopped,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn all_starting_signals_degradation() {
+        // The original storm scenario: every server stuck in Starting.
+        let statuses = vec![
+            ContextServerStatus::Starting,
+            ContextServerStatus::Starting,
+            ContextServerStatus::Starting,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn mixed_real_and_excluded_states() {
+        // Real-world mix: some running, some stopped, one stuck starting,
+        // one in error, one waiting for OAuth.
+        let error: Arc<str> = "connection refused".into();
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+            ContextServerStatus::Stopped,
+            ContextServerStatus::Starting,
+            ContextServerStatus::Error(error),
+            ContextServerStatus::AuthRequired,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        // 2 Running (healthy), 1 Starting + 1 Error count toward total.
+        // Stopped and AuthRequired excluded.
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn empty_slice_is_zero_zero() {
+        let (healthy, total) = classify_fleet_health(&[]);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
     }
 }
