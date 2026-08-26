@@ -424,6 +424,7 @@ impl InferenceIpcClient {
         let params = InferenceParams {
             model_override: Some(model.to_string()),
             batch_prompts: Some(prompts.to_vec()),
+            batch_max_tokens: Some(max_tokens),
             parameters: LLMParameters {
                 temperature,
                 ..Default::default()

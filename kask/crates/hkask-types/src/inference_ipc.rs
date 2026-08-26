@@ -162,6 +162,9 @@ pub struct InferenceParams {
     /// provider's Batch API and returns results keyed by `custom_id`.
     #[serde(default)]
     pub batch_prompts: Option<Vec<BatchPromptEntry>>,
+    /// Max output tokens per prompt for `InferenceMethod::GenerateBatch`.
+    #[serde(default)]
+    pub batch_max_tokens: Option<u32>,
     pub media_op: Option<String>,
     /// Text prompt for image/video generation.
     pub media_prompt: Option<String>,

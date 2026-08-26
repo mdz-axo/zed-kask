@@ -35,6 +35,7 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 agent.workspace = true
 settings.workspace = true
+zed_credentials_provider.workspace = true
 settings_content.workspace = true
 credentials_provider.workspace = true
 collections.workspace = true

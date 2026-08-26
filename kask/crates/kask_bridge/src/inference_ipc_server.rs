@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
-    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
-    ModelListEntry, WorktreeThreadInfo,
+    BatchResultEntry, InferenceErrorPayload, InferenceMethod, InferenceOutcome,
+    InferenceRequest, InferenceResponse, ModelListEntry, WorktreeThreadInfo,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -51,6 +51,18 @@ pub(crate) type WorktreeSpawnRequest = (
     Option<String>, // worktree_name
     Option<String>, // base_ref
     oneshot::Sender<Result<WorktreeThreadInfo, String>>,
+);
+
+/// A request to read a provider API key from zed's `CredentialsProvider`,
+/// sent from the tokio dispatch task to the GPUI-side task via a channel
+/// (same pattern as `ListModels`). The GPUI-side task reads the key from the
+/// keychain and returns it via the oneshot reply channel.
+///
+/// `credential_url` is the `kask://credentials/<key>` URL the keychain entry
+/// is stored under (e.g. `kask://credentials/openrouter`).
+pub(crate) type BatchCredentialRequest = (
+    String,                          // credential_url
+    oneshot::Sender<Result<String, String>>, // api_key or error
 );
 
 /// Spawns a worktree-backed agent thread. Implemented by `main.rs` using
@@ -146,6 +158,7 @@ pub struct InferenceIpcServer {
     _task: tokio::task::JoinHandle<()>,
     _list_models_task: gpui::Task<()>,
     _worktree_spawn_task: gpui::Task<()>,
+    _batch_credential_task: gpui::Task<()>,
 }
 
 /// Maximum size of a single newline-delimited IPC message.
@@ -426,6 +439,38 @@ impl InferenceIpcServer {
         });
 
         let worktree_spawn_tx = Arc::new(worktree_spawn_tx);
+
+        // Batch credential channel — same pattern as `list_models_tx`. The
+        // GPUI-side task reads API keys from zed's `CredentialsProvider`
+        // keychain and returns them via the oneshot reply channel. The tokio-
+        // side dispatch uses this to get the provider API key for batch
+        // inference calls — the key never leaves the zed process.
+        let (batch_credential_tx, mut batch_credential_rx) =
+            tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
+        let batch_credential_task = cx.spawn(async move |cx| {
+            while let Some((credential_url, reply)) = batch_credential_rx.recv().await {
+                let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+                let result = credentials_provider.read_credentials(&credential_url, cx).await;
+                match result {
+                    Ok(Some((_username, password_bytes))) => {
+                        let password = String::from_utf8_lossy(&password_bytes).to_string();
+                        let _ = reply.send(Ok(password));
+                    }
+                    Ok(None) => {
+                        let _ = reply.send(Err(format!(
+                            "credential '{credential_url}' not found in keychain"
+                        )));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(format!(
+                            "failed to read credential '{credential_url}': {e}"
+                        )));
+                    }
+                }
+            }
+        });
+        let batch_credential_tx = Arc::new(batch_credential_tx);
+
         let task = tokio_handle.spawn(async move {
             loop {
                 match listener.accept().await {
@@ -435,6 +480,7 @@ impl InferenceIpcServer {
                         let tools = tools.clone();
                         let list_models_tx = list_models_tx.clone();
                         let worktree_spawn_tx = worktree_spawn_tx.clone();
+                        let batch_credential_tx = batch_credential_tx.clone();
                         tokio::spawn(async move {
                             handle_connection(
                                 stream,
@@ -443,6 +489,7 @@ impl InferenceIpcServer {
                                 tools,
                                 list_models_tx,
                                 Some(worktree_spawn_tx),
+                                batch_credential_tx,
                             )
                             .await;
                         });
@@ -464,6 +511,7 @@ impl InferenceIpcServer {
             _task: task,
             _list_models_task: list_models_task,
             _worktree_spawn_task: worktree_spawn_task,
+            _batch_credential_task: batch_credential_task,
         })
     }
 
@@ -498,6 +546,7 @@ async fn handle_connection(
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
     worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    batch_credential_tx: Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
 ) {
     if !peer_is_owner(&stream) {
         return;
@@ -550,6 +599,7 @@ async fn handle_connection(
             tool_port.as_ref(),
             &list_models_tx,
             worktree_spawn_tx.as_ref(),
+            &batch_credential_tx,
             request,
         )
         .await;
@@ -622,6 +672,7 @@ async fn dispatch(
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
     worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    batch_credential_tx: &Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
@@ -840,6 +891,123 @@ async fn dispatch(
         };
     }
 
+    // GenerateBatch requests are dispatched to the provider's Batch API
+    // (OpenRouter or DeepInfra). The zed side reads the API key from the
+    // keychain via the GPUI-side credential channel, then calls
+    // `hkask_inference::batch::submit_batch`. The MCP server never sees the
+    // API key.
+    if matches!(request.method, InferenceMethod::GenerateBatch) {
+        let model = params.model_override.as_deref().unwrap_or("");
+        let prompts = params.batch_prompts.as_deref().unwrap_or(&[]);
+        let max_tokens = params.batch_max_tokens.unwrap_or(2000);
+        let temperature = params.parameters.temperature;
+
+        // Detect the provider from the model name
+        let Some((provider, clean_model)) =
+            hkask_inference::batch::detect_batch_provider(model)
+        else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "InvalidArgument".to_string(),
+                    message: format!(
+                        "model '{model}' is not batch-eligible — use a ':batch' suffix \
+                         (OpenRouter) or 'DeepInfra/' prefix (DeepInfra), or set \
+                         HKASK_BATCH_PROVIDER"
+                    ),
+                },
+            };
+        };
+
+        // Read the API key from the keychain via the GPUI-side channel
+        let credential_url = match provider {
+            hkask_inference::batch::BatchProvider::OpenRouter => {
+                "kask://credentials/openrouter"
+            }
+            hkask_inference::batch::BatchProvider::DeepInfra => {
+                "kask://credentials/deepinfra"
+            }
+        };
+        let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
+        if batch_credential_tx
+            .send((credential_url.to_string(), tx_reply))
+            .is_err()
+        {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "GPUI-side credential task dropped — server shutting down"
+                        .to_string(),
+                },
+            };
+        }
+        let api_key = match rx_reply.await {
+            Ok(Ok(key)) => key,
+            Ok(Err(e)) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "PermissionDenied".to_string(),
+                        message: format!(
+                            "batch API requires {credential_url}: {e}. \
+                             Set the API key via the kask settings UI."
+                        ),
+                    },
+                };
+            }
+            Err(e) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Connection".to_string(),
+                        message: format!("credential channel failed: {e}"),
+                    },
+                };
+            }
+        };
+
+        // Format prompts for the batch API
+        let batch_prompts: Vec<hkask_inference::batch::BatchPrompt> = prompts
+            .iter()
+            .map(|p| hkask_inference::batch::BatchPrompt {
+                custom_id: p.custom_id.clone(),
+                system: p.system.clone(),
+                user: p.user.clone(),
+            })
+            .collect();
+
+        // Submit the batch and wait for results
+        match hkask_inference::batch::submit_batch(
+            provider,
+            &api_key,
+            &clean_model,
+            &batch_prompts,
+            max_tokens,
+            temperature,
+        )
+        .await
+        {
+            Ok(batch_result) => {
+                let results: Vec<BatchResultEntry> = batch_result
+                    .results
+                    .into_iter()
+                    .map(|(custom_id, r)| BatchResultEntry {
+                        custom_id,
+                        text: Some(r.text),
+                        total_tokens: r.total_tokens,
+                        error: None,
+                    })
+                    .collect();
+                return InferenceOutcome::BatchResults { results };
+            }
+            Err(e) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Internal".to_string(),
+                        message: format!("batch API failed: {e}"),
+                    },
+                };
+            }
+        }
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -886,7 +1054,8 @@ async fn dispatch(
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
-        | InferenceMethod::CreateWorktreeThread => {
+        | InferenceMethod::CreateWorktreeThread
+        | InferenceMethod::GenerateBatch => {
             tracing::error!(
                 target: "reg.inference",
                 method = ?request.method,
