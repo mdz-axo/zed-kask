@@ -107,7 +107,9 @@ pub trait AlertEscalationSink: Send + Sync {
     /// Default returns `false` (no dedup). Implementations backed by a
     /// durable queue should query for pending alerts with this output.
     /// Errors are logged by the caller and never propagated.
-    fn has_pending_alert(&self, _output: &str) -> bool { false }
+    fn has_pending_alert(&self, _output: &str) -> bool {
+        false
+    }
 }
 
 impl RuntimeAlert {

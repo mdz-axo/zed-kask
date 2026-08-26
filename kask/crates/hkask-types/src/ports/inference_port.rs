@@ -285,7 +285,13 @@ pub trait InferencePort: Send + Sync {
         _prompts: &[crate::inference_ipc::BatchPromptEntry],
         _max_tokens: u32,
         _temperature: f32,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<crate::inference_ipc::BatchResultEntry>, InferenceError>> + Send + 'a>> {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Vec<crate::inference_ipc::BatchResultEntry>, InferenceError>>
+                + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async {
             Err(InferenceError::Connection(
                 "batch inference not supported by this InferencePort".into(),

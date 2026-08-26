@@ -480,9 +480,9 @@ impl InferenceIpcClient {
         let line = match line {
             Some(line) => line,
             None => {
-                return Err(IpcTransportError::Connection(
-                    "IPC socket closed by server".into(),
-                ).into());
+                return Err(
+                    IpcTransportError::Connection("IPC socket closed by server".into()).into(),
+                );
             }
         };
 
@@ -493,17 +493,20 @@ impl InferenceIpcClient {
             return Err(IpcTransportError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
-            )).into());
+            ))
+            .into());
         }
 
         match response.outcome {
             InferenceOutcome::BatchResults { results } => Ok(results),
-            InferenceOutcome::Error { error } => Err(InferenceError::Connection(
-                format!("{}: {}", error.code, error.message),
-            )),
-            _ => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "unexpected outcome"),
-            )),
+            InferenceOutcome::Error { error } => Err(InferenceError::Connection(format!(
+                "{}: {}",
+                error.code, error.message
+            ))),
+            _ => Err(InferenceError::Connection(unexpected_outcome_msg(
+                &method,
+                "unexpected outcome",
+            ))),
         }
     }
 
@@ -810,9 +813,7 @@ impl InferencePort for InferenceIpcClient {
         })
     }
 
-    fn generate_batch<
-        'a,
-    >(
+    fn generate_batch<'a>(
         &'a self,
         model: &str,
         prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
@@ -821,9 +822,12 @@ impl InferencePort for InferenceIpcClient {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                Output = Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, InferenceError>,
-            > + Send
-            + 'a,
+                    Output = Result<
+                        Vec<hkask_types::inference_ipc::BatchResultEntry>,
+                        InferenceError,
+                    >,
+                > + Send
+                + 'a,
         >,
     > {
         let this = self.clone();

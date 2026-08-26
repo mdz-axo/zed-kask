@@ -567,9 +567,7 @@ pub(crate) fn extract_invested_capital_from_metrics(
 /// Extract ROE from key_metrics data (pre-computed by FMP).
 /// FMP field: `returnOnEquity`.
 pub(crate) fn extract_roe_from_metrics(metrics_entry: &serde_json::Value) -> Option<f64> {
-    metrics_entry
-        .get("returnOnEquity")
-        .and_then(|v| v.as_f64())
+    metrics_entry.get("returnOnEquity").and_then(|v| v.as_f64())
 }
 
 /// Compute ROE from net income and book value of equity.

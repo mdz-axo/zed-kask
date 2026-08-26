@@ -160,8 +160,7 @@ async fn dismiss_nonexistent_id_returns_not_found() {
 #[tokio::test]
 async fn escalation_queue_has_pending_with_output_detects_duplicates() {
     let driver = SqliteDriver::in_memory_driver();
-    let queue =
-        EscalationQueue::from_driver(driver).expect("escalation queue init");
+    let queue = EscalationQueue::from_driver(driver).expect("escalation queue init");
 
     let output = "Efferent action Throttle (target: inference) recommended but not wired";
 
@@ -176,7 +175,14 @@ async fn escalation_queue_has_pending_with_output_detects_duplicates() {
     let template_id = hkask_types::TemplateID::new();
     let bot_id = hkask_types::BotID::new();
     queue
-        .add(template_id, bot_id, output.to_string(), 1.0, 0, "{}".to_string())
+        .add(
+            template_id,
+            bot_id,
+            output.to_string(),
+            1.0,
+            0,
+            "{}".to_string(),
+        )
         .unwrap();
 
     // Now the dedup check must find it.
@@ -222,8 +228,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
     let database = Arc::new(CuratorDb::from_stores(stores));
     let server = CuratorServer::new(WebID::new(), database);
 
-    let flood_output =
-        "Efferent action Throttle (target: inference) recommended but not wired";
+    let flood_output = "Efferent action Throttle (target: inference) recommended but not wired";
     let other_output = "Variety deficit in domain: reasoning";
 
     // Seed: 5 identical flood escalations + 1 unrelated escalation.
@@ -265,12 +270,10 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
     // Dismiss all 5 flood escalations by pattern.
     let response = parse(
         &server
-            .curator_escalation_dismiss_by_pattern(Parameters(
-                EscalationDismissByPatternRequest {
-                    output: flood_output.to_string(),
-                    reason: "runaway flood from unwired Throttle action".to_string(),
-                },
-            ))
+            .curator_escalation_dismiss_by_pattern(Parameters(EscalationDismissByPatternRequest {
+                output: flood_output.to_string(),
+                reason: "runaway flood from unwired Throttle action".to_string(),
+            }))
             .await,
     );
 
@@ -306,12 +309,10 @@ async fn dismiss_by_pattern_no_matches_returns_zero() {
     let server = make_server();
     let response = parse(
         &server
-            .curator_escalation_dismiss_by_pattern(Parameters(
-                EscalationDismissByPatternRequest {
-                    output: "nothing matches this".to_string(),
-                    reason: "testing no-match boundary".to_string(),
-                },
-            ))
+            .curator_escalation_dismiss_by_pattern(Parameters(EscalationDismissByPatternRequest {
+                output: "nothing matches this".to_string(),
+                reason: "testing no-match boundary".to_string(),
+            }))
             .await,
     );
 

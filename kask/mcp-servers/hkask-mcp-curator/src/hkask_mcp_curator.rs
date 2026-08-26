@@ -394,7 +394,9 @@ impl CuratorServer {
         .await
     }
 
-    #[tool(description = "Dismiss all pending escalations matching an exact output string. Used to clear runaway escalation floods from a single broken feedback loop in one operation. Returns the count of dismissed escalations.")]
+    #[tool(
+        description = "Dismiss all pending escalations matching an exact output string. Used to clear runaway escalation floods from a single broken feedback loop in one operation. Returns the count of dismissed escalations."
+    )]
     pub async fn curator_escalation_dismiss_by_pattern(
         &self,
         Parameters(req): Parameters<EscalationDismissByPatternRequest>,

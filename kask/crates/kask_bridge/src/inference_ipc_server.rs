@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
-    BatchResultEntry, InferenceErrorPayload, InferenceMethod, InferenceOutcome,
-    InferenceRequest, InferenceResponse, ModelListEntry, WorktreeThreadInfo,
+    BatchResultEntry, InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest,
+    InferenceResponse, ModelListEntry, WorktreeThreadInfo,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -61,7 +61,7 @@ pub(crate) type WorktreeSpawnRequest = (
 /// `credential_url` is the `kask://credentials/<key>` URL the keychain entry
 /// is stored under (e.g. `kask://credentials/openrouter`).
 pub(crate) type BatchCredentialRequest = (
-    String,                          // credential_url
+    String,                                  // credential_url
     oneshot::Sender<Result<String, String>>, // api_key or error
 );
 
@@ -450,7 +450,9 @@ impl InferenceIpcServer {
         let batch_credential_task = cx.spawn(async move |cx| {
             while let Some((credential_url, reply)) = batch_credential_rx.recv().await {
                 let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                let result = credentials_provider.read_credentials(&credential_url, cx).await;
+                let result = credentials_provider
+                    .read_credentials(&credential_url, cx)
+                    .await;
                 match result {
                     Ok(Some((_username, password_bytes))) => {
                         let password = String::from_utf8_lossy(&password_bytes).to_string();
@@ -906,15 +908,13 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "InvalidArgument".to_string(),
-                    message: "batch_prompts is empty — cannot submit an empty batch"
-                        .to_string(),
+                    message: "batch_prompts is empty — cannot submit an empty batch".to_string(),
                 },
             };
         }
 
         // Detect the provider from the model name
-        let Some((provider, clean_model)) =
-            hkask_inference::batch::detect_batch_provider(model)
+        let Some((provider, clean_model)) = hkask_inference::batch::detect_batch_provider(model)
         else {
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
@@ -930,12 +930,8 @@ async fn dispatch(
 
         // Read the API key from the keychain via the GPUI-side channel
         let credential_url = match provider {
-            hkask_inference::batch::BatchProvider::OpenRouter => {
-                "kask://credentials/openrouter"
-            }
-            hkask_inference::batch::BatchProvider::DeepInfra => {
-                "kask://credentials/deepinfra"
-            }
+            hkask_inference::batch::BatchProvider::OpenRouter => "kask://credentials/openrouter",
+            hkask_inference::batch::BatchProvider::DeepInfra => "kask://credentials/deepinfra",
         };
         let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
         if batch_credential_tx
@@ -945,8 +941,7 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side credential task dropped — server shutting down"
-                        .to_string(),
+                    message: "GPUI-side credential task dropped — server shutting down".to_string(),
                 },
             };
         }
@@ -1251,8 +1246,7 @@ mod tests {
         Arc::new(tx)
     }
 
-    fn make_batch_credential_tx()
-    -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
+    fn make_batch_credential_tx() -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
     {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
         Arc::new(tx)
@@ -1501,7 +1495,16 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            &batch_credential_tx,
+            request,
+        )
+        .await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1531,7 +1534,16 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            &batch_credential_tx,
+            request,
+        )
+        .await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1558,7 +1570,16 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            &batch_credential_tx,
+            request,
+        )
+        .await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1684,7 +1705,16 @@ mod tests {
             params: InferenceParams::default(),
         };
 
-        let outcome = dispatch(&port, None, None, &list_models_tx, None, &batch_credential_tx, request).await;
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            &batch_credential_tx,
+            request,
+        )
+        .await;
 
         match outcome {
             InferenceOutcome::Error { error } => {

@@ -18,8 +18,8 @@
 //!  10. Shares outstanding         key_metrics.weightedAverageShsOut or profile
 //!  11. Tax rate                   incomeTaxExpense / incomeBeforeTax
 
-use crate::types::ProjectionAssumptionOverrides;
 use crate::providers::CompanyProfile;
+use crate::types::ProjectionAssumptionOverrides;
 use serde::{Deserialize, Serialize};
 
 /// Sector classification source: FMP `company_profile` API, which returns
@@ -90,11 +90,19 @@ pub(crate) fn financial_sector_guard(
     let (method, alternatives) = match tool_name {
         "ep_valuation" => (
             "Economic profit valuation (ROIC - WACC) × Invested Capital",
-            vec!["comparable_analysis", "reverse_dcf with manual overrides", "dividend discount model"],
+            vec![
+                "comparable_analysis",
+                "reverse_dcf with manual overrides",
+                "dividend discount model",
+            ],
         ),
         _ => (
             "FCF-based DCF valuation",
-            vec!["comparable_analysis", "reverse_dcf with manual overrides", "ep_valuation (equity-based)"],
+            vec![
+                "comparable_analysis",
+                "reverse_dcf with manual overrides",
+                "ep_valuation (equity-based)",
+            ],
         ),
     };
     Some(serde_json::json!({
@@ -126,7 +134,11 @@ pub(crate) fn working_capital_guard(
     let (blocked_reason, alternatives) = if is_financial_sector(profile) {
         (
             "Financial-sector companies (banks, insurance) have balance sheets where current liabilities include customer deposits. DPO, DSO, DIO, and the cash conversion cycle are not meaningful — these are industrial-company metrics that measure supplier and customer payment timing, not deposit flows.",
-            vec!["efficiency ratio (bank-specific)", "net interest margin", "ROE"],
+            vec![
+                "efficiency ratio (bank-specific)",
+                "net interest margin",
+                "ROE",
+            ],
         )
     } else if is_reit(profile) {
         (

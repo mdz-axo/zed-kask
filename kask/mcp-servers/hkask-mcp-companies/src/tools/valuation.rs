@@ -266,7 +266,11 @@ impl CompaniesServer {
                     }
 
                     let overlay_profile = CompanyProfile::from_raw(profile_data.clone());
-                    if let Some(err) = financial_model::financial_sector_guard(&overlay_profile, &req.symbol, "dcf_valuation") {
+                    if let Some(err) = financial_model::financial_sector_guard(
+                        &overlay_profile,
+                        &req.symbol,
+                        "dcf_valuation",
+                    ) {
                         return Ok(err);
                     }
 

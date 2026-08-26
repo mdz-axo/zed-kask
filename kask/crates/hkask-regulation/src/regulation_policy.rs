@@ -480,39 +480,51 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
             Some((*deficit as u64, *threshold as u64))
         }
-        RegulationData::ErrorRateExceeded { error_rate, threshold } => {
-            Some((*error_rate as u64, *threshold as u64))
-        }
-        RegulationData::ConnectorLatencyExceeded { latency_secs, threshold } => {
-            Some((*latency_secs as u64, *threshold as u64))
-        }
-        RegulationData::CommunicationBackpressure { queue_depth, threshold } => {
-            Some((*queue_depth as u64, *threshold as u64))
-        }
-        RegulationData::WalletBalanceLow { balance_ratio, threshold, .. } => {
-            Some((*balance_ratio as u64, *threshold as u64))
-        }
-        RegulationData::ToolReliabilityDegraded { reliability, threshold } => {
-            Some((*reliability as u64, *threshold as u64))
-        }
-        RegulationData::EnergyBudgetLow { remaining_ratio, set_point } => {
-            Some((*remaining_ratio as u64, *set_point as u64))
-        }
-        RegulationData::BudgetGuardEscalation { remaining_ratio, set_point, .. } => {
-            Some((*remaining_ratio as u64, *set_point as u64))
-        }
-        RegulationData::EnergyDepletionAutoAdjust { remaining_ratio, set_point } => {
-            Some((*remaining_ratio as u64, *set_point as u64))
-        }
-        RegulationData::SeamCoverageDegraded { coverage_pct, previous_coverage, .. } => {
-            Some((*coverage_pct as u64, *previous_coverage as u64))
-        }
-        RegulationData::SeamCoverageImproved { coverage_pct, previous_coverage, .. } => {
-            Some((*coverage_pct as u64, *previous_coverage as u64))
-        }
-        RegulationData::WalletKeyUnhealthy { threshold, .. } => {
-            Some((0, *threshold as u64))
-        }
+        RegulationData::ErrorRateExceeded {
+            error_rate,
+            threshold,
+        } => Some((*error_rate as u64, *threshold as u64)),
+        RegulationData::ConnectorLatencyExceeded {
+            latency_secs,
+            threshold,
+        } => Some((*latency_secs as u64, *threshold as u64)),
+        RegulationData::CommunicationBackpressure {
+            queue_depth,
+            threshold,
+        } => Some((*queue_depth as u64, *threshold as u64)),
+        RegulationData::WalletBalanceLow {
+            balance_ratio,
+            threshold,
+            ..
+        } => Some((*balance_ratio as u64, *threshold as u64)),
+        RegulationData::ToolReliabilityDegraded {
+            reliability,
+            threshold,
+        } => Some((*reliability as u64, *threshold as u64)),
+        RegulationData::EnergyBudgetLow {
+            remaining_ratio,
+            set_point,
+        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        RegulationData::BudgetGuardEscalation {
+            remaining_ratio,
+            set_point,
+            ..
+        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        RegulationData::EnergyDepletionAutoAdjust {
+            remaining_ratio,
+            set_point,
+        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        RegulationData::SeamCoverageDegraded {
+            coverage_pct,
+            previous_coverage,
+            ..
+        } => Some((*coverage_pct as u64, *previous_coverage as u64)),
+        RegulationData::SeamCoverageImproved {
+            coverage_pct,
+            previous_coverage,
+            ..
+        } => Some((*coverage_pct as u64, *previous_coverage as u64)),
+        RegulationData::WalletKeyUnhealthy { threshold, .. } => Some((0, *threshold as u64)),
         RegulationData::CuratorBudgetOverride { .. }
         | RegulationData::RolloutImpactCheck { .. }
         | RegulationData::NoData => None,

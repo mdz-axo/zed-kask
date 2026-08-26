@@ -439,9 +439,9 @@ async fn poll_batch_completion(
 
         match status_resp.status.as_str() {
             "completed" => {
-                return status_resp.output_file_id.ok_or_else(|| {
-                    format!("Batch {batch_id} completed but no output file id")
-                });
+                return status_resp
+                    .output_file_id
+                    .ok_or_else(|| format!("Batch {batch_id} completed but no output file id"));
             }
             "failed" | "cancelled" | "expired" => {
                 return Err(format!(
@@ -521,10 +521,7 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
             }
         } else if let Some(err) = result_line.error {
             let err_msg = err.message;
-            results.insert(
-                result_line.custom_id.clone(),
-                Err(err_msg.clone()),
-            );
+            results.insert(result_line.custom_id.clone(), Err(err_msg.clone()));
             failed += 1;
             tracing::warn!(
                 target: "hkask.inference.batch",

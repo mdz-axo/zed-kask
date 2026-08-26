@@ -232,9 +232,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
-    fn generate_batch<
-        'a,
-    >(
+    fn generate_batch<'a>(
         &'a self,
         model: &str,
         prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
@@ -243,9 +241,12 @@ impl hkask_types::InferencePort for LazyInferencePort {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                Output = Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, hkask_types::InferenceError>,
-            > + Send
-            + 'a,
+                    Output = Result<
+                        Vec<hkask_types::inference_ipc::BatchResultEntry>,
+                        hkask_types::InferenceError,
+                    >,
+                > + Send
+                + 'a,
         >,
     > {
         let model = model.to_string();

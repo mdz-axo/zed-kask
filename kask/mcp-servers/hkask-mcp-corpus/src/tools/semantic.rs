@@ -456,24 +456,27 @@ impl CorpusServer {
         let file = std::fs::File::create(&output_path).map_err(|e| {
             map_corpus_io_error(e, &format!("Cannot create output file '{}'", output))
         })?;
-        let output_writer = std::sync::Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file)));
+        let output_writer =
+            std::sync::Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file)));
         let write_count = std::sync::atomic::AtomicUsize::new(0);
 
         // Build a lookup map from custom_id to result
-        let result_map: std::collections::HashMap<String, &hkask_types::inference_ipc::BatchResultEntry> =
-            batch_results.iter().map(|r| (r.custom_id.clone(), r)).collect();
+        let result_map: std::collections::HashMap<
+            String,
+            &hkask_types::inference_ipc::BatchResultEntry,
+        > = batch_results
+            .iter()
+            .map(|r| (r.custom_id.clone(), r))
+            .collect();
 
         for prompt in &prompts_vec {
             if let Some(result) = result_map.get(&prompt.chunk_id) {
                 if let Some(ref text) = result.text {
-                    let levels = prompt.bloom_levels.clone().unwrap_or_else(|| {
-                        vec!["factual".to_string(), "conceptual".to_string()]
-                    });
-                    match parse_qa_response(
-                        &extract_json_from_response(text),
-                        &levels,
-                        None,
-                    ) {
+                    let levels = prompt
+                        .bloom_levels
+                        .clone()
+                        .unwrap_or_else(|| vec!["factual".to_string(), "conceptual".to_string()]);
+                    match parse_qa_response(&extract_json_from_response(text), &levels, None) {
                         Ok(qa_response) => {
                             for pair in qa_response.qa_pairs {
                                 let result_json = json!({

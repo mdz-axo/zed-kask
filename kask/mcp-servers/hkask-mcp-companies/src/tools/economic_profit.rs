@@ -444,11 +444,7 @@ fn extract_ep_inputs_equity(
     // Cost of equity via CAPM: COE = rf + beta x ERP.
     // Beta from profile; rf and ERP from request overrides or defaults.
     let beta = economic_profit::extract_beta(profile_data).unwrap_or(1.0);
-    let coe = economic_profit::cost_of_equity(
-        beta,
-        req.risk_free_rate,
-        req.equity_risk_premium,
-    );
+    let coe = economic_profit::cost_of_equity(beta, req.risk_free_rate, req.equity_risk_premium);
 
     let current_price = profile_data
         .get("price")
