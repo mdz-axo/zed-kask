@@ -240,6 +240,19 @@ fn viz_factories() -> &'static [VizFactory] {
     ]
 }
 
+/// The fence languages the D18 gate in `crates/markdown/src/markdown.rs`
+/// admits to `media_block_renderer`. One per registered widget — the graph
+/// widget's bodies arrive under the `graph` fence (tag `event_tree`), the
+/// rest under their tag names. Pinned by
+/// `viz_fence_languages_are_admitted_by_the_d18_gate`.
+const VIZ_FENCE_LANGUAGES: &[&str] = &[
+    "graph",
+    "kanban",
+    "portfolio",
+    "scenarios",
+    "swarm_delegate_results",
+];
+
 const MAX_CACHE_SIZE: usize = 32;
 
 thread_local! {
@@ -336,6 +349,30 @@ mod tests {
     #[test]
     fn viz_factories_cover_five_widgets() {
         assert_eq!(viz_factories().len(), 5);
+    }
+
+    // Pins the D18 fence-language gate in `markdown.rs` (`is_viz_block`):
+    // every fence language a registered widget claims must be admitted by
+    // that gate, or the widget is unreachable (a body can never reach its
+    // factory). The gate lives upstream-side and cannot import this crate's
+    // types, so the contract is pinned here as a literal set — widening the
+    // registry without widening the gate fails this test.
+    #[test]
+    fn viz_fence_languages_are_admitted_by_the_d18_gate() {
+        let mut admitted: Vec<&str> = VIZ_FENCE_LANGUAGES.to_vec();
+        admitted.sort_unstable();
+        assert_eq!(
+            admitted,
+            [
+                "graph",
+                "kanban",
+                "portfolio",
+                "scenarios",
+                "swarm_delegate_results"
+            ],
+            "the D18 gate in crates/markdown/src/markdown.rs must admit exactly \
+             these fence languages — update both together"
+        );
     }
 
     // S4 sensor consistency: every viz widget's block body must parse the

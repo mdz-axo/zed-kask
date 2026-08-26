@@ -54,8 +54,8 @@ hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
 
 Do NOT use for:
 
-- Dispatching a single ABW agent without composition intent (use the
-  `swarm_panel` UI directly)
+- Dispatching a single ABW agent without composition intent (use the swarm
+  panel directly)
 - General multi-agent coordination theory outside ABW (the skill's vocabulary
   is ABW-specific: workspaces, hired agents, compound agents, dependencies)
 - Curator (Xaman Ek) session management (that is a per-dispatch parameter of

@@ -27,8 +27,8 @@ pub const WAL_PRAGMA_BATCH: &str =
 /// Apply the standard WAL PRAGMAs to a raw `rusqlite::Connection`.
 ///
 /// This is the single source of truth for PRAGMA ordering. Crates that
-/// depend on `hkask-database` should call this instead of inlining PRAGMA
-/// strings. Crates that don't depend on `hkask-database` should replicate
+/// depend on `hkask-storage` should call this instead of inlining PRAGMA
+/// strings. Crates that don't depend on `hkask-storage` should replicate
 /// the ordering: `busy_timeout` before `journal_mode = WAL`.
 pub fn init_wal_pragmas(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     conn.execute_batch(WAL_PRAGMA_BATCH)

@@ -823,6 +823,8 @@ mod smoke {
                 query: "test".into(),
                 top_k: Some(5),
                 generate_answer: None,
+                include_text: None,
+                min_score: None,
                 db_path: None,
                 passphrase: None,
             }))

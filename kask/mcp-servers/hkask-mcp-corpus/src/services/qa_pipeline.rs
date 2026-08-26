@@ -199,8 +199,8 @@ mod tests {
     #[test]
     fn format_batch_user_text_falls_back_inline() {
         let result = format_batch_user_text("factual", "chunk-1", "some text");
-        assert!(result.text.contains("some text"));
-        assert!(result.text.contains("chunk-1"));
+        assert!(result.contains("some text"));
+        assert!(result.contains("chunk-1"));
     }
 
     #[test]
