@@ -185,3 +185,233 @@ impl Default for PortRegistry {
         Self::builtin()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema_validate::{ValidationStatus, validate};
+    use serde_json::json;
+
+    // ── schema_validate: the 7-keyword contract ─────────────────────
+    // These pin the validator's three-outcome discipline: `valid` means
+    // checked-and-conforming; an unsupported keyword is NEVER a pass.
+
+    #[test]
+    fn valid_document_passes_with_no_findings() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "count": {"type": "integer"}
+            },
+            "required": ["name"]
+        });
+        let doc = json!({"name": "scout", "count": 3});
+        let result = validate(&schema, &doc);
+        assert!(result.is_valid(), "expected valid, got {result:?}");
+    }
+
+    #[test]
+    fn type_mismatch_is_a_violation_not_unsupported() {
+        let schema = json!({"type": "string"});
+        let result = validate(&schema, &json!(42));
+        assert!(result.is_contradiction());
+        assert!(result.unsupported.is_empty());
+    }
+
+    #[test]
+    fn missing_required_field_is_flagged_at_root_path() {
+        let schema = json!({"type": "object", "required": ["summary"]});
+        let result = validate(&schema, &json!({}));
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].path, "");
+        assert!(result.violations[0].message.contains("summary"));
+    }
+
+    #[test]
+    fn enum_rejects_disallowed_value() {
+        let schema = json!({"enum": ["red", "green"]});
+        let result = validate(&schema, &json!("blue"));
+        assert!(result.is_contradiction());
+        assert!(validate(&schema, &json!("red")).is_valid());
+    }
+
+    #[test]
+    fn const_mismatch_is_flagged() {
+        let schema = json!({"const": "task_result"});
+        assert!(validate(&schema, &json!("task_result")).is_valid());
+        assert!(validate(&schema, &json!("other")).is_contradiction());
+    }
+
+    #[test]
+    fn items_schema_validates_array_elements_with_indexed_paths() {
+        let schema = json!({"type": "array", "items": {"type": "integer"}});
+        let result = validate(&schema, &json!([1, "two", 3]));
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].path, "[1]");
+    }
+
+    #[test]
+    fn nested_properties_produce_dotted_paths() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "outer": {"properties": {"inner": {"const": 7}}}
+            }
+        });
+        let result = validate(&schema, &json!({"outer": {"inner": 8}}));
+        assert_eq!(result.violations[0].path, "outer.inner");
+    }
+
+    #[test]
+    fn oneOf_exactly_one_match_required() {
+        let schema = json!({
+            "oneOf": [
+                {"type": "string"},
+                {"type": "integer"}
+            ]
+        });
+        assert!(validate(&schema, &json!("s")).is_valid());
+        assert!(validate(&schema, &json!(5)).is_valid());
+        // An array matches neither alternative → 0 matches → violation.
+        assert!(validate(&schema, &json!([1])).is_contradiction());
+    }
+
+    #[test]
+    fn unsupported_keyword_is_never_a_pass() {
+        // The load-bearing property: a keyword the validator cannot interpret
+        // must surface as `unsupported`, making `is_valid()` false — even
+        // though the document itself looks conforming.
+        let schema = json!({"type": "object", "minProperties": 2});
+        let doc = json!({"only": "one"});
+        let result = validate(&schema, &doc);
+        assert!(!result.is_valid(), "unsupported keyword silently passed");
+        assert!(result.is_contradiction() == false);
+        assert!(
+            result
+                .unsupported
+                .iter()
+                .any(|u| u.contains("minProperties"))
+        );
+    }
+
+    #[test]
+    fn unsupported_keyword_inside_non_matching_oneOf_still_surfaces() {
+        // The scan-before-early-return invariant: the type-mismatch return in
+        // alternative A must not swallow alternative B's unsupported keyword.
+        let schema = json!({
+            "oneOf": [
+                {"type": "string", "minLength": 1},
+                {"type": "object", "patternProperties": {}}
+            ]
+        });
+        let result = validate(&schema, &json!([1]));
+        assert!(result.is_contradiction());
+        assert!(
+            result
+                .unsupported
+                .iter()
+                .any(|u| u.contains("patternProperties")),
+            "unsupported keyword in non-matching sibling was swallowed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn integer_type_accepts_whole_numbers_only() {
+        let schema = json!({"type": "integer"});
+        assert!(validate(&schema, &json!(5)).is_valid());
+        assert!(validate(&schema, &json!(5.5)).is_contradiction());
+    }
+
+    // ── PortRegistry: the admission gate ────────────────────────────
+
+    #[test]
+    fn builtin_registry_resolves_all_builtin_labels() {
+        let registry = PortRegistry::builtin();
+        for label in BUILTIN_PORT_TYPES {
+            assert!(registry.resolves(label), "builtin label `{label}` missing");
+        }
+        assert!(
+            !registry.resolves("query"),
+            "legacy free-string label must not resolve"
+        );
+        assert!(!registry.resolves("analysis"));
+    }
+
+    #[test]
+    fn task_result_type_carries_the_shared_schema() {
+        let registry = PortRegistry::builtin();
+        assert!(registry.schema_for("task_result").is_some());
+        assert!(registry.schema_for("text").is_none());
+    }
+
+    #[test]
+    fn register_type_extends_and_replaces() {
+        let mut registry = PortRegistry::builtin();
+        registry.register_type("custom_label", None);
+        assert!(registry.resolves("custom_label"));
+
+        registry.register_type("custom_label", Some(json!({"type": "object"})));
+        assert!(registry.schema_for("custom_label").is_some());
+    }
+
+    #[test]
+    fn validate_output_no_schema_when_labels_have_none() {
+        let registry = PortRegistry::builtin();
+        let status = registry
+            .validate_output(&["text".to_string()], &json!({"anything": true}))
+            .status;
+        assert_eq!(status, ValidationStatus::NoSchema);
+    }
+
+    #[test]
+    fn validate_output_no_schema_when_produces_empty() {
+        let registry = PortRegistry::builtin();
+        let status = registry.validate_output(&[], &json!({})).status;
+        assert_eq!(status, ValidationStatus::NoSchema);
+    }
+
+    #[test]
+    fn validate_output_valid_against_task_result_schema() {
+        let registry = PortRegistry::builtin();
+        let output = json!({
+            "deliverable_path": "/tmp/out.md",
+            "test_verdict": null,
+            "summary": "done",
+            "approach": "direct"
+        });
+        let result = registry.validate_output(&["task_result".to_string()], &output);
+        assert_eq!(result.status, ValidationStatus::Valid, "got {result:?}");
+    }
+
+    #[test]
+    fn validate_output_invalid_wrong_type_in_task_result() {
+        let registry = PortRegistry::builtin();
+        let output = json!({"summary": 42});
+        let result = registry.validate_output(&["task_result".to_string()], &output);
+        assert_eq!(result.status, ValidationStatus::Invalid);
+        assert!(result.violations.iter().any(|v| v.path == "summary"));
+    }
+
+    #[test]
+    fn validate_output_task_result_accepts_absent_optional_fields() {
+        // deliverable_path/test_verdict may be absent — the schema must accept
+        // the document with or without them (the "may be absent" contract).
+        let registry = PortRegistry::builtin();
+        let output = json!({"summary": "done", "approach": "direct"});
+        let result = registry.validate_output(&["task_result".to_string()], &output);
+        assert_eq!(result.status, ValidationStatus::Valid, "got {result:?}");
+    }
+
+    #[test]
+    fn validate_output_unsupported_keyword_yields_unsupported_status() {
+        let mut registry = PortRegistry::builtin();
+        registry.register_type(
+            "strict",
+            Some(json!({"type": "object", "additionalProperties": false})),
+        );
+        let result = registry.validate_output(&["strict".to_string()], &json!({"a": 1}));
+        assert_eq!(result.status, ValidationStatus::UnsupportedSchema);
+        assert!(!result.unsupported.is_empty());
+    }
+}

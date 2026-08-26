@@ -67,22 +67,24 @@ flowchart TD
     R --> M[Rendered prompt]
 
     F[CURATOR_STATIC_CONTEXT] --> G[Thread::set_static_context]
-    H[swarm steer_system_prompt] --> I[with_extra_static_context]
+    H[swarm steer_system_prompt] --> I[NativeAgent::set_curator_static_context]
     J[kanban steer_system_prompt] --> I
     I --> G
-    G --> E
+    G --> K[KaskThreadState::set_static_context]
+    K --> E
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PROMPT-001
-verified_date: 2026-08-24
-verified_against: crates/agent/src/templates.rs:36-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context, with_extra_static_context)
+verified_date: 2026-08-26
+verified_against: crates/agent/src/templates.rs:36-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context → KaskThreadState::set_static_context), crates/agent/src/kask_thread_state.rs (KaskThreadState::static_context, set_static_context)
 status: VERIFIED
 -->
 
-The overlay path is the load-bearing detail: **all three overlays converge on the
-single `static_context` field**, so a defect in that one field disables all three
-at once. That is exactly what happened (§5.1).
+The overlay path is the load-bearing detail: **all three overlays converge on
+the single `agent_static_context` field** (on `KaskThreadState`, accessed via
+`thread.kask.static_context()`), so a defect in that one field disables all
+three at once. That is exactly what happened (§5.1).
 
 ### 3.1 Conditional sections
 

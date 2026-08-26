@@ -928,3 +928,303 @@ pub struct CmpIndexProvenance {
     #[serde(default)]
     pub maturity_error_days: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    // ── Brier scoring ───────────────────────────────────────────────
+
+    #[test]
+    fn brier_perfect_and_worst() {
+        assert_eq!(brier_score(1.0, true), 0.0);
+        assert_eq!(brier_score(0.0, false), 0.0);
+        assert_eq!(brier_score(0.0, true), 1.0);
+        assert_eq!(brier_score(1.0, false), 1.0);
+    }
+
+    #[test]
+    fn brier_is_quadratic_penalty() {
+        // 0.8 predicted, occurred → (0.2)² = 0.04.
+        assert!(close(brier_score(0.8, true), 0.04));
+        // 0.5 is the no-skill anchor regardless of outcome.
+        assert!(close(brier_score(0.5, true), 0.25));
+        assert!(close(brier_score(0.5, false), 0.25));
+    }
+
+    #[test]
+    fn brier_multi_mean_is_exact() {
+        // (0.8,true) → (0.2)² = 0.04; (0.4,false) → (0.4)² = 0.16.
+        // Mean = (0.04 + 0.16) / 2 = 0.10.
+        let score = brier_score_multi(&[0.8, 0.4], &[true, false]).unwrap();
+        assert!(close(score, 0.10));
+    }
+
+    #[test]
+    fn brier_multi_rejects_empty_and_mismatched() {
+        assert!(matches!(
+            brier_score_multi(&[], &[]),
+            Err(ForecastError::BrierNoData)
+        ));
+        assert!(matches!(
+            brier_score_multi(&[0.5], &[]),
+            Err(ForecastError::BrierLengthMismatch(1, 0))
+        ));
+    }
+
+    #[test]
+    fn brier_interpretation_thresholds() {
+        assert_eq!(brier_interpretation(0.0), "excellent");
+        assert_eq!(brier_interpretation(0.08), "good");
+        assert_eq!(brier_interpretation(0.15), "fair");
+        assert_eq!(brier_interpretation(0.30), "poor");
+        assert_eq!(brier_interpretation(0.90), "worse_than_climatology");
+    }
+
+    // ── Bayesian update ─────────────────────────────────────────────
+
+    #[test]
+    fn bayesian_update_computes_odds_ratio() {
+        // prior 0.5, likelihood 0.8, base rate 0.4 → 0.8·0.5/0.4 = 1.0.
+        assert!(close(bayesian_update(0.5, 0.8, 0.4), 1.0_f64.min(0.99)));
+        // prior 0.3, likelihood 0.2, base rate 0.5 → 0.12.
+        assert!(close(bayesian_update(0.3, 0.2, 0.5), 0.12));
+    }
+
+    #[test]
+    fn bayesian_update_clamps_posterior_to_open_interval() {
+        // Extreme inputs must not produce exactly 0 or 1.
+        let posterior = bayesian_update(0.99, 1.0, 0.01);
+        assert!((0.01..=0.99).contains(&posterior));
+    }
+
+    #[test]
+    fn bayesian_update_zero_base_rate_returns_clamped_prior_not_nan() {
+        // The fail-safe guard: impossible evidence returns the clamped prior,
+        // never NaN or a sign-flipped value.
+        let posterior = bayesian_update(0.7, 0.9, 0.0);
+        assert!(close(posterior, 0.7));
+        assert!(!posterior.is_nan());
+        let negative = bayesian_update(0.7, 0.9, -0.5);
+        assert!(close(negative, 0.7));
+    }
+
+    // ── Fermi decomposition ─────────────────────────────────────────
+
+    #[test]
+    fn fermi_empty_set_yields_neutral_prior() {
+        assert!(close(calibrate_from_fermi(&[]).unwrap(), 0.5));
+    }
+
+    #[test]
+    fn fermi_weights_by_confidence() {
+        let questions = vec![
+            FermiQuestion::new("a".into(), 0.9, 0.9),
+            FermiQuestion::new("b".into(), 0.1, 0.1),
+        ];
+        // Weighted mean: (0.81 + 0.01) / 1.0 = 0.82 — dominated by the
+        // high-confidence sub-question.
+        let calibrated = calibrate_from_fermi(&questions).unwrap();
+        assert!(close(calibrated, 0.82));
+    }
+
+    #[test]
+    fn fermi_all_zero_confidence_yields_neutral_prior() {
+        let questions = vec![
+            FermiQuestion::new("a".into(), 0.9, 0.0),
+            FermiQuestion::new("b".into(), 0.1, 0.0),
+        ];
+        assert!(close(calibrate_from_fermi(&questions).unwrap(), 0.5));
+    }
+
+    #[test]
+    fn fermi_rejects_out_of_range_inputs() {
+        let bad_estimate = vec![FermiQuestion::new("x".into(), 1.5, 0.5)];
+        assert!(matches!(
+            calibrate_from_fermi(&bad_estimate),
+            Err(ForecastError::InvalidProbability(..))
+        ));
+        let bad_confidence = vec![FermiQuestion::new("x".into(), 0.5, -0.1)];
+        assert!(calibrate_from_fermi(&bad_confidence).is_err());
+    }
+
+    // ── Outside view ────────────────────────────────────────────────
+
+    #[test]
+    fn outside_view_more_references_pull_toward_base_rate() {
+        let few = outside_view_adjustment(0.9, 0.2, 1);
+        let many = outside_view_adjustment(0.9, 0.2, 100);
+        // With many references the estimate converges toward the base rate.
+        assert!(many.0 > few.0, "more references should raise toward base rate");
+        assert!(many.0 <= 0.9 + 1e-9);
+    }
+
+    // ── Marginalization ─────────────────────────────────────────────
+
+    #[test]
+    fn marginalize_single_parent_matches_definition() {
+        // Bitmap convention: bit j set = parent j TRUE. With one parent at
+        // p=0.4: assignment 0 (false) has weight 0.6 and reads conditionals[0];
+        // assignment 1 (true) has weight 0.4 and reads conditionals[1].
+        let marginal = marginalize(&[0.4], &[0.9, 0.1]);
+        assert!(close(marginal, 0.9 * 0.6 + 0.1 * 0.4));
+    }
+
+    #[test]
+    fn marginalize_two_parents_enumerates_full_joint() {
+        // AND-gate: conditional is 1 only when both parents true (bitmap 11 = 3).
+        let p = marginalize(&[0.5, 0.5], &[0.0, 0.0, 0.0, 1.0]);
+        assert!(close(p, 0.25));
+
+        // OR-gate: 1 unless both parents false (bitmap 00).
+        let q = marginalize(&[0.5, 0.5], &[0.0, 1.0, 1.0, 1.0]);
+        assert!(close(q, 0.75));
+    }
+
+    #[test]
+    fn marginalize_short_table_contributes_zero_for_missing_entries() {
+        // Only bitmap-1 entry present: the bitmap-0 contribution is dropped.
+        let with_both = marginalize(&[0.4], &[0.1, 0.9]);
+        let first_only = marginalize(&[0.4], &[0.1]);
+        // With parent at 0.4: full = 0.1·0.6 + 0.9·0.4; truncated drops the
+        // true-parent branch.
+        assert!(first_only < with_both);
+        assert!(close(first_only, 0.1 * 0.6));
+    }
+
+    // ── Tree walk ───────────────────────────────────────────────────
+
+    #[test]
+    fn combine_tree_single_root_returns_its_marginal() {
+        let nodes = vec![TreeNode {
+            id: "outcome".into(),
+            marginal_probability: Some(0.42),
+            depends_on: vec![],
+        }];
+        let combined = combine_tree_probabilities(&nodes, &["outcome"], "outcome").unwrap();
+        assert!(close(combined, 0.42));
+    }
+
+    #[test]
+    fn combine_tree_dependent_node_marginalizes_over_parent() {
+        let nodes = vec![
+            TreeNode {
+                id: "root".into(),
+                marginal_probability: Some(0.5),
+                depends_on: vec![],
+            },
+            TreeNode {
+                id: "outcome".into(),
+                marginal_probability: None,
+                depends_on: vec![TreeDependency {
+                    parent_ids: vec!["root".into()],
+                    conditionals: vec![0.1, 0.9],
+                }],
+            },
+        ];
+        let combined =
+            combine_tree_probabilities(&nodes, &["root", "outcome"], "outcome").unwrap();
+        assert!(close(combined, 0.1 * 0.5 + 0.9 * 0.5));
+    }
+
+    #[test]
+    fn combine_tree_rejects_duplicate_ids() {
+        let node = || TreeNode {
+            id: "dup".into(),
+            marginal_probability: Some(0.5),
+            depends_on: vec![],
+        };
+        assert!(matches!(
+            combine_tree_probabilities(&[node(), node()], &["dup"], "dup"),
+            Err(ForecastError::TreeMissingNode(_))
+        ));
+    }
+
+    #[test]
+    fn combine_tree_rejects_wrong_conditional_table_length() {
+        let nodes = vec![
+            TreeNode {
+                id: "root".into(),
+                marginal_probability: Some(0.5),
+                depends_on: vec![],
+            },
+            TreeNode {
+                id: "dep".into(),
+                marginal_probability: None,
+                depends_on: vec![TreeDependency {
+                    parent_ids: vec!["root".into()],
+                    conditionals: vec![0.5], // needs 2^1 = 2 entries
+                }],
+            },
+        ];
+        assert!(matches!(
+            combine_tree_probabilities(&nodes, &["root", "dep"], "dep"),
+            Err(ForecastError::TreeConditionalLength(_, 0, 2))
+        ));
+    }
+
+    #[test]
+    fn combine_tree_rejects_node_with_both_marginal_and_dependencies() {
+        let nodes = vec![TreeNode {
+            id: "ambiguous".into(),
+            marginal_probability: Some(0.5),
+            depends_on: vec![TreeDependency {
+                parent_ids: vec!["self".into()],
+                conditionals: vec![0.0, 1.0],
+            }],
+        }];
+        assert!(matches!(
+            combine_tree_probabilities(&nodes, &["ambiguous"], "ambiguous"),
+            Err(ForecastError::TreeUndefinedNode(_))
+        ));
+    }
+
+    #[test]
+    fn combine_tree_missing_outcome_is_an_error() {
+        let nodes = vec![TreeNode {
+            id: "a".into(),
+            marginal_probability: Some(0.5),
+            depends_on: vec![],
+        }];
+        assert!(matches!(
+            combine_tree_probabilities(&nodes, &["a"], "nope"),
+            Err(ForecastError::TreeMissingOutcome(_))
+        ));
+    }
+
+    // ── Certainty tiers ─────────────────────────────────────────────
+
+    #[test]
+    fn certainty_tier_boundaries() {
+        assert_eq!(certainty_tier(0.67), "proximate");
+        assert_eq!(certainty_tier(0.66), "probable");
+        assert_eq!(certainty_tier(0.33), "probable");
+        assert_eq!(certainty_tier(0.32), "possible");
+    }
+
+    // ── Calibration adjustment ──────────────────────────────────────
+
+    #[test]
+    fn calibration_overconfidence_pulls_extreme_prior_toward_half() {
+        // Overconfident forecaster (positive bias): extreme 0.9 regresses down.
+        let adjusted = apply_calibration_adjustment(0.9, 0.4);
+        assert!(adjusted < 0.9 && adjusted > 0.5);
+    }
+
+    #[test]
+    fn calibration_underconfidence_pushes_prior_away_from_half() {
+        let adjusted = apply_calibration_adjustment(0.9, -0.4);
+        assert!(adjusted > 0.9);
+    }
+
+    #[test]
+    fn calibration_bias_influence_is_clamped() {
+        // A wild bias must not invert the forecast past the clamp bounds.
+        let adjusted = apply_calibration_adjustment(0.9, 50.0);
+        assert!((0.01..=0.99).contains(&adjusted));
+    }
+}

@@ -4886,7 +4886,9 @@ async fn test_non_streaming_tool_partial_input_then_retryable_error_flushes_canc
     fake_model.end_last_completion_stream();
 
     // Advance past the retry delay so run_turn_internal retries.
-    cx.executor().advance_clock(Duration::from_secs(5));
+    // The retry uses exponential_backoff(1) = 5s + jitter (up to 10% = 0.5s).
+    // Advance by 6s to clear the jitter window.
+    cx.executor().advance_clock(Duration::from_secs(6));
     cx.run_until_parked();
 
     // The retry request should contain the partial tool_use with a flushed

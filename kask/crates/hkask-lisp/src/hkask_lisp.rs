@@ -1372,3 +1372,102 @@ pub fn eval_sandboxed_with_budget(
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+// The tests module header above was a placeholder — the sandbox-budget
+// contract is pinned below. These tests guard the `lisp_eval` tool's safety
+// envelope: an LLM-supplied form cannot loop forever (step budget), blow the
+// stack (depth budget), or escape the environment (no ambient access).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arithmetic_evaluates() {
+        let result = eval_sandboxed("(+ 1 2)", &serde_json::json!({})).unwrap();
+        assert_eq!(result, serde_json::json!(3));
+    }
+
+    #[test]
+    fn environment_bindings_resolve() {
+        let env = serde_json::json!({"x": 10});
+        let result = eval_sandboxed("(* x x)", &env).unwrap();
+        assert_eq!(result, serde_json::json!(100));
+    }
+
+    #[test]
+    fn unbound_symbol_is_an_error_not_a_crash() {
+        let err = eval_sandboxed("nosuchsymbol", &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, LispError::UnboundSymbol(_)));
+    }
+
+    #[test]
+    fn parse_error_surfaces_as_parse_variant() {
+        let err = eval_sandboxed("(+ 1", &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, LispError::Parse(_)));
+    }
+
+    #[test]
+    fn empty_program_yields_null() {
+        let result = eval_sandboxed("", &serde_json::json!({})).unwrap();
+        assert_eq!(result, serde_json::json!(null));
+    }
+
+    #[test]
+    fn infinite_loop_hits_step_budget() {
+        // (define (loop) (loop)) then call it — unbounded recursion consumes
+        // steps and must be rejected by the step/depth limit, never hang.
+        // `define` has no function sugar — bind a lambda instead.
+        let program = "(define loop (lambda (n) (loop (+ n 1)))) (loop 0)";
+        let err = eval_sandboxed_with_budget(program, &serde_json::json!({}), 1000, 64)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LispError::StepLimitExceeded(_) | LispError::DepthLimitExceeded(_)
+            ),
+            "unbounded recursion must hit a budget, got: {err}"
+        );
+    }
+
+    #[test]
+    fn deep_recursion_hits_depth_budget_before_stack_overflow() {
+        // Depth budget far below the real stack limit: the interpreter must
+        // reject, not segfault.
+        let program = "(define f (lambda (n) (+ 1 (f (+ n 1))))) (f 0)";
+        let err = eval_sandboxed_with_budget(program, &serde_json::json!({}), 1_000_000, 32)
+            .unwrap_err();
+        assert!(
+            matches!(err, LispError::DepthLimitExceeded(32)),
+            "expected depth limit, got: {err}"
+        );
+    }
+
+    #[test]
+    fn generous_budget_completes_legitimate_recursion() {
+        // A bounded recursive sum must complete within the default budget —
+        // the limits stop runaway programs, not legitimate compute.
+        // Default depth budget is 64 — recursion deeper than that needs an
+        // explicit larger budget (the lisp_eval tool's documented knobs).
+        let program = "(define sum (lambda (n) (if (= n 0) 0 (+ n (sum (- n 1)))))) (sum 40)";
+        let result =
+            eval_sandboxed_with_budget(program, &serde_json::json!({}), 100_000, 128).unwrap();
+        assert_eq!(result, serde_json::json!(820));
+    }
+
+    #[test]
+    fn step_budget_counts_across_multiple_top_level_forms() {
+        // Two forms share one budget: a cheap first form + runaway second
+        // must still trip the limit.
+        let err = eval_sandboxed_with_budget(
+            "(+ 1 1) (define loop (lambda (n) (loop (+ n 1)))) (loop 0)",
+            &serde_json::json!({}),
+            500,
+            64,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LispError::StepLimitExceeded(_) | LispError::DepthLimitExceeded(_)
+        ));
+    }
+}

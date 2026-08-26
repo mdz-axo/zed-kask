@@ -2172,25 +2172,25 @@ impl Thread {
     }
 
     /// Set a custom system prompt that overrides the default template.
+    /// When set, `render_system_prompt` returns this string directly instead of
+    /// rendering `system_prompt.hbs`. The project context, tools list, and other
+    /// dynamic sections are NOT included — the override is the complete system
+    /// prompt. Delegates to `KaskThreadState::set_system_prompt_override`.
     ///
-    /// Used by the Curator agent to inject its own persona. When set,
-    /// `render_system_prompt` returns this string directly instead of
-    /// rendering `system_prompt.hbs`. The project context, tools list,
-    /// and other dynamic sections are NOT included — the override is the
-    /// complete system prompt.
+    /// Note: no production caller currently uses this — the Curator agent uses
+    /// `set_static_context` (overlay appended to the template), not this override
+    /// (which bypasses the template entirely). The override mechanism is
+    /// retained for potential future use (e.g., a custom agent persona that
+    /// replaces the base prompt). Pinned by `test_system_prompt_override_bypasses_template`.
     pub fn set_system_prompt_override(&mut self, prompt: SharedString, cx: &mut Context<Self>) {
         self.kask.set_system_prompt_override(prompt);
         cx.notify();
     }
 
-    /// Set static context that will be appended to the system prompt.
-    ///
-    /// This is NOT an override — the system prompt template is still rendered.
-    /// The static context is rendered after the project context section.
-    /// Used by the Curator overlay to inject regulatory context.
-    ///
-    /// Set agent static context (e.g., Curator overlay). Rendered in the
-    /// system prompt's `## Session Context` section.
+    /// Set static context appended to the system prompt's `## Session Context`
+    /// section (e.g., Curator overlay, Steer panel overlay). This is NOT an
+    /// override — the system prompt template is still rendered. Delegates to
+    /// `KaskThreadState::set_static_context`.
     pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
         self.kask.set_static_context(context);
         cx.notify();

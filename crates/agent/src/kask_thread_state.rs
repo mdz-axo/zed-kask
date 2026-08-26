@@ -26,8 +26,8 @@ use std::rc::Rc;
 use gpui::SharedString;
 use project::AgentId;
 
-use crate::tool_retry_tracker::ToolRetryTracker;
 use crate::thread::{CachedFilteredContext, CachedSystemPrompt, DeferredToolResult};
+use crate::tool_retry_tracker::ToolRetryTracker;
 
 /// All kask-specific per-thread state. Created with `new()` (all defaults)
 /// for both upstream Zed and kask threads. Kask-specific setters
@@ -116,7 +116,10 @@ impl KaskThreadState {
     // ── Filtered context caching ─────────────────────────────────────
 
     /// Get the cached filtered context if the digest matches.
-    pub fn cached_filtered_context(&self, digest: &[u8; 32]) -> Option<&prompt_store::ProjectContext> {
+    pub fn cached_filtered_context(
+        &self,
+        digest: &[u8; 32],
+    ) -> Option<&prompt_store::ProjectContext> {
         self.cached_filtered_context
             .as_ref()
             .filter(|c| c.filter_digest == *digest)
@@ -136,6 +139,7 @@ impl KaskThreadState {
     }
 
     /// Whether a filtered context cache entry exists. For test assertions.
+    #[cfg(test)]
     pub fn has_cached_filtered_context(&self) -> bool {
         self.cached_filtered_context.is_some()
     }
@@ -226,14 +230,17 @@ impl KaskThreadState {
         self.tool_retry_tracker.borrow().check(tool_name, input)
     }
 
-    /// Record a tool failure.
+    /// Record a tool failure. Test seam — production records via the
+    /// `retry_tracker` directly in `Thread::run_turn`.
+    #[cfg(test)]
     pub fn record_tool_failure(&self, tool_name: &str, input: &serde_json::Value) {
         self.tool_retry_tracker
             .borrow()
             .record_failure(tool_name, input);
     }
 
-    /// Record a tool success.
+    /// Record a tool success. Test seam — see `record_tool_failure`.
+    #[cfg(test)]
     pub fn record_tool_success(&self, tool_name: &str, input: &serde_json::Value) {
         self.tool_retry_tracker
             .borrow()
@@ -248,7 +255,9 @@ impl KaskThreadState {
     }
 
     /// Drain completed deferred results.
-    pub fn drain_completed_deferred_results(&mut self) -> Vec<crate::thread::CompletedDeferredResult> {
+    pub fn drain_completed_deferred_results(
+        &mut self,
+    ) -> Vec<crate::thread::CompletedDeferredResult> {
         crate::thread::drain_completed_deferred_results(&mut self.deferred_tool_results)
     }
 

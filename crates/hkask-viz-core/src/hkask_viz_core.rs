@@ -240,19 +240,6 @@ fn viz_factories() -> &'static [VizFactory] {
     ]
 }
 
-/// The fence languages the D18 gate in `crates/markdown/src/markdown.rs`
-/// admits to `media_block_renderer`. One per registered widget — the graph
-/// widget's bodies arrive under the `graph` fence (tag `event_tree`), the
-/// rest under their tag names. Pinned by
-/// `viz_fence_languages_are_admitted_by_the_d18_gate`.
-const VIZ_FENCE_LANGUAGES: &[&str] = &[
-    "graph",
-    "kanban",
-    "portfolio",
-    "scenarios",
-    "swarm_delegate_results",
-];
-
 const MAX_CACHE_SIZE: usize = 32;
 
 thread_local! {
@@ -359,7 +346,19 @@ mod tests {
     // registry without widening the gate fails this test.
     #[test]
     fn viz_fence_languages_are_admitted_by_the_d18_gate() {
-        let mut admitted: Vec<&str> = VIZ_FENCE_LANGUAGES.to_vec();
+        // The fence languages the D18 gate in `crates/markdown/src/markdown.rs`
+        // admits to `media_block_renderer`. One per registered widget — the
+        // graph widget's bodies arrive under the `graph` fence (tag
+        // `event_tree`), the rest under their tag names. The gate lives
+        // upstream-side and cannot import this crate's types, so the contract
+        // is pinned here as a literal set.
+        let mut admitted: Vec<&str> = vec![
+            "graph",
+            "kanban",
+            "portfolio",
+            "scenarios",
+            "swarm_delegate_results",
+        ];
         admitted.sort_unstable();
         assert_eq!(
             admitted,

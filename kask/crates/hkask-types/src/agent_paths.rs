@@ -237,3 +237,77 @@ pub fn sanitize_name(name: &str) -> String {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // D28 — Standardized Artifact Storage pins. The layout contract:
+    // every persistent kask artifact resolves under one rooted data tree
+    // with class subdirs (agents/, mcp/, skills/, threads/). If a helper
+    // here changes shape, these tests fail until the D28 doc and every
+    // consumer move together.
+
+    #[test]
+    fn agent_db_follows_agents_class_layout() {
+        assert_eq!(
+            agent_db("curator"),
+            PathBuf::from("agents/curator/curator.db")
+        );
+    }
+
+    #[test]
+    fn mcp_server_db_follows_mcp_class_layout() {
+        assert_eq!(
+            mcp_server_db("kata-kanban", "kanban"),
+            PathBuf::from("mcp/kata-kanban/kanban.db")
+        );
+        assert_eq!(
+            mcp_server_db("swarm", "ledger"),
+            PathBuf::from("mcp/swarm/ledger.db")
+        );
+    }
+
+    #[test]
+    fn mcp_server_subdir_handles_empty_and_nested() {
+        assert_eq!(
+            mcp_server_subdir("portfolio", "transactions"),
+            PathBuf::from("mcp/portfolio/transactions")
+        );
+        assert_eq!(mcp_server_subdir("swarm", ""), PathBuf::from("mcp/swarm"));
+    }
+
+    #[test]
+    fn all_layout_helpers_resolve_under_one_root() {
+        // Every class-subdir helper must compose with resolve_under_data_dir
+        // without escaping the root. Uses a relative probe path so the join
+        // is observable regardless of what the env resolves to.
+        for relative in [
+            agent_db("curator"),
+            mcp_server_db("swarm", "ledger"),
+            mcp_server_subdir("portfolio", "transactions"),
+        ] {
+            let resolved = resolve_under_data_dir(&relative);
+            assert!(resolved.starts_with(resolve_data_dir()));
+        }
+    }
+
+    #[test]
+    fn sanitize_name_replaces_filesystem_hostile_characters() {
+        assert_eq!(sanitize_name("Jacques (Zuck)"), "Jacques-Zuck");
+        assert_eq!(
+            sanitize_name("a/b\\c:d*e?f\"g<h>i|j"),
+            "a-b-c-d-e-f-g-h-i-j"
+        );
+    }
+
+    #[test]
+    fn sanitize_name_blocks_path_traversal() {
+        assert_eq!(sanitize_name("."), "unnamed");
+        assert_eq!(sanitize_name(".."), "unnamed");
+        // A name of only hostile characters collapses to empty → must not
+        // become an empty filename or a traversal vector.
+        assert_eq!(sanitize_name("///"), "");
+        assert_ne!(sanitize_name(".."), "..");
+    }
+}

@@ -653,12 +653,12 @@ mod tests {
     #[test]
     fn format_batch_jsonl_produces_valid_jsonl() {
         let prompts = vec![
-            BatchPrompt {
+            hkask_types::inference_ipc::BatchPromptEntry {
                 custom_id: "req-1".to_string(),
                 system: "you are helpful".to_string(),
                 user: "say hello".to_string(),
             },
-            BatchPrompt {
+            hkask_types::inference_ipc::BatchPromptEntry {
                 custom_id: "req-2".to_string(),
                 system: "you are helpful".to_string(),
                 user: "say goodbye".to_string(),

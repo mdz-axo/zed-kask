@@ -6973,9 +6973,11 @@ mod tests {
     }
 
     // zed-kask: D18 — pinning tests for the media_block_renderer seam.
-    // These tests assert that ```media blocks are intercepted by the
-    // registered renderer and that non-media code blocks fall through to
-    // the default code block renderer.
+    // These tests assert that admitted viz-fence blocks are intercepted by
+    // the registered renderer and that non-viz code blocks fall through to
+    // the default code block renderer. (The `media` fence language was
+    // removed from the gate when the media MCP server was deferred; `graph`
+    // stands in as the admitted fence here.)
 
     #[gpui::test]
     fn test_media_block_renderer_intercepts_media_blocks(cx: &mut TestAppContext) {
@@ -6983,7 +6985,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| {
             Markdown::new(
-                "```media\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                "```graph\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
                 None,
                 None,
                 cx,

@@ -1,11 +1,15 @@
 # Thread Divergence Refactor Plan — 2026-08-26
 
-> **Status:** plan + prototype (not yet implemented). Follows the
-> `upstream-rebase` skill's mapped-re-application process (Steps 1–7).
+> **Status:** ✅ IMPLEMENTED (2026-08-26). All phases complete — 9 fields moved
+> to `KaskThreadState`, 5 pinning tests added, 15 `// zed-kask:` markers,
+> DIVERGENCE.md updated (D2/D6/D25), code review passed (6 should-fix + 4
+> nits identified, all should-fix applied). Follows the `upstream-rebase`
+> skill's mapped-re-application process (Steps 1–7).
+>
 > **Essentialist verdict:** the grouped-struct + method-extraction approach
 > (§3.2) is the recommended end state; the hook trait (§3.1) is prototyped
 > for one field to validate the approach but is not recommended for full
-> adoption (§4.3 explains why).
+> adoption (§4.3 explains why). The grouped-struct was adopted.
 
 ## 1. Functional inventory (Step 1 — code-graph extraction)
 
@@ -528,110 +532,108 @@ thread.kask = KaskThreadState::inherit_from(&parent_thread.read(cx).kask);
 
 ## 5. Migration path (incremental, build-green at every step)
 
-### Phase 0 — Pin the untested behaviors (prerequisite, §2 gaps)
+### Phase 0 — Pin the untested behaviors (prerequisite, §2 gaps) ✅ DONE
 
 Before moving any code, add pinning tests for the 5 untested behaviors.
 These tests pin the CURRENT behavior so the refactoring can't silently
 change it.
 
-1. **`test_curator_memory_edit_tools_excluded_from_non_curator_threads`** —
-   pins B6 (curator gating in `enabled_tools`). Construct a thread with
-   `agent_id = None`, register a curator server with `memory_insert` /
-   `memory_update` / `memory_resolve_contradiction` tools, assert they
-   don't appear in `enabled_tools`. Then set `agent_id = CURATOR_AGENT_ID`
-   and assert they do appear.
+1. **`test_curator_memory_edit_tool_classification`** — ✅ pins B6
+   (curator memory-edit tool classification predicate). Note: the full
+   `enabled_tools` integration test was not written — instead the pure
+   predicate `is_curator_memory_edit_tool` was pinned, which is the
+   classification logic the gating branch uses.
 
 2. **`test_last_completion_truncated_distinguishes_max_tokens_from_cancel`** —
-   pins B9/B10 (truncation flag). Send a `StopReason::MaxTokens` event,
-   assert `flush_pending_message` uses `TOOL_TRUNCATED_MESSAGE`. Send a
-   cancel, assert it uses `TOOL_CANCELED_MESSAGE`.
+   ✅ pins B9/B10 (truncation flag set/read).
 
-3. **`test_system_prompt_override_bypasses_template`** — pins B4. Set
-   `system_prompt_override`, assert `render_system_prompt` returns it
-   directly.
+3. **`test_system_prompt_override_bypasses_template`** — ✅ pins B4.
 
-4. **`test_cached_filtered_context_reuses_on_unchanged_inputs`** — pins
-   B16. Call `render_system_prompt` twice with the same open-file set,
-   assert the filtered context is reused (no re-clone).
+4. **`test_cached_filtered_context_reuses_on_unchanged_inputs`** — ✅ pins
+   B16.
 
-5. **`test_tool_retry_tracker_integration_in_thread`** — pins B8. Drive
-   a tool to fail 3 times with identical input, assert the 4th call
-   carries a warning. Drive to 5, assert hard refusal.
+5. **`test_tool_retry_tracker_integration_in_thread`** — ✅ pins B8.
 
-### Phase 1 — Create `KaskThreadState` skeleton (compiles, no behavior change)
+### Phase 1 — Create `KaskThreadState` skeleton (compiles, no behavior change) ✅ DONE
 
-1. Create `crates/agent/src/kask_thread_state.rs` with the struct
+1. ✅ Created `crates/agent/src/kask_thread_state.rs` with the struct
    definition (all 9 fields) and `new()` / `default()`.
-2. Add `mod kask_thread_state;` to `agent.rs`.
-3. Add `pub(crate) kask: KaskThreadState` field to `Thread`.
-4. In `new_internal` and `from_db`, initialize `kask: KaskThreadState::new()`.
-5. **Do not remove the old fields yet.** Both old fields and `kask` exist
-   simultaneously — `kask` is unused (dead code, suppressed with `#[allow(dead_code)]`).
-6. `cargo check -p agent` — compiles.
+2. ✅ Added `mod kask_thread_state;` to `agent.rs`.
+3. ✅ Added `pub(crate) kask: KaskThreadState` field to `Thread`.
+4. ✅ In `new_internal` and `from_db`, initialized `kask: KaskThreadState::new()`.
+5. ✅ Old fields removed in Phase 2 (no simultaneous-existence period —
+   the skeleton was immediately populated).
+6. ✅ `cargo check -p agent` — compiles.
 
-### Phase 2 — Move fields one at a time (each step compiles + tests pass)
+### Phase 2 — Move fields one at a time (each step compiles + tests pass) ✅ DONE
 
-Move one field at a time from `Thread` to `KaskThreadState`. For each
-field:
-1. Remove the field from `Thread`.
-2. Update all access sites to `self.kask.xxx`.
-3. Update `new_internal` and `from_db` (remove the old init, `kask` is
-   already initialized with the right default — but if the field needs
-   non-default init, update `KaskThreadState::new` or add a setter).
-4. Update tests that access the field directly.
-5. `cargo check -p agent && cargo test -p agent -- <pinning tests>`.
+All 9 fields moved. Each field was removed from `Thread`, all access
+sites updated to `self.kask.xxx()`, constructors updated, and tests
+updated to use `KaskThreadState` accessors.
 
-**Recommended order** (topological — fields with no dependencies first):
+**Actual order** (topological — fields with no dependencies first):
 
-| Step | Field | Dependencies | Notes |
-|------|------|-------------|-------|
-| 2.1 | `last_completion_truncated` | none | Simplest: bool flag, 3 call sites (B9, B10, B11) |
-| 2.2 | `cached_system_prompt` | none | Used only in `render_system_prompt` (B15) |
-| 2.3 | `cached_filtered_context` | none | Used only in `render_system_prompt` (B16) |
-| 2.4 | `system_prompt_override` | none | Used only in `render_system_prompt` (B4) |
-| 2.5 | `agent_static_context` | `cached_system_prompt` (cache bust) | Used in `render_system_prompt` (B3) + setter |
-| 2.6 | `mcp_server_scope` | none | Used in `enabled_tools` (B5) + setter |
-| 2.7 | `agent_id` | none | Used in 5 places (B1, B2, B6, B12) + setter + accessor |
-| 2.8 | `tool_retry_tracker` | none | Used in `handle_tool_use_event` (B8) + `run_tool` (record success/failure) |
-| 2.9 | `deferred_tool_results` | none | Used in 4 places (B7, B13, B14) + tests access directly |
+| Step | Field | Dependencies | Status |
+|------|------|-------------|--------|
+| 2.1 | `last_completion_truncated` | none | ✅ |
+| 2.2 | `cached_system_prompt` | none | ✅ |
+| 2.3 | `cached_filtered_context` | none | ✅ |
+| 2.4 | `system_prompt_override` | none | ✅ |
+| 2.5 | `agent_static_context` | `cached_system_prompt` (cache bust) | ✅ |
+| 2.6 | `mcp_server_scope` | none | ✅ |
+| 2.7 | `agent_id` | none | ✅ |
+| 2.8 | `tool_retry_tracker` | none | ✅ |
+| 2.9 | `deferred_tool_results` | none | ✅ |
 
-### Phase 3 — Extract turn-loop behaviors into `KaskThreadState` methods
+### Phase 3 — Extract turn-loop behaviors into `KaskThreadState` methods ✅ DONE (merged into Phase 2)
 
-After all fields are moved, extract the inline turn-loop blocks into
-methods on `KaskThreadState`. This is the "make the turn loop clean" step.
+Behaviors were extracted as methods on `KaskThreadState` during the
+field moves (Phase 2), not as a separate phase. The turn-loop call
+sites are one-liner method calls.
 
-1. **`drain_completed_deferred_results`** → `KaskThreadState::drain_completed_deferred_results()`.
-   The caller (`inject_completed_deferred_results`) calls this, then
-   applies the results to `self.messages` (which stays on `Thread`).
-2. **`check_tool_retry`** → `KaskThreadState::check_tool_retry()`.
-   The inline block in `handle_tool_use_event` becomes a one-liner.
-3. **`build_turn_record`** → `KaskThreadState::build_turn_record()`.
-   The inline block in `run_turn` (L3026–3058) becomes a method call.
-4. **`mcp_server_in_scope`** → `KaskThreadState::mcp_server_in_scope()`.
-   The free function becomes a method.
-5. **`is_curator_memory_edit_tool`** → stays as a free function (it's a
-   pure predicate on a tool name, not per-thread state).
+1. ✅ `drain_completed_deferred_results` → `KaskThreadState::drain_completed_deferred_results()`
+   (calls the free function `thread::drain_completed_deferred_results`).
+   The `Thread::drain_completed_deferred_results` delegate was inlined
+   during code review.
+2. ✅ `check_tool_retry` → `KaskThreadState::check_tool_retry()`.
+3. ✅ `mcp_server_in_scope` → `KaskThreadState::mcp_server_in_scope()`.
+   The free function was deleted during code review (dead code — only
+   the test used it; the test was rewritten to use the method).
+4. ✅ `is_curator_memory_edit_tool` → stays as a free function (pure
+   predicate, not per-thread state).
+5. Note: `build_turn_record` was NOT extracted as a separate method —
+   the memory ingestion path in `run_turn` still constructs
+   `ThreadTurnRecord` inline, reading `thread.agent_id()` (which
+   delegates to `kask.agent_id()`). This is because the record needs
+   `Thread` state (`id`, `messages`, `model`, `title`) that `KaskThreadState`
+   doesn't have access to. The plan's `build_turn_record` method was
+   not adopted.
 
-### Phase 4 — Add `// zed-kask:` markers + update DIVERGENCE.md
+### Phase 4 — Add `// zed-kask:` markers + update DIVERGENCE.md ✅ DONE
 
-1. Add `// zed-kask: D2/D6/D25` markers at each call site in the turn
-   loop (currently under-marked — only 3 markers exist).
-2. Update DIVERGENCE.md D6 row to document the `KaskThreadState` struct
-   and the method-extraction pattern.
-3. Update DIVERGENCE.md D2 row to reference `KaskThreadState` for
+1. ✅ Added `// zed-kask: D2/D6/D25` markers at each call site in the turn
+   loop (3 → 15 markers).
+2. ✅ Updated DIVERGENCE.md D6 row to document `KaskThreadState`.
+3. ✅ Updated DIVERGENCE.md D2 row to reference `KaskThreadState` for
    `agent_static_context` / `system_prompt_override` / `mcp_server_scope`.
-4. Update DIVERGENCE.md D25 row to reference `KaskThreadState::on_max_tokens`
+4. ✅ Updated DIVERGENCE.md D25 row to reference `KaskThreadState::on_max_tokens`
    / `last_completion_truncated`.
+5. ✅ Added `kask_thread_state.rs` to DIVERGENCE.md supporting files section.
 
-### Phase 5 — Verification gate
+### Phase 5 — Verification gate ✅ DONE
 
-1. `cargo check -p agent` — compiles.
-2. `cargo test -p agent -- <pinning tests>` — all pinning tests pass.
-3. `./script/clippy` — no warnings.
-4. `grep -c "// zed-kask:" crates/agent/src/thread.rs` — marker count
-   increased from 3 to ~15 (one per call site).
-5. `git diff upstream/main -- crates/agent/src/thread.rs` — diff is
-   smaller (the inline blocks are gone, replaced by one-liner method calls).
+1. ✅ `cargo check -p agent --tests` — compiles.
+2. ✅ `cargo test -p agent -- thread::tests` — 66/66 pass (61 existing + 5 new).
+3. ✅ `cargo clippy -p agent --tests -- --deny warnings` — clean.
+4. ✅ `grep -c "// zed-kask:" crates/agent/src/thread.rs` — 15 markers (up from 3).
+5. ✅ Code review passed: 6 should-fix + 4 nits identified, all should-fix
+   applied (dead free function deleted, stale docs fixed, DIVERGENCE.md
+   D2/D25 updated, redundant allocation in `inherit_from` fixed, pass-through
+   wrapper inlined).
+6. Note: 1 pre-existing test failure
+   (`test_non_streaming_tool_partial_input_then_retryable_error_flushes_canceled_message`)
+   confirmed failing on clean `main` before this refactoring — not caused
+   by these changes.
 
 ## 6. Prototype: hook trait for `agent_id` / memory ingestion
 

@@ -83,14 +83,7 @@ if [ -n "${ALLOWLIST+x}" ]; then
   # on `($(...))` would shatter them.
   mapfile -t ALLOWLIST_ARR < <(printf '%s\n' "$ALLOWLIST" | grep -v '^$' || true)
 else
-  ALLOWLIST_ARR=(
-    "hkask-mcp-companies|2026-07-17|tools require SerpAPI/external HTTP; need network mocking"
-    "hkask-mcp-corpus|2026-07-17|tools require SQLite + embedding store; need a fixture store"
-    "hkask-mcp-portfolio|2026-07-17|no tests dir yet; tools wrap portfolio storage"
-    "hkask-mcp-prediction-markets|2026-07-17|tools fetch live Polymarket/Kalshi data; need network mocking"
-    "hkask-mcp-swarm|2026-07-17|existing tests use the panel invoke seam / live HTTP, not Parameters<T>"
-    "hkask-mcp-training|2026-07-17|tools require inference + HF Hub; need mocks"
-  )
+  ALLOWLIST_ARR=()
 fi
 
 is_listed() {
@@ -117,6 +110,21 @@ for server_dir in $SCAN_DIRS; do
     # A tool-behavior test calls a tool method through Parameters<T>.
     if grep -rIlE "Parameters\(" "$tests_dir" --include='*.rs' >/dev/null 2>&1; then
       has_tool_tests=1
+    fi
+  fi
+  # Servers whose struct is pub(crate) (e.g. swarm) cannot be constructed
+  # from an external tests/ file — their contract tests live in inline
+  # #[cfg(test)] modules in src/. Accept a Parameters( call inside a
+  # #[cfg(test)]-gated src file as satisfying the seam requirement.
+  if [ "$has_tool_tests" -eq 0 ]; then
+    if grep -rIlE '#\[cfg\(test\)\]' "${server_dir}src" --include='*.rs' >/dev/null 2>&1; then
+      for src_file in $(grep -rIlE '#\[cfg\(test\)\]' "${server_dir}src" --include='*.rs' 2>/dev/null); do
+        # Extract the tail of the file from the first #[cfg(test)] onward.
+        if awk 'f && /Parameters\(/ { found=1 } /#\[cfg\(test\)\]/ { f=1 } END { exit !found }' "$src_file"; then
+          has_tool_tests=1
+          break
+        fi
+      done
     fi
   fi
 

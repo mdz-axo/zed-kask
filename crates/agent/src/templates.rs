@@ -598,4 +598,45 @@ mod tests {
             "available_skills catalog must still list the skill by name"
         );
     }
+
+    use crate::curator_agent_server::CURATOR_STATIC_CONTEXT;
+
+    // D2 standing obligation: an overlay that advertises tool names must pin
+    // them against the tools' actual NAME constants — a rename would degrade
+    // to "tool not found" at dispatch. Every `\`curator_*\` tool` mention in
+    // CURATOR_STATIC_CONTEXT must be a registered Curator tool's NAME.
+    #[test]
+    fn test_curator_overlay_advertises_only_registered_tool_names() {
+        use crate::thread::AgentTool;
+        use crate::tools::{
+            CuratorClearAlgedonicLogTool, CuratorDirectiveTool, CuratorStatusTool,
+        };
+        const NAMES: &[&str] = &[
+            <CuratorStatusTool as AgentTool>::NAME,
+            <CuratorDirectiveTool as AgentTool>::NAME,
+            <CuratorClearAlgedonicLogTool as AgentTool>::NAME,
+        ];
+
+        // Extract every backtick token from the overlay that looks like a
+        // curator tool reference (`curator_...`).
+        let mut advertised: Vec<&str> = Vec::new();
+        for segment in CURATOR_STATIC_CONTEXT.split('`') {
+            let token = segment.trim();
+            if token.starts_with("curator_") && token.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                advertised.push(token);
+            }
+        }
+        assert!(
+            !advertised.is_empty(),
+            "CURATOR_STATIC_CONTEXT must advertise at least one curator tool"
+        );
+
+        for token in advertised {
+            assert!(
+                NAMES.contains(&token),
+                "CURATOR_STATIC_CONTEXT advertises `{token}` but no Curator tool \
+                 registers that NAME — update the overlay or the tool together"
+            );
+        }
+    }
 }
