@@ -200,6 +200,7 @@ impl extension::Extension for WasmExtension {
             .boxed()
         })
         .await?
+        .map_err(anyhow::Error::from)
     }
 
     async fn language_server_workspace_configuration_schema(
@@ -227,6 +228,7 @@ impl extension::Extension for WasmExtension {
             .boxed()
         })
         .await?
+        .map_err(anyhow::Error::from)
     }
 
     async fn language_server_additional_initialization_options(
@@ -579,6 +581,7 @@ impl extension::Extension for WasmExtension {
             .boxed()
         })
         .await?
+        .map_err(anyhow::Error::from)
     }
     async fn run_dap_locator(
         &self,
@@ -618,7 +621,6 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
         .get_or_init(|| {
             let mut config = wasmtime::Config::new();
             config.wasm_component_model(true);
-            config.async_support(true);
             config
                 .enable_incremental_compilation(cache_store())
                 .unwrap();
@@ -718,6 +720,7 @@ impl WasmHost {
             executor.spawn(async move {
                 let zed_api_version = parse_wasm_extension_version(&manifest_id, &wasm_bytes)?;
                 let component = Component::from_binary(&engine, &wasm_bytes)
+                    .map_err(anyhow::Error::from)
                     .context("failed to compile wasm component")?;
 
                 anyhow::Ok((zed_api_version, component))
@@ -755,6 +758,7 @@ impl WasmHost {
             extension
                 .call_init_extension(&mut store)
                 .await
+                .map_err(anyhow::Error::from)
                 .context("failed to initialize wasm extension")?;
 
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
@@ -802,8 +806,7 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let file_perms = wasmtime_wasi::FilePerms::all();
-        let dir_perms = wasmtime_wasi::DirPerms::all();
+        let permissions = wasmtime_wasi::FsPerms::ReadWrite;
         let path = SanitizedPath::new(&extension_work_dir).to_string();
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
@@ -813,8 +816,8 @@ impl WasmHost {
             .env("PWD", &path)
             .env("RUST_BACKTRACE", "full");
 
-        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
-        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, ".", permissions)?;
+        ctx.preopened_dir(&path, &path, permissions)?;
 
         Ok(ctx.build())
     }

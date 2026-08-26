@@ -637,7 +637,6 @@ clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 clap_complete = { version = "4.4" }
 clap_complete_nushell = { version = "4.4" }
 cocoa = "=0.26.0"
-cocoa-foundation = "=0.2.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 const_format = "0.2"
@@ -684,7 +683,6 @@ fork = "0.4.0"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
-futures-util = "0.3.32"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 tokio-rustls = "0.26"
 globset = "0.4"
@@ -940,7 +938,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "dff1fd868c750dbbae179fcd5c43ce987e4e0528" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 tracing = "0.1.40"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
@@ -980,7 +978,8 @@ vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.252"
 wasmparser = "0.252"
-wasmtime = { version = "36", default-features = false, features = [
+wasmtime = { version = "48", default-features = false, features = [
+    "anyhow",
     "async",
     "demangle",
     "runtime",
@@ -991,7 +990,7 @@ wasmtime = { version = "36", default-features = false, features = [
 ] }
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
-wasmtime-wasi = "36"
+wasmtime-wasi = "48"
 wax = "0.7"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
@@ -1087,7 +1086,7 @@ features = [
 # Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
 # the git tree-sitter above; two instances of the crate would make grammar
 # constants type-incompatible with `tree_sitter::Language`.
-tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "dff1fd868c750dbbae179fcd5c43ce987e4e0528" }
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
@@ -1235,16 +1234,6 @@ large_enum_variant = "allow"
 # Boolean expressions can be hard to read, requiring only the minimal form gets in the way
 nonminimal_bool = "allow"
 
-[workspace.metadata.cargo-machete]
-ignored = [
-    "bindgen",
-    "cbindgen",
-    "prost_build",
-    "serde",
-    "component",
-    "documented",
-    "sea-orm-macros",
-]
 
 # Dylint discovers our custom lints through this entry, so `cargo dylint --all`
 # runs them without a `--path` argument. The `lints` package pins its own
