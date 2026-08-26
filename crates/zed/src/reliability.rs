@@ -207,6 +207,14 @@ const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Compute `(healthy_count, total_count)` across all open projects'
 /// `ContextServerStore`s. A server is "healthy" iff its status is `Running`.
+///
+/// Only servers expected to be running count toward `total`: `Starting`,
+/// `Running`, and `Error`. Servers in `Stopped` (deliberately stopped or
+/// disabled), `AuthRequired`, `ClientSecretRequired`, and `Authenticating`
+/// (OAuth-waiting) are excluded — they are legitimate non-running states,
+/// not fleet degradation. Counting them produced constant false-positive
+/// `ContextServerFleetDegraded` alerts every tick.
+///
 /// Deduplicates by `ContextServerStore` entity id (a project opened in two
 /// windows shares one store).
 fn compute_context_server_health_snapshot(
@@ -231,9 +239,23 @@ fn compute_context_server_health_snapshot(
         }
         let store = context_server_store.read(cx);
         for server_id in store.server_ids() {
-            total += 1;
-            if let Some(ContextServerStatus::Running) = store.status_for_server(server_id) {
-                healthy += 1;
+            let Some(status) = store.status_for_server(server_id) else {
+                continue;
+            };
+            match status {
+                ContextServerStatus::Starting
+                | ContextServerStatus::Running
+                | ContextServerStatus::Error(_) => {
+                    total += 1;
+                    if let ContextServerStatus::Running = status {
+                        healthy += 1;
+                    }
+                }
+                // Deliberately not running — not fleet degradation.
+                ContextServerStatus::Stopped
+                | ContextServerStatus::AuthRequired
+                | ContextServerStatus::ClientSecretRequired { .. }
+                | ContextServerStatus::Authenticating => {}
             }
         }
     }

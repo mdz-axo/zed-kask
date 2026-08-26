@@ -19,6 +19,14 @@
 >
 > Severity: 🔴 High · 🟠 Medium · 🟡 Low.
 
+> **Amendment (2026-08-26, post-review):** operator review established that
+> the dominant root cause behind Surface B/C findings is **incomplete
+> multi-leg changes** — a deletion or rename landed on one side while the
+> consumer-side update never did. Git-history triage (§2.1) confirmed this
+> for every 🔴 skill finding and surfaced a further cluster of vestiges
+> (G1–G8). §5.0 adds a triage protocol; Phase 0/3 steps are re-scoped
+> accordingly. Finding B1 was **retracted** after verification.
+
 ---
 
 ## 1. Verdict on the reference model
@@ -34,11 +42,55 @@ dead or unseeded surfaces — not architectural rot.
 
 ---
 
+
 ## 2. Merged findings register
 
 Findings are deduplicated across the two source audits. The `Origin`
 column records which audit first surfaced each item; convergent findings
 are marked `both`. IDs are stable for plan cross-reference.
+
+### 2.1 Root-cause triage: the incomplete-change inventory (git-verified)
+
+Every "phantom reference" finding was traced through git history to its
+originating change. In each case the *removal leg* completed and the
+*consumer-update leg* did not. This is the pattern to watch for globally:
+
+| Origin commit | Removed | Consumer leg missed | Live symptom |
+|---|---|---|---|
+| `9e9c41ef3c` (Aug 20) "Remove unused skills, harness, and verification crate" | skills `harness-optimize`, `proptest`, `eqm-improvement`, `eqm`, `kali-audit`; crates `hkask-test-harness`, `hkask-verification`; registry dir `templates/media/` (incl. all logo templates) | `bug-hunt` still cites `harness-optimize` + deleted `test-harness-trace-schema.md`; `tdd` still dispatches to `harness-optimize`/`proptest`, imports `hkask-test-harness` oracle taxonomy, references missing `./scripts/test --trace`; `superforecasting` step 21 calls `eqm-improvement`; `lora-training` divides authority with `kali-audit`; `logo-builder` references templates whose dir was deleted in the same window | B7, B8, B9-class refs; G1 |
+| `6761c23961` (Aug 20) "Replace manifest executor with agent-driven skills" | `kask_bridge/src/skill_executor.rs` incl. `BridgeManifestExecutor::validate_golden_outputs` | `gemba-walk` action enum + `recommend-actions.j2` still offer `validate_golden_outputs` as an approvable action — now a no-op approval loop | B2 (root cause found: executor existed, was deleted, skill not updated) |
+| `26215d845e` (Aug 20) "…remove hkask-mcp-codegraph, condenser, and media crates" | media MCP server (~8k lines), codegraph server | `system_prompt.hbs:46-47` still instructs the agent to copy `display_hint`/```media blocks from media-tool results; D18 gate in `markdown.rs:2723` still routes ```media fences; IPC request struct retains 10 write-only `media_*` fields read by nobody; `falsifiability` mentions "codegraph ontological anchoring" | G2–G5 |
+| `7d0253ab0d` (Aug 20) | `kask/docs/architecture/test-harness-trace-schema.md` | `bug-hunt/SKILL.md:81` link now dead | B5 (one instance root-caused) |
+
+**Lesson encoded into the plan:** when a removal PR lands, the same PR must
+resolve every inbound reference (skill↔skill, skill↔template,
+skill↔doc, prompt↔tool, protocol-field↔reader). The new cross-reference
+gate (step 0.8) makes the unresolved half fail CI instead of surviving as
+zombie prose.
+
+### Media/logo-builder disposition (operator decision recorded)
+
+The media MCP server was **deferred deliberately** (complexity of
+multi-media-type handling; strategic focus on text/number/logic domains:
+financial, planning, markets, research, document processing). It is
+recoverable: `git show 26215d845e^:kask/mcp-servers/hkask-mcp-media/...`
+yields ~8k lines including `generate_image`/`describe_image` over the
+(still-live) vision path, and `git show 9e9c41ef3c^:kask/registry/templates/media/logo-{discovery-map,formal-prompt}.j2`
+yields the two logo templates the skill expects. Disposition:
+
+- **logo-builder**: keep the skill; recompose it against current tools.
+  The generation pipeline needs an image backend that no longer exists,
+  so until media is revived the skill's template refs are restored
+  (recoverable verbatim) but the skill gains a front-matter note naming
+  its dependency (`media` server, deferred) — honest about being
+  dormant rather than silently broken.
+- **media server revival**: out of scope for this audit's plan; recorded
+  here so the recovery command and rationale survive. When revived, the
+  `media_*` IPC fields (G4) become live again — do not delete them until
+  that decision is final.
+
+---
+
 
 ### Surface A — kask crates (`kask/crates/`, 18 crates)
 
@@ -47,7 +99,7 @@ are marked `both`. IDs are stable for plan cross-reference.
 | A1 | 🟠 | Canonical | both | `hkask-event-store` is a workspace member (root `Cargo.toml:285`) with 3 dependents (`hkask-mcp-training/Cargo.toml:22`, `hkask-mcp-swarm/Cargo.toml:21`, `kask_bridge/Cargo.toml:19`) but is absent from the hKask members enumeration in DIVERGENCE.md. The upstream-sync runbook treats that list as complete. | `DIVERGENCE.md:85` vs root `Cargo.toml:285` |
 | A2 | 🟠 | Deletion / Load-bearing | other | `DatabaseDriver` trait has one production impl (`SqliteDriver`) and no mock/test driver, yet `hkask-event-store/Cargo.toml:5` advertises it as a swappable abstraction. Per `.rules`, trait-with-one-impl without a test seam is speculative generality. | `kask/crates/hkask-storage/src/database/driver.rs`; `sqlite.rs:223` |
 | A3 | 🟡 | Load-bearing | both | `Mutex.lock().unwrap()` ×3 on the inference timeout-rate-limit path; a poisoned mutex cascades into the stream error path. Additional unwrap clusters: `companies/tools/analytics.rs` (~12, mostly post-guard), `swarm/local_registry.rs` (~9 × `lock().unwrap()`). | `kask_bridge/src/inference_chat.rs:416,488,961`; `hkask-mcp-companies/src/tools/analytics.rs`; `hkask-mcp-swarm/src/local_registry.rs` |
-| A4 | 🟡 | Canonical | mine | ~14 production `let _ =` on fallible ops in `kask_bridge` — mostly best-effort reply sends (defensible), but stale-socket `remove_file` before bind silently changes bind behavior. `.rules` requires `.log_err()`. | `inference_ipc_server.rs:356,358,411,430,437,459,462,467,1850`; `inference_chat.rs:554,559,566`; `inference_embedding.rs:146,188` |
+| A4 | 🟡 | Load-bearing | mine | ~12 production `let _ =` on fallible ops in `kask_bridge` — mostly best-effort reply sends (defensible), but stale-socket `remove_file` before bind silently changes bind behavior. `.rules` requires `.log_err()`. (Post-review correction: two originally-cited lines, `inference_ipc_server.rs:1850,1858`, are inside `#[cfg(test)]` — dropped.) | `inference_ipc_server.rs:356,358,411,430,437,459,462,467`; `inference_chat.rs:554,559,566`; `inference_embedding.rs:146,188` |
 | A5 | 🟡 | Load-bearing | mine | `WorktreeSpawner` trait has one impl (`AgentPanelWorktreeSpawner`) and no test seam — the IPC worktree-spawn path is untestable without GPUI. Justified as §13.1 inversion, but unseamed. | `kask_bridge/src/inference_ipc_server.rs:73`; `crates/zed/src/main.rs:3254` |
 | A6 | 🟡 | Canonical | mine | Stale crate name in WAL-invariant doc ("crates that depend on `hkask-database`" — crate is `hkask-storage`). | `hkask-storage/src/database/sqlite.rs:29` |
 | A7 | 🔴 | Load-bearing | other | `reg.sensor.memory` is emitted by `RealMemoryPort::h_mem_count` and `low_confidence_count` but is not registered in `CANONICAL_NAMESPACES` (`hkask-types/src/event.rs:75`). The reg-canonical and reg-creep gates currently fail on this namespace. The sensor is real (it feeds the regulation loop); the correct fix is registration, not retargeting. | `kask_bridge/src/memory.rs:997,1012`; `hkask-types/src/event.rs:75` |
@@ -65,9 +117,12 @@ are marked `both`. IDs are stable for plan cross-reference.
 
 | ID | Sev | Test | Origin | Finding | Evidence |
 |---|---|---|---|---|---|
-| B1 | 🔴 | Impedance | mine | `superforecasting` instructs the agent to use a `market_context` tool 6× — no such tool exists anywhere in `kask/mcp-servers/`. The real tool is `market_match` (`hkask_mcp_prediction_markets.rs:233`). Agents following stages 2/4/6 will hunt for a phantom tool. | `.agents/skills/superforecasting/SKILL.md:107-177` |
-| B2 | 🔴 | Impedance / Load-bearing | mine | `gemba-walk` offers `validate_golden_outputs` as an operator-approvable action type, but no executor exists in any `.rs`, `.j2`, or skill. Approving it does nothing — a broken feedback loop per the "advertised invariants need enforcement points" rule. | `.agents/skills/gemba-walk/SKILL.md:64,78`; `kask/registry/templates/gemba-walk/recommend-actions.j2:23,60,81` |
-| B3 | 🔴 | Impedance | other | `logo-builder` references `logo-discovery-map.j2` and `logo-formal-prompt.j2` — neither template exists anywhere in `kask/registry/templates/`. Skill is broken as shipped. | `.agents/skills/logo-builder/SKILL.md:67-82` |
+| B1 | ~~retracted~~ | — | mine | **RETRACTED post-review.** `market_context` is a template *input name*, not a tool; the skill correctly says "call `market_match` directly" (SKILL.md:48) and all referenced tools (`market_match`, `scenario_calibration`, `rss_search`) exist. Step 0.3 removed. | verification: no "call market_context" phrasing anywhere |
+| B2 | 🔴 | Impedance / Load-bearing | mine | **Root-caused (§2.1):** `validate_golden_outputs` had a real executor (`BridgeManifestExecutor::validate_golden_outputs`, `skill_executor.rs:213`) deleted by `6761c23961`; gemba-walk's action enum was never updated. Approving it is a no-op — a broken feedback loop. Disposition per §5.0 triage: **remove from the action enum** (the manifest-executor architecture it served is gone deliberately; agent-driven skills replaced it). | `.agents/skills/gemba-walk/SKILL.md:64,78`; `recommend-actions.j2:23,60,81` |
+| B3 | 🔴 | Impedance | both | **Root-caused (§2.1):** logo-builder's templates lived under `templates/media/` (per its own manifest: "no own .j2 … uses media server tools") and were deleted with the media server. Operator decision recorded in §2.1: **recover the two templates verbatim from git** (`9e9c41ef3c^`) and mark the skill dormant pending media revival. | `.agents/skills/logo-builder/SKILL.md:67-82`; recovery: `git show 9e9c41ef3c^:kask/registry/templates/media/logo-discovery-map.j2` |
+| B7 | 🔴 | Impedance | review | `bug-hunt` writes traces "visible to the `harness-optimize` skill" and cites the deleted `test-harness-trace-schema.md`; `tdd` dispatches to phantom skills `harness-optimize` + `proptest`, imports the deleted `hkask-test-harness` oracle taxonomy, references missing `./scripts/test --trace`, and emits `reg.contract.violated` — not in `CANONICAL_NAMESPACES`. The advertised bug-hunt→harness-optimize→CI mutation loop terminates in vapor. Root cause: `9e9c41ef3c` + `7d0253ab0d`. | `bug-hunt/SKILL.md:81`; `tdd/SKILL.md:49,55,58,137,153,170,178,189`; `hkask-types/src/event.rs` CANONICAL_NAMESPACES |
+| B8 | 🟠 | Impedance | review | `superforecasting` step 21 invokes the `eqm-improvement` skill — deleted by `9e9c41ef3c`, consumer step not updated. | `superforecasting/SKILL.md:151` |
+| B9 | 🟡 | Impedance | review | `constraint-forces-recast` + `gradient-seeded-recombination` defer evidence assembly to `web-deep-research` — neither a skill nor an MCP tool. Triage needed: uninstalled dependency vs stale prose. | both SKILL.mds |
 | B4 | 🟠 | Deletion | mine | `listening` self-declares `apply-template-rag.j2` as legacy ("registered but NOT referenced by skill execution") — survives only for hypothetical standalone use. | `.agents/skills/listening/SKILL.md:44` |
 | B5 | 🟠 | Impedance (doc) | mine | Doc-path drift: `bug-hunt/SKILL.md:81` → `architecture/test-harness-trace-schema.md` does not exist anywhere (dead link); `skill-discovery/SKILL.md:26` misses the `core/` segment; `algedonic-review/SKILL.md:96` + `gemba-walk/SKILL.md:98` resolve to repo-root `docs/`, inconsistent with sibling refs. | cited per item |
 | B6 | 🟡 | Deletion | mine | `swarm-intelligence/SKILL.md:58` references a `swarm_panel` UI surface that doesn't exist as a tool or callable surface — stale prose. | cited |
@@ -121,6 +176,19 @@ line." Several gates are advertised but have zero pinning tests.
 | F5 | 🟡 | Canonical | other | `hkask-mcp-server/src/server.rs:7` doc example imports the wrong crate name (`use hkask_mcp::server::…`). | cited |
 | F6 | 🟡 | Canonical | other | DIVERGENCE.md D-rows have accreted into multi-thousand-word essays (D3 alone dwarfs the rest) — drifting from "sync conflict map" toward "design history database." | `DIVERGENCE.md` |
 
+### Surface G — Incomplete-deletion vestiges (post-review sweep, git-verified)
+
+Found by sweeping for the §2.1 pattern globally. Each is a leftover the
+originating deletion commit should have removed in the same PR.
+
+| ID | Sev | Test | Finding | Evidence |
+|---|---|---|---|---|
+| G1 | 🟠 | Load-bearing | `system_prompt.hbs:46-47` instructs the agent to copy `display_hint` / ```media fenced blocks from media-tool results into replies — hkask-mcp-media was deleted (`26215d845e`); no live tool emits these fields. Dead instruction weight steering agent behavior toward a surface that cannot fire. Also: D18's fence-gate in `markdown.rs:2723` still routes ```media (harmless fall-through, but the gate's own comment claims it enumerates the registry). | `crates/agent/src/templates/system_prompt.hbs:26,46-47`; `crates/markdown/src/markdown.rs:2723` |
+| G2 | 🟠 | Deletion | IPC request struct carries ~10 write-only `media_*` fields (`media_op`, `media_prompt`, `media_image_url`, `media_audio_url`, `media_text`, `media_voice`, `media_size`, `media_count`, `media_strength`, …) — declared, serialized, **read by nobody** after the media server deletion. Protocol dead weight; also blocks honest documentation of the IPC surface. **Hold** until the media-revival decision is final (§2.1) — revival makes them live again. | `kask/crates/hkask-types/src/inference_ipc.rs:168-185` |
+| G3 | 🟡 | Deletion | `falsifiability/SKILL.md:59` references "codegraph ontological anchoring" — codegraph server deleted in the same window. Stale prose. | cited |
+| G4 | 🟠 | Impedance | The D18 fence gate (`markdown.rs:2723`) lists `media/graph/kanban/portfolio/scenarios` but NOT `swarm_delegate_results` — yet `hkask-viz-core` composes 5 widgets including swarm (VIZ_TAG `swarm_delegate_results`). A ```` ```swarm_delegate_results ```` block never reaches its widget. Compounding: **no skill, template, or panel code currently emits that fence** — the widget is doubly unreachable (gate + no producer), and no pin asserts gate-list == registry-composition despite the comment claiming it must. | `crates/markdown/src/markdown.rs:2716-2729`; `hkask-viz-core/src/hkask_viz_core.rs:165`; grep: zero emitters |
+| G5 | 🟡 | Canonical | `principle-constraints/SKILL.md:75` honestly documents deriving constraints from the *deleted* `hkask-verification/src/grounding.rs` — fine as history, but the phrasing "historical reference" is the only reason it isn't a B-class phantom. No action; recorded as the correct way to reference deleted machinery. | cited |
+
 ### Verified clean (no findings, recorded for completeness)
 
 - All three Curator-prompt tools (`curator_status`, `curator_directive`,
@@ -162,11 +230,14 @@ selftests) at each phase boundary.
 |---|---|---|---|
 | 0.1 | A7 | Register `reg.sensor.memory` in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:75`). Mirror in `scripts/check-reg-canonical.sh::is_canonical`. Both reg gates go green. | No |
 | 0.2 | D1–D3 | Add the seven missing env vars to `config_env` allowlists in `kask_bridge/src/mcp_servers.rs` (kanban ×3, swarm ×3, corpus ×1). Align with actual reads; no behavior change when unset. | No |
-| 0.3 | B1 | Rewrite `superforecasting/SKILL.md:107-177` to reference `market_match` (the real tool) and its actual output shape. | No |
-| 0.4 | B2 | Either implement a `validate_golden_outputs` executor or remove it from gemba-walk's action enum + `recommend-actions.j2`. Prefer removal (essentialist: take away). | No |
-| 0.5 | B3 | Add `logo-discovery-map.j2` / `logo-formal-prompt.j2` or delete the `logo-builder` skill (essentialist: take away). | No |
+| 0.3 | B2 | Remove `validate_golden_outputs` from gemba-walk's action enum + `recommend-actions.j2` (root-caused: its executor was deliberately deleted with the manifest-executor architecture in `6761c23961`; removal is the completion of that change, not a new deletion). | No |
+| 0.4 | B3 | Recover `logo-discovery-map.j2` + `logo-formal-prompt.j2` verbatim from `git show 9e9c41ef3c^:kask/registry/templates/media/…` into a restored `templates/media/` dir; add a dormancy note to logo-builder naming its deferred media-server dependency (§2.1 disposition). | No |
+| 0.5 | B7 | Complete the `9e9c41ef3c`/`7d0253ab0d` deletions: strip `harness-optimize`/`proptest` dispatch + `hkask-test-harness` oracle taxonomy from `tdd`, fix bug-hunt's trace-schema reference (restore the schema doc or inline the schema), decide `reg.contract.violated` (register or retarget), and either restore `./scripts/test --trace` or correct the references. | No |
 | 0.6 | C2(b) | Seed `kask/registry/classify/*.yaml` alongside templates (extend the build.rs scan to a second asset class + test); derive `registry_dir` from `HKASK_TEMPLATE_ROOT` instead of `config_path` triple-parent arithmetic. | No |
 | 0.7 | A1, A6, B5, B6, B4 | Doc/truth repair: add `hkask-event-store` to `DIVERGENCE.md:85`; correct stale `hkask-database` name in `sqlite.rs:29`; fix dead/drifted skill doc links (bug-hunt, skill-discovery, algedonic-review, gemba-walk); delete stale `swarm_panel` prose in `swarm-intelligence/SKILL.md:58`; mark `apply-template-rag.j2` deprecated or delete with its SKILL.md mention. | No |
+| 0.8 | B8, B9, cross-cutting | **New gate: `check-skill-crossrefs.sh`** — mechanically resolve every `` `skill-name` `` backtick ref against `.agents/skills/`, every template ref against `kask/registry/templates/`, and every MCP tool name against server registries; fail CI on unresolved refs (allowlist for deliberate dormancy, e.g. logo-builder). This is the structural fix for the entire incomplete-change class: the unresolved half of a two-leg edit now fails CI instead of surviving as zombie prose. Use it to triage B8/B9 before fixing them by hand. | No |
+| 0.9 | G1 | Remove the media display-hint instructions from `system_prompt.hbs:46-47` and drop ```media from the D18 fence gate + system-prompt widget list (media deferred; revival restores them — one commit when that decision lands). ⬆ upstream files → D-seam note + pin update (`test_system_prompt_advertises_every_supported_diagram_type`). | ⬆ |
+| 0.10 | G4 | Either add `swarm_delegate_results` to the D18 fence gate and give swarm-steering an emitter contract, or delete the unreachable swarm widget until a producer exists; either way add the missing pin asserting gate-list == viz-core registry composition. ⬆ → D-seam note. | ⬆ |
 
 ### Phase 1 — pins before refactors (so later phases can't silently break behavior)
 
@@ -195,7 +266,9 @@ selftests) at each phase boundary.
 | 3.2 | A10 | Rule on `hkask-bridge-ontology::{sumo, sdmx}`: keep-with-test or delete (axis.rs is their only reference). | No |
 | 3.3 | A11 | Rule on swarm `a2a*` (keep-with-test or delete). | No |
 | 3.4 | A12 | Document or delete `KaskScenariosSettings {}`. | No |
-| 3.5 | C6, C7 | Delete unreferenced templates (7 files) after a final grep-based reachability check; move `listening/tests/fixtures/*` and READMEs out of `registry/templates/`. | No |
+| 3.5 | C6, C7 | Delete unreferenced templates (7 files) after a final grep-based reachability check **and** the 0.8 cross-ref gate passes; move `listening/tests/fixtures/*` and READMEs out of `registry/templates/`. | No |
+| 3.6 | G2 | Delete the write-only `media_*` IPC fields — **only after** the media-revival decision is final (§2.1); if revival is approved instead, this step converts to "wire them or document them as reserved." ⬆ (protocol struct is kask-side but consumers span the seam). | No |
+| 3.7 | G3 | Fix `falsifiability/SKILL.md:59` codegraph mention (keep the ontological-anchor concept, drop the deleted server's name). | No |
 
 ### Phase 4 — structural canonicalization
 
@@ -227,8 +300,11 @@ selftests) at each phase boundary.
 
 - **Phase 0** is pure wins with near-zero risk and protects the sync
   runbook, operator overrides, and CI gates today. A7 alone unblocks the
-  reg-canonical gate; D1–D3 restore operator-visible env overrides; B1–B3
-  fix three skills that are broken as shipped.
+  reg-canonical gate; D1–D3 restore operator-visible env overrides; 0.3–0.5
+  complete the consumer legs of three verified deletions. **0.8 is the
+  highest-leverage single step in the plan**: the cross-reference gate
+  converts the entire incomplete-change failure class (§2.1) from
+  "discovered by a later audit" to "fails CI at the boundary."
 - **Phase 1** establishes the test pins that Phases 2–4 will rely on. The
   repo advertises these as gates; they're unpinned. Highest leverage per
   line written: property tests for the validator + port registry,
@@ -250,22 +326,55 @@ selftests) at each phase boundary.
 
 ## 5. Open questions for the operator
 
-1. **B2 / B3 / 0.4 / 0.5**: implement the missing executors/templates,
-   or remove the broken skill surfaces? Recommend removal (essentialist:
-   take away) unless there's an active consumer.
+### 5.0 Standing policy: triage before fix (the incomplete-change protocol)
+
+Every phantom-reference finding gets the same three-way triage **before**
+an edit direction is chosen, because "just remove it" and "just build it"
+are both guesses when the real question is *which leg of a prior change
+didn't finish*:
+
+1. **Was the referenced thing deleted?** (`git log --diff-filter=D`) → if
+   yes, the removal leg completed; the fix is to complete the consumer leg
+   (update/remove the referencing side). The deletion was presumably
+   deliberate — do not resurrect it without an operator decision.
+2. **Was it renamed/moved?** (`git log --follow`, grep history) → if yes,
+   the rename leg completed; fix is a mechanical reference update.
+3. **Was it planned but never built?** (manifest/enum/doc references with
+   no commit ever touching the target) → the *initiating* change is the
+   incomplete one; decide whether to finish it (build the artifact) or
+   roll the initiation back (remove the reference + any scaffolding).
+   This is the only case where "implement the missing piece" is the
+   default — and only when the surrounding design still makes sense.
+
+The audit's root-cause column in §2.1 applies this protocol; findings
+landing in case 3 are exactly where rushed work left scaffolding for
+something never built. The 0.8 cross-reference gate exists so that future
+incomplete legs fail CI at the boundary instead of being discovered by a
+later audit.
+
+### Remaining operator decisions
+
+1. ~~B2 / B3~~ — resolved by §2.1 triage: B2 removes (case 1), B3
+   recovers templates + marks dormant (operator decision recorded §2.1).
 2. **A11 / 3.3**: keep swarm `a2a*` with tests, or delete? Needs a
-   keep-or-delete ruling — the audit can't decide aliveness from grep
-   alone.
+   keep-or-delete ruling — apply §5.0 triage first (were its consumers
+   deleted, or was it never wired?).
 3. **A16 / 5.5**: rename `hkask-mcp` ↔ `hkask-mcp-server` now, or
    tolerate the doc-example confusion? Mechanical but touches many
    manifests.
 4. **C5 / 2.3**: is the `[inference]` frontmatter rule (skill-maintenance
    T4) meant to apply inside frontmatter only, or to forbid the block
    entirely? The catalog predates the rule and fails it wholesale as
-   written.
+   written. **Resolve this before writing 2.1's parser tests** — the rule
+   determines what the stripper should accept.
+5. **Media revival (§2.1)**: defer confirmed for now; G2's `media_*` IPC
+   fields and B3's recovered templates are held in dormancy. Revisit when
+   media-type handling returns to scope.
 
 ---
 
 *Audit conducted 2026-08-26 by two read-only `refactor-architecture`
-passes. No files were modified during the audit; this document is the
-deliverable. Verification was by inspection and grep only.*
+passes; amended the same day after operator review (B1 retracted, §2.1
+root-cause triage added, Surface G + steps 0.8–0.10 added, §5.0 triage
+protocol adopted). No source files were modified; this document is the
+deliverable. Verification was by inspection, grep, and git history.*

@@ -1173,21 +1173,61 @@ impl CompaniesServer {
             let return_accurate = superforecast::within_tolerance(
                 req.forecast_price_change, req.actual_price_change, 0.20,
             );
-            let return_brier = hkask_forecast::brier_score(0.7, return_accurate);
-            let combined = return_brier;
-
-            // Gap decomposition: use the owner's durable forecast model if requested.
-            let stored_forecast = if let Some(ref forecast_id) = req.forecast_id {
-                let persisted = self
-                    .get_persisted_forecast(forecast_id.clone())
-                    .await?
-                    .ok_or_else(|| McpToolError::invalid_argument("forecast not found for this owner"))?;
-                if persisted.symbol != req.symbol {
+            // FIX (H7): Use the forecast's own probability from the stored
+            // snapshot, not a hardcoded 0.7. The forecast probability is the
+            // calibrated confidence from calibrate_forecast or driver_forecast.
+            // When no stored forecast is available, fall back to 0.7 (the
+            // historical default) and warn so the operator knows the Brier
+            // score is not measuring the forecast's own calibration.
+            //
+            // Fetch the persisted forecast once — reused below for gap
+            // decomposition to avoid a redundant DB call.
+            let persisted_forecast: Option<crate::portfolio::PersistedForecast> = if let Some(ref forecast_id) = req.forecast_id {
+                Some(
+                    self.get_persisted_forecast(forecast_id.clone())
+                        .await?
+                        .ok_or_else(|| McpToolError::invalid_argument("forecast not found for this owner"))?
+                )
+            } else {
+                None
+            };
+            // Validate symbol match before using the forecast.
+            if let Some(ref pf) = persisted_forecast {
+                if pf.symbol != req.symbol {
                     return Err(McpToolError::invalid_argument(format!(
-                        "forecast '{forecast_id}' belongs to symbol '{}', not '{}'",
-                        persisted.symbol, req.symbol
+                        "forecast '{}' belongs to symbol '{}', not '{}'",
+                        req.forecast_id.as_ref().unwrap(), pf.symbol, req.symbol
                     )));
                 }
+            }
+            let forecast_probability = persisted_forecast
+                .as_ref()
+                .and_then(|pf| pf.snapshot.get("forecast_probability"))
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    // Also check the calibration block from calibrate_forecast,
+                    // which stores confidence as a proxy for probability.
+                    persisted_forecast
+                        .as_ref()
+                        .and_then(|pf| pf.snapshot.get("calibration"))
+                        .and_then(|c| c.get("growth"))
+                        .and_then(|g| g.get("confidence"))
+                        .and_then(|v| v.as_f64())
+                })
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        target: "hkask.mcp.companies",
+                        "forecast_record: no forecast_probability in snapshot — \
+                         using 0.7 fallback. Brier score does not measure the \
+                         forecast's own calibration."
+                    );
+                    0.7
+                });
+            let return_brier = hkask_forecast::brier_score(forecast_probability, return_accurate);
+            let combined = return_brier;
+
+            // Gap decomposition: reuse the already-fetched persisted forecast.
+            let stored_forecast = if let Some(ref pf) = persisted_forecast {
                 // Pre-computed PTs from forecast_persist carry a minimal
                 // snapshot (kind: "precomputed_price_target") with no
                 // projected model — StoredForecast::from_snapshot fails on
@@ -1195,13 +1235,13 @@ impl CompaniesServer {
                 // scoring still runs. Per .rules: don't collapse to None via
                 // .ok()? on a fallible operation silently — log the skip so
                 // the operator can distinguish "no model" from "broken."
-                match StoredForecast::from_snapshot(&persisted.snapshot) {
+                match StoredForecast::from_snapshot(&pf.snapshot) {
                     Ok(stored) => Some(stored),
                     Err(e) => {
                         tracing::warn!(
                             "forecast_record: forecast '{}' snapshot is not a full StoredForecast — \
                              gap decomposition unavailable, Brier scoring still runs. Error: {}",
-                            forecast_id, e
+                            req.forecast_id.as_deref().unwrap_or(""), e
                         );
                         None
                     }

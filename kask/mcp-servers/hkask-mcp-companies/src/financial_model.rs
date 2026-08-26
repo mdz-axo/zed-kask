@@ -583,6 +583,27 @@ impl HistoricalSnapshot {
             .unwrap_or(0.0)
     }
 
+    /// Latest accounts receivable.
+    pub fn latest_ar(&self) -> f64 {
+        self.accounts_receivable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
+    /// Latest inventory.
+    pub fn latest_inventory(&self) -> f64 {
+        self.inventory.last().map(|(_, v)| *v).unwrap_or(0.0)
+    }
+
+    /// Latest accounts payable.
+    pub fn latest_ap(&self) -> f64 {
+        self.accounts_payable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
     /// Latest net PP&E.
     pub fn latest_ppe_net(&self) -> f64 {
         self.ppe_net.last().map(|(_, v)| *v).unwrap_or(0.0)
@@ -1188,6 +1209,6 @@ pub(crate) use scenario_impact::{
 // ── Driver-based three-statement model — `financial_model/driver_model.rs`
 mod driver_model;
 pub(crate) use driver_model::{
-    DriverAdjustment, DriverAssumptions, DriverModelError, DriverPeriod,
-    DriverProjectedModel, NwcMethod, generate_markdown_report, project_driver_model,
+    DriverAssumptions, NwcMethod, generate_markdown_report,
+    project_driver_model,
 };

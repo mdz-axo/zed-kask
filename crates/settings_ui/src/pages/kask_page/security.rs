@@ -29,7 +29,6 @@ pub(crate) fn render_security_page(
     // the DB is rotated before the keychain write so a rotation failure
     // leaves the old passphrase intact.
     let db_passphrase_card = if db_passphrase_configured {
-        let provider = credentials_provider.clone();
         v_flex()
             .gap_2()
             .child(
@@ -63,13 +62,12 @@ pub(crate) fn render_security_page(
                     .confirm_on_focus_out()
                     .on_confirm(move |value, _window, cx| {
                         if let Some(pw) = value.filter(|v| !v.is_empty()) {
-                            spawn_db_passphrase_rotation(&pw.clone(), cx).detach();
+                            spawn_db_passphrase_rotation(&pw, cx).detach();
                         }
                     }),
             )
             .into_any_element()
     } else {
-        let provider = credentials_provider.clone();
         v_flex()
             .gap_2()
             .child(
@@ -94,7 +92,7 @@ pub(crate) fn render_security_page(
                     .confirm_on_focus_out()
                     .on_confirm(move |value, _window, cx| {
                         if let Some(pw) = value.filter(|v| !v.is_empty()) {
-                            spawn_db_passphrase_rotation(&pw.clone(), cx).detach();
+                            spawn_db_passphrase_rotation(&pw, cx).detach();
                         }
                     }),
             )
@@ -157,8 +155,7 @@ fn spawn_db_passphrase_rotation(new_passphrase: &str, cx: &mut App) -> Task<()> 
 
         match rotation_result {
             Ok(()) => {
-                tracing::info!(
-                    target: "hkask.settings.security",
+                log::info!(
                     "DB passphrase rotation succeeded — writing new passphrase to keychain"
                 );
                 // 2. Write the new passphrase to the keychain. This triggers
@@ -175,11 +172,9 @@ fn spawn_db_passphrase_rotation(new_passphrase: &str, cx: &mut App) -> Task<()> 
                 cx.update(|cx| nudge_mcp_servers(cx));
             }
             Err(error) => {
-                tracing::warn!(
-                    target: "hkask.settings.security",
-                    %error,
+                log::warn!(
                     "DB passphrase rotation failed — the old passphrase remains in effect. \
-                     The new passphrase was NOT saved to the keychain."
+                     The new passphrase was NOT saved to the keychain. Error: {error}"
                 );
                 // Also update the UI to show the error. We can't show a toast
                 // from here, but the tracing span surfaces in the logs.

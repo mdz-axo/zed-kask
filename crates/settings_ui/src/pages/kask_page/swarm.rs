@@ -299,7 +299,7 @@ pub(crate) fn render_swarm_page(
                     // the new one (broken feedback loop — the operator would
                     // see the new passphrase in settings but the DB uses the
                     // old one).
-                    let new_passphrase = parsed.clone();
+                    let new_passphrase = parsed;
                     cx.spawn(async move |cx| {
                         let passphrase_for_rotation = new_passphrase.clone();
                         let rotation_result = cx
@@ -311,8 +311,7 @@ pub(crate) fn render_swarm_page(
                             .await;
                         match rotation_result {
                             Ok(()) => {
-                                tracing::info!(
-                                    target: "hkask.settings.swarm",
+                                log::info!(
                                     "Swarm memory DB passphrase rotation succeeded \
                                      — saving new passphrase to settings"
                                 );
@@ -335,7 +334,7 @@ pub(crate) fn render_swarm_page(
                                 // Write to the keychain so MCP servers pick it up
                                 // via the primary ctx.credentials tier.
                                 let credentials_provider =
-                                    zed_credentials::global(&cx);
+                                    cx.update(|cx| zed_credentials::global(cx));
                                 let url = format!(
                                     "{KASK_CREDENTIAL_NAMESPACE}/hkask_swarm_memory_passphrase"
                                 );
@@ -353,12 +352,10 @@ pub(crate) fn render_swarm_page(
                                 let _ = cx.update(|cx| nudge_mcp_servers(cx));
                             }
                             Err(error) => {
-                                tracing::warn!(
-                                    target: "hkask.settings.swarm",
-                                    %error,
+                                log::warn!(
                                     "Swarm memory DB passphrase rotation failed — \
                                      the old passphrase remains in effect. \
-                                     The new passphrase was NOT saved to settings."
+                                     The new passphrase was NOT saved to settings. Error: {error}"
                                 );
                             }
                         }

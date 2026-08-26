@@ -249,15 +249,32 @@ fn rejection(path: &std::path::Path, root: &std::path::Path, reason: &str) -> Mc
     ))
 }
 
-/// Contain `path` under the process current working directory (the project
-/// root when the MCP server is launched per-project via `ContextServerStore`,
-/// or zed's launch cwd for the app-global `McpRuntime` spawn — fail-safe in
-/// both cases). Canonicalization collapses symlink escapes. Absolute paths
-/// like `/etc/passwd` and traversals like `../../escape` are rejected.
+/// Contain `path` under an allowed root. The allowed roots are:
+/// 1. The process current working directory (the project root when the MCP
+///    server is launched per-project via `ContextServerStore`, or zed's
+///    launch cwd for the app-global `McpRuntime` spawn).
+/// 2. The kask data directory (`HKASK_DATA_DIR` or `~/.local/share/zed-kask`)
+///    — where MCP server DBs and internal artifacts live (D28).
+/// 3. The kask artifacts directory (`~/Documents/zk-data`) — where
+///    user-facing artifacts like corpus files, QA output, and replica configs
+///    are stored (D28).
+///
+/// Canonicalization collapses symlink escapes. Absolute paths like
+/// `/etc/passwd` and traversals like `../../escape` are rejected unless they
+/// resolve under one of the allowed roots.
 fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, McpToolError> {
-    let root = std::env::current_dir()
+    let cwd = std::env::current_dir()
         .and_then(|cwd| cwd.canonicalize())
         .map_err(|e| McpToolError::internal(format!("Cannot resolve working directory: {e}")))?;
+
+    // Collect all allowed roots: CWD + data dir + artifacts dir.
+    let mut allowed_roots = vec![cwd];
+    if let Some(data_dir) = hkask_types::agent_paths::resolve_data_dir().canonicalize().ok() {
+        allowed_roots.push(data_dir);
+    }
+    if let Some(artifacts_dir) = hkask_types::agent_paths::resolve_artifacts_dir().canonicalize().ok() {
+        allowed_roots.push(artifacts_dir);
+    }
 
     let resolved = if write {
         canonicalize_lenient(path)
@@ -268,8 +285,12 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
         McpToolError::invalid_argument(format!("Cannot resolve path '{}': {e}", path.display()))
     })?;
 
-    if !resolved.starts_with(&root) {
-        return Err(rejection(path, &root, "path escapes the project root"));
+    if !allowed_roots.iter().any(|root| resolved.starts_with(root)) {
+        let roots_display: Vec<String> = allowed_roots.iter().map(|r| r.display().to_string()).collect();
+        return Err(rejection(path, &allowed_roots[0], &format!(
+            "path escapes all allowed roots: {}",
+            roots_display.join(", ")
+        )));
     }
     Ok(resolved)
 }

@@ -26,7 +26,7 @@ use super::HistoricalSnapshot;
 /// How a driver value is applied. Each driver supports one or more of these
 /// adjustment types simultaneously (e.g., revenue can grow 8% YoY AND receive
 /// an explicit $500M adjustment for a planned expansion).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DriverAdjustment {
     /// Percentage change from prior period (e.g., 0.08 = 8% YoY growth).
     /// For margins, this is the percentage of revenue (e.g., 0.60 = 60% of revenue).
@@ -37,33 +37,18 @@ pub struct DriverAdjustment {
     pub ratio: Option<f64>,
 }
 
-impl Default for DriverAdjustment {
-    fn default() -> Self {
-        Self {
-            percent: None,
-            explicit: None,
-            ratio: None,
-        }
-    }
-}
-
 // ── Working capital method ──────────────────────────────────────────────────
 
 /// Method for projecting net working capital.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum NwcMethod {
     /// Days-based: DSO, DIO, DPO drive AR, inventory, AP.
     Days,
     /// Percentage of revenue: NWC = revenue × nwc_pct.
+    #[default]
     PercentOfRevenue,
     /// Explicit dollar amount for total NWC.
     Explicit,
-}
-
-impl Default for NwcMethod {
-    fn default() -> Self {
-        Self::PercentOfRevenue
-    }
 }
 
 // ── Driver assumptions ──────────────────────────────────────────────────────
@@ -323,6 +308,10 @@ pub struct DriverPeriod {
     pub cfi: f64,
     pub cff: f64,
     pub net_cash_change: f64,
+    /// Reconciliation: (cash - prev_cash) - net_cash_change. Should be ~0.
+    pub cash_reconciliation: f64,
+    /// Debt plug amount (shortfall financing when cash would go negative).
+    pub debt_plug: f64,
 
     // Free Cash Flow (firm-level, for non-financial DCF)
     pub free_cash_flow: f64,
@@ -413,13 +402,24 @@ fn project_industrial(
     let total_years = assumptions.total_years as usize;
     let mut periods: Vec<DriverPeriod> = Vec::with_capacity(total_years);
 
-    // Starting balance sheet values from latest historical period
+    // Starting balance sheet values from latest historical period.
+    // The historical balance sheet may not balance with our simplified item
+    // set (we track AR, inventory, PP&E, AP, debt, equity — but real balance
+    // sheets have other assets/liabilities). We use the actual historical cash
+    // and compute "other assets" as the residual that makes the balance sheet
+    // balance. Other assets are held constant through the projection.
+    let starting_total_le = hist.latest_ap() + hist.latest_debt() + hist.latest_equity();
+    let starting_tracked_assets =
+        hist.latest_cash() + hist.latest_ar() + hist.latest_inventory() + hist.latest_ppe_net();
+    // Other assets = L+E - tracked assets. Can be negative (other liabilities).
+    let starting_other_assets = starting_total_le - starting_tracked_assets;
     let mut prev_revenue = hist.latest_revenue();
-    let mut prev_nwc = hist.latest_nwc();
+    let mut prev_nwc = hist.latest_ar() + hist.latest_inventory() - hist.latest_ap();
     let mut prev_debt = hist.latest_debt();
     let mut prev_equity = hist.latest_equity();
     let mut prev_ppe = hist.latest_ppe_net();
     let mut prev_cash = hist.latest_cash();
+    let prev_other_assets = starting_other_assets;
 
     // Extract driver values (with fallbacks)
     let growth_rate = assumptions
@@ -515,24 +515,25 @@ fn project_industrial(
         let equity = prev_equity + net_income - dividends + assumptions.equity_issuance;
 
         // Balance sheet identity: Assets = Liabilities + Equity
-        // Cash is the plug: Cash = (AP + Debt + Equity) - (AR + Inventory + PP&E)
+        // Cash is the plug: Cash = (AP + Debt + Equity) - (AR + Inventory + PP&E + Other Assets)
+        // Other assets are held constant from the starting balance sheet gap.
         let total_liabilities_equity = ap + debt + equity;
-        let non_cash_assets = ar + inventory + ppe_net;
+        let non_cash_assets = ar + inventory + ppe_net + prev_other_assets;
         let cash = total_liabilities_equity - non_cash_assets;
 
         // If cash goes negative, the company needs to raise debt to cover it.
         // This is the standard "debt plug" fallback in three-statement modelling.
-        let (cash, debt, total_liabilities_equity) = if cash < 0.0 {
+        let (cash, debt, total_liabilities_equity, debt_plug) = if cash < 0.0 {
             let shortfall = -cash;
             let adjusted_debt = debt + shortfall;
             let adjusted_cash = 0.0;
             let adjusted_total_le = ap + adjusted_debt + equity;
-            (adjusted_cash, adjusted_debt, adjusted_total_le)
+            (adjusted_cash, adjusted_debt, adjusted_total_le, shortfall)
         } else {
-            (cash, debt, total_liabilities_equity)
+            (cash, debt, total_liabilities_equity, 0.0)
         };
 
-        let total_assets = cash + ar + inventory + ppe_net;
+        let total_assets = cash + ar + inventory + ppe_net + prev_other_assets;
         let balance_check = total_assets - total_liabilities_equity;
 
         // ── Cash Flow Statement ────────────────────────────────────────────
@@ -541,11 +542,18 @@ fn project_industrial(
         let cfo = net_income + da - change_in_nwc;
         // CFI = -Capex
         let cfi = -capex;
-        // CFF = Debt issuance - Debt repayment + Equity issuance - Dividends
+        // CFF = Debt issuance - Debt repayment + Equity issuance - Dividends + Debt plug
+        // The debt plug (shortfall financing) is included so CFF reconciles with
+        // the balance sheet cash change when the plug fires.
         let cff = assumptions.debt_issuance - assumptions.debt_repayment
             + assumptions.equity_issuance
-            - dividends;
+            - dividends
+            + debt_plug;
         let net_cash_change = cfo + cfi + cff;
+        // Reconciliation check: net_cash_change should equal cash - prev_cash.
+        // The balance sheet plug ensures this by construction, but floating-point
+        // rounding can cause tiny discrepancies.
+        let cash_reconciliation = (cash - prev_cash) - net_cash_change;
 
         // FCF (firm-level) = NOPAT + D&A - Capex - ΔNWC
         // NOPAT = EBIT × (1 - tax_rate)
@@ -582,6 +590,8 @@ fn project_industrial(
             cfi,
             cff,
             net_cash_change,
+            cash_reconciliation,
+            debt_plug,
             free_cash_flow,
             discount_factor,
             present_value,
@@ -648,7 +658,6 @@ fn project_financial_sector(
     let mut prev_revenue = hist.latest_revenue();
     let mut prev_equity = hist.latest_equity();
     let mut prev_debt = hist.latest_debt();
-    let mut prev_cash = hist.latest_cash();
 
     let growth_rate = assumptions
         .revenue_growth
@@ -724,8 +733,16 @@ fn project_financial_sector(
             balance_check,
             cfo: net_income,
             cfi: 0.0,
-            cff: assumptions.equity_issuance - dividends,
-            net_cash_change: net_income + assumptions.equity_issuance - dividends,
+            cff: assumptions.debt_issuance - assumptions.debt_repayment
+                + assumptions.equity_issuance
+                - dividends,
+            net_cash_change: net_income
+                + assumptions.debt_issuance
+                - assumptions.debt_repayment
+                + assumptions.equity_issuance
+                - dividends,
+            cash_reconciliation: 0.0, // Simplified model — cash is a fixed ratio
+            debt_plug: 0.0,
             free_cash_flow,
             discount_factor,
             present_value,
@@ -734,7 +751,6 @@ fn project_financial_sector(
         prev_revenue = revenue;
         prev_equity = equity;
         prev_debt = debt;
-        prev_cash = cash;
     }
 
     // Terminal value: perpetuity of residual income at terminal growth
@@ -855,9 +871,7 @@ pub fn generate_markdown_report(
 
     // Valuation summary
     md.push_str("## Valuation Summary\n\n");
-    md.push_str(&format!(
-        "| Metric | Value |\n|--------|-------|\n"
-    ));
+    md.push_str("| Metric | Value |\n|--------|-------|\n");
     md.push_str(&format!(
         "| Intrinsic value/share | ${:.2} |\n",
         model.intrinsic_per_share
@@ -961,4 +975,220 @@ pub fn generate_markdown_report(
     md.push_str("- Terminal value: Gordon Growth perpetuity (FCF × (1+g) / (r-g))\n");
 
     md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::financial_model::HistoricalSnapshot;
+
+    fn synthetic_hist() -> HistoricalSnapshot {
+        HistoricalSnapshot {
+            revenue: vec![
+                ("2020".into(), 1_000.0),
+                ("2021".into(), 1_100.0),
+                ("2022".into(), 1_200.0),
+            ],
+            cogs: vec![
+                ("2020".into(), 600.0),
+                ("2021".into(), 660.0),
+                ("2022".into(), 720.0),
+            ],
+            da: vec![
+                ("2020".into(), 30.0),
+                ("2021".into(), 33.0),
+                ("2022".into(), 36.0),
+            ],
+            capex: vec![
+                ("2020".into(), 40.0),
+                ("2021".into(), 44.0),
+                ("2022".into(), 48.0),
+            ],
+            sga: vec![
+                ("2020".into(), 150.0),
+                ("2021".into(), 165.0),
+                ("2022".into(), 180.0),
+            ],
+            current_assets: vec![
+                ("2020".into(), 300.0),
+                ("2021".into(), 330.0),
+                ("2022".into(), 360.0),
+            ],
+            current_liabilities: vec![
+                ("2020".into(), 200.0),
+                ("2021".into(), 220.0),
+                ("2022".into(), 240.0),
+            ],
+            cash: vec![
+                ("2020".into(), 100.0),
+                ("2021".into(), 110.0),
+                ("2022".into(), 120.0),
+            ],
+            long_term_debt: vec![
+                ("2020".into(), 400.0),
+                ("2021".into(), 400.0),
+                ("2022".into(), 400.0),
+            ],
+            accounts_receivable: vec![
+                ("2020".into(), 150.0),
+                ("2021".into(), 165.0),
+                ("2022".into(), 180.0),
+            ],
+            inventory: vec![
+                ("2020".into(), 100.0),
+                ("2021".into(), 110.0),
+                ("2022".into(), 120.0),
+            ],
+            accounts_payable: vec![
+                ("2020".into(), 80.0),
+                ("2021".into(), 88.0),
+                ("2022".into(), 96.0),
+            ],
+            total_equity: vec![
+                ("2020".into(), 500.0),
+                ("2021".into(), 550.0),
+                ("2022".into(), 600.0),
+            ],
+            ppe_net: vec![
+                ("2020".into(), 800.0),
+                ("2021".into(), 810.0),
+                ("2022".into(), 820.0),
+            ],
+            interest_expense: vec![
+                ("2020".into(), 20.0),
+                ("2021".into(), 20.0),
+                ("2022".into(), 20.0),
+            ],
+            dividends_paid: vec![
+                ("2020".into(), 0.0),
+                ("2021".into(), 0.0),
+                ("2022".into(), 0.0),
+            ],
+            shares_outstanding: 100.0,
+            tax_rate: 0.21,
+        }
+    }
+
+    #[test]
+    fn balance_sheet_balances_every_period() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        for p in &model.periods {
+            let abs_check = p.balance_check.abs();
+            assert!(
+                abs_check < 1.0,
+                "Balance sheet doesn't balance in year {}: A-L-E = {}",
+                p.year,
+                p.balance_check
+            );
+        }
+    }
+
+    #[test]
+    fn cash_flow_reconciles_every_period() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        // The model uses actual historical cash as the starting point, with
+        // "other assets" absorbing the balance sheet gap. The CF statement
+        // reconciles with the actual cash change.
+        let mut prev_cash = hist.latest_cash();
+
+        for p in &model.periods {
+            let expected_cash_change = p.cash - prev_cash;
+            let reconciliation = expected_cash_change - p.net_cash_change;
+            assert!(
+                reconciliation.abs() < 1.0,
+                "Cash flow doesn't reconcile in year {}: expected change {}, got {}, diff {}",
+                p.year,
+                expected_cash_change,
+                p.net_cash_change,
+                reconciliation
+            );
+            prev_cash = p.cash;
+        }
+    }
+
+    #[test]
+    fn sga_is_deducted_from_ebit() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        let p = &model.periods[0];
+        let expected_ebit = p.gross_profit - p.sga - p.da;
+        assert_eq!(
+            p.ebit, expected_ebit,
+            "EBIT should be gross profit - SG&A - D&A"
+        );
+    }
+
+    #[test]
+    fn interest_expense_linked_to_debt() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        let p = &model.periods[0];
+        let expected_interest = hist.latest_debt() * assumptions.interest_rate;
+        assert_eq!(
+            p.interest_expense, expected_interest,
+            "Interest expense should be beginning debt × interest rate"
+        );
+    }
+
+    #[test]
+    fn retained_earnings_flow_correct() {
+        let hist = synthetic_hist();
+        let mut assumptions = DriverAssumptions::from_history(&hist);
+        assumptions.dividend_payout_ratio = 0.30;
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        let p = &model.periods[0];
+        let dividends = p.net_income * 0.30;
+        let expected_equity = hist.latest_equity() + p.net_income - dividends;
+        assert_eq!(
+            p.equity, expected_equity,
+            "Equity should be beginning equity + NI - dividends + issuance"
+        );
+    }
+
+    #[test]
+    fn ppe_rolls_forward() {
+        let hist = synthetic_hist();
+        let assumptions = DriverAssumptions::from_history(&hist);
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        let p = &model.periods[0];
+        let expected_ppe = hist.latest_ppe_net() + p.capex_from_cf() - p.da;
+        assert_eq!(
+            p.ppe_net, expected_ppe,
+            "PP&E should roll forward: PP&E[t-1] + Capex - D&A"
+        );
+    }
+
+    #[test]
+    fn financial_sector_uses_residual_income() {
+        let hist = synthetic_hist();
+        let mut assumptions = DriverAssumptions::from_history(&hist);
+        assumptions.is_financial_sector = true;
+        assumptions.cost_of_equity = 0.10;
+        let model = project_driver_model(&hist, &assumptions).unwrap();
+
+        assert!(model.is_financial_sector);
+        // Residual income = (ROE - COE) × beginning equity
+        let p = &model.periods[0];
+        let roe = assumptions.gross_margin.percent.unwrap_or(0.10);
+        let expected_ri = (roe - 0.10) * hist.latest_equity();
+        assert_eq!(p.free_cash_flow, expected_ri);
+    }
+
+    impl DriverPeriod {
+        fn capex_from_cf(&self) -> f64 {
+            -self.cfi
+        }
+    }
 }
