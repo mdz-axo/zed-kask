@@ -2272,44 +2272,6 @@ impl Thread {
         self.agent_id.as_ref()
     }
 
-    /// Snapshot the last `n` turns as `LanguageModelRequestMessage`s, for
-    /// cascade context injection. Only user and assistant messages are
-    /// included (system, tool, and summary-compaction messages are skipped —
-    /// they are not part of the conversational context that memory should be
-    /// salient to). Returns an empty vec when `n` is 0 or the thread has no
-    /// qualifying messages.
-    ///
-    /// Used by `SkillTool::run` to snapshot recent turns for the cascade
-    /// context provider, so skill templates see the conversation they were
-    /// invoked from.
-    pub fn recent_turn_messages(
-        &self,
-        n: usize,
-    ) -> Vec<language_model::LanguageModelRequestMessage> {
-        if n == 0 {
-            return Vec::new();
-        }
-        let mut messages = Vec::new();
-        // Walk backwards through the message list, collecting user and
-        // assistant messages until we have `n` turns or run out.
-        for msg in self.messages.iter().rev() {
-            if messages.len() >= n {
-                break;
-            }
-            match msg.as_ref() {
-                Message::User(_) | Message::Agent(_) => {
-                    let req = msg.to_request();
-                    // Prepend to maintain chronological order.
-                    messages.splice(0..0, req);
-                }
-                Message::Resume | Message::Compaction(_) => {
-                    // Skip — not conversational turns.
-                }
-            }
-        }
-        messages
-    }
-
     /// Restrict this thread's context-server (MCP) tools to a single server.
     ///
     /// Used by the kask panel's per-tab scoping: each tab's thread exposes
@@ -5082,54 +5044,52 @@ impl Thread {
         // `list_directory`, etc. on ordinary coding requests, while leaving
         // the model to discover the loss by getting "tool not found" errors
         // mid-turn.
+        //
+        // Skill-aware bypass: when the `skill` tool has been called in this
+        // conversation, skill bodies (injected as tool results) reference
+        // MCP tools by name. The router scores against the user's message
+        // only, so it would filter out tools the skill needs. Bypass the
+        // router entirely when a skill is active — `refresh_turn_tools` is
+        // called at the start of each turn-loop iteration, so the bypass
+        // takes effect on the iteration after the `skill` tool returns.
         if let Some(router) = crate::tool_router() {
-            let built_in_names: &std::collections::HashSet<&'static str> = &BUILT_IN_TOOL_NAMES;
-            let open_file_paths: Vec<String> = self
-                .project
-                .read(cx)
-                .opened_buffers(cx)
-                .into_iter()
-                .filter_map(|buffer| {
-                    buffer.read(cx).file().and_then(|file| {
-                        file.as_local()
-                            .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
-                    })
-                })
-                .collect();
-            // Collect (name, description) pairs for the router. The router
-            // only needs descriptions for scoring — the full AnyAgentTool
-            // objects stay in `tools`.
-            let tool_descriptions: Vec<(SharedString, SharedString)> = tools
-                .iter()
-                .map(|(name, tool)| (name.clone(), tool.description()))
-                .collect();
-            let mut retained = crate::tool_router::apply_router_bypassing_built_ins(
-                router.as_ref(),
-                tool_descriptions.iter().map(|(n, d)| (n, d)),
-                self.last_user_message_text().as_deref(),
-                open_file_paths,
-                &built_in_names,
-            );
-            // zed-kask: Skill bodies and tool results reference MCP tools by
-            // name. The router scores against the user's message only, so
-            // tools referenced by skill bodies injected mid-turn (via the
-            // `skill` tool) get filtered out before the model can call them.
-            // Scan recent conversation history for tool name references and
-            // retain them — the same exact-name bypass the router applies to
-            // the user's message, extended to the conversation.
-            for message in self.messages.iter().rev().take(20) {
-                let text = message.to_markdown();
-                if text.is_empty() {
-                    continue;
-                }
-                let text_lower = text.to_lowercase();
-                for (name, _) in &tools {
-                    if !retained.contains(name) && text_lower.contains(&name.to_lowercase()) {
-                        retained.insert(name.clone());
+            let skill_active = self.messages.iter().rev().take(20).any(|message| {
+                match &**message {
+                    Message::Agent(agent_message) => {
+                        agent_message
+                            .tool_results
+                            .values()
+                            .any(|result| result.tool_name.as_ref() == "skill")
                     }
+                    _ => false,
                 }
+            });
+            if !skill_active {
+                let built_in_names: &std::collections::HashSet<&'static str> =
+                    &BUILT_IN_TOOL_NAMES;
+                let open_file_paths: Vec<String> = self
+                    .project
+                    .read(cx)
+                    .opened_buffers(cx)
+                    .into_iter()
+                    .filter_map(|buffer| {
+                        buffer.read(cx).file().and_then(|file| {
+                            file.as_local()
+                                .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
+                        })
+                    })
+                    .collect();
+                let tool_descriptions: Vec<(SharedString, SharedString)> =
+                    tools.iter().map(|(name, tool)| (name.clone(), tool.description())).collect();
+                let retained = crate::tool_router::apply_router_bypassing_built_ins(
+                    router.as_ref(),
+                    tool_descriptions.iter().map(|(n, d)| (n, d)),
+                    self.last_user_message_text().as_deref(),
+                    open_file_paths,
+                    &built_in_names,
+                );
+                tools.retain(|name, _| retained.contains(name));
             }
-            tools.retain(|name, _| retained.contains(name));
         }
 
         tools
@@ -6815,10 +6775,9 @@ pub struct ToolCallEventStream {
 }
 
 impl ToolCallEventStream {
-    /// Get the owning thread, if any. Used by tools that need to snapshot
-    /// the thread's message history (e.g. `SkillTool` snapshots recent
-    /// turns for cascade context injection). Returns `None` in tests and
-    /// for streams not tied to a live thread.
+    /// Get the owning thread, if any. Used by tools that need to access
+    /// the thread's message history. Returns `None` in tests and for
+    /// streams not tied to a live thread.
     pub fn thread(&self) -> Option<gpui::WeakEntity<Thread>> {
         self.thread.clone()
     }

@@ -1,9 +1,10 @@
-//! Core loop types — identifiers, the Loop trait, and quality telemetry.
+//! Core loop types — identifiers, channels, and quality telemetry.
 //!
 //! The Loop trait uses async-trait for object safety.
 
 use super::actions::{ActionType, RegulatoryAction};
 use super::signals::{Deviation, SignalMetric};
+use crate::algedonic::RuntimeAlert;
 
 /// Loop identifiers for the 4-loop model.
 ///
@@ -287,6 +288,19 @@ impl LoopMetrics {
             trigger,
         }
     }
+}
+
+// ── Inter-loop channel types ───────────────────────────────────────────────
+
+/// Cybernetics sends `Alert` through the `mpsc::Sender<CurationInput>` channel.
+///
+/// Each pathway gets its own typed `tokio::mpsc` channel. Channel identity
+/// replaces the former `LoopId` and `DispatchTarget` routing of the old
+/// Communication Loop.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CurationInput {
+    /// Algedonic alert from Cybernetics (variety deficit escalation)
+    Alert(RuntimeAlert),
 }
 
 #[cfg(test)]

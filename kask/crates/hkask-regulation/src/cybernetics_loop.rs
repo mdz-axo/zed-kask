@@ -258,10 +258,8 @@ impl CyberneticsLoop {
         };
 
         // F5: Warn about metrics that have policy rules but no sensor.
-        // The policy has 30 rules covering 29 SignalMetric variants, but only
-        // 5 sensors are registered (EnergyRemaining, VarietyDeficit,
-        // TestCoverage, MutationScore, ToolReliability) plus one inline check
-        // (AlgedonicLogApproachingCap). The remaining 23 metrics are blind —
+        // The policy has rules covering many SignalMetric variants, but only
+        // some have sensors registered. The remaining metrics are blind —
         // their policy rules can never fire because no signal is ever
         // produced for them. This is a variety deficit on the sensing side
         // (Ashby's Law: the regulator's sensing variety must match the

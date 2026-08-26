@@ -602,6 +602,36 @@ impl RealMemoryPort {
         })
     }
 
+    /// Record co-occurrence links between entities recalled in the same
+    /// context. Delegates to the curator's `MemoryStore`. Called by the
+    /// context injector after a successful recall to populate the
+    /// `memory_links` table — the `connectedness` signal for recall ranking.
+    ///
+    /// Returns `Ok(())` when the curator store is unavailable (graceful
+    /// degradation — co-occurrence tracking is a bonus, not a requirement).
+    pub fn record_co_occurrence(&self, entities: &[String]) {
+        if let Some(ref store) = self.curator_store.get() {
+            if let Err(e) = store.record_co_occurrence(entities) {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    "Failed to record co-occurrence links"
+                );
+            }
+        }
+    }
+
+    /// Get the connectedness score for an entity — the total co-occurrence
+    /// count across all links. Higher = more connected = more salient.
+    /// Returns 0 when the curator store is unavailable.
+    pub fn connectedness(&self, entity: &str) -> u64 {
+        self.curator_store
+            .get()
+            .as_ref()
+            .and_then(|store| store.connectedness(entity).ok())
+            .unwrap_or(0)
+    }
+
     /// Shared recall implementation for both the user and curator stores.
     ///
     /// `perspective` scopes the keyword search to the owning agent's WebID;
@@ -683,6 +713,7 @@ impl RealMemoryPort {
                                     candidates.push(Candidate {
                                         snippet: MemorySnippet {
                                             text,
+                                            entity: h_mem.entity.clone(),
                                             confidence: h_mem.confidence.value(),
                                             relevance_score: 1.0 - result.distance,
                                         },
@@ -761,6 +792,7 @@ impl RealMemoryPort {
                     candidates.push(Candidate {
                         snippet: MemorySnippet {
                             text,
+                            entity: h_mem.entity.clone(),
                             confidence: h_mem.confidence.value(),
                             relevance_score: 0.5, // Base relevance for keyword match
                         },
@@ -770,7 +802,7 @@ impl RealMemoryPort {
             }
         }
 
-        // ── 3. Sort by combined relevance × confidence and truncate ─────
+        // ── 3. Sort by combined relevance × confidence × connectedness and truncate ─
         //
         // Confidence is the outcome-calibrated signal (Dunning's double
         // curse: the model can't self-evaluate, but confidence that's been
@@ -779,11 +811,22 @@ impl RealMemoryPort {
         // has been recalled many times and never contradicted outranks a
         // fresh, untested memory with similar embedding similarity.
         //
+        // Connectedness is a structural prior: entities that co-occur
+        // frequently across recall contexts are more salient — they've been
+        // tested against more contexts (Tetlock's dilution effect: well-
+        // connected memories resist dilution). The bonus is capped at 50%
+        // so a highly-connected entity can at most boost salience by 1.5×,
+        // preventing a popularity cascade that crowds out fresh memories.
+        //
         // Corpus evidence: Dunning `138299529:5` (double curse), Tetlock
         // `Superforecasting_tetlock:71` (Brier = forecast accuracy).
         candidates.sort_by(|a, b| {
-            let a_score = a.snippet.relevance_score * a.snippet.confidence;
-            let b_score = b.snippet.relevance_score * b.snippet.confidence;
+            let a_conn = self.connectedness(&a.snippet.entity) as f64;
+            let b_conn = self.connectedness(&b.snippet.entity) as f64;
+            let a_score =
+                a.snippet.relevance_score * a.snippet.confidence * (1.0 + (a_conn * 0.1).min(0.5));
+            let b_score =
+                b.snippet.relevance_score * b.snippet.confidence * (1.0 + (b_conn * 0.1).min(0.5));
             b_score
                 .partial_cmp(&a_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -855,6 +898,7 @@ impl RealMemoryPort {
                 candidates.push(Candidate {
                     snippet: MemorySnippet {
                         text,
+                        entity: h_mem.entity.clone(),
                         confidence: h_mem.confidence.value(),
                         relevance_score: 1.0,
                     },
@@ -881,6 +925,7 @@ impl RealMemoryPort {
                 candidates.push(Candidate {
                     snippet: MemorySnippet {
                         text,
+                        entity: h_mem.entity.clone(),
                         confidence: h_mem.confidence.value(),
                         relevance_score: 1.0,
                     },

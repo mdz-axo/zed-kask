@@ -22,15 +22,15 @@ pub enum SignalMetric {
     ConnectorLatency,
     /// Communication queue depth (backpressure signal)
     CommunicationQueueDepth,
-    /// Storage usage fraction (Memory Loop 2a)
+    /// Storage usage fraction (Memory Loop 2)
     StorageUsage,
-    /// Memory life S in days (Memory Loop 2a).
+    /// Memory life S in days (Memory Loop 2).
     /// Wozniak-Gorzelanczyk (1995) forgetting curve: R(t) = exp(-t/S).
     /// Default 180 days. Configurable via HKASK_MEMORY_LIFE_DAYS.
     MemoryLife,
-    /// h_mem count (Memory Loop 2b)
+    /// h_mem count (Memory Loop 2)
     TripleCount,
-    /// Low-confidence h_mem count (Memory Loop 2b)
+    /// Low-confidence h_mem count (Memory Loop 2)
     LowConfidenceCount,
 
     /// Circuit breaker state 0.0/1.0 (Inference Loop 1)

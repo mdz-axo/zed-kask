@@ -1,12 +1,4 @@
-//! hKask 6-Loop Architecture — loop type system and channel types.
-//!
-//! The loop type system (LoopId, Signal, Deviation, RegulatoryAction, etc.)
-//! lives here alongside the channel types. These types have no
-//! Regulation-internal dependencies; their sole consumer is
-//! `hkask-regulation`.
-//!
-//! Channel types (`CurationInput`, `ToolConsumptionEvent`, etc.) remain here
-//! because they depend on `RuntimeAlert` (Regulation-internal).
+//! hKask 4-Loop Architecture — loop type system.
 //!
 //! **Loop Numbering (VSM correspondence):**
 //!
@@ -27,9 +19,6 @@
 //! **Authority DAG:** Curation → Cybernetics → {Inference, Memory}
 //! No sideways edges. Authority flows downward.
 
-// Channel types stay in hkask-regulation (depend on RuntimeAlert).
-pub(crate) mod channels;
-
 // Loop type system — actions, core, signals.
 pub(crate) mod actions;
 pub(crate) mod core;
@@ -37,7 +26,7 @@ pub(crate) mod signals;
 
 pub(crate) use actions::{ActionType, RegulatoryAction};
 pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
-pub use channels::CurationInput;
+pub use core::CurationInput;
 pub(crate) use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
 pub(crate) use signals::Signal;

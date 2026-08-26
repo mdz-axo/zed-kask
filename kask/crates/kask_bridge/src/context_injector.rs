@@ -321,6 +321,19 @@ impl ContextInjector for BridgeContextInjector {
                 context_text.push_str(&format_recall_context(thread_header, &thread_filtered));
             }
 
+            // Record co-occurrence links between entities recalled in the
+            // same context. This populates the `memory_links` table — the
+            // `connectedness` signal for recall ranking. Entities that
+            // co-occur frequently across recall contexts are more salient
+            // (Tetlock's dilution effect). Only records when 2+ distinct
+            // entities were recalled; the method no-ops otherwise.
+            let entities: Vec<String> = prompt_filtered
+                .iter()
+                .chain(thread_filtered.iter())
+                .map(|s| s.entity.clone())
+                .collect();
+            memory_port.record_co_occurrence(&entities);
+
             vec![LanguageModelRequestMessage {
                 role: Role::System,
                 content: vec![MessageContent::Text(context_text)],

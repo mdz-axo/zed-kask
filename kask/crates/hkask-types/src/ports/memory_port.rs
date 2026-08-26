@@ -75,6 +75,10 @@ impl TurnRecord {
 pub struct MemorySnippet {
     /// The text content of the memory (e.g., a chat turn, a fact, a summary).
     pub text: String,
+    /// The entity key this memory was stored under (e.g. `chat:thread:{id}`).
+    /// Used by the context injector to record co-occurrence links between
+    /// entities recalled in the same context — the `connectedness` signal.
+    pub entity: String,
     /// The memory's confidence score (0.0–1.0), decayed by time since recall.
     pub confidence: f64,
     /// Relevance score to the query (0.0–1.0), computed by the recall method.
