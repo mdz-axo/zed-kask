@@ -305,7 +305,7 @@ pub(crate) fn emit_swarm_env(
             swarm.a2a_http_enabled.to_string(),
         );
     }
-    if !swarm.memory_passphrase.is_empty() {
+    if swarm.memory_passphrase != swarm_default.memory_passphrase {
         env.insert(
             "HKASK_SWARM_MEMORY_PASSPHRASE".to_string(),
             swarm.memory_passphrase.clone(),

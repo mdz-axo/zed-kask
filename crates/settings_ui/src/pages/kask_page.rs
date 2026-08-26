@@ -21,6 +21,7 @@ mod condenser;
 mod curator;
 mod data_services;
 mod general;
+mod security;
 
 pub(crate) use {
     companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
@@ -28,7 +29,8 @@ pub(crate) use {
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, memory::render_memory_page, models::render_models_page,
     prediction_markets::render_prediction_markets_page, research::render_research_page,
-    scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
+    scenarios::render_scenarios_page, security::render_security_page, swarm::render_swarm_page,
+    training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -555,6 +557,20 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_memory_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Security".into(),
+            r#type: Default::default(),
+            json_path: None,
+            description: Some(
+                "Change the SQLCipher passphrase for kask memory databases \
+                 (curator, corpus, kata-kanban). Re-encrypts the DB atomically \
+                 — no data loss on failure.".into(),
+            ),
+            search_aliases: &["security", "passphrase", "encryption", "rotate", "key"],
+            in_json: false,
+            files: USER,
+            render: render_security_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Condenser".into(),

@@ -232,11 +232,28 @@ pub(crate) struct HistoricalSnapshot {
     pub cogs: Vec<(String, f64)>,
     pub da: Vec<(String, f64)>,
     pub capex: Vec<(String, f64)>,
+    /// SG&A expenses (sellingGeneralAndAdministrativeExpenses from FMP).
+    /// Added to fix the SG&A omission defect (H1) in the original model.
+    pub sga: Vec<(String, f64)>,
 
     pub current_assets: Vec<(String, f64)>,
     pub current_liabilities: Vec<(String, f64)>,
     pub cash: Vec<(String, f64)>,
     pub long_term_debt: Vec<(String, f64)>,
+    /// Accounts receivable (netReceivables from FMP).
+    pub accounts_receivable: Vec<(String, f64)>,
+    /// Inventory (inventory from FMP).
+    pub inventory: Vec<(String, f64)>,
+    /// Accounts payable (accountsPayable from FMP).
+    pub accounts_payable: Vec<(String, f64)>,
+    /// Total stockholders equity (totalStockholdersEquity from FMP).
+    pub total_equity: Vec<(String, f64)>,
+    /// Net PP&E (netPPE or propertyPlantEquipmentNet from FMP).
+    pub ppe_net: Vec<(String, f64)>,
+    /// Interest expense (interestExpense from FMP income statement).
+    pub interest_expense: Vec<(String, f64)>,
+    /// Dividends paid (dividendsPaid from FMP cash flow).
+    pub dividends_paid: Vec<(String, f64)>,
 
     pub shares_outstanding: f64,
     pub tax_rate: f64,
@@ -253,10 +270,12 @@ impl HistoricalSnapshot {
         key_metrics: &[serde_json::Value],
         profile: &serde_json::Value,
     ) -> Self {
-        // Extract revenue, COGS, D&A, tax data from income statements
+        // Extract revenue, COGS, D&A, SG&A, interest, tax data from income statements
         let mut revenue: Vec<(String, f64)> = Vec::new();
         let mut cogs: Vec<(String, f64)> = Vec::new();
         let mut da: Vec<(String, f64)> = Vec::new();
+        let mut sga: Vec<(String, f64)> = Vec::new();
+        let mut interest_expense: Vec<(String, f64)> = Vec::new();
         let mut tax_expense: Vec<f64> = Vec::new();
         let mut pre_tax_income: Vec<f64> = Vec::new();
 
@@ -270,6 +289,8 @@ impl HistoricalSnapshot {
             let rev = parse_financial_field(entry, "revenue");
             let c = parse_financial_field(entry, "costOfRevenue");
             let d = parse_financial_field(entry, "depreciationAndAmortization");
+            let s = parse_financial_field(entry, "sellingGeneralAndAdministrativeExpenses");
+            let ie = parse_financial_field(entry, "interestExpense");
             let te = parse_financial_field(entry, "incomeTaxExpense");
             let pi = parse_financial_field_or(entry, "incomeBeforeTax", 1.0);
 
@@ -279,6 +300,8 @@ impl HistoricalSnapshot {
             revenue.push((year.to_string(), rev));
             cogs.push((year.to_string(), c));
             da.push((year.to_string(), d));
+            sga.push((year.to_string(), s));
+            interest_expense.push((year.to_string(), ie));
             tax_expense.push(te);
             pre_tax_income.push(pi);
         }
@@ -289,6 +312,11 @@ impl HistoricalSnapshot {
         let mut current_liabilities: Vec<(String, f64)> = Vec::new();
         let mut cash: Vec<(String, f64)> = Vec::new();
         let mut long_term_debt: Vec<(String, f64)> = Vec::new();
+        let mut accounts_receivable: Vec<(String, f64)> = Vec::new();
+        let mut inventory: Vec<(String, f64)> = Vec::new();
+        let mut accounts_payable: Vec<(String, f64)> = Vec::new();
+        let mut total_equity: Vec<(String, f64)> = Vec::new();
+        let mut ppe_net: Vec<(String, f64)> = Vec::new();
 
         for entry in balance_sheets.iter().rev() {
             let year = entry
@@ -321,10 +349,48 @@ impl HistoricalSnapshot {
                 year.to_string(),
                 parse_financial_field(entry, "longTermDebt"),
             ));
+            accounts_receivable.push((
+                year.to_string(),
+                entry
+                    .get("netReceivables")
+                    .or_else(|| entry.get("accountsReceivables"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+            ));
+            inventory.push((
+                year.to_string(),
+                entry.get("inventory").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            ));
+            accounts_payable.push((
+                year.to_string(),
+                entry
+                    .get("accountsPayable")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+            ));
+            total_equity.push((
+                year.to_string(),
+                entry
+                    .get("totalStockholdersEquity")
+                    .or_else(|| entry.get("totalStockholderEquity"))
+                    .or_else(|| entry.get("totalEquity"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+            ));
+            ppe_net.push((
+                year.to_string(),
+                entry
+                    .get("netPPE")
+                    .or_else(|| entry.get("propertyPlantEquipmentNet"))
+                    .or_else(|| entry.get("totalNonCurrentAssets"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+            ));
         }
 
-        // Extract capex from cash flows (FMP: capex is negative)
+        // Extract capex and dividends from cash flows (FMP: capex is negative)
         let mut capex: Vec<(String, f64)> = Vec::new();
+        let mut dividends_paid: Vec<(String, f64)> = Vec::new();
         for entry in cash_flows.iter().rev() {
             let year = entry
                 .get("calendarYear")
@@ -337,6 +403,8 @@ impl HistoricalSnapshot {
             }
             let cap = parse_financial_field(entry, "capitalExpenditure");
             capex.push((year.to_string(), cap.abs()));
+            let div = parse_financial_field(entry, "dividendsPaid");
+            dividends_paid.push((year.to_string(), div.abs()));
         }
 
         // Shares outstanding: prefer diluted from income statement (FMP stable
@@ -375,11 +443,19 @@ impl HistoricalSnapshot {
             cogs,
             da,
             capex,
+            sga,
 
             current_assets,
             current_liabilities,
             cash,
             long_term_debt,
+            accounts_receivable,
+            inventory,
+            accounts_payable,
+            total_equity,
+            ppe_net,
+            interest_expense,
+            dividends_paid,
 
             shares_outstanding,
             tax_rate,
@@ -481,6 +557,174 @@ impl HistoricalSnapshot {
     /// Net debt: long_term_debt - cash.
     pub fn net_debt(&self) -> f64 {
         self.latest_debt() - self.latest_cash()
+    }
+
+    // ── New accessors for the driver-based three-statement model ──────────
+
+    /// Latest SG&A expense.
+    pub fn latest_sga(&self) -> f64 {
+        self.sga.last().map(|(_, v)| *v).unwrap_or(0.0)
+    }
+
+    /// SG&A as percentage of revenue.
+    pub fn sga_to_revenue(&self) -> f64 {
+        let rev = self.latest_revenue();
+        if rev <= 0.0 {
+            return 0.15;
+        }
+        self.latest_sga() / rev
+    }
+
+    /// Latest total stockholders equity.
+    pub fn latest_equity(&self) -> f64 {
+        self.total_equity
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
+    /// Latest net PP&E.
+    pub fn latest_ppe_net(&self) -> f64 {
+        self.ppe_net.last().map(|(_, v)| *v).unwrap_or(0.0)
+    }
+
+    /// Latest interest expense.
+    pub fn interest_expense(&self) -> f64 {
+        self.interest_expense
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
+    /// Latest dividends paid.
+    pub fn latest_dividends(&self) -> f64 {
+        self.dividends_paid
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
+    /// Dividend payout ratio: dividends / net income.
+    /// Net income approximated as revenue - cogs - sga - da - interest - tax.
+    pub fn dividend_payout_ratio(&self) -> f64 {
+        let rev = self.latest_revenue();
+        let ni = (rev
+            - self.latest_cogs()
+            - self.latest_sga()
+            - self.latest_da()
+            - self.interest_expense())
+            * (1.0 - self.tax_rate);
+        if ni > 0.0 {
+            (self.latest_dividends() / ni).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// ROE: return on equity = net income / total equity.
+    pub fn roe(&self) -> f64 {
+        let equity = self.latest_equity();
+        if equity <= 0.0 {
+            return 0.10;
+        }
+        let rev = self.latest_revenue();
+        let ni = (rev
+            - self.latest_cogs()
+            - self.latest_sga()
+            - self.latest_da()
+            - self.interest_expense())
+            * (1.0 - self.tax_rate);
+        ni / equity
+    }
+
+    /// Days sales outstanding: AR / (revenue / 365).
+    pub fn dso_days(&self) -> f64 {
+        let rev = self.latest_revenue();
+        let ar = self
+            .accounts_receivable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        if rev > 0.0 {
+            (ar / rev * 365.0).clamp(0.0, 365.0)
+        } else {
+            45.0
+        }
+    }
+
+    /// Days inventory outstanding: inventory / (cogs / 365).
+    pub fn dio_days(&self) -> f64 {
+        let cogs = self.latest_cogs();
+        let inv = self
+            .inventory
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        if cogs > 0.0 {
+            (inv / cogs * 365.0).clamp(0.0, 365.0)
+        } else {
+            60.0
+        }
+    }
+
+    /// Days payable outstanding: AP / (cogs / 365).
+    pub fn dpo_days(&self) -> f64 {
+        let cogs = self.latest_cogs();
+        let ap = self
+            .accounts_payable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        if cogs > 0.0 {
+            (ap / cogs * 365.0).clamp(0.0, 365.0)
+        } else {
+            30.0
+        }
+    }
+
+    /// AR as fraction of NWC (for distributing NWC across WC accounts).
+    pub fn ar_to_nwc_ratio(&self) -> f64 {
+        let ar = self
+            .accounts_receivable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        let nwc = self.latest_nwc().abs();
+        if nwc > 0.0 {
+            (ar / nwc).clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
+    }
+
+    /// Inventory as fraction of NWC.
+    pub fn inventory_to_nwc_ratio(&self) -> f64 {
+        let inv = self
+            .inventory
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        let nwc = self.latest_nwc().abs();
+        if nwc > 0.0 {
+            (inv / nwc).clamp(0.0, 1.0)
+        } else {
+            0.3
+        }
+    }
+
+    /// AP as fraction of NWC.
+    pub fn ap_to_nwc_ratio(&self) -> f64 {
+        let ap = self
+            .accounts_payable
+            .last()
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        let nwc = self.latest_nwc().abs();
+        if nwc > 0.0 {
+            (ap / nwc).clamp(0.0, 1.0)
+        } else {
+            0.2
+        }
     }
 
     /// Compute signal quality for all 11-line-item model inputs.
@@ -939,4 +1183,11 @@ mod scenario_impact;
 pub(crate) use scenario_impact::{
     ScenarioImpactError, ScenarioNodeImpact, ScenarioTreeInput, normalize_scenario_tree_json,
     scenario_impact_dcf,
+};
+
+// ── Driver-based three-statement model — `financial_model/driver_model.rs`
+mod driver_model;
+pub(crate) use driver_model::{
+    DriverAdjustment, DriverAssumptions, DriverModelError, DriverPeriod,
+    DriverProjectedModel, NwcMethod, generate_markdown_report, project_driver_model,
 };

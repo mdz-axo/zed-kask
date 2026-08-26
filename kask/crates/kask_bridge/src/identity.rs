@@ -219,15 +219,18 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
     match hkask_keystore::keychain::resolve_db_passphrase_string() {
         Ok(passphrase) => Ok(passphrase.to_string()),
         Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
-            // First run — generate a random English word and store it.
-            let word = hkask_keystore::generate_random_passphrase();
+            // First run — use the default passphrase "allostery" so initial
+            // builds and first user runs don't fail. The user can change it
+            // later via the settings UI (which triggers DB rotation) or the
+            // HKASK_DB_PASSPHRASE env var.
+            let word = "allostery".to_string();
             let keychain = Keychain::default();
             keychain
                 .store_by_key(KEY_DB_PASSPHRASE, &word)
                 .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
             tracing::info!(
-                "Generated DB passphrase (random English word) and stored in keychain. \
-                 The user can change it via the keychain or HKASK_DB_PASSPHRASE env var."
+                "Provisioned DB passphrase with default 'allostery' and stored in keychain. \
+                 The user can change it via the settings UI (Security page) or HKASK_DB_PASSPHRASE env var."
             );
             Ok(word)
         }
@@ -271,15 +274,19 @@ pub fn provision_swarm_memory_passphrase() -> Result<String, ProvisionError> {
     match hkask_keystore::keychain::resolve_swarm_memory_passphrase_string() {
         Ok(passphrase) => Ok(passphrase.to_string()),
         Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
-            // 3. First run — generate a random English word and store it.
-            let word = hkask_keystore::generate_random_passphrase();
+            // 3. First run — use the default passphrase "allostery" so initial
+            //    builds and first user runs don't fail (matching the DB
+            //    passphrase default and `SwarmConfig::default()`). The user
+            //    can change it later via the settings UI (which triggers DB
+            //    rotation) or the HKASK_SWARM_MEMORY_PASSPHRASE env var.
+            let word = "allostery".to_string();
             let keychain = Keychain::default();
             keychain
                 .store_by_key(KEY_SWARM_MEMORY_PASSPHRASE, &word)
                 .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
             tracing::info!(
-                "Generated swarm memory passphrase (random English word) and stored \
-                 in keychain. The user can change it via the keychain or \
+                "Provisioned swarm memory passphrase with default 'allostery' and stored \
+                 in keychain. The user can change it via the settings UI (Swarm page) or \
                  HKASK_SWARM_MEMORY_PASSPHRASE env var."
             );
             Ok(word)
@@ -355,4 +362,159 @@ pub fn mirror_provisioned_swarm_memory_passphrase(
             ),
         }
     })
+}
+
+// ── Passphrase rotation ──────────────────────────────────────────────────────
+
+/// Error type for passphrase rotation at the bridge layer.
+///
+/// Wraps the storage-layer `RotationError` and adds context about which DB
+/// was being rotated and what the old passphrase resolution path was.
+#[derive(Debug, thiserror::Error)]
+pub enum BridgeRotationError {
+    /// The storage-layer rotation failed.
+    #[error("Rotation failed for {db_path}: {source}")]
+    Storage {
+        db_path: String,
+        #[source]
+        source: hkask_storage::RotationError,
+    },
+    /// The old passphrase could not be resolved from the keychain.
+    #[error("Could not resolve old passphrase for {db_path}: {error}")]
+    OldPassphraseResolve {
+        db_path: String,
+        error: String,
+    },
+    /// The DB path could not be resolved (e.g., no agent provisioned).
+    #[error("Could not resolve DB path: {0}")]
+    PathResolve(String),
+}
+
+/// Resolve the curator DB path.
+///
+/// `HKASK_CURATOR_DB` if set, else `agents/curator/curator.db` under the
+/// hKask data dir. Mirrors the resolution in
+/// `kask_bridge::memory::curator_stores::curator_db_path`.
+fn resolve_curator_db_path() -> String {
+    std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
+        let p = hkask_types::agent_paths::agent_db("curator");
+        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+        resolved.to_string_lossy().to_string()
+    })
+}
+
+/// Resolve the swarm memory DB path.
+///
+/// `HKASK_SWARM_MEMORY_DB` if set (absolute override), else
+/// `mcp/swarm/memory.db` under the hKask data dir. Mirrors the resolution
+/// in `SwarmConfig::from_env`.
+fn resolve_swarm_memory_db_path() -> String {
+    let default = "mcp/swarm/memory.db";
+    let raw = std::env::var("HKASK_SWARM_MEMORY_DB")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| default.to_string());
+    if std::path::Path::new(&raw).is_absolute() {
+        raw
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw))
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
+/// Rotate the curator DB passphrase.
+///
+/// Resolves the old passphrase from the keychain chain
+/// (`resolve_db_passphrase_string`), resolves the curator DB path, and calls
+/// `hkask_storage::rotate_passphrase`. The caller must then write the new
+/// passphrase to the keychain and nudge MCP servers to restart.
+///
+/// # Arguments
+///
+/// - `new_passphrase`: The new passphrase (>=8 chars).
+///
+/// # Errors
+///
+/// Returns `BridgeRotationError` if the old passphrase can't be resolved,
+/// the DB path can't be resolved, or the storage-layer rotation fails.
+///
+/// # Failure safety
+///
+/// If rotation fails, the old DB is untouched — the caller should NOT write
+/// the new passphrase to the keychain. The caller should write the new
+/// passphrase ONLY after this function returns `Ok(())`.
+pub fn rotate_curator_db_passphrase(
+    new_passphrase: &str,
+) -> Result<(), BridgeRotationError> {
+    let db_path = resolve_curator_db_path();
+    let old_passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
+        .map_err(|e| BridgeRotationError::OldPassphraseResolve {
+            db_path: db_path.clone(),
+            error: e.to_string(),
+        })?
+        .to_string();
+
+    tracing::info!(
+        target: "hkask.identity",
+        db_path = %db_path,
+        "Rotating curator DB passphrase"
+    );
+
+    hkask_storage::rotate_passphrase(&db_path, &old_passphrase, new_passphrase).map_err(|e| {
+        BridgeRotationError::Storage {
+            db_path: db_path.clone(),
+            source: e,
+        }
+    })?;
+
+    Ok(())
+}
+
+/// Rotate the swarm memory DB passphrase.
+///
+/// Resolves the old passphrase from the keychain chain
+/// (`resolve_swarm_memory_passphrase_string`), resolves the swarm memory DB
+/// path, and calls `hkask_storage::rotate_passphrase`. The caller must then
+/// write the new passphrase to the keychain/settings and nudge MCP servers.
+///
+/// # Arguments
+///
+/// - `new_passphrase`: The new passphrase (>=8 chars).
+///
+/// # Errors
+///
+/// Returns `BridgeRotationError` if the old passphrase can't be resolved,
+/// the DB path can't be resolved, or the storage-layer rotation fails.
+///
+/// # Failure safety
+///
+/// If rotation fails, the old DB is untouched — the caller should NOT write
+/// the new passphrase to the keychain/settings.
+pub fn rotate_swarm_memory_db_passphrase(
+    new_passphrase: &str,
+) -> Result<(), BridgeRotationError> {
+    let db_path = resolve_swarm_memory_db_path();
+    let old_passphrase =
+        hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()
+            .map_err(|e| BridgeRotationError::OldPassphraseResolve {
+                db_path: db_path.clone(),
+                error: e.to_string(),
+            })?
+            .to_string();
+
+    tracing::info!(
+        target: "hkask.identity",
+        db_path = %db_path,
+        "Rotating swarm memory DB passphrase"
+    );
+
+    hkask_storage::rotate_passphrase(&db_path, &old_passphrase, new_passphrase).map_err(|e| {
+        BridgeRotationError::Storage {
+            db_path: db_path.clone(),
+            source: e,
+        }
+    })?;
+
+    Ok(())
 }

@@ -1447,4 +1447,206 @@ impl CompaniesServer {
         )
         .await
     }
+
+    #[tool(
+        description = "Driver-based linked three-statement financial forecast. Projects income statement, balance sheet, and cash flow from five key drivers (revenue growth, profit margins, capex vs depreciation, net working capital, debt/equity issuance). Each driver supports percent change, percent of revenue, and explicit adjustment. Balance sheet identity (A = L + E) enforced every period. Financial-sector companies use equity-based residual income (ROE/COE) per Damodaran Applied Corporate Finance Ch. 19. Output is forecast_persist-compatible JSON."
+    )]
+    pub async fn driver_forecast(
+        &self,
+        Parameters(req): Parameters<types::DriverForecastRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "driver_forecast", Self::ontology_anchor("driver_forecast"), async {
+            validate_symbol(&req.symbol)?;
+
+            // Fetch historical financial data
+            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
+            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
+            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
+            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
+
+            let (income, balance, metrics, profile, cf) =
+                match (income_result, balance_result, metrics_result, profile_result, cf_result) {
+                    (Ok(inc), Ok(bal), Ok(m), Ok(p), Ok(c)) => (inc, bal, m, p, c),
+                    (Err(e), _, _, _, _)
+                    | (_, Err(e), _, _, _)
+                    | (_, _, Err(e), _, _)
+                    | (_, _, _, Err(e), _)
+                    | (_, _, _, _, Err(e)) => { return Err(e); }
+                };
+
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+            else {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
+            };
+
+            let hist = financial_model::HistoricalSnapshot::from_api_json(
+                income_data, balance_data, cf_data, metrics_data, profile_data,
+            );
+
+            if hist.revenue.len() < 2 && !financial_model::is_financial_sector(&profile) {
+                return Ok(serde_json::json!({
+                    "symbol": req.symbol,
+                    "error": "insufficient historical data — need at least 2 years of revenue"
+                }));
+            }
+
+            // Build driver assumptions from history with user overrides
+            let mut assumptions = financial_model::DriverAssumptions::from_history(&hist);
+            assumptions.is_financial_sector = financial_model::is_financial_sector(&profile);
+
+            // Apply user overrides
+            if let Some(g) = req.revenue_growth {
+                assumptions.revenue_growth.percent = Some(g);
+            }
+            if let Some(adj) = req.revenue_explicit {
+                assumptions.revenue_explicit.explicit = Some(adj);
+            }
+            if let Some(gm) = req.gross_margin {
+                assumptions.gross_margin.percent = Some(gm);
+            }
+            if let Some(sga) = req.sga_pct {
+                assumptions.sga_pct.percent = Some(sga);
+            }
+            if let Some(da) = req.da_pct {
+                assumptions.da_pct.percent = Some(da);
+            }
+            if let Some(tr) = req.tax_rate {
+                assumptions.tax_rate = tr;
+            }
+            if let Some(cp) = req.capex_pct {
+                assumptions.capex_pct.percent = Some(cp);
+            }
+            if let Some(adj) = req.capex_explicit {
+                assumptions.capex_explicit.explicit = Some(adj);
+            }
+            if let Some(ratio) = req.capex_da_ratio {
+                assumptions.capex_da_ratio = Some(ratio);
+            }
+            if let Some(ref method) = req.nwc_method {
+                assumptions.nwc_method = match method.to_lowercase().as_str() {
+                    "days" => financial_model::NwcMethod::Days,
+                    "percent_of_revenue" | "pct" => financial_model::NwcMethod::PercentOfRevenue,
+                    "explicit" => financial_model::NwcMethod::Explicit,
+                    _ => financial_model::NwcMethod::PercentOfRevenue,
+                };
+            }
+            if let Some(dso) = req.dso_days {
+                assumptions.dso_days = dso;
+            }
+            if let Some(dio) = req.dio_days {
+                assumptions.dio_days = dio;
+            }
+            if let Some(dpo) = req.dpo_days {
+                assumptions.dpo_days = dpo;
+            }
+            if let Some(nwc_pct) = req.nwc_pct {
+                assumptions.nwc_pct = nwc_pct;
+            }
+            if let Some(adj) = req.nwc_explicit {
+                assumptions.nwc_explicit.explicit = Some(adj);
+            }
+            if let Some(di) = req.debt_issuance {
+                assumptions.debt_issuance = di;
+            }
+            if let Some(dr) = req.debt_repayment {
+                assumptions.debt_repayment = dr;
+            }
+            if let Some(de) = req.target_debt_equity {
+                assumptions.target_debt_equity = Some(de);
+            }
+            if let Some(ir) = req.interest_rate {
+                assumptions.interest_rate = ir;
+            }
+            if let Some(ei) = req.equity_issuance {
+                assumptions.equity_issuance = ei;
+            }
+            if let Some(dpr) = req.dividend_payout_ratio {
+                assumptions.dividend_payout_ratio = dpr;
+            }
+            if let Some(dr) = req.discount_rate {
+                assumptions.discount_rate = dr;
+            }
+            if let Some(tg) = req.terminal_growth {
+                assumptions.terminal_growth = tg;
+            }
+            if let Some(yrs) = req.total_years {
+                assumptions.total_years = yrs;
+            }
+            if let Some(coe) = req.cost_of_equity {
+                assumptions.cost_of_equity = coe;
+            }
+
+            // Validate and project
+            assumptions.validate()
+                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+
+            let current_price = profile.price().unwrap_or(0.0);
+            let model = financial_model::project_driver_model(&hist, &assumptions)
+                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+
+            // Build forecast_persist-compatible snapshot
+            let forecast_id = Uuid::new_v4().to_string();
+            let snapshot = serde_json::json!({
+                "kind": "driver_forecast",
+                "symbol": req.symbol,
+                "model": model,
+                "assumptions": assumptions,
+                "current_price": current_price,
+                "intrinsic_per_share": model.intrinsic_per_share,
+            });
+
+            self.save_forecast(crate::portfolio::PersistedForecast {
+                id: forecast_id.clone(),
+                symbol: req.symbol.clone(),
+                revision_of: None,
+                snapshot,
+                outcomes: Vec::new(),
+                created_at: now_rfc3339(),
+            })
+            .await?;
+
+            let margin_of_safety = if current_price > 0.0 {
+                (model.intrinsic_per_share - current_price) / current_price
+            } else {
+                0.0
+            };
+
+            let mut output = serde_json::json!({
+                "symbol": req.symbol,
+                "forecast_id": forecast_id,
+                "current_price": current_price,
+                "intrinsic_per_share": model.intrinsic_per_share,
+                "margin_of_safety": margin_of_safety,
+                "enterprise_value": model.enterprise_value,
+                "equity_value": model.equity_value,
+                "terminal_value": model.terminal_value,
+                "terminal_pv_share": if model.enterprise_value > 0.0 {
+                    model.terminal_pv / model.enterprise_value
+                } else {
+                    0.0
+                },
+                "is_financial_sector": model.is_financial_sector,
+                "valuation_method": if model.is_financial_sector {
+                    "equity_residual_income (ROE/COE)"
+                } else {
+                    "firm_level_dcf (WACC)"
+                },
+                "periods": model.periods,
+                "assumptions": assumptions,
+                "framework": "Driver-based linked three-statement projection. Five drivers: revenue growth, profit margins (incl. SG&A), capex vs depreciation, net working capital, debt/equity issuance. Balance sheet identity enforced via cash plug. Financial-sector path: residual income = (ROE - COE) × equity (Damodaran Ch. 19). Sources: Damodaran Investment Valuation, Fabozzi Financial Management & Analysis.",
+            });
+
+            if req.markdown_report {
+                output["markdown_report"] = serde_json::json!(
+                    financial_model::generate_markdown_report(
+                        &model, &assumptions, &req.symbol, current_price
+                    )
+                );
+            }
+
+            Ok(output)
+        }).await
+    }
 }

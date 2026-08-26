@@ -45,8 +45,10 @@ pub use hkask_inference::model_constants::{
 pub use hkask_types::agent_paths::resolve_data_dir;
 
 pub use identity::{
-    ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
-    mirror_provisioned_swarm_memory_passphrase, provision_agent, provision_swarm_memory_passphrase,
+    BridgeRotationError, ProvisionError, ProvisionedAgent, agent_name_from_username,
+    mirror_provisioned_db_passphrase, mirror_provisioned_swarm_memory_passphrase,
+    provision_agent, provision_swarm_memory_passphrase, rotate_curator_db_passphrase,
+    rotate_swarm_memory_db_passphrase,
 };
 pub use inference_chat::{LanguageModelInferencePort, NoModelInferencePort};
 pub use inference_edit_prediction::BridgeEditPredictionPort;

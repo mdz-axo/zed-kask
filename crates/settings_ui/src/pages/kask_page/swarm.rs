@@ -278,21 +278,93 @@ pub(crate) fn render_swarm_page(
         .on_confirm(move |value, _window, cx| {
             if let Some(text) = value {
                 let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .memory_passphrase = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
+                if parsed.is_empty() {
+                    // Clearing the passphrase — just remove it from settings.
+                    // The server falls back to the keychain/env default.
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .swarm
+                                .get_or_insert_default()
+                                .memory_passphrase = None;
+                        },
+                    );
+                } else {
+                    // Non-empty passphrase — rotate the swarm memory DB before
+                    // saving the new passphrase to settings. If rotation fails,
+                    // the old passphrase remains in effect and we do NOT save
+                    // the new one (broken feedback loop — the operator would
+                    // see the new passphrase in settings but the DB uses the
+                    // old one).
+                    let new_passphrase = parsed.clone();
+                    cx.spawn(async move |cx| {
+                        let passphrase_for_rotation = new_passphrase.clone();
+                        let rotation_result = cx
+                            .background_spawn(async move {
+                                kask_bridge::rotate_swarm_memory_db_passphrase(
+                                    &passphrase_for_rotation,
+                                )
+                            })
+                            .await;
+                        match rotation_result {
+                            Ok(()) => {
+                                tracing::info!(
+                                    target: "hkask.settings.swarm",
+                                    "Swarm memory DB passphrase rotation succeeded \
+                                     — saving new passphrase to settings"
+                                );
+                                // Save the new passphrase to settings.json.
+                                let parsed_for_save = new_passphrase.clone();
+                                let _ = cx.update(|cx| {
+                                    SettingsStore::global(cx).update_settings_file(
+                                        <dyn fs::Fs>::global(cx),
+                                        move |settings, _| {
+                                            settings
+                                                .kask
+                                                .get_or_insert_default()
+                                                .swarm
+                                                .get_or_insert_default()
+                                                .memory_passphrase =
+                                                Some(parsed_for_save);
+                                        },
+                                    );
+                                });
+                                // Write to the keychain so MCP servers pick it up
+                                // via the primary ctx.credentials tier.
+                                let credentials_provider =
+                                    zed_credentials::global(&cx);
+                                let url = format!(
+                                    "{KASK_CREDENTIAL_NAMESPACE}/hkask_swarm_memory_passphrase"
+                                );
+                                let _ = credentials_provider
+                                    .write_credentials(
+                                        &url,
+                                        "kask",
+                                        new_passphrase.as_bytes(),
+                                        &cx,
+                                    )
+                                    .await
+                                    .log_err();
+                                mark_recently_written(&url);
+                                // Nudge MCP servers to restart with the new passphrase.
+                                let _ = cx.update(|cx| nudge_mcp_servers(cx));
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    target: "hkask.settings.swarm",
+                                    %error,
+                                    "Swarm memory DB passphrase rotation failed — \
+                                     the old passphrase remains in effect. \
+                                     The new passphrase was NOT saved to settings."
+                                );
+                            }
+                        }
+                    })
+                    .detach();
+                }
             }
         });
 
@@ -427,8 +499,8 @@ pub(crate) fn render_swarm_page(
                     Label::new(
                         "SQLCipher passphrase for the local swarm semantic-memory store. \
                          Must be >=8 chars. Default 'allostery' (pre-release). \
-                         Change via HKASK_SWARM_MEMORY_PASSPHRASE — the DB will be \
-                         re-encrypted with the new passphrase."
+                         Changing it re-encrypts the DB atomically — no data loss \
+                         on failure. If rotation fails, the old passphrase remains."
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

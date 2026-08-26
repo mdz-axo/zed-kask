@@ -52,10 +52,19 @@ pub(crate) fn decompose_gap(
     };
     let total_return_gap = actual_return - projected_return;
 
-    // Helper to compute what intrinsic would be with one parameter changed
+    // Helper to compute what intrinsic would be with one parameter changed.
+    // FIX (H5): Use the SAME historical base (actual_hist) for both the base
+    // and the alternative, so the delta isolates the driver change only.
+    // Previously, `base_intrinsic` was computed from `projected` (which used
+    // the original historical data at forecast time), while `alt_model` used
+    // `actual_hist` (updated data at outcome time) — contaminating driver
+    // contributions with the changed historical base.
+    // Now: recompute the base from actual_hist with the original assumptions,
+    // so each delta is pure driver effect.
+    let base_from_actual = project_model(actual_hist, projected_assumptions, 0.0).intrinsic_per_share;
     let compute_delta = |assumptions: &ProjectionAssumptions| -> f64 {
         let alt_model = project_model(actual_hist, assumptions, 0.0);
-        alt_model.intrinsic_per_share - base_intrinsic
+        alt_model.intrinsic_per_share - base_from_actual
     };
 
     // Revenue growth contribution: use actual CAGR vs projected CAGR

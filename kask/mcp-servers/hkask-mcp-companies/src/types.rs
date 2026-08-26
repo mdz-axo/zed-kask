@@ -813,3 +813,87 @@ pub(crate) struct EpValuationRequest {
     /// Default: 4.5% (Damodaran implied ERP). Only used for equity-based valuation path.
     pub equity_risk_premium: Option<f64>,
 }
+
+// ── Driver-based forecast request ────────────────────────────────────
+
+/// Request for the driver-based three-statement forecasting tool.
+///
+/// Projects linked income statement, balance sheet, and cash flow from five
+/// key drivers. Each driver supports percent change, percent of revenue, and
+/// explicit adjustment. The balance sheet identity (A = L + E) is enforced
+/// every period. Financial-sector companies use an equity-based residual
+/// income path (ROE/COE) instead of FCF-based DCF.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DriverForecastRequest {
+    pub symbol: String,
+
+    // Driver 1: Revenue growth
+    /// Revenue growth rate (YoY %, e.g., 0.08 = 8%). Default: historical CAGR.
+    pub revenue_growth: Option<f64>,
+    /// Explicit revenue adjustment in dollars (e.g., acquisition contribution).
+    pub revenue_explicit: Option<f64>,
+
+    // Driver 2: Profit margins
+    /// Gross margin (% of revenue, e.g., 0.40 = 40%). Default: historical.
+    pub gross_margin: Option<f64>,
+    /// SG&A as % of revenue (e.g., 0.15 = 15%). Default: historical.
+    pub sga_pct: Option<f64>,
+    /// D&A as % of revenue. Default: historical.
+    pub da_pct: Option<f64>,
+    /// Effective tax rate. Default: historical.
+    pub tax_rate: Option<f64>,
+
+    // Driver 3: Capex vs depreciation
+    /// Capex as % of revenue. Default: historical.
+    pub capex_pct: Option<f64>,
+    /// Explicit capex adjustment in dollars.
+    pub capex_explicit: Option<f64>,
+    /// Capex/D&A ratio target. When set, D&A is derived from capex / ratio.
+    pub capex_da_ratio: Option<f64>,
+
+    // Driver 4: Net working capital
+    /// NWC method: "days", "percent_of_revenue", or "explicit".
+    /// Default: "percent_of_revenue".
+    pub nwc_method: Option<String>,
+    /// Days sales outstanding (for days method).
+    pub dso_days: Option<f64>,
+    /// Days inventory outstanding (for days method).
+    pub dio_days: Option<f64>,
+    /// Days payable outstanding (for days method).
+    pub dpo_days: Option<f64>,
+    /// NWC as % of revenue (for percent_of_revenue method).
+    pub nwc_pct: Option<f64>,
+    /// Explicit NWC adjustment in dollars.
+    pub nwc_explicit: Option<f64>,
+
+    // Driver 5: Debt/equity issuance
+    /// Explicit debt issuance in dollars per period.
+    pub debt_issuance: Option<f64>,
+    /// Explicit debt repayment in dollars per period.
+    pub debt_repayment: Option<f64>,
+    /// Target debt-to-equity ratio.
+    pub target_debt_equity: Option<f64>,
+    /// Interest rate on debt. Default: historical interest/debt.
+    pub interest_rate: Option<f64>,
+    /// Explicit equity issuance in dollars per period.
+    pub equity_issuance: Option<f64>,
+    /// Dividend payout ratio (0.0 = full retention, 1.0 = full payout).
+    pub dividend_payout_ratio: Option<f64>,
+
+    // Valuation
+    /// Discount rate (WACC for industrial, COE for financial-sector).
+    /// Default: 0.10.
+    pub discount_rate: Option<f64>,
+    /// Terminal growth rate. Default: 0.025.
+    pub terminal_growth: Option<f64>,
+    /// Projection horizon in years. Default: 10.
+    pub total_years: Option<u8>,
+    /// Cost of equity for financial-sector residual income path. Default: 0.10.
+    pub cost_of_equity: Option<f64>,
+
+    // Output
+    /// When true, return a Markdown report alongside the JSON.
+    /// Default: false.
+    #[serde(default)]
+    pub markdown_report: bool,
+}

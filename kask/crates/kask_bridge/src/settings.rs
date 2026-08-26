@@ -413,8 +413,9 @@ pub struct KaskSwarmSettings {
     pub a2a_http_enabled: bool,
 
     /// SQLCipher passphrase for the local swarm semantic-memory store. Must
-    /// be >=8 chars. When empty, resolved from the canonical keychain chain
-    /// (provisioned by `provision_swarm_memory_passphrase`).
+    /// be >=8 chars. Default `"allostery"` (pre-release) so initial builds
+    /// and first user runs don't fail. The user can change it via the
+    /// settings UI (Swarm page), which triggers DB rotation.
     pub memory_passphrase: String,
 
     /// Embedding vector dimension for the semantic-memory embedding store.
@@ -473,7 +474,7 @@ impl Default for KaskSwarmSettings {
             skills_dir: String::new(),
             default_agent_model: String::new(),
             a2a_http_enabled: false,
-            memory_passphrase: String::new(),
+            memory_passphrase: "allostery".to_string(),
             embedding_dim: 1024,
         }
     }
