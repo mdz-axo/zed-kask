@@ -240,8 +240,7 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
 /// Mirrors the resolve-or-create half of [`provision_agent`] but for the
 /// swarm memory store (`swarm_memory.db`), which is a separate SQLCipher DB
 /// shared across all swarms and agents. Without this, the swarm server falls
-/// back to the compiled-in pre-release default `"allostery"`
-/// (`SwarmConfig::default().memory_passphrase`) — a constant that ships in
+/// back to an empty string (`SwarmConfig::default().memory_passphrase`)
 /// the source tree, which the `mcp_servers.rs` RR-0061 comment explicitly
 /// flags as the bug the allowlist was supposed to fix. The allowlist fix let
 /// the operator override it, but nothing generated an override on first
@@ -323,8 +322,8 @@ pub fn mirror_provisioned_swarm_memory_passphrase(
                 target: "hkask.identity",
                 %error,
                 "Could not read provisioned swarm memory passphrase for mirror — \
-                 the swarm server will rely on the fallback tier of resolve_credential \
-                 or the compiled-in default 'allostery'"
+                 the swarm server will rely on the fallback tier of resolve_credential. \
+                 If that also fails, local knowledge tools will degrade."
             );
             return Task::ready(());
         }
@@ -352,7 +351,7 @@ pub fn mirror_provisioned_swarm_memory_passphrase(
                 credential_url = %url,
                 "Failed to mirror provisioned swarm memory passphrase to \
                  CredentialsProvider — the swarm server will rely on the fallback \
-                 tier of resolve_credential or the compiled-in default 'allostery'"
+                 tier of resolve_credential. If that also fails, local knowledge tools will degrade."
             ),
         }
     })

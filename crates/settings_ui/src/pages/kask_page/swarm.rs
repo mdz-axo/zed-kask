@@ -426,8 +426,9 @@ pub(crate) fn render_swarm_page(
                 .child(
                     Label::new(
                         "SQLCipher passphrase for the local swarm semantic-memory store. \
-                         Must be >=8 chars. Leave empty for the pre-release default \
-                         (allostery). Or set HKASK_SWARM_MEMORY_PASSPHRASE.",
+                         Must be >=8 chars. Default 'allostery' (pre-release). \
+                         Change via HKASK_SWARM_MEMORY_PASSPHRASE — the DB will be \
+                         re-encrypted with the new passphrase."
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

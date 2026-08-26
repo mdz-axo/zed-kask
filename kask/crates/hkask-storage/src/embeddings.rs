@@ -30,6 +30,7 @@ pub struct StoredEmbedding {
     pub entity_ref: String,
     pub vector: Vec<f32>,
     pub model: String,
+    pub passage_text: Option<String>,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimilarityResult {
@@ -171,6 +172,7 @@ impl EmbeddingStore {
         entity_ref: &str,
         vector: &[f32],
         model: &str,
+        passage_text: Option<&str>,
     ) -> Result<String, EmbeddingError> {
         self.validate_dim(vector)?;
         let id = hkask_types::EmbeddingID::new().to_string();
@@ -183,8 +185,8 @@ impl EmbeddingStore {
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         conn.execute_batch("BEGIN TRANSACTION;")?;
         let result = conn.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![id, entity_ref, blob, dim, model],
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, entity_ref, blob, dim, model, passage_text],
         );
         if let Err(e) = result {
             if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
@@ -232,7 +234,7 @@ impl EmbeddingStore {
     pub fn get(&self, entity_ref: &str) -> Result<StoredEmbedding, EmbeddingError> {
         use crate::database::value::DbValue;
         let rows = self.query_driver(
-            "SELECT id, entity_ref, vector, dimensions, model FROM embeddings WHERE entity_ref = ?",
+            "SELECT id, entity_ref, vector, dimensions, model, passage_text FROM embeddings WHERE entity_ref = ?",
             &[DbValue::Text(entity_ref.to_string())],
         )?;
         match rows.first() {
@@ -241,12 +243,14 @@ impl EmbeddingStore {
                 let er = row.get(1)?.as_text()?.to_string();
                 let blob = row.get(2)?.as_blob()?.to_vec();
                 let model = row.get(4)?.as_text()?.to_string();
+                let passage_text = row.get(5).ok().and_then(|v| v.as_text().ok()).map(|s| s.to_string());
                 let vector = Self::decode_vector(&blob, self.dim())?;
                 Ok(StoredEmbedding {
                     id,
                     entity_ref: er,
                     vector,
                     model,
+                    passage_text,
                 })
             }
             None => Err(EmbeddingError::NotFound(NotFound {
@@ -286,7 +290,7 @@ impl EmbeddingStore {
         // only in the embeddings table. Join on rowid (integer B-tree
         // lookup) instead of a TEXT metadata column.
         let mut stmt = conn.prepare(
-            "SELECT e.id, v.distance, e.entity_ref, e.vector, e.model
+            "SELECT e.id, v.distance, e.entity_ref, e.vector, e.model, e.passage_text
              FROM vec_embeddings v
              JOIN embeddings e ON v.rowid = e.rowid
              WHERE v.embedding MATCH ?1 AND v.k = ?2
@@ -298,11 +302,12 @@ impl EmbeddingStore {
             let entity_ref: String = row.get(2)?;
             let vector_blob: Vec<u8> = row.get(3)?;
             let model: String = row.get(4)?;
-            Ok((id, distance, entity_ref, vector_blob, model))
+            let passage_text: Option<String> = row.get(5)?;
+            Ok((id, distance, entity_ref, vector_blob, model, passage_text))
         })?;
         let mut results = Vec::new();
         for row in rows {
-            let (id, distance, entity_ref, blob, model) = row.map_err(EmbeddingError::Storage)?;
+            let (id, distance, entity_ref, blob, model, passage_text) = row.map_err(EmbeddingError::Storage)?;
             let vector = Self::decode_vector(&blob, self.dim())?;
             results.push(SimilarityResult {
                 embedding: StoredEmbedding {
@@ -310,6 +315,7 @@ impl EmbeddingStore {
                     entity_ref,
                     vector,
                     model,
+                    passage_text,
                 },
                 distance,
             });
@@ -446,5 +452,37 @@ impl EmbeddingStore {
             refs.push(entity_ref);
         }
         Ok(refs)
+    }
+
+    /// Load all embeddings with their passage text for in-memory index hydration.
+    ///
+    /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.
+    /// Used by the corpus server to rebuild the in-memory vector index after a
+    /// restart, so `corpus_query` returns full passage text without requiring
+    /// a re-embed from the source JSONL.
+    pub fn all_with_text(
+        &self,
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>)>, EmbeddingError> {
+        let dim = self.dim();
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT entity_ref, vector, passage_text FROM embeddings",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let entity_ref: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            let passage_text: Option<String> = row.get(2)?;
+            Ok((entity_ref, blob, passage_text))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            let (entity_ref, blob, passage_text) = row.map_err(EmbeddingError::Storage)?;
+            let vector = Self::decode_vector(&blob, dim)?;
+            results.push((entity_ref, vector, passage_text));
+        }
+        Ok(results)
     }
 }

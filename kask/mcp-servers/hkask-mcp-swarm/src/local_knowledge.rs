@@ -9,11 +9,11 @@
 //!
 //! Design rationale: `kask/docs/plans/local-swarm-knowledge-tools.md`.
 //!
-//! Graceful degradation: `LazyLocalMemory::get_or_init` opens the
-//! `MemoryStore` lazily. The SQLCipher passphrase defaults to `"allostery"`
-//! (pre-release kask-wide default) so the tools work out of the box; override
-//! via `HKASK_SWARM_MEMORY_PASSPHRASE`. If open fails (e.g., an existing DB was
-//! created under a different passphrase), the search tool returns an empty
+//! Graceful degradation: `LazyLocalMemory::get` opens the
+//! `MemoryStore` lazily. The SQLCipher passphrase is resolved from the
+//! canonical chain (env → keychain → `kask://credentials/hkask_swarm_memory_passphrase`)
+//! by `SwarmConfig::from_env`. If the passphrase is empty or too short,
+//! `get` returns an error and the search tool returns an empty
 //! result with a `memory_unconfigured` note (never a panic, never a fabricated
 //! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
 //! unseeded (memory is an enhancement, not a dependency).
@@ -40,54 +40,69 @@ pub struct LazyLocalMemory {
     db_path: String,
     passphrase: String,
     dim: usize,
-    inner: tokio::sync::OnceCell<MemoryStore>,
+    /// Self-healing handle — mirrors `CuratorStore`'s pattern. A transient
+    /// DB open failure sets this to `None`; the next `get` call retries.
+    /// This replaces the old `OnceCell` which made transient failures
+    /// permanent for the process lifetime.
+    inner: tokio::sync::RwLock<Option<Arc<MemoryStore>>>,
 }
 
 impl LazyLocalMemory {
     /// Store the config without initializing. The memory is constructed on the
-    /// first `get_or_init` call.
+    /// first `get` call.
     pub(crate) fn lazy(db_path: String, passphrase: String, dim: usize) -> Self {
         Self {
             db_path,
             passphrase,
             dim,
-            inner: tokio::sync::OnceCell::new(),
+            inner: tokio::sync::RwLock::new(None),
         }
     }
 
-    /// Get the semantic memory, initializing it on the first call. Returns
-    /// `Err` if the passphrase is unset/too short or the store fails to open —
-    /// callers degrade gracefully (the `.rules` startup-failure-signal rule: a
-    /// missing memory is signaled, not silently empty).
-    pub(crate) async fn get_or_init(&self) -> Result<&MemoryStore, LocalSwarmError> {
-        self.inner
-            .get_or_try_init(|| async {
-                if self.passphrase.len() < 8 {
-                    return Err(LocalSwarmError::InvalidInput(format!(
-                        "swarm memory passphrase too short ({} chars — need >=8; set \
-                         HKASK_SWARM_MEMORY_PASSPHRASE). Local knowledge tools will degrade.",
-                        self.passphrase.len()
-                    )));
-                }
-                // Create the parent directory so a first-run open does not fail
-                // on a missing data dir.
-                if let Some(parent) = std::path::Path::new(&self.db_path).parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            LocalSwarmError::Io(format!(
-                                "failed to create swarm memory dir {}: {e}",
-                                parent.display()
-                            ))
-                        })?;
-                    }
-                }
-                MemoryStore::open(&self.db_path, &self.passphrase, self.dim).map_err(|e| {
-                    LocalSwarmError::Database(format!("failed to open swarm memory store: {e}"))
-                })
-            })
-            .await
+    /// Get the semantic memory, opening it on the first call or retrying
+    /// after a transient failure. Returns `Err` if the passphrase is
+    /// unset/too short or the store fails to open — callers degrade
+    /// gracefully (the `.rules` startup-failure-signal rule: a missing
+    /// memory is signaled, not silently empty).
+    pub(crate) async fn get(&self) -> Result<Arc<MemoryStore>, LocalSwarmError> {
+        // Fast path: already open.
+        if let Some(store) = self.inner.read().await.as_ref() {
+            return Ok(store.clone());
+        }
+        // Slow path: open (or re-open after a transient failure).
+        let store = self.open()?;
+        let mut guard = self.inner.write().await;
+        *guard = Some(store.clone());
+        Ok(store)
     }
-}
+
+    /// Open the store from disk. Called by `get` when the handle is `None`.
+    fn open(&self) -> Result<Arc<MemoryStore>, LocalSwarmError> {
+        if self.passphrase.len() < 8 {
+            return Err(LocalSwarmError::InvalidInput(format!(
+                "swarm memory passphrase too short ({} chars — need >=8; set \
+                 HKASK_SWARM_MEMORY_PASSPHRASE). Local knowledge tools will degrade.",
+                self.passphrase.len()
+            )));
+        }
+        // Create the parent directory so a first-run open does not fail
+        // on a missing data dir.
+        if let Some(parent) = std::path::Path::new(&self.db_path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    LocalSwarmError::Io(format!(
+                        "failed to create swarm memory dir {}: {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+        }
+        MemoryStore::open(&self.db_path, &self.passphrase, self.dim)
+            .map(Arc::new)
+            .map_err(|e| {
+                LocalSwarmError::Database(format!("failed to open swarm memory store: {e}"))
+            })
+    }
 
 /// A knowledge fragment returned by `swarm_search_knowledge_local`. Mirrors
 /// the ABW envelope (matching knowledge fragments) but in kask terms: the
@@ -113,7 +128,7 @@ pub(crate) async fn search_agent_knowledge(
     query: &str,
     limit: usize,
 ) -> Result<Vec<KnowledgeFragment>, LocalSwarmError> {
-    let store = match memory.get_or_init().await {
+    let store = match memory.get().await {
         Ok(s) => s,
         Err(reason) => {
             tracing::warn!(target: "hkask.mcp.swarm", error = %reason, "swarm memory unavailable — search returns empty");
@@ -194,7 +209,7 @@ pub(crate) async fn record_delegation(
     task_success_pass: Option<bool>,
     response: &str,
 ) {
-    let store = match memory.get_or_init().await {
+    let store = match memory.get().await {
         Ok(s) => s,
         Err(reason) => {
             tracing::warn!(
@@ -315,7 +330,7 @@ pub(crate) async fn ingest_turn(
     response: &str,
     model: &str,
 ) {
-    let store = match memory.get_or_init().await {
+    let store = match memory.get().await {
         Ok(store) => store,
         Err(reason) => {
             tracing::warn!(
@@ -378,7 +393,7 @@ pub(crate) async fn ingest_turn(
     match inference.embed(&embedding_model, &[task.to_string()]).await {
         Ok(vectors) => match vectors.into_iter().next() {
             Some(vector) => {
-                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model) {
+                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model, None) {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         error = %error,
@@ -435,7 +450,7 @@ pub(crate) async fn recall_turns(
     query: &str,
     limit: usize,
 ) -> Result<Vec<RecalledTurn>, LocalSwarmError> {
-    let store = memory.get_or_init().await?;
+    let store = memory.get().await?;
     let embedding_model = hkask_inference::model_constants::embedding_model();
     let vectors = inference
         .embed(&embedding_model, &[query.to_string()])
@@ -674,7 +689,7 @@ mod tests {
     async fn ingest_turn_skips_and_recall_errors_when_store_unavailable() {
         let path =
             std::env::temp_dir().join(format!("kask-swarm-mem-test-{}.db", uuid::Uuid::new_v4()));
-        // A passphrase shorter than 8 chars makes `get_or_init` error every
+        // A passphrase shorter than 8 chars makes `get` error every
         // time, so the store never opens.
         let memory = LazyLocalMemory::lazy(
             path.to_string_lossy().to_string(),

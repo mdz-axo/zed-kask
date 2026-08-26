@@ -273,9 +273,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // memory DB), so it belongs here, not in config_env. Before it was
         // allowlisted (RR-0061) the read at hkask-mcp-swarm/src/config.rs:252
         // could never receive a value, so the store always opened under the
-        // compiled-in pre-release default "allostery" (config.rs:157) — i.e.
-        // encrypted with a constant that ships in the source. The documented
-        // override in local_knowledge.rs was unreachable via the governed launch.
+        // hardcoded default "allostery" — encrypted with a constant that ships
+        // in the source. That default has been eliminated; the passphrase is now
+        // resolved from the canonical chain (env → keychain →
+        // kask://credentials/hkask_swarm_memory_passphrase) and the store
+        // degrades gracefully if resolution fails.
         credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_SWARM_MEMORY_PASSPHRASE"]),
         config_env: Some(&[
             "HKASK_ABW_API_URL",
@@ -1019,8 +1021,9 @@ mod tests {
     /// The sharpest instance: HKASK_SWARM_MEMORY_PASSPHRASE is READ at
     /// hkask-mcp-swarm/src/config.rs:252 but was not allowlisted, so the override
     /// could never arrive and the SQLCipher memory DB always opened under the
-    /// compiled-in default "allostery" (config.rs:157) — encrypted with a constant
-    /// that ships in the source.
+    /// hardcoded default "allostery" — encrypted with a constant that ships
+    /// in the source. That default has been eliminated; the passphrase is now
+    /// resolved from the canonical chain.
     #[test]
     fn swarm_credentials_include_memory_passphrase() {
         let s = server_by_id("swarm");

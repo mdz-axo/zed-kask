@@ -413,7 +413,8 @@ pub struct KaskSwarmSettings {
     pub a2a_http_enabled: bool,
 
     /// SQLCipher passphrase for the local swarm semantic-memory store. Must
-    /// be >=8 chars. When empty, uses the pre-release default `"allostery"`.
+    /// be >=8 chars. When empty, resolved from the canonical keychain chain
+    /// (provisioned by `provision_swarm_memory_passphrase`).
     pub memory_passphrase: String,
 
     /// Embedding vector dimension for the semantic-memory embedding store.

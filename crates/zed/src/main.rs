@@ -1400,10 +1400,10 @@ fn main() {
 
                 // zed-kask: provision the swarm memory SQLCipher passphrase and
                 // mirror it into zed's CredentialsProvider. Without this, the
-                // swarm server falls back to the compiled-in pre-release default
-                // "allostery" (a constant that ships in the source tree) — the
-                // RR-0061 allowlist fix let the operator override it, but
-                // nothing generated an override on first run, so
+                // swarm server has no passphrase and local knowledge tools degrade
+                // (they require >=8 chars). `provision_swarm_memory_passphrase`
+                // generates a random English word on first run (matching the DB
+                // passphrase pattern) and mirrors it into
                 // `build_mcp_server_env` warned on every launch. Provisioning
                 // generates a random English word on first run (matching the DB
                 // passphrase pattern) and mirrors it into
@@ -1416,7 +1416,7 @@ fn main() {
                 if let Err(error) = swarm_passphrase_provision_task.await {
                     log::warn!(
                         "Failed to provision swarm memory passphrase: {error}. \
-                         The swarm server will fall back to the compiled-in default 'allostery'."
+                         The swarm server will have no passphrase — local knowledge tools will degrade."
                     );
                 }
                 let swarm_passphrase_mirror_task = cx.update(|cx| {

@@ -200,17 +200,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             if let Some(w) = warning {
                 tracing::warn!(target: "hkask.mcp.swarm", "{w}");
             }
-            // The default swarm-memory passphrase is a pre-release convenience
-            // so the local knowledge tools work out of the box. A production
-            // deployment with the default is unencrypted-in-effect — surface it
-            // so the operator distinguishes "not configured" from "configured"
-            // (the .rules opt-in-feature failure-classification rule).
-            if config.memory_passphrase == "allostery" {
+            // Surface a missing or too-short swarm-memory passphrase so the
+            // operator distinguishes "not configured" from "configured but broken"
+            // (the .rules startup-failure-signal rule). The default is
+            // "allostery" (pre-release) so this should not fire on first run.
+            if config.memory_passphrase.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
-                    "swarm memory passphrase is the pre-release default ('allostery') — \
-                     set HKASK_SWARM_MEMORY_PASSPHRASE for a real secret. The local \
-                     knowledge store is unencrypted-in-effect until then."
+                    "swarm memory passphrase is empty — local knowledge tools \
+                     will degrade. Set HKASK_SWARM_MEMORY_PASSPHRASE."
+                );
+            } else if config.memory_passphrase.len() < 8 {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    "swarm memory passphrase too short ({} chars — need >=8) — \
+                     local knowledge tools will degrade.",
+                    config.memory_passphrase.len()
                 );
             }
             // Load local agent cards (v2 §15). In Abw mode this is a no-op
@@ -298,9 +303,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             // Local swarm semantic memory — backs `swarm_search_knowledge_local`
             // (and seeds the generate tools). Lazily opened on first use. The
-            // passphrase defaults to "allostery" (pre-release) so the tools work
-            // out of the box; override via `HKASK_SWARM_MEMORY_PASSPHRASE`. If the
-            // store cannot be opened (e.g., an existing DB was created under a
+            // passphrase is resolved from the canonical chain (env → keychain →
+            // `kask://credentials/hkask_swarm_memory_passphrase`) by `SwarmConfig::from_env`.
+            // If the store cannot be opened (e.g., an existing DB was created under a
+            // different passphrase), the search tool degrades to an empty result
             // different passphrase), the search tool degrades to an empty result
             // and the generate tools proceed unseeded (memory is an enhancement,
             // not a dependency).
@@ -478,7 +484,7 @@ mod smoke_tests {
         let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
         let local_memory = Arc::new(LazyLocalMemory::lazy(
             memory_path,
-            "allostery".to_string(),
+            "test-passphrase".to_string(),
             1024,
         ));
         let event_store = Arc::new(LazyEventStore::lazy(events_path));

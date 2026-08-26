@@ -420,8 +420,9 @@ impl MemoryStore {
         entity_ref: &str,
         vector: &[f32],
         model: &str,
+        passage_text: Option<&str>,
     ) -> Result<String, MemoryStoreError> {
-        Ok(self.embedding.store(entity_ref, vector, model)?)
+        Ok(self.embedding.store(entity_ref, vector, model, passage_text)?)
     }
 
     pub fn search_similar(
@@ -441,6 +442,14 @@ impl MemoryStore {
         prefix: &str,
     ) -> Result<Vec<(String, Vec<f32>)>, MemoryStoreError> {
         Ok(self.embedding.get_all_by_prefix(prefix)?)
+    }
+
+    /// Load all embeddings with passage text for in-memory index hydration.
+    /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.
+    pub fn all_embeddings_with_text(
+        &self,
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>)>, MemoryStoreError> {
+        Ok(self.embedding.all_with_text()?)
     }
 
     /// Compute the centroid (mean embedding vector) for embeddings matching a prefix.
@@ -500,7 +509,7 @@ impl MemoryStore {
 
         let stored = if let Some(ref_to_store) = store_as {
             if let Some(m) = model {
-                let _id = self.embedding.store(ref_to_store, &centroid, m)?;
+                let _id = self.embedding.store(ref_to_store, &centroid, m, None)?;
                 true
             } else {
                 false

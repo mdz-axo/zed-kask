@@ -408,7 +408,7 @@ impl ConsolidationService {
                 match self.inference_router.embed(&emb_model, &texts).await {
                     Ok(vectors) => {
                         for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                            if let Err(e) = store.store_embedding(entity_ref, vector, &emb_model) {
+                            if let Err(e) = store.store_embedding(entity_ref, vector, &emb_model, None) {
                                 tracing::warn!(
                                     entity_ref = %entity_ref,
                                     error = %e,

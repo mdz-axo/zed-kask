@@ -175,6 +175,7 @@ pub(crate) async fn write_turn(
                         &embedding_entity,
                         &vector,
                         ctx.embedding_model,
+                        None,
                     )
                 {
                     tracing::warn!(

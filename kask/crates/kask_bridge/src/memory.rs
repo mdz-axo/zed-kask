@@ -1750,10 +1750,10 @@ pub(crate) mod tests {
         };
         let curator_store = port.curator_store.get().expect("curator store");
         curator_store
-            .store_embedding("test:ranking:high", &unit_vec, "test-model")
+            .store_embedding("test:ranking:high", &unit_vec, "test-model", None)
             .expect("store embedding high");
         curator_store
-            .store_embedding("test:ranking:low", &unit_vec, "test-model")
+            .store_embedding("test:ranking:low", &unit_vec, "test-model", None)
             .expect("store embedding low");
 
         curator_store.store(high_conf).expect("store high");

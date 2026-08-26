@@ -106,12 +106,10 @@ pub struct SwarmConfig {
     pub allowed_tool_servers: Option<Vec<String>>,
     /// SQLCipher passphrase for the local swarm semantic-memory store (the
     /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
-    /// be >=8 chars. Pre-release default `"allostery"` (the kask-wide default for
-    /// any user-facing passphrase that isn't an internally generated key) — the
-    /// local knowledge tools work out of the box without operator config. Override
-    /// via `HKASK_SWARM_MEMORY_PASSPHRASE` for a real secret; if an existing store
-    /// was created under a different passphrase, open fails and
-    /// `swarm_search_knowledge_local` degrades to an empty result with a
+    /// be >=8 chars. Resolved from the canonical chain (env → keychain →
+    /// `kask://credentials/hkask_swarm_memory_passphrase`) by `from_env`.
+    /// If empty or too short, `LazyLocalMemory::get_or_init` returns an error
+    /// and `swarm_search_knowledge_local` degrades to an empty result with a
     /// `memory_unconfigured` note (the generate tools proceed unseeded — memory
     /// is an enhancement, not a dependency).
     pub memory_passphrase: String,

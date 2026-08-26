@@ -137,7 +137,7 @@ impl CorpusServer {
 
             // Search the index (scoped to drop guard before any await)
             let (results, total_indexed) = {
-                let index = match self.index.lock() {
+                let mut index = match self.index.lock() {
                     Ok(i) => i,
                     Err(poisoned) => {
                         tracing::warn!(
@@ -159,6 +159,12 @@ impl CorpusServer {
                     };
                     let passphrase = passphrase
                         .unwrap_or_else(|| crate::tools::semantic::default_corpus_passphrase());
+                    if passphrase.is_empty() {
+                        return Err(McpToolError::permission_denied(
+                            "HKASK_DB_PASSPHRASE not configured — corpus_query requires the DB passphrase. \
+                             Set it via the keychain (kask://credentials/hkask_db_passphrase) or environment variable."
+                        ));
+                    }
                     let store = crate::helpers::open_memory_store(db_path, &passphrase)?;
                     let total = store.embedding_count().unwrap_or(0);
                     if total == 0 {
@@ -168,18 +174,51 @@ impl CorpusServer {
                             "total_indexed": 0,
                         }));
                     }
-                    let db_results = store
-                        .search_similar(&query_embedding, k)
-                        .map_err(|e| McpToolError::internal(format!("DB search failed: {e}")))?;
-                    let results: Vec<serde_json::Value> = db_results
+                    // Hydrate the in-memory index from the DB so subsequent
+                    // queries return full passage text without re-opening the
+                    // DB. This loads all embeddings + text in one pass.
+                    let all_embeddings = store
+                        .all_embeddings_with_text()
+                        .map_err(|e| McpToolError::internal(format!("DB hydration failed: {e}")))?;
+                    let mut hydrated: Vec<IndexedPassage> = Vec::with_capacity(all_embeddings.len());
+                    for (entity_ref, vector, passage_text) in all_embeddings {
+                        let text = passage_text.unwrap_or_default();
+                        hydrated.push(IndexedPassage {
+                            text: text.clone(),
+                            metadata: json!({"entity_ref": entity_ref}),
+                            embedding: vector,
+                        });
+                    }
+                    tracing::info!(
+                        target: "hkask.mcp.corpus",
+                        hydrated = hydrated.len(),
+                        "In-memory index hydrated from DB"
+                    );
+                    // Search the hydrated passages in-memory.
+                    let mut scored: Vec<(f32, &IndexedPassage)> = hydrated
                         .iter()
-                        .map(|r| json!({
-                            "entity_ref": r.embedding.entity_ref.clone(),
-                            "metadata": {"entity_ref": r.embedding.entity_ref.clone(), "model": r.embedding.model.clone()},
-                            "score": (1.0 - r.distance as f32).max(0.0),
-                        }))
+                        .map(|p| (cosine_similarity(&query_embedding, &p.embedding), p))
                         .collect();
-                    (results, total)
+                    scored.sort_by(|a, b| {
+                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    scored.truncate(k);
+                    let results: Vec<serde_json::Value> = scored
+                        .iter()
+                        .map(|(score, p)| {
+                            json!({
+                                "text": p.text.clone(),
+                                "metadata": p.metadata.clone(),
+                                "score": score,
+                            })
+                        })
+                        .collect();
+                    // Move hydrated passages into the persistent in-memory index
+                    // so subsequent queries skip the DB hydration pass.
+                    drop(scored);
+                    let hydrated_count = hydrated.len();
+                    index.extend(hydrated);
+                    (results, hydrated_count)
                 } else {
                     let mut scored: Vec<(f32, &IndexedPassage)> = index
                         .iter()
@@ -295,6 +334,12 @@ impl CorpusServer {
     )]
     pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
         execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
+            if req.passphrase.is_empty() {
+                return Err(McpToolError::permission_denied(
+                    "HKASK_DB_PASSPHRASE not configured — corpus_purge_qa requires the DB passphrase. \
+                     Set it via the keychain (kask://credentials/hkask_db_passphrase) or environment variable."
+                ));
+            }
             let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
 
             let embeddings_before = match store.embedding_count() {

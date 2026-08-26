@@ -768,7 +768,7 @@ impl CorpusServer {
                 }
 
                 for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
-                    if let Err(e) = store.store_embedding(&c.0, vector, &model_name) {
+                    if let Err(e) = store.store_embedding(&c.0, vector, &model_name, Some(&c.1)) {
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if failed.load(std::sync::atomic::Ordering::Relaxed) <= 5 {
                             tracing::warn!(
@@ -985,12 +985,17 @@ pub(crate) fn default_corpus_passphrase() -> String {
     }
     // Fall back to env → keychain for tests or when construction didn't set
     // the OnceLock (or set it to `None` after a resolution failure).
+    // Returns empty string on failure — callers must check and surface
+    // `permission_denied` (see `persona.rs::database_passphrase` for the
+    // canonical pattern). An empty passphrase must NOT be passed to a DB
+    // open call — it would silently create an unencrypted DB.
     hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE")
         .map_err(|e| {
             tracing::warn!(
                 target: "hkask.mcp.corpus",
                 error = %e,
-                "HKASK_DB_PASSPHRASE resolution failed; falling back to empty passphrase"
+                "HKASK_DB_PASSPHRASE resolution failed — returning empty string; \
+                 callers must surface permission_denied"
             );
             e
         })

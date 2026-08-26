@@ -18,6 +18,33 @@ use util::shell_builder::ShellBuilder;
 use crate::client::ModelContextServerBinary;
 use crate::transport::Transport;
 
+/// Minimal env vars a child process needs to function (resolve binaries,
+/// find home, connect to D-Bus for keychain access). After `env_clear()`,
+/// only these are passed through from the parent; the rest comes from the
+/// `binary.env` map (which for kask servers is built by
+/// `build_mcp_server_env` with per-server credential filtering).
+///
+/// Mirrors `PASSTHROUGH_ENV_VARS` in `hkask-mcp/src/runtime.rs` — the two
+/// lists must stay in sync. Duplicated rather than shared because
+/// `context_server` is an upstream Zed crate and cannot depend on
+/// `hkask-mcp`.
+const PASSTHROUGH_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "TMPDIR",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+];
+
 pub struct StdioTransport {
     stdout_sender: async_channel::Sender<String>,
     stdin_receiver: async_channel::Receiver<String>,
@@ -40,6 +67,18 @@ impl StdioTransport {
         let mut command =
             builder.build_std_command(Some(binary.executable.display().to_string()), &binary.args);
 
+        // Clear the parent env and inject only the passthrough vars + the
+        // per-server env map. Without `env_clear()`, the child inherits every
+        // secret in the parent's environment (API keys, SMTP passwords, DB
+        // passphrases), silently nullifying the per-server credential
+        // filtering that `build_mcp_server_env` provides. This mirrors the
+        // governed `McpRuntime` path in `hkask-mcp/src/runtime.rs`.
+        command.env_clear();
+        for key in PASSTHROUGH_ENV_VARS {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
         command.envs(binary.env.unwrap_or_default());
 
         if let Some(working_directory) = working_directory {

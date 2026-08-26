@@ -639,7 +639,7 @@ impl CorpusServer {
                 let model = embedding_model();
                 let gen_model = generation_model();
                 store
-                    .store(&blended_ref, &blended, &model)
+                    .store(&blended_ref, &blended, &model, None)
                     .map_err(|e| map_embedding_error(e, "store blended centroid"))?;
 
                 let config = crate::compose::CognitionConfig {
