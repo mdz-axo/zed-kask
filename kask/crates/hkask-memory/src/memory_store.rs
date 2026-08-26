@@ -190,34 +190,14 @@ impl MemoryStore {
 
     /// Store any h_mem. No visibility/perspective invariants — the ontology
     /// blob classifies the memory. The caller is responsible for setting the
-    /// ontology (semantic facts get `HMemOntology::semantic()`, episodic
-    /// experiences get `HMemOntology::episodic()`).
+    /// ontology (semantic facts get `HMemOntology::state()`, episodic
+    /// experiences get `HMemOntology::process()`).
     ///
     /// Emits a `reg.memory.encode` span for observability.
     pub fn store(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
         self.h_mem_store.insert(&h_mem)?;
         if let Some(sink) = &self.event_sink {
             let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "stored");
-            let event = RegulationRecord::new(
-                h_mem.access.owner_webid,
-                span,
-                CyclePhase::Act,
-                serde_json::json!({"entity": h_mem.entity, "attribute": h_mem.attribute}),
-                0,
-            );
-            if let Err(e) = sink.persist(&event) {
-                tracing::warn!(target: "hkask.memory", error = %e, "Failed to persist reg.memory span");
-            }
-        }
-        Ok(())
-    }
-
-    /// Store a h_mem as a consolidation product (internal write, no
-    /// visibility check). Used by the consolidation bridge.
-    pub(crate) fn store_consolidated(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
-        self.h_mem_store.insert(&h_mem)?;
-        if let Some(sink) = &self.event_sink {
-            let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "consolidated");
             let event = RegulationRecord::new(
                 h_mem.access.owner_webid,
                 span,
@@ -626,7 +606,7 @@ impl MemoryStore {
     ) -> Result<Vec<HMem>, MemoryStoreError> {
         let mut h_mems = self
             .h_mem_store
-            .query_by_perspective(&perspective)?;;
+            .query_by_perspective(&perspective)?;
         h_mems.sort_by(|a, b| {
             let a_effective = a
                 .confidence

@@ -2,15 +2,39 @@
 
 Status doc for the memory system improvements, grounded in Dunning's self-knowledge/calibration research and Tetlock's superforecasting framework. RAG synthesis of the John Brooks corpus is in `rag-synthesis-dunning-memory-design.md`.
 
+## Architecture (2026-08-25)
+
+The memory system has been simplified to a single memory process and loop:
+
+- **User/zed agent**: NO memory. The user is human and has their own memory. Context injection continues (system prompt, project rules), but no memory is generated or recalled for user threads. `ingest_turn` is a no-op for non-curator turns. `recall_context` and `recall_thread` return empty vecs.
+- **Curator**: has memory (`curator.db`). Only curator turns are ingested. The curator recalls its own memory via `recall_context_curator` / `recall_thread_curator`.
+- **Replicas**: static memory from corpus (built through the corpus server).
+- **Swarm agents**: shared memory per swarm (as long as that swarm is maintained).
+
+The legacy episodic/semantic distinction has been completely removed:
+- `MemorySnippet.source` field removed (no more "episodic"/"semantic" labels).
+- `HMemOntology::episodic()` → `HMemOntology::process()`, `HMemOntology::semantic()` → `HMemOntology::state()`, `to_semantic()` removed.
+- `HMem::is_episodic()` removed.
+- `SEMANTIC_PREDICATE` / `EPISODIC_PREDICATE` SQL constants removed — all h_mems are unified.
+- `query_episodic_by_perspective` removed — use `query_by_perspective`.
+- `*_semantic_*` query methods renamed to plain names (`count_semantic` → `count`, etc.).
+- `promote_episodic_to_semantic` removed — consolidation is now confidence-based cleanup only (no promotion, no re-tagging).
+- `store_consolidated` removed (dead code).
+- User DB opening removed from `RealMemoryPort::new` — no user store to open.
+- `fire_consolidation_pass` → `fire_curator_consolidation_pass` (curator-only, no user consolidation).
+- Dead env-var parsers removed (`parse_storage_budget`, `resolve_storage_budget`, `parse_memory_life_days`, `resolve_memory_life_days`).
+
 ## Completed (2026-08-25)
 
-- **Q4 (G12)** — Log pre-login ingest no-ops. `crates/agent/src/thread.rs` now emits `log::warn!` when `memory_port()` returns `None`, naming the thread ID. Closes the feedback gap (Dunning, 2011, pp. 264–265).
-- **Q1 (convergence test)** — Mid-session ingest → next-turn recall test. `kask/crates/kask_bridge/src/context_injector.rs` now has `inject_context_recalls_mid_session_ingest` and `inject_context_returns_empty_when_no_match`. Pins the per-turn freshness property.
-- **Q2 (S6)** — Compact, labeled state block in curator context. `crates/agent/src/curator_agent_server.rs` now fetches a regulation health snapshot at `connect` time and appends it to the curator context with an explicit "snapshot at session start — pull curator_status for live updates" label. Breaks the naive-realist trap (Ehrlinger & Dunning, 2003).
+- **Episodic/semantic distinction removed** — full removal across all crates. See Architecture above.
+- **User memory store removed** — `RealMemoryPort` no longer holds a user `MemoryStore`. Only the curator store remains.
+- **Q4 (G12)** — Log pre-login ingest no-ops. `crates/agent/src/thread.rs` now emits `log::warn!` when `memory_port()` returns `None`, naming the thread ID.
+- **Q1 (convergence test)** — Mid-session ingest → next-turn recall test. `kask/crates/kask_bridge/src/context_injector.rs` now has `inject_context_recalls_mid_session_ingest` and `inject_context_returns_empty_when_no_match`.
+- **Q2 (S6)** — Compact, labeled state block in curator context. `crates/agent/src/curator_agent_server.rs` now fetches a regulation health snapshot at `connect` time.
 
 ## Prioritized Implementation Plan
 
-Seven changes, ordered by leverage and dependency. Priorities 1–4 are the "Q1" recall ranking improvements (confidence + Brier + connectedness). Priorities 5–7 are the "Q3/Q5" writable memory and therapy improvements. Q6 (swarm recall) is independent.
+Seven changes, ordered by leverage and dependency. Priorities 1–4 are the recall ranking improvements (confidence + Brier + connectedness). Priorities 5–7 are the writable memory and therapy improvements. Q6 (swarm recall) is independent.
 
 | Priority | Change | Effort | Depends on | Evidence (corpus entity_ref) |
 |---|---|---|---|---|

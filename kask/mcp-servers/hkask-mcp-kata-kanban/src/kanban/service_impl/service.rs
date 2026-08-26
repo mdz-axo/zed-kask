@@ -254,7 +254,7 @@ impl KanbanService {
         // Persist the task — anchored as a PKO Step of the board's procedure.
         // `query_by_pko_procedure(board_id)` reaches every task under a board.
         let task_ontology =
-            HMemOntology::episodic(board_id.to_string(), task.id.to_string(), "kanban");
+            HMemOntology::process(board_id.to_string(), task.id.to_string(), "kanban");
         let h_mem =
             HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner).with_ontology(task_ontology);
         self.store
@@ -267,7 +267,7 @@ impl KanbanService {
         // payload itself).
         let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
         let index_ontology =
-            HMemOntology::episodic(board_id.to_string(), task.id.to_string(), "kanban:index");
+            HMemOntology::process(board_id.to_string(), task.id.to_string(), "kanban:index");
         let index_triple = HMem::new(
             &index_entity,
             &task.id.to_string(),

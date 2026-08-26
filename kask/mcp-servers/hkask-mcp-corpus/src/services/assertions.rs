@@ -303,7 +303,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                         // tagged with it — the same cross-check that gates the
                         // confidence cap above, so a hallucinated namespace
                         // doesn't get an ontology anchor it never earned.
-                        let mut ontology = HMemOntology::semantic(
+                        let mut ontology = HMemOntology::state(
                             "dcterms:Assertion",
                             vec![subject.to_string()],
                             entity_ref.clone(),

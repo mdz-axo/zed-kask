@@ -358,20 +358,20 @@ mod tests {
             });
         let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
 
-        // Ingest a turn with a distinctive keyword.
+        // Ingest a curator turn with a distinctive keyword.
         port.ingest_turn(TurnRecord {
             thread_id: "convergence-test-thread".to_string(),
             user_input: "How does the zephyr protocol handle reconnection?".to_string(),
             agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
             model: "test-model".to_string(),
             thread_title: None,
-            agent_id: None,
+            agent_id: Some("Curator".to_string()),
         })
         .await
         .expect("ingest succeeds");
 
-        // Construct the injector with auto_inject enabled.
-        let injector = BridgeContextInjector::new(port, 10, 0.0, true);
+        // Construct the curator injector with auto_inject enabled.
+        let injector = BridgeContextInjector::new_curator(port, 10, 0.0, true);
 
         // Call inject_context with a prompt that shares keywords with the
         // ingested turn. The prompt is long enough to pass the should_recall gate.
@@ -407,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn inject_context_returns_empty_when_no_match() {
         let port = Arc::new(in_memory_port());
-        let injector = BridgeContextInjector::new(port, 10, 0.0, true);
+        let injector = BridgeContextInjector::new_curator(port, 10, 0.0, true);
 
         // Query with a prompt that shares no keywords with the empty store.
         let prompt = "this prompt has no matching content in the empty memory store";

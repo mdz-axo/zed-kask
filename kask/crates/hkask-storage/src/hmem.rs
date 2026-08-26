@@ -515,7 +515,7 @@ impl HMemStore {
     /// Count h_mems below confidence threshold. Used by consolidation.
     pub fn count_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
         self.count_rows(
-            &format!("SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL AND confidence <= ?1"),
+            "SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL AND confidence <= ?1",
             &[DbValue::Real(threshold)],
         )
     }

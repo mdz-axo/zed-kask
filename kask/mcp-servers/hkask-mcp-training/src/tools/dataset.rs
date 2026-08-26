@@ -46,7 +46,7 @@ impl TrainingServer {
                 // record, not a process step. The bloom level is the pedagogic
                 // classification, so it belongs on the subject axis alongside
                 // the dataset name.
-                let ontology = HMemOntology::semantic(
+                let ontology = HMemOntology::state(
                     "dcterms:Dataset",
                     vec![ds.to_string(), level.to_string()],
                     source.clone(),

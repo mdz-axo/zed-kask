@@ -291,7 +291,7 @@ impl CorpusServer {
                 // `corpus_generate_qa`, with the source chunk as the step).
                 // The value blob's former nested `"ontology"` object was not
                 // queryable — this is.
-                let mut ontology = hkask_types::HMemOntology::semantic(
+                let mut ontology = hkask_types::HMemOntology::state(
                     "bibo:Document",
                     qa.concepts.clone(),
                     qa.source.clone(),

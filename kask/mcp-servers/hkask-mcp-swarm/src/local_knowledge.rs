@@ -212,7 +212,7 @@ pub(crate) async fn record_delegation(
     // execution of the delegation procedure, not a standalone fact. Anchoring
     // it this way is what lets the SENSE phase distinguish pheromone trails
     // (process traces) from consolidated agent facts in the same store.
-    let ontology = HMemOntology::episodic("swarm_delegate", "record", agent_id);
+    let ontology = HMemOntology::process("swarm_delegate", "record", agent_id);
 
     // Write the latency annotation.
     let mut h_mem = HMem::new(
@@ -353,7 +353,7 @@ pub(crate) async fn ingest_turn(
     // Process-axis anchoring (P5.4): a swarm delegation is a PKO step
     // execution of the delegate procedure, anchored to the agent so recall
     // can distinguish turns by producer.
-    let ontology = HMemOntology::episodic("swarm_delegate", "turn", agent_id);
+    let ontology = HMemOntology::process("swarm_delegate", "turn", agent_id);
     let mut h_mem = HMem::new(&entity, "chatted", turn_record, owner).with_ontology(ontology);
     // Shared visibility so the turn is part of the shared knowledgebase —
     // recallable across all agents/swarms, not just the producing agent.

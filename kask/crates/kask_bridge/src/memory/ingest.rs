@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use hkask_memory::{MemoryConsolidator, MemoryStore};
+use hkask_memory::{MemoryConsolidator};
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, MemoryError, TurnRecord, Visibility, WebID};
 use std::sync::RwLock;
@@ -24,11 +24,9 @@ use super::curator_stores::{CuratorStore, build_curator_consolidation};
 /// directly from in-memory stores without going through `RealMemoryPort::new`
 /// (no DB open, no passphrase, no consolidation timer).
 pub(crate) struct WriteContext<'a> {
-    pub store: &'a MemoryStore,
     pub curator_store: &'a CuratorStore,
     pub embedding_port: &'a LanguageModelEmbeddingPort,
     pub embedding_model: &'a str,
-    pub user_webid: WebID,
     pub curator_webid: WebID,
     pub tokio_handle: &'a tokio::runtime::Handle,
     /// Self-healing curator consolidation service — rebuilt here after a
@@ -38,28 +36,24 @@ pub(crate) struct WriteContext<'a> {
     pub consolidation_cadence_secs: u64,
 }
 
-/// Write a completed turn into memory.
+/// Write a completed turn into the curator's memory.
+///
+/// Only curator turns are ingested. User/zed agent turns are NOT ingested —
+/// the user is human and has their own memory. The kask memory system only
+/// stores the curator's own turns and a shared copy for curator recall.
 ///
 /// Performs, in order:
 /// 1. Curator-store self-heal re-open + consolidation rebuild (if healed).
-/// 2. User-perspective h_mem (Private) to the user's `memory.db` — every turn.
-/// 3. If it's a curator turn: curator-perspective h_mem (Private) to the
+/// 2. If it's a curator turn: curator-perspective h_mem (Private) to the
 ///    curator's `curator.db`.
-/// 4. Shared copy to the curator's `curator.db` — every turn, so
+/// 3. Shared copy to the curator's `curator.db` — every turn, so
 ///    `curator_memory_recall` / `curator_semantic_search` see every turn the
 ///    agent observed.
-/// 5. Embed the user prompt and store it to the user's store (always) and the
-///    curator's store (curator turns only), for KNN-based recall.
+/// 4. Embed the user prompt and store it to the curator's store (curator
+///    turns only), for KNN-based recall.
 ///
-/// The embedding's `entity_ref` MUST match the h_mem's `entity`
-/// (`chat:thread:{thread_id}`) so the recall path's
-/// `query_deduped_untouched(entity_ref)` joins the KNN neighbor back to the
-/// h_mem holding the full turn text.
-///
-/// `Ok(())` on success; the only hard error is a failed user store
-/// (`MemoryError::Ingestion`). Curator-side and embedding failures are
-/// non-fatal — they warn and continue, since the user's record is the
-/// primary store.
+/// `Ok(())` on success. Curator-side and embedding failures are non-fatal —
+/// they warn and continue.
 pub(crate) async fn write_turn(
     ctx: &WriteContext<'_>,
     record: TurnRecord,
@@ -72,6 +66,11 @@ pub(crate) async fn write_turn(
     let agent_id = record.agent_id.clone();
     let is_curator_turn = agent_id.as_deref() == Some("Curator");
 
+    // Only ingest curator turns. User/zed agent turns are not stored.
+    if !is_curator_turn {
+        return Ok(());
+    }
+
     let turn_value = serde_json::json!({
         "user_input": user_input,
         "agent_response": agent_response,
@@ -79,12 +78,9 @@ pub(crate) async fn write_turn(
         "title": title,
     });
 
-    // Resolve the curator stores once per ingestion — `get()` re-attempts the
-    // open when they're down (self-healing) and signals persistent failure with
-    // a warn-once, so the writes below can treat `None` as "already signaled, skip".
+    // Resolve the curator stores once per ingestion.
     let curator_store = ctx.curator_store.get();
-    // Rebuild the curator consolidation service after a heal so the timer
-    // promotes freshly-ingested curator h_mems.
+    // Rebuild the curator consolidation service after a heal.
     if curator_store.is_some() {
         let needs_rebuild = match ctx.curator_consolidation.read() {
             Ok(guard) => guard.is_none(),
@@ -101,73 +97,42 @@ pub(crate) async fn write_turn(
         }
     }
 
-    // ── 1. User-perspective h_mem (Private) — EVERY turn ──────────────
     let entity = format!("chat:thread:{thread_id}");
     let ontology = HMemOntology::process("chat", "turn", format!("session:{thread_id}"));
-    let h_mem = HMem::new(
+
+    // ── 1. Curator-perspective h_mem (Private) ──────────────────────
+    let curator_h_mem = HMem::new(
         &entity,
         "chatted",
         serde_json::Value::String(turn_value.to_string()),
-        ctx.user_webid,
+        ctx.curator_webid,
     )
-    .with_perspective(ctx.user_webid)
+    .with_perspective(ctx.curator_webid)
     .with_visibility(Visibility::Private)
     .with_ontology(ontology);
 
-    if let Err(e) = ctx.store.store(h_mem) {
-        tracing::warn!(
-            target: "reg.memory",
-            thread_id = %thread_id,
-            error = %e,
-            "Failed to store h_mem"
-        );
-        return Err(MemoryError::Ingestion(format!(
-            "Store failed: {e}"
-        )));
-    }
-
-    // ── 2. Curator-side writes — branch on whose turn it is ───────────
-    if is_curator_turn {
-        let curator_h_mem = HMem::new(
-            &entity,
-            "chatted",
-            serde_json::Value::String(turn_value.to_string()),
-            ctx.curator_webid,
-        )
-        .with_perspective(ctx.curator_webid)
-        .with_visibility(Visibility::Private)
-        .with_ontology(HMemOntology::process(
-            "chat",
-            "turn",
-            format!("session:{thread_id}"),
-        ));
-
-        if let Some(ref curator_store) = curator_store {
-            if let Err(e) = curator_store.store(curator_h_mem) {
-                tracing::warn!(
-                    target: "reg.memory",
-                    thread_id = %thread_id,
-                    error = %e,
-                    "Failed to store curator h_mem — \
-                     curator will not recall this turn"
-                );
-            }
-        } else {
-            tracing::trace!(
+    if let Some(ref curator_store) = curator_store {
+        if let Err(e) = curator_store.store(curator_h_mem) {
+            tracing::warn!(
                 target: "reg.memory",
                 thread_id = %thread_id,
-                "Curator store unavailable — skipping curator write"
+                error = %e,
+                "Failed to store curator h_mem"
             );
         }
+    } else {
+        tracing::trace!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            "Curator store unavailable — skipping curator write"
+        );
     }
 
-    // Shared copy in the curator's DB — written for BOTH turn kinds so
-    // `curator_memory_recall` / `curator_semantic_search` see every turn the
-    // agent observed, regardless of speaker.
+    // ── 2. Shared copy in the curator's DB ──────────────────────────
     let curator_entity = format!("curator:thread:{thread_id}");
     let curator_ontology =
         HMemOntology::state("bibo:Document", vec!["chat_turn".to_string()], "curator");
-    let curator_h_mem = HMem::new(
+    let curator_copy = HMem::new(
         &curator_entity,
         "turn",
         serde_json::Value::String(turn_value.to_string()),
@@ -177,21 +142,14 @@ pub(crate) async fn write_turn(
     .with_ontology(curator_ontology);
 
     if let Some(ref curator_store) = curator_store {
-        if let Err(e) = curator_store.store(curator_h_mem) {
+        if let Err(e) = curator_store.store(curator_copy) {
             tracing::warn!(
                 target: "reg.memory",
                 thread_id = %thread_id,
                 error = %e,
-                "Failed to store curator copy — \
-                 curator memory will not include this turn"
+                "Failed to store curator copy"
             );
         }
-    } else {
-        tracing::trace!(
-            target: "reg.memory",
-            thread_id = %thread_id,
-            "Curator store unavailable — skipping curator copy"
-        );
     }
 
     // ── 3. Embed the user prompt for future retrieval ─────────────────
@@ -211,19 +169,7 @@ pub(crate) async fn write_turn(
     match vectors {
         Ok(Ok(vectors)) => {
             if let Some(vector) = vectors.into_iter().next() {
-                if let Err(e) =
-                    ctx.store
-                        .store_embedding(&embedding_entity, &vector, ctx.embedding_model)
-                {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Failed to store prompt embedding"
-                    );
-                }
-                if is_curator_turn
-                    && let Some(ref curator_store) = curator_store
+                if let Some(ref curator_store) = curator_store
                     && let Err(e) = curator_store.store_embedding(
                         &embedding_entity,
                         &vector,
@@ -244,7 +190,7 @@ pub(crate) async fn write_turn(
                 target: "reg.memory",
                 thread_id = %thread_id,
                 error = %e,
-                "Failed to embed user prompt — embedding-based recall will not work for this turn"
+                "Failed to embed user prompt"
             );
         }
         Err(e) => {
@@ -252,7 +198,7 @@ pub(crate) async fn write_turn(
                 target: "reg.memory",
                 thread_id = %thread_id,
                 error = %e,
-                "Embedding task panicked — embedding-based recall will not work for this turn"
+                "Embedding task panicked"
             );
         }
     }
@@ -261,8 +207,7 @@ pub(crate) async fn write_turn(
         target: "reg.memory",
         thread_id = %thread_id,
         model = %model,
-        is_curator_turn,
-        "Turn ingested into memory"
+        "Curator turn ingested into memory"
     );
 
     Ok(())
