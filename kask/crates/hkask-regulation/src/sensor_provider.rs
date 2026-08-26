@@ -686,7 +686,11 @@ impl Sensor for MemoryHealthSensor {
         }
 
         // LowConfidenceCount — h_mems at or below the confidence threshold.
-        if let Some(low_count) = self.source.low_confidence_count(self.low_confidence_threshold).await {
+        if let Some(low_count) = self
+            .source
+            .low_confidence_count(self.low_confidence_threshold)
+            .await
+        {
             if low_count as f64 > self.low_confidence_max as f64 {
                 return Some(Signal::new(
                     LoopId::Cybernetics,
@@ -698,7 +702,11 @@ impl Sensor for MemoryHealthSensor {
         }
 
         // ConsolidationCandidates — h_mems at or below the consolidation floor.
-        if let Some(candidates) = self.source.low_confidence_count(self.consolidation_floor).await {
+        if let Some(candidates) = self
+            .source
+            .low_confidence_count(self.consolidation_floor)
+            .await
+        {
             if candidates as f64 > self.consolidation_candidates_max as f64 {
                 return Some(Signal::new(
                     LoopId::Cybernetics,

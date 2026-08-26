@@ -8,7 +8,7 @@
 //!
 //! Exposes the Curator's regulatory surface as MCP tools:
 //! system health, escalation management, Regulation observability,
-//! cross-pod semantic search, memory recall, spec drift detection,
+//! semantic memory search, memory recall, spec drift detection,
 //! and algedonic event history.
 
 pub(crate) mod governance;
@@ -761,7 +761,7 @@ impl CuratorServer {
     /// messages, add fallbacks). Complements the existing runtime telemetry
     /// (reg.* spans, algedonic events).
     #[tool(
-        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an episodic h_mem for Curator pattern analysis. The report includes: skill name, tool name, step ordinal, error description, optional tool input, and optional failure type classification."
+        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an h_mem for Curator pattern analysis. The report includes: skill name, tool name, step ordinal, error description, optional tool input, and optional failure type classification."
     )]
     pub async fn curator_report_skill_use_issue(
         &self,
@@ -822,14 +822,14 @@ impl CuratorServer {
     // (Packer et al., 2023) — OS-style memory management with permission
     // boundaries.
 
-    /// Insert a new semantic memory into the curator's store.
+    /// Insert a new memory into the curator's store.
     ///
     /// The memory starts at confidence 0.5 (the floor — NOT the model's
     /// self-assessed confidence). Confidence is calibrated by subsequent
     /// Brier-scored outcomes, not by self-assessment.
     ///
     /// Evidence-grounding: the `evidence_h_mem_id` field must cite a
-    /// specific episodic h_mem ID that supports this memory. The tool
+    /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
         description = "Insert a new memory into the curator's store. Curator-only. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
@@ -858,7 +858,7 @@ impl CuratorServer {
                 })?;
             if evidence.is_empty() {
                 return Err(McpToolError::invalid_argument(format!(
-                    "Evidence h_mem '{id}' not found — memory_insert requires an existing episodic citation",
+                    "Evidence h_mem '{id}' not found — memory_insert requires an existing citation",
                     id = req.evidence_h_mem_id
                 )));
             }

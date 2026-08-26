@@ -154,30 +154,6 @@ async fn dismiss_nonexistent_id_returns_not_found() {
 
 // ── Memory recall — invalid input ──────────────────────────────────────────
 
-/// An unknown `memory_type` must be rejected with `invalid_argument`, not
-/// silently coerced to the default. The tool's own validation gate (before
-/// any store access) is the thing under test.
-#[tokio::test]
-async fn memory_recall_rejects_unknown_memory_type() {
-    let server = make_server();
-    let response = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
-                entity: "test-entity".to_string(),
-                memory_type: Some("bogus".to_string()),
-                ontology_axis: None,
-                ontology_value: None,
-            }))
-            .await,
-    );
-
-    assert_eq!(
-        response["kind"].as_str(),
-        Some("invalid_argument"),
-        "an unknown memory_type must be rejected as invalid_argument — got: {response}",
-    );
-}
-
 /// Naming an `ontology_axis` without an `ontology_value` is a contract
 /// violation — the axis is meaningless without a term to match. Must surface
 /// `invalid_argument`, not a silent empty result.
@@ -188,7 +164,7 @@ async fn memory_recall_ontology_axis_without_value_is_rejected() {
         &server
             .curator_memory_recall(Parameters(MemoryRecallRequest {
                 entity: "test-entity".to_string(),
-                memory_type: None,
+                recall_shape: MemoryRecallType::default(),
                 ontology_axis: Some("dc_type".to_string()),
                 ontology_value: None,
             }))
@@ -211,7 +187,7 @@ async fn memory_recall_rejects_unknown_ontology_axis() {
         &server
             .curator_memory_recall(Parameters(MemoryRecallRequest {
                 entity: "test-entity".to_string(),
-                memory_type: None,
+                recall_shape: MemoryRecallType::default(),
                 ontology_axis: Some("bogus_axis".to_string()),
                 ontology_value: Some("whatever".to_string()),
             }))
@@ -237,7 +213,7 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
         &server
             .curator_memory_recall(Parameters(MemoryRecallRequest {
                 entity: "never-seen".to_string(),
-                memory_type: Some("both".to_string()),
+                recall_shape: MemoryRecallType::Both,
                 ontology_axis: None,
                 ontology_value: None,
             }))
@@ -249,14 +225,14 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
         "an empty entity is not an error — got: {response}",
     );
     assert_eq!(
-        response["episodic"]["count"].as_u64(),
+        response["perspective_scoped"]["count"].as_u64(),
         Some(0),
-        "episodic count must be zero for an unseen entity — got: {response}",
+        "perspective_scoped count must be zero for an unseen entity — got: {response}",
     );
     assert_eq!(
-        response["semantic"]["count"].as_u64(),
+        response["entity_wide"]["count"].as_u64(),
         Some(0),
-        "semantic count must be zero for an unseen entity — got: {response}",
+        "entity_wide count must be zero for an unseen entity — got: {response}",
     );
 }
 

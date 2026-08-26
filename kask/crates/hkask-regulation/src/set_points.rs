@@ -454,12 +454,24 @@ impl SetPoints {
                 .unwrap_or(defaults.max_skill_span_history),
             max_alerts: config.max_alerts.unwrap_or(defaults.max_alerts),
             triple_count_max: config.triple_count_max.unwrap_or(defaults.triple_count_max),
-            low_confidence_max: config.low_confidence_max.unwrap_or(defaults.low_confidence_max),
-            low_confidence_threshold: config.low_confidence_threshold.unwrap_or(defaults.low_confidence_threshold),
-            consolidation_floor: config.consolidation_floor.unwrap_or(defaults.consolidation_floor),
-            consolidation_candidates_max: config.consolidation_candidates_max.unwrap_or(defaults.consolidation_candidates_max),
-            storage_usage_max_ratio: config.storage_usage_max_ratio.unwrap_or(defaults.storage_usage_max_ratio),
-            memory_life_min_days: config.memory_life_min_days.unwrap_or(defaults.memory_life_min_days),
+            low_confidence_max: config
+                .low_confidence_max
+                .unwrap_or(defaults.low_confidence_max),
+            low_confidence_threshold: config
+                .low_confidence_threshold
+                .unwrap_or(defaults.low_confidence_threshold),
+            consolidation_floor: config
+                .consolidation_floor
+                .unwrap_or(defaults.consolidation_floor),
+            consolidation_candidates_max: config
+                .consolidation_candidates_max
+                .unwrap_or(defaults.consolidation_candidates_max),
+            storage_usage_max_ratio: config
+                .storage_usage_max_ratio
+                .unwrap_or(defaults.storage_usage_max_ratio),
+            memory_life_min_days: config
+                .memory_life_min_days
+                .unwrap_or(defaults.memory_life_min_days),
         }
     }
 

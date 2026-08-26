@@ -498,8 +498,8 @@ impl CyberneticsLoop {
         source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
         set_points: &crate::set_points::SetPoints,
     ) -> Self {
-        self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::MemoryHealthSensor::new(
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::MemoryHealthSensor::new(
                 source,
                 set_points.triple_count_max,
                 set_points.low_confidence_max,
@@ -508,8 +508,7 @@ impl CyberneticsLoop {
                 set_points.consolidation_candidates_max,
                 set_points.storage_usage_max_ratio,
                 set_points.memory_life_min_days,
-            ),
-        ));
+            )));
         self
     }
 
@@ -521,8 +520,8 @@ impl CyberneticsLoop {
         &mut self,
         source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
     ) {
-        self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::MemoryHealthSensor::new(
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::MemoryHealthSensor::new(
                 source,
                 self.set_points.triple_count_max,
                 self.set_points.low_confidence_max,
@@ -531,8 +530,7 @@ impl CyberneticsLoop {
                 self.set_points.consolidation_candidates_max,
                 self.set_points.storage_usage_max_ratio,
                 self.set_points.memory_life_min_days,
-            ),
-        ));
+            )));
     }
 
     /// Submit a rollout impact check for the next `verify_impact` pass.

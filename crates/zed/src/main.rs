@@ -1699,9 +1699,35 @@ fn main() {
                                      auto_inject={auto_inject})"
                                 );
 
+                                // Wire the memory health source into the cybernetics
+                                // loop so it can sense memory growth, low-confidence
+                                // accumulation, and storage budget pressure. Without
+                                // this, 5 memory regulation loops are blind — their
+                                // policy rules (`TripleCount`, `LowConfidenceCount`,
+                                // `ConsolidationCandidates`, `StorageUsage`,
+                                // `MemoryLife`) can never fire because no signal is
+                                // produced. This closes the dead-policy gap.
+                                //
+                                // The health source is the `RealMemoryPort` itself —
+                                // it implements `MemoryHealthSource` by reading from
+                                // the curator's `MemoryStore` behind the self-healing
+                                // handle.
+                                let memory_health_source: std::sync::Arc<
+                                    dyn hkask_regulation::MemoryHealthSource,
+                                > = real_memory_typed.clone();
+                                {
+                                    let loop_for_health =
+                                        cybernetics_loop_for_panel_deferred.clone();
+                                    gpui_tokio::Tokio::spawn(cx, async move {
+                                        let mut loop_guard = loop_for_health.write().await;
+                                        loop_guard.set_memory_health_source(memory_health_source);
+                                    })
+                                    .detach();
+                                }
+
                                 // D11 curator mirror: wire the curator context
                                 // injector so the Curator recalls its own
-                                // sovereign memory (episodic + semantic from
+                                // sovereign memory from
                                 // `agents/curator/curator.db`). Without this, the
                                 // Curator has no automatic recall — it must
                                 // call `curator_memory_recall` /
@@ -2026,32 +2052,6 @@ fn main() {
                             gpui_tokio::Tokio::spawn(cx, async move {
                                 let mut loop_guard = loop_for_health.write().await;
                                 loop_guard.set_inference_health_source(inference_health_source);
-                            })
-                            .detach();
-                        }
-
-                        // Wire the memory health source into the cybernetics
-                        // loop so it can sense memory growth, low-confidence
-                        // accumulation, and storage budget pressure. Without
-                        // this, 5 memory regulation loops are blind — their
-                        // policy rules (`TripleCount`, `LowConfidenceCount`,
-                        // `ConsolidationCandidates`, `StorageUsage`,
-                        // `MemoryLife`) can never fire because no signal is
-                        // produced. This closes the dead-policy gap identified
-                        // in the cybernetics review.
-                        //
-                        // The health source is the `RealMemoryPort` itself —
-                        // it implements `MemoryHealthSource` by reading from
-                        // the curator's `MemoryStore` behind the self-healing
-                        // handle.
-                        let memory_health_source: std::sync::Arc<
-                            dyn hkask_regulation::MemoryHealthSource,
-                        > = real_memory_typed.clone();
-                        {
-                            let loop_for_health = cybernetics_loop_for_panel_deferred.clone();
-                            gpui_tokio::Tokio::spawn(cx, async move {
-                                let mut loop_guard = loop_for_health.write().await;
-                                loop_guard.set_memory_health_source(memory_health_source);
                             })
                             .detach();
                         }
