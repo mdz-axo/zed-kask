@@ -27,3 +27,8 @@ pub use escalation::{EscalationEntry, EscalationError, EscalationQueue, Escalati
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore};
 pub use regulation_store::{DecayConfig, RegulationArchive};
+
+pub use gallery::{
+    FaceRegistryRecord, GalleryMode, GalleryRecord, GalleryStore, GalleryStoreError, ImageRecord,
+    TagRecord,
+};

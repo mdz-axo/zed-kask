@@ -1,0 +1,91 @@
+# Media — Reaction-GIF Pipeline (FlowDef)
+# Pre-defined pipeline (OpenMontage pattern): generate a still image, animate
+# it into a short video clip, then convert the clip to a GIF. Fixed, known-good
+# topology — the FlowDef executor chains tool outputs implicitly (no
+# $references). Invoked via action: flowdef from a parent skill.
+#
+# This pipeline demonstrates the local+cloud dual path: image generation and
+# image-to-video run on the cloud provider (fal.ai); the final video-to-gif
+# conversion runs locally via ffmpeg (the local execution path referenced in
+# the refactor plan, WS-1/WS-11). No asset leaves the user's machine after the
+# cloud steps return — the GIF is produced locally from the downloaded clip.
+
+template_type: FlowDef
+name: media_reaction_gif
+version: "1.0.0"
+description: >
+  Reaction-GIF pipeline: generate a still image, animate it into a short video
+  clip, then convert the clip to a shareable GIF. Pre-defined multi-step
+  pipeline spanning cloud generation and local ffmpeg processing.
+
+# primary_model is the model used by the generate step (the generate_image MCP
+# tool's default, overridable via HKASK_MEDIA_IMAGE_GEN_MODEL). The animate
+# step routes through the image_to_video MCP tool's configured model
+# (fal.ai/seedance-2.0/image-to-video by default); the to-gif step is local
+# ffmpeg (no model).
+primary_model: "fal.ai/flux/dev"
+
+# No fusion block — model selection is operator-configured via kask.fusion /
+# HKASK_FUSION_PANEL_MODELS. Recommend the default image generation model
+# (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the fal.ai
+# seedance-2.0 image-to-video endpoint for the animate step.
+
+# rJoule: generate_image (flux/dev) + image_to_video (seedance, queue-mode) is
+# the costly pair; video_to_gif is local ffmpeg (no inference cost).
+rjoule:
+  cap: 4
+  alert_threshold: 0.8
+  hard_limit: true
+
+parameters:
+  - name: scene_description
+    type: string
+    required: true
+    description: "The still image to generate (the reaction subject)"
+  - name: motion_description
+    type: string
+    required: false
+    description: "How the scene should move in the clip (optional; defaults to subtle motion)"
+  - name: duration
+    type: float
+    default: 2.0
+    description: "Clip length in seconds (1–5)"
+  - name: gif_start
+    type: float
+    default: 0.0
+    description: "GIF start time within the clip (seconds)"
+  - name: gif_end
+    type: float
+    default: 2.0
+    description: "GIF end time within the clip (seconds)"
+
+input_type: text
+output_type: image_urls
+latency: async
+cost_tier: high
+
+steps:
+  - id: generate
+    tool: generate_image
+    description: "Generate the still image to animate"
+    prompt: "{{ scene_description }}. Suitable for a short looping reaction clip."
+
+  - id: animate
+    tool: image_to_video
+    description: "Animate the still image into a short video clip (cloud, queue-mode)"
+    prompt: "{{ motion_description }}"
+    duration: "{{ duration }}"
+
+  - id: to_gif
+    tool: video_to_gif
+    description: "Convert the clip to a shareable GIF (local ffmpeg — no cloud cost)"
+    start: "{{ gif_start }}"
+    end: "{{ gif_end }}"
+
+# Pipeline (documentation):
+# Phase 1: generate_image — still (cloud)
+# Phase 2: image_to_video — animate (cloud, queue)
+# Phase 3: video_to_gif — local ffmpeg conversion
+# Return: final GIF URL (local file)
+# Anti-lock-in note: the GIF is a local file; the cloud provider only supplies
+# the intermediate video URL, which is not the deliverable.

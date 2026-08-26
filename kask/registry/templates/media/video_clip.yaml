@@ -1,0 +1,30 @@
+# Media Video — Video Clip FlowDef
+# Local ffmpeg subprocess for trimming video.
+
+template_type: FlowDef
+name: media_video_clip
+version: "1.0.0"
+description: "Trim a video to specified start/end times"
+primary_model: "local/ffmpeg"
+parameters:
+  - name: video_url
+    type: string
+    required: true
+    description: "URL or path to the source video"
+  - name: start_sec
+    type: float
+    required: true
+    description: "Start time in seconds"
+  - name: end_sec
+    type: float
+    required: true
+    description: "End time in seconds"
+input_type: video_url
+output_type: video_url
+latency: sync
+cost_tier: free
+---
+# Video Clip Pipeline
+# Step 1: Validate video_url
+# Step 2: Run ffmpeg -ss {start_sec} -to {end_sec} -i {input} -c copy {output}
+# Step 3: Return output video path/URL

@@ -1,0 +1,28 @@
+# Media Bundle — Meme Pipeline Workflow
+# Composes: select_template → caption_generate → render_meme → video_add_caption
+
+template_type: FlowDef
+name: media_bundle_meme
+version: "1.0.0"
+description: "Create a meme video: select template, generate caption, animate"
+bundle: true
+steps:
+  - tool: gallery_get_image
+    description: "Select meme template from gallery"
+  - tool: image_caption
+    description: "Generate meme-style caption via LLM"
+  - tool: image_to_video
+    description: "Animate template image to short video"
+  - tool: video_add_caption
+    description: "Overlay caption text on video"
+input_type: image_index
+output_type: video_url
+latency: queue
+cost_tier: high
+---
+# Meme Pipeline Workflow
+# 1. gallery_get_image → get template image URL
+# 2. image_caption with meme-style prompt → caption text
+# 3. image_to_video with motion prompt → animated video
+# 4. video_add_caption with caption text → final meme video
+# 5. Return video URL

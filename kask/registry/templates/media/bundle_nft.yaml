@@ -1,0 +1,28 @@
+# Media Bundle — NFT Derivation Workflow
+# Composes: select_source → apply_style_transfer → upscale → caption → export_metadata
+
+template_type: FlowDef
+name: media_bundle_nft
+version: "1.0.0"
+description: "Derive an NFT from a gallery image: style transfer, upscale, caption"
+bundle: true
+steps:
+  - tool: gallery_get_image
+    description: "Select source image from gallery"
+  - tool: image_apply_style
+    description: "Apply style transfer with prompt"
+  - tool: image_upscale
+    description: "Upscale to target resolution"
+  - tool: image_caption
+    description: "Generate caption for metadata"
+input_type: image_index
+output_type: image_blob
+latency: queue
+cost_tier: high
+---
+# NFT Derivation Workflow
+# 1. gallery_get_image → get source image URL
+# 2. image_apply_style with style_prompt + strength → styled image
+# 3. image_upscale to target resolution → high-res output
+# 4. image_caption for metadata → description text
+# 5. Return {image_url, caption, metadata}

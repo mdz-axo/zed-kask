@@ -1,0 +1,37 @@
+# Media Derivation — Collage Creation FlowDef
+# Local composition using the image crate. No LLM call.
+
+template_type: FlowDef
+name: media_create_collage
+version: "1.0.0"
+description: "Create a collage from multiple images"
+primary_model: "local/image-crate"
+parameters:
+  - name: image_urls
+    type: array
+    required: true
+    description: "Array of image URLs or paths"
+  - name: layout
+    type: enum
+    values: [grid, horizontal, vertical, masonry]
+    default: grid
+    description: "Layout arrangement"
+  - name: spacing
+    type: integer
+    default: 8
+    description: "Pixels between images"
+  - name: canvas_size
+    type: string
+    default: "1920x1080"
+    description: "Output canvas dimensions (WxH)"
+input_type: image_urls
+output_type: image_blob
+latency: sync
+cost_tier: free
+---
+# Collage Creation Pipeline
+# Step 1: Download/load all source images
+# Step 2: Optionally remove backgrounds (if transparent collage)
+# Step 3: Resize images to fit layout grid
+# Step 4: Compose onto canvas with spacing
+# Step 5: Return composite image blob

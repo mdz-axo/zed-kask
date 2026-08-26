@@ -1,0 +1,25 @@
+# Media Bundle — Collage Workflow
+# Composes: select_images → remove_backgrounds → compose_layout → render_collage
+
+template_type: FlowDef
+name: media_bundle_collage
+version: "1.0.0"
+description: "Create a collage from gallery images with background removal"
+bundle: true
+steps:
+  - tool: gallery_get_image
+    description: "Select source images from gallery"
+  - tool: image_remove_background
+    description: "Remove backgrounds from each selected image"
+  - tool: image_create_collage
+    description: "Compose images into collage layout"
+input_type: image_indices
+output_type: image_blob
+latency: sync
+cost_tier: low
+---
+# Collage Workflow
+# 1. gallery_get_image for each index → get image URLs
+# 2. image_remove_background for each image → transparent PNGs
+# 3. image_create_collage with layout + spacing → composite image
+# 4. Return collage image blob
