@@ -102,6 +102,7 @@ use std::sync::Mutex;
 hkask_mcp_server::mcp_server!(
     pub struct TrainingServer {
         pub store: Option<MemoryStore>,
+        pub db_passphrase: Option<String>,
         pub host: Box<dyn TrainingHost>,
         pub host_id: TrainingHostId,
         pub harness_id: TrainingHarnessId,
@@ -397,7 +398,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                let (store, adapter_store, job_store) = match passphrase {
+                let (store, adapter_store, job_store) = match passphrase.clone() {
                     Some(passphrase) => {
                         let db = hkask_storage::Database::open(&db_path, &passphrase)
                             .map_err(|e| {
@@ -488,6 +489,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 Ok(TrainingServer::new(
                     ctx.webid,
                     store,
+                    passphrase,
                     host,
                     host_config.host,
                     harness_id,
@@ -637,6 +639,8 @@ mod smoke {
         TrainingServer::new(
             WebID::new(),
             // store: no MemoryStore — validate_config never reads it.
+            None,
+            // db_passphrase: no encrypted DB — validate_config never reads it.
             None,
             Box::new(NullTrainingHost),
             TrainingHostId::Runpod,

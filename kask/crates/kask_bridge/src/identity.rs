@@ -105,7 +105,7 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
     //    Resolve against the hKask data directory so paths are absolute.
     //    D28: scaffolding subdirs removed — `ensure_agent_dirs` now creates
     //    only the agent root. DBs create their own parent dir on open.
-    let data_dir = hkask_services_core::config::resolve_data_dir();
+    let data_dir = hkask_types::agent_paths::resolve_data_dir();
     let agent_root = data_dir.join(hkask_types::agent_paths::agent_dir(&agent_name));
     std::fs::create_dir_all(&agent_root).map_err(ProvisionError::DirectoryCreation)?;
 
@@ -207,6 +207,21 @@ pub fn mirror_provisioned_db_passphrase(
             ),
         }
     })
+}
+
+/// Username-independent DB passphrase provisioning for MCP server launch
+/// time.
+///
+/// `provision_agent` (and thus the "allostery" first-run default) runs in
+/// zed's deferred post-login task, but MCP servers resolve their launch env
+/// before login resolves — on a machine that never signs in, the default
+/// never landed and every DB-backed server failed with `permission_denied`.
+/// This wrapper exposes the username-independent passphrase half so the
+/// canonical env path (`build_mcp_server_env`) can provision it at launch
+/// time, login or not. Idempotent: env override → existing keychain entry →
+/// default "allostery" stored on first run.
+pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
+    resolve_or_create_passphrase()
 }
 
 /// Resolve the DB passphrase from the keychain, or create one if none exists.

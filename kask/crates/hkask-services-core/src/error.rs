@@ -126,21 +126,15 @@ pub enum ServiceError {
 /// Top-level domain for error routing and observability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainKind {
-    Agent,
-    Consent,
     Curator,
     Inference,
     Infrastructure,
     Memory,
-    Pod,
     Storage,
     User,
     Wallet,
-    /// MCP tool invocations (out-of-process tool servers). Distinct from `Skill`
-    /// (agent capability management) and `Wallet` (economic balance).
+    /// MCP tool invocations (out-of-process tool servers).
     Mcp,
-    /// Skill registry operations: discovery, publishing, auditing, bundle composition.
-    Skill,
 }
 
 impl ServiceError {

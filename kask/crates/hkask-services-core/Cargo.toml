@@ -3,17 +3,15 @@ name = "hkask-services-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "hKask service-layer foundation — ServiceError, ServiceConfig, HkaskSettings"
+description = "hKask service-layer foundation — ServiceError and HkaskSettings"
 
 
 [lib]
 path = "src/hkask_services_core.rs"
 
 [dependencies]
-hkask-storage.workspace = true
 hkask-types.workspace = true
 hkask-inference.workspace = true
-hkask-keystore.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

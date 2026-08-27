@@ -1,23 +1,20 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hKask Service-Layer Foundation — shared error types, configuration, and settings.
+//! hKask Service-Layer Foundation — shared error types and model settings.
 //!
-//! This crate is the foundation for most service-layer modules: `ServiceError`,
-//! `ServiceConfig`, and `HkaskSettings` are consumed by every service crate
-//! except the research module (now in hkask-mcp-research), which intentionally keeps its own
-//! provider-shaped `WebError` (see ADR-054). Extracted from `hkask-services` to
-//! enable parallel compilation and clear architectural boundaries.
+//! Consumed by the corpus and curator MCP servers: `ServiceError` (with
+//! `DomainKind`/`ErrorKind`) and `HkaskSettings` (env > settings.json >
+//! default model resolution). The former `ServiceConfig` was removed —
+//! zero production callers (the deletion test); storage drivers are opened
+//! directly by each server via `hkask-storage`.
 //!
 //! # Modules
 //!
 //! - `error` — `ServiceError` enum composing all domain error types
-//! - `config` — `ServiceConfig` resolved once at startup
-//! - `settings` — `HkaskSettings` and canonical settings path
+//! - `settings` — `HkaskSettings` and the canonical settings path
 
-pub mod config;
 pub mod error;
 pub mod settings;
 
-pub use config::{DEFAULT_DB_PATH, ServiceConfig};
 pub use error::{DomainKind, ErrorKind, ServiceError};
-pub use settings::{HkaskSettings, load_settings, settings_path};
+pub use settings::HkaskSettings;

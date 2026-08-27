@@ -361,6 +361,13 @@ pub struct KaskPredictionMarketsSettings {
 /// No path fields — the scenarios data dir is derived from the global
 /// `KaskSettings::data_dir` as `mcp/scenarios/` by `mcp_env()`. The server
 /// reads it via `HKASK_SCENARIOS_DATA`.
+///
+/// Reserved: the struct is intentionally empty today (the scenarios server
+/// has no non-secret operator-tunable knobs beyond `HKASK_DATA_DIR`). It
+/// exists in the settings schema so the settings UI page and the
+/// `KaskSettings` struct stay symmetric with the other per-server sections;
+/// adding a field here when the server gains a knob requires no schema
+/// migration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskScenariosSettings {}
 

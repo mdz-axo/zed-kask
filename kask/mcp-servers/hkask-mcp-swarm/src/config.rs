@@ -195,6 +195,8 @@ pub fn resolve_local_swarms_dir(local_swarms_dir: &str) -> String {
     }
 }
 
+use hkask_mcp_server::parse_env_warn;
+
 impl SwarmConfig {
     /// Build from environment, returning the config plus any warnings about
     /// degraded operation (missing key → catalogue-only mode).
@@ -209,14 +211,14 @@ impl SwarmConfig {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.api_base_url);
-        let max_credits_per_dispatch = std::env::var("HKASK_ABW_MAX_CREDITS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default.max_credits_per_dispatch);
-        let curator_consent_default = std::env::var("HKASK_ABW_CURATOR_CONSENT_DEFAULT")
-            .ok()
-            .and_then(|s| s.trim().to_lowercase().parse::<bool>().ok())
-            .unwrap_or(default.curator_consent_default);
+        let max_credits_per_dispatch = parse_env_warn(
+            "HKASK_ABW_MAX_CREDITS",
+            default.max_credits_per_dispatch,
+        );
+        let curator_consent_default = parse_env_warn(
+            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
+            default.curator_consent_default,
+        );
         let default_agent_model = std::env::var("HKASK_ABW_DEFAULT_AGENT_MODEL")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -231,11 +233,10 @@ impl SwarmConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_swarms_dir);
         let local_swarms_dir = resolve_local_swarms_dir(&local_swarms_dir);
-        let a2a_http_enabled = std::env::var("HKASK_A2A_HTTP_ENABLE")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .and_then(|s| s.trim().to_lowercase().parse::<bool>().ok())
-            .unwrap_or(default.a2a_http_enabled);
+        let a2a_http_enabled = parse_env_warn(
+            "HKASK_A2A_HTTP_ENABLE",
+            default.a2a_http_enabled,
+        );
         let allowed_tool_servers = std::env::var("HKASK_MCP_SERVER_IDS")
             .ok()
             .filter(|s| !s.trim().is_empty())

@@ -53,7 +53,7 @@ pub const DEFAULT_DB_PATH: &str = "hkask.db";
 /// 3. `$HOME/.local/share/zed-kask`
 /// 4. Current working directory (fallback, with a `warn!`)
 ///
-/// All relative database paths in `ServiceConfig` are resolved against
+/// All relative database paths are resolved against
 /// this directory, ensuring agent databases stay in a predictable location
 /// regardless of where `kask` is invoked from. This is the single regulator for
 /// the data-dir rule — `resolve_under_data_dir` delegates here so the two

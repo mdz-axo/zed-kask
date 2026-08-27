@@ -40,7 +40,7 @@ pub(crate) fn days_since(dt: DateTime<Utc>) -> f64 {
 /// Default memory life in days: 6 months × 30 days = 180 days.
 ///
 /// After 180 days without recall, confidence decays to exp(-1) ≈ 36.8%.
-/// Configurable via ServiceConfig.memory_life_days (admin setting).
+/// Configurable via the `memory_life_days` admin setting.
 ///
 /// Based on Wozniak & Gorzelanczyk (1995): R(t) = exp(-t/S) where S is
 /// memory life in days.

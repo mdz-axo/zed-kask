@@ -18,8 +18,10 @@
 //! and are never composed in sequence on the same map. Config is filtered first, then
 //! credentials are resolved and merged into the already-filtered map. Reversing this
 //! order — or running the config filter over a map that already contains credentials —
-//! drops every credential (the config allowlist does not list credential keys). This
-//! is the regression the previous two-path design had; do not reintroduce it.
+//! drops every credential (the config allowlist does not list credential keys). This is
+//! the regression the previous two-path design had; do not reintroduce it.
+
+use gpui::AppContext;
 
 /// A built-in kask MCP server descriptor.
 #[derive(Debug, Clone, Copy)]
@@ -543,6 +545,31 @@ pub async fn build_mcp_server_env(
             env.insert(env_var, value);
             continue;
         }
+        // Startup-default passphrases: provision the required "allostery"
+        // default before falling through to the missing-credential warning.
+        // See `DEFAULT_PASSPHRASE_ENV_VARS` for why this tier exists at all.
+        if let Some(passphrase) = provision_default_passphrase(&env_var, cx).await {
+            // Mirror into zed's keychain so the primary ctx.credentials tier
+            // (and the settings UI's `has_credential`) sees the provisioned
+            // value on subsequent reads; the env insertion below serves this
+            // launch directly even if the mirror write fails.
+            if let Err(error) = credentials_provider
+                .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
+                .await
+            {
+                tracing::warn!(
+                    target: "reg.mcp",
+                    server_id = %server_id,
+                    env_var = %env_var,
+                    %error,
+                    "Failed to mirror provisioned passphrase to CredentialsProvider — \
+                     the value is injected into this launch's env, but future reads \
+                     will re-provision until the mirror succeeds"
+                );
+            }
+            env.insert(env_var, passphrase);
+            continue;
+        }
         // Neither the parent shell nor the keychain provided a non-empty
         // value. The MCP server will surface `permission_denied` when it
         // tries to use this credential (see `.rules` — "Missing credentials
@@ -583,6 +610,63 @@ pub async fn build_mcp_server_env(
     }
 
     env
+}
+
+/// Env vars with a required startup-default passphrase.
+///
+/// The default ("allostery") is a stated first-run requirement: DB-backed
+/// MCP servers must open their SQLCipher databases without login or manual
+/// keychain configuration. The default used to be provisioned only in zed's
+/// deferred post-login task (`provision_agent` + keychain mirrors in
+/// `main.rs`), but servers resolve their launch env before login resolves —
+/// on a machine that never signs in, the default never landed and every
+/// DB-backed server failed with `permission_denied`. Provisioning at the
+/// canonical env path guarantees the default regardless of launch ordering.
+///
+/// All other credentials have NO default — a miss keeps warning so "not
+/// configured" stays visible to the operator.
+const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 2] =
+    ["HKASK_DB_PASSPHRASE", "HKASK_SWARM_MEMORY_PASSPHRASE"];
+
+/// Provision the startup-default passphrase for `env_var`, if it has one.
+///
+/// Runs the keystore chain (env override → existing keychain entry → default
+/// "allostery" stored on first run) on the background executor — keyring I/O
+/// is synchronous D-Bus and must not block the foreground thread. Returns the
+/// resolved passphrase, or `None` when `env_var` has no startup default or
+/// provisioning failed (the caller then falls through to the
+/// missing-credential warning, which names the env var).
+async fn provision_default_passphrase(env_var: &str, cx: &gpui::AsyncApp) -> Option<String> {
+    if !DEFAULT_PASSPHRASE_ENV_VARS.contains(&env_var) {
+        return None;
+    }
+    let env_var = env_var.to_string();
+    let env_var_for_log = env_var.clone();
+    let provisioned = cx
+        .background_spawn(async move {
+            match env_var.as_str() {
+                "HKASK_SWARM_MEMORY_PASSPHRASE" => {
+                    crate::identity::provision_swarm_memory_passphrase()
+                }
+                _ => crate::identity::provision_db_passphrase(),
+            }
+        })
+        .await;
+    match provisioned {
+        Ok(passphrase) if !passphrase.is_empty() => Some(passphrase),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(
+                target: "reg.mcp",
+                env_var = %env_var_for_log,
+                %error,
+                "Failed to provision the default passphrase — the server will \
+                 fail with permission_denied until a passphrase is provisioned \
+                 (sign in, or set the env var / keychain entry)"
+            );
+            None
+        }
+    }
 }
 
 /// Filter a base config env map (`mcp_env()` output) to only the env vars the
@@ -1439,6 +1523,69 @@ mod tests {
             env.get("HKASK_SMTP_USERNAME"),
             None,
             "curator email config must not leak into the portfolio server"
+        );
+    }
+
+    // ── startup-default passphrase tests ───────────────────────────────
+    //
+    // The "allostery" default is a stated first-run requirement: DB-backed
+    // servers must open their SQLCipher databases without login or manual
+    // keychain configuration. These tests pin the wiring that guarantees it
+    // at the canonical env path — the vars that have a default, and that
+    // non-default credentials never silently gain one.
+
+    /// Pin the requirement surface: exactly the two passphrase vars carry a
+    /// startup default, and both are reachable through the credential loop
+    /// for the servers that need them (so the provisioning tier actually
+    /// fires — a var with a default but no credential URL would never reach
+    /// `provision_default_passphrase`).
+    #[test]
+    fn default_passphrase_env_vars_pin_the_requirement() {
+        assert_eq!(
+            DEFAULT_PASSPHRASE_ENV_VARS,
+            ["HKASK_DB_PASSPHRASE", "HKASK_SWARM_MEMORY_PASSPHRASE"],
+            "the startup-default passphrase set is a stated requirement — \
+             DB + swarm memory passphrases default to 'allostery' on first run; \
+             changing this set is a requirements change, not a refactor"
+        );
+
+        // Both vars must be in the credential URL list so the loop reaches
+        // the provisioning tier for servers that allowlist them.
+        let urls = crate::credential_urls_for_mcp();
+        for env_var in DEFAULT_PASSPHRASE_ENV_VARS {
+            assert!(
+                urls.iter().any(|(var, _)| var == env_var),
+                "{env_var} must have a credential URL — otherwise the credential \
+                 loop never reaches provision_default_passphrase for it"
+            );
+        }
+
+        // And at least one DB-backed server must allowlist the DB passphrase —
+        // pins that the default actually reaches a consumer.
+        let corpus_urls = filter_credentials_for_server("corpus", &urls);
+        assert!(
+            corpus_urls
+                .iter()
+                .any(|(var, _)| var == "HKASK_DB_PASSPHRASE"),
+            "the corpus server must allowlist HKASK_DB_PASSPHRASE so the \
+             startup default is provisioned for its launch env"
+        );
+    }
+
+    /// Pin that non-default credentials never silently gain a default: a
+    /// missing API key must return `None` (falling through to the
+    /// missing-credential warning) rather than provisioning a value.
+    /// "Not configured" must stay visible for credentials that have no
+    /// required default.
+    #[tokio::test]
+    async fn provision_default_passphrase_returns_none_for_non_default_vars() {
+        let cx = gpui::TestAppContext::single().to_async();
+        assert!(
+            provision_default_passphrase("HKASK_ABW_API_KEY", &cx)
+                .await
+                .is_none(),
+            "HKASK_ABW_API_KEY has no startup default — a miss must fall through \
+             to the missing-credential warning, not be silently provisioned"
         );
     }
 }

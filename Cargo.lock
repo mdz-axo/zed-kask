@@ -9332,8 +9332,6 @@ version = "0.38.0"
 dependencies = [
  "dirs",
  "hkask-inference",
- "hkask-keystore",
- "hkask-storage",
  "hkask-types",
  "serde",
  "serde_json",

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// pre:  none (always succeeds)
 /// post: returns PathBuf to ~/.config/zed-kask/settings.json; parent directory created if missing
 #[must_use]
-pub fn settings_path() -> std::path::PathBuf {
+pub(crate) fn settings_path() -> std::path::PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     path.push("zed-kask");
     if let Err(e) = std::fs::create_dir_all(&path) {
@@ -220,27 +220,3 @@ impl HkaskSettings {
     }
 }
 
-/// Load any settings type from `~/.config/hkask/settings.json`.
-/// Falls back to `T::default()` if the file doesn't exist or is unparsable.
-///
-/// This is the shared load path for CLI (`ReplSettings`), API (`SettingsResponse`),
-/// and any future surface that needs LLM parameter persistence.
-///
-/// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-/// pre:  T must implement DeserializeOwned + Default
-/// post: returns T from disk; T::default() if file missing or unparsable
-#[must_use]
-pub fn load_settings<T: serde::de::DeserializeOwned + Default>() -> T {
-    let path = settings_path();
-    match std::fs::read_to_string(&path) {
-        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "Failed to parse settings.json — using defaults"
-            );
-            T::default()
-        }),
-        Err(_) => T::default(),
-    }
-}

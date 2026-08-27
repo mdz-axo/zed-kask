@@ -264,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn oneOf_exactly_one_match_required() {
+    fn one_of_exactly_one_match_required() {
         let schema = json!({
             "oneOf": [
                 {"type": "string"},
@@ -286,7 +286,7 @@ mod tests {
         let doc = json!({"only": "one"});
         let result = validate(&schema, &doc);
         assert!(!result.is_valid(), "unsupported keyword silently passed");
-        assert!(result.is_contradiction() == false);
+        assert!(!result.is_contradiction());
         assert!(
             result
                 .unsupported
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_keyword_inside_non_matching_oneOf_still_surfaces() {
+    fn unsupported_keyword_inside_non_matching_one_of_still_surfaces() {
         // The scan-before-early-return invariant: the type-mismatch return in
         // alternative A must not swallow alternative B's unsupported keyword.
         let schema = json!({

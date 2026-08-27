@@ -151,15 +151,11 @@ impl ScenariosServer {
         }
     }
 
-    /// Validate tool call sequence and emit Regulation warnings on violations.
-    ///
-    /// Tracks which tools have been called on this server instance. When a
-    /// pipeline-stage tool is invoked without its expected predecessor having
-    /// been called, emits a Regulation warning. Does not block execution — tool
-    /// flexibility is preserved for exploratory and bypass workflows.
-    ///
-    /// In-memory only: tracking resets when the server process restarts.
-    fn check_sequence(&self, tool: &str) {
+    /// Track pipeline sequence for this tool and emit a Regulation warning if
+    /// its expected predecessor was not called. In-memory only: tracking
+    /// resets when the server process restarts. Does not block execution —
+    /// tool flexibility is preserved for exploratory and bypass workflows.
+    fn record_experience(&self, tool: &str) {
         let mut called = self.called_tools.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(expected) = Self::expected_predecessor(tool)
@@ -176,24 +172,6 @@ impl ScenariosServer {
 
         called.insert(tool.to_string());
     }
-
-    /// Check pipeline sequence for this tool and emit a Regulation warning if
-    /// the expected predecessor was not called.
-    ///
-    /// This is the pipeline-sequence validation hook — it tracks which tools
-    /// have been called on this server instance and warns when a pipeline-stage
-    /// tool is invoked out of order. It does NOT record or persist anything.
-    fn record_experience(&self, tool: &str) {
-        self.check_sequence(tool);
-    }
-}
-
-// ── Tool router ────────────────────────────────────────────────────────────
-
-impl ScenariosServer {
-    fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
-        Self::scenario_router()
-    }
 }
 
 // ── MCP Tools ──────────────────────────────────────────────────────────────
@@ -207,8 +185,12 @@ fn build_status_response(
     recent: Vec<serde_json::Value>,
     tree: Option<serde_json::Value>,
 ) -> serde_json::Value {
-    let provenance_args = serde_json::Value::Object(serde_json::Map::new());
-    let provenance_span_id = serde_json::Value::Null;
+    let mut prov_extra = serde_json::Map::new();
+    prov_extra.insert(
+        "args".into(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
+    prov_extra.insert("span_id".into(), serde_json::Value::Null);
     serde_json::json!({
         "pipeline": {
             "forecast_count": total,
@@ -219,15 +201,69 @@ fn build_status_response(
         },
         "calibration": calibration,
         "event_tree": tree,
-        "provenance": {
-            "tool": "scenario_status",
-            "server": "hkask-mcp-scenarios",
-            "args": provenance_args,
-            "span_id": provenance_span_id,
-            "version": SERVER_VERSION
-        },
+        "provenance": provenance("scenario_status", prov_extra),
         "ontology": dc_bibo::DATASET
     })
+}
+
+/// Build the standard provenance object for a tool output. The common core
+/// (`tool`, `server`, `version`) is merged with per-tool `extra` fields.
+fn provenance(tool: &str, extra: serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("tool".into(), serde_json::Value::String(tool.to_string()));
+    map.insert(
+        "server".into(),
+        serde_json::Value::String("hkask-mcp-scenarios".to_string()),
+    );
+    map.insert(
+        "version".into(),
+        serde_json::Value::String(SERVER_VERSION.to_string()),
+    );
+    for (key, value) in extra {
+        map.insert(key, value);
+    }
+    serde_json::Value::Object(map)
+}
+
+/// Decode a JSON parameter that may arrive as a JSON object/array or as a
+/// JSON string containing one (some MCP frameworks encode complex parameters
+/// as strings).
+fn decode_json_param(
+    value: &serde_json::Value,
+    label: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    match value {
+        serde_json::Value::String(s) => serde_json::from_str(s).map_err(|e| {
+            McpToolError::invalid_argument(format!("invalid {label} JSON string: {e}"))
+        }),
+        other => Ok(other.clone()),
+    }
+}
+
+/// Serialize an EventTree's nodes to the standard JSON shape. `include_basis`
+/// controls whether the `basis` field appears (CMP-index trees cite it;
+/// market-set trees don't).
+fn tree_nodes_json(tree: &EventTree, include_basis: bool) -> Vec<serde_json::Value> {
+    tree.nodes
+        .iter()
+        .map(|n| {
+            let mut node = serde_json::json!({
+                "id": n.event.id,
+                "question": n.event.question,
+                "marginal_probability": n.marginal_probability,
+                "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
+                    "parent_event_ids": d.parent_event_ids,
+                    "conditionals": d.conditionals,
+                })).collect::<Vec<_>>(),
+                "base_rate": n.event.base_rate,
+                "variance_contribution": n.variance_contribution,
+            });
+            if include_basis {
+                node["basis"] = n.event.basis.clone().into();
+            }
+            node
+        })
+        .collect()
 }
 
 #[tool_router(router = scenario_router, vis = "pub")]
@@ -434,13 +470,12 @@ impl ScenariosServer {
                 "calibration": calibration,
                 "synthesis": synth.map(|s| serde_json::json!({"aggregated": s.aggregated_probability, "disagreement": s.disagreement_score})),
                 "assessment": {"overall": assessment.overall_score, "recommendations": assessment.recommendations},
-                "provenance": {
-                    "tool": "scenario_full",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "pipeline_steps": ["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"],
-                    "delegates_to": ["triage_question", "build_event_tree", "sensitivity_ranking", "calibrate_from_fermi", "outside_view_adjustment", "synthesize_perspectives", "assess_project"]
-                },
+                "provenance": provenance("scenario_full", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("pipeline_steps".into(), serde_json::json!(["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"]));
+                    m.insert("delegates_to".into(), serde_json::json!(["triage_question", "build_event_tree", "sensitivity_ranking", "calibrate_from_fermi", "outside_view_adjustment", "synthesize_perspectives", "assess_project"]));
+                    m
+                }),
                 "ontology": dc_bibo::DATASET
             });
 
@@ -463,14 +498,7 @@ impl ScenariosServer {
         Parameters(req): Parameters<MarketsBridgeRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets", Self::ontology_anchor("scenario_from_markets"), async {
-            // The market_record may arrive as a JSON object or as a
-            // JSON string containing a serialized object (some MCP
-            // frameworks encode complex parameters as strings).
-            let record_value: serde_json::Value = match &*req.market_record {
-                serde_json::Value::String(s) => serde_json::from_str(s)
-                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON string: {e}")))?,
-                other => other.clone(),
-            };
+            let record_value = decode_json_param(&req.market_record, "market record")?;
             let record: hkask_mcp_prediction_markets::types::MarketRecord =
                 serde_json::from_value(record_value)
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
@@ -497,13 +525,12 @@ impl ScenariosServer {
                     "reference_class": event.reference_class,
                 },
                 "warnings": warnings,
-                "provenance": {
-                    "tool": "scenario_from_markets",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "source": format!("{:?}:{}", record.source, record.market_id),
-                    "ontology_identifier": record.ontology.state.identifier,
-                },
+                "provenance": provenance("scenario_from_markets", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("source".into(), format!("{:?}:{}", record.source, record.market_id).into());
+                    m.insert("ontology_identifier".into(), record.ontology.state.identifier.into());
+                    m
+                }),
                 "bridge_note": "The prediction-markets server supplies annotated market-implied probabilities; this bridge anchors a trackable ScenarioEvent on them. base_rate is None when the reliability/match gates refuse the anchor — do not substitute the raw price.",
                 "ontology": dc_bibo::DATASET
             });
@@ -534,13 +561,7 @@ impl ScenariosServer {
         Parameters(req): Parameters<MarketsSetBridgeRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets_set", Self::ontology_anchor("scenario_from_markets_set"), async {
-            // The market_records may arrive as a JSON array or as a
-            // JSON string containing a serialized array.
-            let records_value: serde_json::Value = match &*req.market_records {
-                serde_json::Value::String(s) => serde_json::from_str(s)
-                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON string: {e}")))?,
-                other => other.clone(),
-            };
+            let records_value = decode_json_param(&req.market_records, "market records")?;
             let records: Vec<hkask_mcp_prediction_markets::types::MarketRecord> =
                 serde_json::from_value(records_value)
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON array: {e}")))?;
@@ -563,21 +584,7 @@ impl ScenariosServer {
             }
             .map_err(map_scenario_error)?;
 
-            let nodes: Vec<serde_json::Value> = tree
-                .nodes
-                .iter()
-                .map(|n| serde_json::json!({
-                    "id": n.event.id,
-                    "question": n.event.question,
-                    "marginal_probability": n.marginal_probability,
-                    "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
-                        "parent_event_ids": d.parent_event_ids,
-                        "conditionals": d.conditionals,
-                    })).collect::<Vec<_>>(),
-                    "base_rate": n.event.base_rate,
-                    "variance_contribution": n.variance_contribution,
-                }))
-                .collect();
+            let nodes = tree_nodes_json(&tree, false);
 
             let output = serde_json::json!({
                 "tree": {
@@ -588,13 +595,12 @@ impl ScenariosServer {
                     "nodes": nodes,
                 },
                 "warnings": warnings,
-                "provenance": {
-                    "tool": "scenario_from_markets_set",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "market_count": records.len(),
-                    "dependency_edge_count": specs.len(),
-                },
+                "provenance": provenance("scenario_from_markets_set", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("market_count".into(), records.len().into());
+                    m.insert("dependency_edge_count".into(), specs.len().into());
+                    m
+                }),
                 "bridge_note": "Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities. base_rate is None on records refused by the per-market gates.",
                 "ontology": dc_bibo::DATASET
             });
@@ -650,22 +656,7 @@ impl ScenariosServer {
             }
             .map_err(map_scenario_error)?;
 
-            let nodes: Vec<serde_json::Value> = tree
-                .nodes
-                .iter()
-                .map(|n| serde_json::json!({
-                    "id": n.event.id,
-                    "question": n.event.question,
-                    "marginal_probability": n.marginal_probability,
-                    "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
-                        "parent_event_ids": d.parent_event_ids,
-                        "conditionals": d.conditionals,
-                    })).collect::<Vec<_>>(),
-                    "base_rate": n.event.base_rate,
-                    "basis": n.event.basis,
-                    "variance_contribution": n.variance_contribution,
-                }))
-                .collect();
+            let nodes = tree_nodes_json(&tree, true);
 
             // CMP provenance — the full 7-field index identity per CMP root.
             // Emitted from the `ProvenancedCmpIndex` list (the pre-composition
@@ -693,14 +684,13 @@ impl ScenariosServer {
                     "nodes": nodes,
                     "cmp_provenance": cmp_provenance,
                 },
-                "provenance": {
-                    "tool": "scenario_from_cmp_indices",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "cmp_index_count": indices.len(),
-                    "dependency_edge_count": deps.len(),
-                    "observation_date": req.observation_date,
-                },
+                "provenance": provenance("scenario_from_cmp_indices", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("cmp_index_count".into(), indices.len().into());
+                    m.insert("dependency_edge_count".into(), deps.len().into());
+                    m.insert("observation_date".into(), req.observation_date.clone().into());
+                    m
+                }),
                 "bridge_note": "CMP indices are constant-maturity, constant-orientation synthetic portfolios. The tree cites the index identity, not a decaying contract. Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities.",
                 "ontology": dc_bibo::DATASET
             });
@@ -1299,13 +1289,12 @@ impl ScenariosServer {
                 "journal": result.journal,
                 "joint_before": result.joint_before,
                 "joint_after": result.joint_after,
-                "provenance": {
-                    "tool": "scenario_propagate",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "updated_event": req.event_id,
-                    "changed_nodes": result.journal.len(),
-                },
+                "provenance": provenance("scenario_propagate", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("updated_event".into(), req.event_id.clone().into());
+                    m.insert("changed_nodes".into(), result.journal.len().into());
+                    m
+                }),
                 "framework": "Tree-level Bayesian propagation: the named event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node (one tâtonnement round, Bhattacharya Prop. 6, arXiv:2211.03244).",
                 "ontology": dc_bibo::DATASET
             });
@@ -1873,7 +1862,7 @@ impl ScenariosServer {
 }
 // ── Tool handler registration ──────────────────────────────────────────────
 
-#[rmcp::tool_handler(router = Self::combined_router())]
+#[rmcp::tool_handler(router = Self::scenario_router())]
 impl rmcp::ServerHandler for ScenariosServer {}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1954,6 +1943,87 @@ fn emit_cmp_provenance(
             })
         })
         .collect()
+}
+
+// ── Pin tests ───────────────────────────────────────────────────────────────
+// The two pin tests referenced in the crate doc and `emit_cmp_provenance`'s
+// doc comment. They enforce the advertised invariants: the tool surface
+// count (21) and the 7-field CMP provenance shape emitted inside `tree`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scenarios server registers exactly 21 tools. Adding or removing a
+    /// tool is an intentional surface change — this pin catches accidental
+    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_42_registered_tools`.
+    #[test]
+    fn tool_surface_is_exactly_21_registered_tools() {
+        let n = ScenariosServer::scenario_router().list_all().len();
+        assert_eq!(n, 21, "scenarios registered tool surface changed; got {n}");
+    }
+
+    /// `emit_cmp_provenance` produces the full 7-field CMP index identity per
+    /// root: id, family, tenor, orientation, venue, method, maturity_error_days.
+    /// The companies crate's `EventTreeProjection` deserializer consumes this
+    /// shape; if the emitter drops a field the bridge silently degrades.
+    #[test]
+    fn scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree() {
+        use hkask_mcp_prediction_markets::cmp::CmpMethod;
+        use hkask_mcp_prediction_markets::cmp_index_builder::{ProvenancedCmpIndex, Venue};
+        use hkask_mcp_prediction_markets::cmp_portfolio::{
+            CmpIndex, IndexPortfolio, MaturityBucket, Orientation,
+        };
+        use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
+
+        let index = ProvenancedCmpIndex {
+            family: BaseEconomicObject::PolicyInterestRate,
+            venue: Venue::Kalshi,
+            index: CmpIndex {
+                bucket: MaturityBucket::OneMonth,
+                orientation: Orientation::Increase,
+                portfolio: IndexPortfolio {
+                    constituents: vec![],
+                    weighted_maturity_days: 30.0,
+                    maturity_error_days: 0.5,
+                    index_probability: 0.55,
+                    method: CmpMethod::Interpolated,
+                },
+            },
+        };
+
+        let provenance = emit_cmp_provenance(&[index]);
+        assert_eq!(
+            provenance.len(),
+            1,
+            "one CMP index in → one provenance entry out"
+        );
+        let entry = &provenance[0];
+        for field in [
+            "id",
+            "family",
+            "tenor",
+            "orientation",
+            "venue",
+            "method",
+            "maturity_error_days",
+        ] {
+            assert!(
+                entry.get(field).is_some(),
+                "cmp_provenance entry must have field '{field}', got: {entry}"
+            );
+        }
+        assert_eq!(
+            entry["id"].as_str(),
+            Some("cmp:policy_interest_rate:1m:increase")
+        );
+        assert_eq!(entry["family"].as_str(), Some("policy_interest_rate"));
+        assert_eq!(entry["tenor"].as_str(), Some("1m"));
+        assert_eq!(entry["orientation"].as_str(), Some("increase"));
+        assert_eq!(entry["venue"].as_str(), Some("kalshi"));
+        assert_eq!(entry["method"].as_str(), Some("interpolated"));
+        assert_eq!(entry["maturity_error_days"].as_f64(), Some(0.5));
+    }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────

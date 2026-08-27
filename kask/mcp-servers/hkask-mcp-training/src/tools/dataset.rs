@@ -96,7 +96,8 @@ impl TrainingServer {
             let h_mems = if let Some(db_path) = db_path.as_deref() {
                 let passphrase = passphrase
                     .clone()
-                    .unwrap_or_else(|| std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default());
+                    .or_else(|| self.db_passphrase.clone())
+                    .unwrap_or_default();
                 if passphrase.is_empty() {
                     return Err(McpToolError::permission_denied(
                         "db_path provided but passphrase is empty",

@@ -20,18 +20,14 @@ impl ServiceError {
     pub fn message_key(&self) -> &'static str {
         match self {
             ServiceError::Domain { domain, .. } => match domain {
-                DomainKind::Agent => "error.agent",
-                DomainKind::Consent => "error.consent",
                 DomainKind::Curator => "error.curator",
                 DomainKind::Inference => "error.inference",
                 DomainKind::Infrastructure => "error.infra",
                 DomainKind::Memory => "error.memory",
-                DomainKind::Pod => "error.pod",
                 DomainKind::Storage => "error.storage",
                 DomainKind::User => "error.user",
                 DomainKind::Wallet => "error.wallet",
                 DomainKind::Mcp => "error.mcp.tool",
-                DomainKind::Skill => "error.skill",
             },
             ServiceError::ModelService { retryable, .. } => {
                 if *retryable {
