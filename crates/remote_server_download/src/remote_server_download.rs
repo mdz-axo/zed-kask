@@ -12,7 +12,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use anyhow::{Context as _, Result};
 use client::Client;
@@ -22,9 +22,9 @@ use paths::remote_servers_dir;
 use release_channel::ReleaseChannel;
 use semver::Version;
 use serde::Deserialize;
-use smol::fs::File;
-use smol::io::{AsyncReadExt, AsyncWriteExt};
-use smol::{fs, stream::StreamExt};
+use smol::fs as sfs;
+use smol::io::AsyncReadExt;
+use smol::stream::StreamExt;
 
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
@@ -77,11 +77,11 @@ pub async fn download_remote_server_release(
     let channel_dir = servers_dir.join(release_channel.dev_name());
     let platform_dir = channel_dir.join(format!("{os}-{arch}"));
     let version_path = platform_dir.join(format!("{}.gz", release.version));
-    fs::create_dir_all(&platform_dir).await.ok();
+    sfs::create_dir_all(&platform_dir).await.ok();
 
     let http_client = client.http_client();
 
-    if fs::metadata(&version_path).await.is_err() {
+    if sfs::metadata(&version_path).await.is_err() {
         log::info!(
             "downloading zed-remote-server {os} {arch} version {}",
             release.version
@@ -183,7 +183,7 @@ async fn download_remote_server_binary(
     client: Arc<HttpClientWithUrl>,
 ) -> Result<()> {
     let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
-    let mut temp_file = File::create(&temp).await?;
+    let mut temp_file = sfs::File::create(&temp).await?;
 
     let mut response = client.get(&release.url, Default::default(), true).await?;
     anyhow::ensure!(
@@ -192,7 +192,7 @@ async fn download_remote_server_binary(
         response.status()
     );
     smol::io::copy(response.body_mut(), &mut temp_file).await?;
-    fs::rename(&temp, target_path).await?;
+    sfs::rename(&temp, target_path).await?;
 
     Ok(())
 }
@@ -206,7 +206,7 @@ async fn cleanup_remote_server_cache(
         return Ok(());
     }
 
-    let mut entries = fs::read_dir(platform_dir).await?;
+    let mut entries = sfs::read_dir(platform_dir).await?;
     let now = SystemTime::now();
     let mut candidates = Vec::new();
 
@@ -220,7 +220,7 @@ async fn cleanup_remote_server_cache(
         let mtime = if path == keep_path {
             now
         } else {
-            fs::metadata(&path)
+            sfs::metadata(&path)
                 .await
                 .and_then(|metadata| metadata.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH)
@@ -242,7 +242,7 @@ async fn cleanup_remote_server_cache(
             continue;
         }
 
-        if let Err(error) = fs::remove_file(&path).await {
+        if let Err(error) = sfs::remove_file(&path).await {
             log::warn!(
                 "Failed to remove old remote server archive {:?}: {}",
                 path,

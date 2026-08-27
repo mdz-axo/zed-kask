@@ -8798,7 +8798,7 @@ name = "hkask-keystore"
 version = "0.38.0"
 dependencies = [
  "argon2",
- "futures 0.3.32",
+ "async-std",
  "hex",
  "hkask-types",
  "hmac",
@@ -16743,6 +16743,7 @@ dependencies = [
  "client",
  "gpui",
  "http_client",
+ "log",
  "paths",
  "release_channel",
  "semver",
@@ -18405,6 +18406,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "hkask-keystore",
  "http_client",
  "http_proxy",
  "itertools 0.14.0",
@@ -25303,9 +25305,7 @@ dependencies = [
  "credentials_provider",
  "futures 0.3.32",
  "gpui",
- "paths",
- "release_channel",
- "serde_json",
+ "hkask-keystore",
 ]
 
 [[package]]

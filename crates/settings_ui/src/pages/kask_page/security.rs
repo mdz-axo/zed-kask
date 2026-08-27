@@ -20,6 +20,7 @@ pub(crate) fn render_security_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    super::ensure_keychain_prefetch(cx);
     let credentials_provider = zed_credentials::global(cx);
     let db_passphrase_configured = has_credential(
         &credentials_provider,

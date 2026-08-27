@@ -17,6 +17,7 @@ pub(crate) fn render_swarm_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    super::ensure_keychain_prefetch(cx);
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
     let swarm: kask_bridge::KaskSwarmSettings = raw

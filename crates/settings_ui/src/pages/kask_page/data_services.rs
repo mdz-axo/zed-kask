@@ -36,6 +36,7 @@ pub(crate) fn render_data_services_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    super::ensure_keychain_prefetch(cx);
     let provider = zed_credentials::global(cx);
 
     let mut rows: Vec<AnyElement> = Vec::new();

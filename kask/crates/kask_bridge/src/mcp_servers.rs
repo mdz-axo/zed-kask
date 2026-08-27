@@ -553,6 +553,10 @@ pub async fn build_mcp_server_env(
             // (and the settings UI's `has_credential`) sees the provisioned
             // value on subsequent reads; the env insertion below serves this
             // launch directly even if the mirror write fails.
+            //
+            // The write is atomic (oo7 `create_item` with `replace=true`)
+            // and only affects the passphrase entry — it cannot clobber
+            // other credentials.
             if let Err(error) = credentials_provider
                 .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
                 .await

@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use gpui::{Empty, Render};
+use gpui::{Context, Empty, IntoElement, Render, Window};
 use semver::Version;
-use ui::{Tooltip, UpdateButton, prelude::*};
+use ui::UpdateButton;
 
 // zed-kask: the `auto_update` crate was removed (D7). The `UpdateVersion`
 // entity is retained for the title-bar UI simulation (dev/test) but is
 // permanently `Idle` in production — the `AutoUpdater` it observed is gone.
 // App updates are handled by the terminal-based `update-zed-kask.sh` script.
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
@@ -96,7 +97,11 @@ impl UpdateVersion {
     }
 
     fn is_dismissed(&self) -> bool {
-        self.dismissed_status.as_ref() == Some(&self.status)
+        // Arc<anyhow::Error> doesn't implement PartialEq, so compare the
+        // Debug representation — sufficient for the simulation's dismiss logic.
+        self.dismissed_status.is_some()
+            && format!("{:?}", self.dismissed_status.as_ref().unwrap())
+                == format!("{:?}", self.status)
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -121,7 +126,7 @@ impl Render for UpdateVersion {
             AutoUpdateStatus::Downloading { version, progress } => {
                 let message = UpdateButton::downloading_tooltip_message(version, *progress);
                 UpdateButton::downloading(*progress)
-                    .tooltip(Tooltip::text(message))
+                    .tooltip(message)
                     .into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {

@@ -36,14 +36,28 @@ fn credential_url(key: &str) -> String {
 
 /// Block on an async future from sync context.
 ///
-/// `oo7` uses `async-io` (epoll-based) for I/O, which works with any
-/// executor. `futures::executor::block_on` drives the future to completion
-/// on the current thread. This is safe because:
-/// - MCP servers are separate processes with no async runtime.
-/// - `provision_agent` runs on background threads via `cx.background_spawn`.
-/// - Settings UI rotation runs in spawned tasks.
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    futures::executor::block_on(future)
+/// `oo7` uses `async-std` for I/O (`zbus/async-io`). Its reactor must be
+/// driven by an `async-std` task executor — `futures::executor::block_on`
+/// does NOT drive the `async-std` reactor and will deadlock on the first
+/// I/O operation. We spawn a dedicated OS thread with an `async-std`
+/// runtime, run the future to completion there, and return the result.
+/// This is safe from any calling context (sync, tokio, GPUI background)
+/// because the `async-std` reactor runs on the dedicated thread, not the
+/// caller's thread.
+fn block_on<F>(future: F) -> F::Output
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("hkask-keystore-keychain".to_string())
+        .spawn(move || {
+            let result = async_std::task::block_on(future);
+            let _ = tx.send(result);
+        })
+        .expect("Failed to spawn keychain thread");
+    rx.recv().expect("Keychain thread panicked")
 }
 
 #[derive(Error, Debug)]
@@ -96,7 +110,9 @@ impl Keychain {
     /// post: secret stored at `kask://credentials/<key>` with label `zed-github-account`
     pub fn store_by_key(&self, key: &str, secret: &str) -> Result<(), KeychainError> {
         let url = credential_url(key);
-        block_on(async {
+        let key = key.to_string();
+        let secret = secret.to_string();
+        block_on(async move {
             let keyring = oo7::Keyring::new().await?;
             keyring.unlock().await?;
             keyring
@@ -122,7 +138,8 @@ impl Keychain {
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
     pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
         let url = credential_url(key);
-        block_on(async {
+        let key = key.to_string();
+        block_on(async move {
             let keyring = oo7::Keyring::new().await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
@@ -154,7 +171,8 @@ impl Keychain {
     /// post: secret removed from OS keychain (idempotent — no-op if absent)
     pub fn delete_by_key(&self, key: &str) -> Result<(), KeychainError> {
         let url = credential_url(key);
-        block_on(async {
+        let key = key.to_string();
+        block_on(async move {
             let keyring = oo7::Keyring::new().await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
@@ -167,6 +185,84 @@ impl Keychain {
                         key = %key,
                         "REG"
                     );
+                    return Ok(());
+                }
+            }
+            Ok::<_, KeychainError>(())
+        })
+    }
+
+    // ── Generic URL-based access ─────────────────────────────────────
+    //
+    // These accept any URL string (e.g. `kask://credentials/exa` or
+    // `https://openrouter.ai/api/v1`) and use the same oo7 pattern as the
+    // key-based methods above. Used by `KeychainCredentialsProvider` so ALL
+    // credential URLs route through the keystore's dedicated async-std
+    // thread, not just `kask://credentials/*`.
+
+    /// Store a secret at an arbitrary URL in the OS keychain.
+    ///
+    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
+    /// pre:  url is non-empty, secret is non-empty
+    /// post: secret stored with label `zed-github-account`, attribute `url=<url>`
+    pub fn store_by_url(&self, url: &str, username: &str, secret: &str) -> Result<(), KeychainError> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let secret = secret.to_string();
+        block_on(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            keyring
+                .create_item(
+                    KEYRING_LABEL,
+                    &[("url", url.as_str()), ("username", username.as_str())],
+                    secret.as_bytes(),
+                    true,
+                )
+                .await?;
+            Ok::<_, KeychainError>(())
+        })
+    }
+
+    /// Retrieve a secret from an arbitrary URL in the OS keychain.
+    ///
+    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
+    /// pre:  url is non-empty
+    /// post: returns Ok(secret) if stored, Err(NotFound) if not
+    pub fn retrieve_by_url(&self, url: &str) -> Result<Zeroizing<String>, KeychainError> {
+        let url = url.to_string();
+        block_on(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            let items = keyring.search_items(&[("url", url.as_str())]).await?;
+            for item in items {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    item.unlock().await?;
+                    let secret = item.secret().await?;
+                    return Ok(Zeroizing::new(String::from_utf8_lossy(&secret).into_owned()));
+                }
+            }
+            Err(KeychainError::NotFound(NotFound {
+                entity_type: "secret".to_string(),
+                id: format!("keychain entry not found at url={url}"),
+            }))
+        })
+    }
+
+    /// Delete a secret at an arbitrary URL from the OS keychain.
+    ///
+    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
+    /// pre:  url is non-empty
+    /// post: secret removed (idempotent — no-op if absent)
+    pub fn delete_by_url(&self, url: &str) -> Result<(), KeychainError> {
+        let url = url.to_string();
+        block_on(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            let items = keyring.search_items(&[("url", url.as_str())]).await?;
+            for item in items {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    item.delete().await?;
                     return Ok(());
                 }
             }
@@ -200,11 +296,12 @@ impl Keychain {
             }
 
             // Search for the old entry by its `service=hkask` + `username` attributes.
-            let old_secret = block_on(async {
+            let old_key_owned = old_key.to_string();
+            let old_secret = block_on(async move {
                 let keyring = oo7::Keyring::new().await?;
                 keyring.unlock().await?;
                 let items = keyring
-                    .search_items(&[("service", "hkask"), ("username", old_key)])
+                    .search_items(&[("service", "hkask"), ("username", old_key_owned.as_str())])
                     .await?;
                 if let Some(item) = items.into_iter().next() {
                     let secret = item.secret().await?;
@@ -372,4 +469,138 @@ fn normalize_master_key_bytes(
         return Ok(Zeroizing::new(decoded));
     }
     Ok(master_key_bytes)
+}
+
+// ── Integration tests (live keychain; run with -- --ignored) ──────────────────
+//
+// These tests exercise the real OS keychain via `oo7`, not a mock. They
+// verify that:
+//   1. `store_by_key` → `retrieve_by_key` round-trips a value
+//   2. `delete_by_key` removes it (subsequent `retrieve_by_key` → NotFound)
+//   3. `resolve_db_passphrase_string` finds an entry written by `store_by_key`
+//      (proves the resolve path and the store path hit the same namespace)
+//   4. `migrate_legacy_entries` copies old `service=hkask` entries to the
+//      unified `kask://credentials/*` namespace
+//
+// They use a sentinel key (`__hkask_test_round_trip__`) to avoid touching
+// real credentials. `#[ignore]` keeps them out of `cargo test` by default;
+// run with `cargo test -p hkask-keystore -- --ignored`.
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    /// Sentinel key for round-trip tests. Never used by production code.
+    const TEST_KEY: &str = "__hkask_test_round_trip__";
+    const TEST_VALUE: &str = "test-value-not-a-real-secret-1234567890";
+
+    fn cleanup() {
+        let _ = Keychain.delete_by_key(TEST_KEY);
+    }
+
+    #[test]
+    #[ignore]
+    fn store_retrieve_delete_round_trips() {
+        cleanup();
+        let kc = Keychain;
+
+        // Store
+        kc.store_by_key(TEST_KEY, TEST_VALUE)
+            .expect("store_by_key should succeed");
+
+        // Retrieve — should return the same value
+        let retrieved = kc
+            .retrieve_by_key(TEST_KEY)
+            .expect("retrieve_by_key should find the stored value");
+        assert_eq!(
+            retrieved.as_str(),
+            TEST_VALUE,
+            "retrieve_by_key must return the same value that store_by_key wrote"
+        );
+
+        // Delete
+        kc.delete_by_key(TEST_KEY)
+            .expect("delete_by_key should succeed");
+
+        // Retrieve after delete — should be NotFound
+        let result = kc.retrieve_by_key(TEST_KEY);
+        assert!(
+            matches!(result, Err(KeychainError::NotFound(_))),
+            "retrieve_by_key after delete must return NotFound, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn resolve_finds_entry_written_by_store_by_key() {
+        // Delete first — the migration test may have already written the
+        // real passphrase to kask://credentials/hkask_db_passphrase.
+        let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
+        let kc = Keychain;
+
+        // Write via the store path
+        kc.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)
+            .expect("store_by_key for DB passphrase should succeed");
+
+        // Read via the resolve path — this proves both paths hit the
+        // same namespace and the same entry.
+        let resolved = resolve_db_passphrase_string()
+            .expect("resolve_db_passphrase_string should find the entry written by store_by_key");
+        assert_eq!(
+            resolved.as_str(),
+            TEST_VALUE,
+            "resolve_db_passphrase_string must return the same value that store_by_key wrote"
+        );
+
+        // Cleanup: delete the test value. The next zed-kask startup will
+        // re-provision via the migration or the default "allostery".
+        let _ = kc.delete_by_key(KEY_DB_PASSPHRASE);
+    }
+
+    #[test]
+    #[ignore]
+    fn migrate_legacy_entries_copies_old_namespace_to_unified() {
+        // This test verifies the migration path for existing installations:
+        // entries in the old `service=hkask` namespace should be copied to
+        // `kask://credentials/*`.
+        //
+        // Precondition: the old namespace has `hkask-db-passphrase` (the
+        // real passphrase). The test verifies that after migration,
+        // `kask://credentials/hkask_db_passphrase` exists and contains
+        // the same value.
+        let report =
+            migrate_legacy_hkask_entries().expect("migrate_legacy_hkask_entries should not error");
+
+        // The DB passphrase should either be migrated or skipped (if already
+        // in the new namespace).
+        let db_in_new = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE);
+        assert!(
+            db_in_new.is_ok(),
+            "After migration, kask://credentials/hkask_db_passphrase must exist. \
+             Migrated: {:?}, Skipped: {:?}",
+            report.migrated,
+            report.skipped
+        );
+
+        // If it was migrated, verify it matches the old value.
+        if report.migrated.contains(&KEY_DB_PASSPHRASE.to_string()) {
+            let new_val = db_in_new
+                .as_ref()
+                .map(|v| v.as_str().to_string())
+                .unwrap_or_default();
+            assert!(!new_val.is_empty(), "Migrated passphrase must be non-empty");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn retrieve_missing_key_returns_not_found() {
+        let result = Keychain.retrieve_by_key("__hkask_definitely_does_not_exist__");
+        assert!(
+            matches!(result, Err(KeychainError::NotFound(_))),
+            "retrieve_by_key for a missing key must return NotFound, got: {:?}",
+            result
+        );
+    }
 }

@@ -46,7 +46,7 @@ use std::sync::{Arc, Mutex};
 
 use collections::HashSet;
 use credentials_provider::CredentialsProvider;
-use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
+use gpui::{AppContext, ReadGlobal as _, ScrollHandle, Task, prelude::*};
 use settings::SettingsStore;
 use ui::{
     Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
@@ -70,6 +70,17 @@ pub(crate) use kask_bridge::KASK_CREDENTIAL_NAMESPACE;
 /// enters a key.
 pub(crate) static RECENTLY_WRITTEN_CREDENTIALS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+/// Cache of credential URLs found in the OS keychain via a background
+/// pre-fetch. Populated once on first settings page render, then updated
+/// when keys are written or deleted. This avoids blocking the UI thread
+/// with synchronous keychain I/O on every render — `has_credential`
+/// checks this cache (instant) instead of doing a D-Bus round-trip per row.
+pub(crate) static KEYCHAIN_CREDENTIAL_CACHE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Whether the keychain pre-fetch has been spawned.
+static KEYCHAIN_PREFETCH_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Check if a credential URL was written during this session.
 pub(crate) fn was_recently_written(url: &str) -> bool {
     RECENTLY_WRITTEN_CREDENTIALS
@@ -85,6 +96,13 @@ pub(crate) fn mark_recently_written(url: &str) {
             .get_or_insert_with(HashSet::default)
             .insert(url.to_string());
     }
+    // Also add to the keychain cache so the UI shows "Configured" immediately
+    // without waiting for the next pre-fetch cycle.
+    if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+        guard
+            .get_or_insert_with(HashSet::default)
+            .insert(url.to_string());
+    }
 }
 
 /// Remove a credential URL from the session cache (after deletion).
@@ -94,6 +112,44 @@ pub(crate) fn unmark_recently_written(url: &str) {
             set.remove(url);
         }
     }
+    // Also remove from the keychain cache so the UI shows the input field
+    // again immediately, not just on next pre-fetch.
+    if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+        if let Some(set) = guard.as_mut() {
+            set.remove(url);
+        }
+    }
+}
+
+/// Spawn a background task that reads all kask credential URLs from the
+/// OS keychain and populates `KEYCHAIN_CREDENTIAL_CACHE`. Called once on
+/// first settings page render. The background task uses the keystore's
+/// `Keychain` (dedicated async-std thread) so it doesn't block the UI.
+pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
+    if KEYCHAIN_PREFETCH_STARTED
+        .swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return;
+    }
+    let urls: Vec<String> = kask_bridge::credential_urls_for_mcp()
+        .into_iter()
+        .map(|(_, url)| url)
+        .collect();
+    cx.background_spawn(async move {
+        let mut found = HashSet::default();
+        for url in &urls {
+            if hkask_keystore::Keychain
+                .retrieve_by_url(url)
+                .is_ok_and(|s| !s.is_empty())
+            {
+                found.insert(url.clone());
+            }
+        }
+        if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+            *guard = Some(found);
+        }
+    })
+    .detach();
 }
 
 /// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
@@ -153,7 +209,22 @@ pub(crate) fn has_credential(
             return true;
         }
     }
+    // Check the OS keychain cache (populated by `ensure_keychain_prefetch`).
+    // This is a sync HashSet lookup — no D-Bus round-trip, no UI freeze.
+    for url in urls {
+        if was_in_keychain(url) {
+            return true;
+        }
+    }
     false
+}
+
+/// Check if a credential URL was found in the OS keychain by the pre-fetch.
+fn was_in_keychain(url: &str) -> bool {
+    KEYCHAIN_CREDENTIAL_CACHE
+        .lock()
+        .map(|opt| opt.as_ref().is_some_and(|set| set.contains(url)))
+        .unwrap_or(false)
 }
 
 pub(crate) fn write_credential(

@@ -132,6 +132,7 @@ pub(crate) fn render_curator_email_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    super::ensure_keychain_prefetch(cx);
     let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
