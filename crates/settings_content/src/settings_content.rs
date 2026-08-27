@@ -1744,7 +1744,6 @@ pub struct KaskCompaniesSettingsContent {
 pub struct KaskCorpusSettingsContent {
     pub embedding_dim: Option<u32>,
     pub embedding_model: Option<String>,
-    pub ocr_concurrency: Option<u32>,
     pub ocr_simple_max: Option<f64>,
     pub ocr_moderate_max: Option<f64>,
     pub ocr_sample_rate: Option<f64>,

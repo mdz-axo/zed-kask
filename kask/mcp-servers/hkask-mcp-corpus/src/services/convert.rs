@@ -37,7 +37,7 @@ use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
     ExtractOutcome, IndexedPassage, OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds,
-    default_embedding_model, extract_text, filter_outcome_to_pages, ocr_concurrency,
+    default_embedding_model, extract_text, filter_outcome_to_pages, max_concurrency,
     sanitize_links,
 };
 use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
@@ -376,7 +376,7 @@ impl<'a> ConvertService<'a> {
                     Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                     &self.ocr_thresholds,
                     Some(&model),
-                    Some(ocr_concurrency()),
+                    Some(max_concurrency()),
                 )
                 .await;
                 self.persist_pipeline_outcome(&outcome).await;
@@ -422,7 +422,7 @@ impl<'a> ConvertService<'a> {
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            Some(ocr_concurrency()),
+                            Some(max_concurrency()),
                         )
                         .await;
                         self.persist_pipeline_outcome(&outcome).await;
@@ -563,7 +563,7 @@ impl<'a> ConvertService<'a> {
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            Some(ocr_concurrency()),
+                            Some(max_concurrency()),
                         )
                         .await;
                         self.persist_pipeline_outcome(&outcome).await;
@@ -638,7 +638,7 @@ impl<'a> ConvertService<'a> {
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            Some(ocr_concurrency()),
+                            Some(max_concurrency()),
                         )
                         .await;
                         self.persist_pipeline_outcome(&outcome).await;

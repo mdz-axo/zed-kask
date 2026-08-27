@@ -9214,6 +9214,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-media-widget"
+version = "0.38.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "theme",
+ "tracing",
+ "ui",
+]
+
+[[package]]
 name = "hkask-memory"
 version = "0.38.0"
 dependencies = [

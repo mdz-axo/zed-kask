@@ -158,30 +158,18 @@ pub(crate) const OCR_FALLBACK_WORD_THRESHOLD: usize = 100;
 /// Default owner persona for h_mems stored by corpus pipeline tools.
 const DEFAULT_OWNER: &str = "john-brooks";
 
-/// OCR pipeline concurrency — env var HKASK_OCR_CONCURRENCY, default 4.
-/// Controls how many pages are sent to the vision model in parallel.
-/// Set to 1 for sequential mode (interactive use), higher for batch processing.
-pub(crate) fn ocr_concurrency() -> usize {
-    match std::env::var("HKASK_OCR_CONCURRENCY") {
-        Ok(v) => match v.parse::<usize>() {
-            Ok(n) if n > 0 => n,
-            Ok(_) => {
-                tracing::warn!(
-                    value = %v,
-                    "HKASK_OCR_CONCURRENCY must be > 0 — falling back to 4"
-                );
-                4
-            }
-            Err(_) => {
-                tracing::warn!(
-                    value = %v,
-                    "Malformed HKASK_OCR_CONCURRENCY — falling back to 4"
-                );
-                4
-            }
-        },
-        Err(_) => 4,
-    }
+/// Resolve the process-wide concurrency ceiling from HKASK_MAX_CONCURRENCY,
+/// which is injected from KaskGeneralSettings.max_concurrency (default 96,
+/// configurable via the settings UI General page). All corpus server
+/// concurrency defaults (embedding, tagging, QA batch, assertions,
+/// consolidation, OCR) read from this single source — no per-tool magic
+/// numbers.
+pub(crate) fn max_concurrency() -> usize {
+    std::env::var("HKASK_MAX_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(96)
 }
 
 /// Default embedding model — env var first, then HkaskSettings from disk.

@@ -1,0 +1,26 @@
+[package]
+name = "hkask-media-widget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUI media widget for rendering ```media fenced blocks (image, video, audio) inline in agent markdown"
+
+[lib]
+path = "src/hkask_media_widget.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+theme.workspace = true
+ui.workspace = true
+anyhow.workspace = true
+log.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -388,11 +388,6 @@ pub(crate) fn kask_string_input(
                                     kask.corpus.get_or_insert_default().embedding_dim = Some(v);
                                 }
                             }
-                            ("corpus", "ocr_concurrency") => {
-                                if let Ok(v) = parsed.parse::<u32>() {
-                                    kask.corpus.get_or_insert_default().ocr_concurrency = Some(v);
-                                }
-                            }
                             ("general", "max_concurrency") => {
                                 if let Ok(v) = parsed.parse::<u32>() {
                                     kask.general.get_or_insert_default().max_concurrency = Some(v);

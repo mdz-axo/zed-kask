@@ -17,7 +17,6 @@ pub(crate) fn render_corpus_page(
     let embedding_model = corpus.embedding_model;
     let template_root = corpus.template_root;
     let embedding_dim = corpus.embedding_dim.to_string();
-    let ocr_concurrency = corpus.ocr_concurrency.to_string();
     let ocr_simple_max = corpus.ocr_simple_max.to_string();
     let ocr_moderate_max = corpus.ocr_moderate_max.to_string();
     let ocr_sample_rate = corpus.ocr_sample_rate.to_string();
@@ -46,14 +45,6 @@ pub(crate) fn render_corpus_page(
         embedding_dim,
         "corpus",
         "embedding_dim",
-    );
-    let ocr_concurrency_input = kask_string_input(
-        "kask-corpus-ocr-concurrency",
-        "OCR Concurrency",
-        "4",
-        ocr_concurrency,
-        "corpus",
-        "ocr_concurrency",
     );
     let ocr_simple_max_input = kask_string_input(
         "kask-corpus-ocr-simple-max",
@@ -170,21 +161,6 @@ pub(crate) fn render_corpus_page(
                     .color(Color::Muted),
                 )
                 .child(embedding_dim_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("OCR Concurrency"))
-                .child(
-                    Label::new(
-                        "Number of document pages sent to the vision model in parallel. \
-                         0 is treated as the default. Or set HKASK_OCR_CONCURRENCY.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(ocr_concurrency_input),
         )
         .child(Divider::horizontal())
         .child(

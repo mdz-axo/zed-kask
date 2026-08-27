@@ -180,7 +180,6 @@ impl HkaskSettings {
         // A malformed or non-positive numeric env var must warn, not silently
         // fall back — an operator cannot distinguish "not configured" from
         // "configured but broken" otherwise (`.rules` failure-signal trap).
-        // Mirrors the `HKASK_OCR_CONCURRENCY` reference in `hkask-mcp-corpus`.
         match std::env::var("HKASK_CHUNK_MAX_TOKENS") {
             Ok(raw) => match raw.parse::<usize>() {
                 Ok(n) if n > 0 => n,

@@ -1,9 +1,9 @@
 # Template crate manifest for media skill
-# hKask v0.35.0
+# hKask v0.38.0
 
 crate:
   name: media
-  version: "0.35.0"
+  version: "0.38.0"
   description: >
     Vision LLM-powered media analysis and generation. Classifies photographic
     style, genre, and era; generates scene descriptions in multiple modes;
@@ -45,15 +45,6 @@ templates:
       thirds, leading lines, depth of field, perspective, framing,
       symmetry, and negative space.
 
-  - id: media/logo-discovery
-    name: "Discovery-phase pipeline: map qualitative brand identity inputs to…"
-    path: logo-discovery.yaml
-    type: FlowDef
-    description: >
-      Discovery-phase pipeline: map qualitative brand identity inputs to
-      formal logo design parameters using the logo-discovery-map.j2
-      template, then select the appropriate generation strategy.
-
   - id: media/logo-discovery-map
     name: "Map qualitative brand identity inputs (industry, audience, values) to…"
     path: logo-discovery-map.j2
@@ -71,56 +62,3 @@ templates:
       Core logo generation prompt encoding Bokhua's five design gates:
       simplicity, monochrome viability, grid discipline, negative space,
       and scalability. Every logo generation flow delegates to this template.
-
-  - id: media/logo-iterative-refine
-    name: "Peters-inspired iterative logo pipeline: generate N candidates, score…"
-    path: logo-iterative-refine.yaml
-    type: FlowDef
-    description: >
-      Peters-inspired iterative logo pipeline: generate N candidates, score
-      each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit
-      + distinctiveness), select best, refine through critique cycles.
-      Final output is background-removed for transparent PNG deliverables.
-
-  - id: media/logo-presentation
-    name: "Generate a complete logo deliverables package from a refined logo:…"
-    path: logo-presentation.yaml
-    type: FlowDef
-    description: >
-      Generate a complete logo deliverables package from a refined logo:
-      transparent PNG, monochrome variant, icon-only mark, and context
-      mockup showing the logo in real-world use.
-
-  # ── Pre-defined pipelines (OpenMontage pattern; FlowDef, fixed topology) ──
-  # The FlowDef executor chains tool outputs implicitly — no $references and
-  # no DeepInfra/OpenRouter response-shape coupling. The agent only supplies the subject /
-  # style / motion description; the step topology is fixed and known-good.
-
-  - id: media/product-shot
-    name: "Product-shot pipeline: generate a clean product image, remove…"
-    path: product-shot.yaml
-    type: FlowDef
-    description: >
-      Product photography pipeline: generate a centered product image with
-      studio lighting, remove the background for a clean cutout, and upscale
-      to 4K. Pre-defined multi-step pipeline — the agent only supplies the
-      product description; the step topology is fixed.
-
-  - id: media/stylize-upscale
-    name: "Stylize-and-upscale pipeline: generate a base image, apply an…"
-    path: stylize-upscale.yaml
-    type: FlowDef
-    description: >
-      Artistic stylization pipeline: generate a base image, apply an artistic
-      style transfer, then upscale the result to final resolution. Pre-defined
-      multi-step pipeline — the agent supplies the subject and the target
-      style; the step topology is fixed.
-
-  - id: media/reaction-gif
-    name: "Reaction-GIF pipeline: generate a still image, animate it into a…"
-    path: reaction-gif.yaml
-    type: FlowDef
-    description: >
-      Reaction-GIF pipeline: generate a still image, animate it into a short
-      video clip, then convert the clip to a shareable GIF. Spans cloud
-      generation and local ffmpeg processing — the local+cloud dual path.

@@ -497,20 +497,12 @@ impl CorpusServer {
         let num_batches = batches.len();
 
         // Concurrent embedding: spawn one task per batch, gated by a semaphore.
-        // Priority: HKASK_EMBED_CONCURRENCY (per-tool override) →
-        // HKASK_MAX_CONCURRENCY (system-wide ceiling from KaskGeneralSettings) →
-        // 32 (fallback for local Ollama or unset settings).
-        let embed_concurrency = std::env::var("HKASK_EMBED_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&n| n > 0)
-            .or_else(|| {
-                std::env::var("HKASK_MAX_CONCURRENCY")
-                    .ok()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .filter(|&n| n > 0)
-            })
-            .unwrap_or(32);
+        // The concurrency limit comes from HKASK_MAX_CONCURRENCY, which is
+        // injected from KaskGeneralSettings.max_concurrency (default 96,
+        // configurable via the settings UI General page). This is the
+        // system-wide concurrency ceiling — the same value the zed-side
+        // inference port uses.
+        let embed_concurrency = crate::max_concurrency();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(embed_concurrency));
         let router = Arc::clone(&self.inference_router);
         let store = Arc::new(store);
@@ -675,7 +667,7 @@ pub(crate) struct GenerateQaBatchRequest {
 }
 
 fn default_batch_concurrency() -> usize {
-    4
+    crate::max_concurrency()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -708,7 +700,7 @@ fn default_max_assertions() -> usize {
 }
 
 fn default_assertions_concurrency() -> usize {
-    64
+    crate::max_concurrency()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

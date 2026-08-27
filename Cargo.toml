@@ -296,6 +296,7 @@ members = [
     "crates/hkask-portfolio-widget",
     "crates/hkask-scenarios-widget",
     "crates/hkask-swarm-widget",
+    "crates/hkask-media-widget",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -393,6 +394,7 @@ hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-ka
 hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
 hkask_swarm_widget = { path = "crates/hkask-swarm-widget", package = "hkask-swarm-widget" }
+hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 diagnostics = { path = "crates/diagnostics" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }

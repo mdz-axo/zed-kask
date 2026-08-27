@@ -388,7 +388,7 @@ fn default_consolidate_threshold() -> f64 {
 }
 
 fn default_consolidate_concurrency() -> usize {
-    12
+    crate::max_concurrency()
 }
 
 fn default_max_chunks_per_cluster() -> usize {

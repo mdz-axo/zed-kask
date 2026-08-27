@@ -564,5 +564,5 @@ pub(crate) struct TagChunksRequest {
 }
 
 fn default_tag_concurrency() -> usize {
-    32
+    crate::max_concurrency()
 }

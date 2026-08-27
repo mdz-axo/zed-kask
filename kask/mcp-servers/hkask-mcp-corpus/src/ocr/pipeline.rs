@@ -187,7 +187,8 @@ async fn run_pipeline_parallel(
     // distinct from the zed main process. The global concurrency limiter is
     // never wired here — `global_concurrency_limiter()` always returns `None`
     // in this process. Use a local per-pipeline semaphore bounded by
-    // `max_concurrency` (from `HKASK_OCR_CONCURRENCY`). The process-wide
+    // `max_concurrency` (from `HKASK_MAX_CONCURRENCY`, the system-wide
+    // concurrency ceiling from KaskGeneralSettings). The process-wide
     // limiter lives in the zed process and gates skill execution + MCP tool
     // calls there; OCR's concurrency is bounded locally.
     //

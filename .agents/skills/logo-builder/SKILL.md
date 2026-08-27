@@ -5,18 +5,7 @@ description: "Pragmatic logo design using LLM-assisted generation. Three-phase p
 
 # Logo Builder
 
-> **Status: dormant.** This skill was built against the `hkask-mcp-media`
-> server's image-generation tools, which are currently deferred (media-type
-> handling is out of scope until text/number/logic domains stabilize). The
-> discovery and formal-prompt templates (`media/logo-discovery-map`,
-> `media/logo-formal-prompt`) are restored and render fine; the generation
-> and gallery steps require the media server's return. Until then, the
-> skill produces text-based specifications and prompts usable with any
-> external image-generation tool — steps that call media tools directly
-> will not execute.
-
-Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Produces text-based logo design specifications and detailed prompts that can be used with any image generation tool.
-
+Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Produces text-based logo design specifications and detailed prompts, then generates images via the `hkask-mcp-media` server's `generate_image`, `image_remove_background`, and `upscale_image` tools.
 
 ## When to Use
 
@@ -28,67 +17,62 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 ## Instructions
 
-### logo-discovery
+### Phase 1 — Discovery
 
-1. Render the `logo-discovery-map` template with the provided brand inputs.
+1. Render the `media/logo-discovery-map` template with the provided brand inputs (name, industry, audience, values, personality).
 2. Call the inference router with the rendered prompt to classify and map brand attributes.
-3. Parse the JSON response into formal design parameters (style, logo_type, dominant_shape, typography_class, palette_hex, density, rationale).
-4. Select a generation strategy (single-shot, iterative-refine, or moodboard-first) based on brand complexity and user preference.
+3. Parse the JSON response into formal design parameters: `style`, `logo_type`, `dominant_shape`, `typography_class`, `palette_hex`, `density`, `rationale`.
+4. Select a generation strategy based on brand complexity:
+   - **Single-shot** — simple brands (single word, clear industry). Use `media/logo-formal-prompt` template + `generate_image` tool.
+   - **Iterative-refine** — complex brands (multiple products, unclear audience). Use Phase 3 below.
+   - **Moodboard-first** — visual-first brands (luxury, fashion). Generate a moodboard image first, then use it as a reference for logo generation.
 
-### logo-discovery-map
+### Phase 2 — Formal Generation
 
-1. Act as a brand strategist to recommend formal logo design parameters from a business identity brief.
-2. Return a JSON object containing `style`, `logo_type`, `dominant_shape`, `typography_class`, `palette_direction`, `palette_hex`, `density`, and `rationale`.
-3. Base recommendations on brand strategy principles, considering audience expectations and industry visual conventions.
-4. Recommend differentiation over imitation.
+1. Render the `media/logo-formal-prompt` template with the design parameters from Phase 1.
+2. Call the `generate_image` tool with the rendered prompt to produce the logo image.
+3. If the logo needs background removal, call `image_remove_background` on the generated image.
+4. If the logo needs upscaling for print quality, call `upscale_image` on the result.
 
-### logo-formal-prompt
+### Phase 3 — Iterative Refinement
 
-1. Design a professional logo using the provided design parameters (style, logo type, dominant shape, density, typography, palette).
-2. Ensure the mark is simple, describable in one sentence, and built on one strong idea (G1 — Simplicity).
-3. Verify the logo works in pure black on pure white, treating color as additive rather than structural (G2 — Monochrome Viability).
-4. Align key elements to geometric relationships like the golden ratio or integer ratios without accidental placement (G3 — Grid Discipline).
-5. Design negative space to be active or neutral, never accidental (G4 — Negative Space).
-6. Guarantee legibility at 16px and balance at billboard size, avoiding hairline strokes (G5 — Scalability).
-7. Produce a clean, scalable vector-style design with high contrast and no text artifacts.
-8. Avoid photographic elements, UI chrome, trademarked logos, and multiple variations in a single image.
-9. Return a single logo image.
+1. Generate the specified number of initial logo candidates (default: 3) using the `media/logo-formal-prompt` template and `generate_image` tool.
+2. Critique each candidate using `describe_image` with this prompt:
+   > Critique this logo design for professional quality. Evaluate:
+   > 1. Readability — is the name clear and legible?
+   > 2. Scalability — does it work at icon size and billboard size?
+   > 3. Distinctiveness — is it memorable, not generic?
+   > 4. Professionalism — would a client pay for this?
+   > 5. Text accuracy — are there any garbled letters, misspellings, or artifacts?
+   > Return a score 1-10 for each criterion and a one-paragraph summary of the strongest weakness.
+3. Select the best candidate based on the highest aggregate score.
+4. Regenerate the selected candidate with this refined prompt:
+   > Redesign this logo concept addressing the following critique: {critique_summary}. Keep the same business name, industry, and style direction. Fix the identified weaknesses while preserving the strengths.
+5. Repeat the critique and refine cycles for the specified number of rounds (default: 1).
+6. Call `image_remove_background` on the final logo for transparent PNG output.
 
-### logo-iterative-refine
+### Phase 4 — Deliverables
 
-1. Generate the specified number of initial logo candidates using the `logo-formal-prompt` template.
-2. Critique each candidate, scoring readability, scalability, distinctiveness, professionalism, and text accuracy from 1-10.
-3. Summarize the strongest weakness of each candidate in one paragraph.
-4. Select the best candidate based on the highest aggregate score.
-5. Regenerate the selected candidate by incorporating critique feedback, fixing weaknesses while preserving strengths.
-6. Repeat the critique and refine cycles for the specified number of rounds.
-7. Produce the final selected logo design specification with all refinements applied.
-
-### logo-presentation (legacy — registered in crate as `logo-presentation.yaml`, not invoked by the skill execution)
-
-1. Specify the final logo with transparent background for PNG output.
-2. Generate a monochrome variant (pure black on white) for single-color applications, maintaining the exact same design without color or gradients.
-3. Generate a 1:1 square icon-only version by removing all text and keeping only the symbol, ensuring it works at 64x64 pixels.
-4. Generate a photorealistic context mockup showing the logo in real-world use (signage, business card, app icon).
+1. Call `image_remove_background` on the final logo for transparent PNG output.
+2. Generate a monochrome variant: call `generate_image` with prompt:
+   > Monochrome (pure black on white background) version of this logo. Same exact design, no color, no gradients. High contrast. Clean sharp edges.
+3. Generate a 1:1 square icon-only mark: call `generate_image` with prompt:
+   > Square icon-only version of this logo mark. Remove all text and typography, keep only the symbol/icon/graphic element. 1:1 aspect ratio. Works at 64x64 pixels. Simple and recognizable at tiny sizes.
+4. Generate a context mockup: call `generate_image` with prompt:
+   > Photorealistic product photography mockup showing the logo for "{name}" applied in a real-world context. Show it on a clean, well-lit storefront sign or website header. Professional photography style. Good natural lighting. No other brands or logos visible. The logo should look naturally placed, not composited.
 5. Return the complete deliverables package: transparent PNG, monochrome variant, icon mark, and context mockup.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `logo-discovery.yaml` | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
-| `logo-discovery-map.j2` | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
-| `logo-formal-prompt.j2` | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
-| `logo-iterative-refine.yaml` | Peters-inspired iterative logo pipeline: generate N candidate descriptions, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is a refined logo design specification. |
-| `logo-presentation.yaml` | Generate a complete logo deliverables specification from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup description. |
+| `media/logo-discovery-map` | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
+| `media/logo-formal-prompt` | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `media/logo-discovery-map`) and a context object with the required variables.
 
 ## Constraints
 
-- `logo-discovery.yaml`: Public.
-- `logo-discovery-map.j2`: Public.
-- `logo-formal-prompt.j2`: Public.
-- `logo-iterative-refine.yaml`: Public.
-- `logo-presentation.yaml`: Public.
+- `media/logo-discovery-map`: Public.
+- `media/logo-formal-prompt`: Public.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

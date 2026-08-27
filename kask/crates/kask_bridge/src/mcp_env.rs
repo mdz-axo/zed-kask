@@ -168,12 +168,6 @@ pub(crate) fn emit_corpus_ocr_env(
     env: &mut std::collections::HashMap<String, String>,
 ) {
     let corpus_default = KaskCorpusSettings::default();
-    if corpus.ocr_concurrency != corpus_default.ocr_concurrency {
-        env.insert(
-            "HKASK_OCR_CONCURRENCY".to_string(),
-            corpus.ocr_concurrency.to_string(),
-        );
-    }
     if (corpus.ocr_simple_max - corpus_default.ocr_simple_max).abs() > f64::EPSILON {
         env.insert(
             "HKASK_OCR_SIMPLE_MAX".to_string(),
@@ -373,8 +367,6 @@ const OPERATOR_OVERRIDE_ENV_VARS: &[&str] = &[
     "HKASK_SWARM_EVENTS_PATH",
     "HKASK_SWARM_BODY_RETENTION_HOURS",
     "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
-    // corpus — embedding batch concurrency (tools/semantic.rs)
-    "HKASK_EMBED_CONCURRENCY",
 ];
 
 pub(crate) fn emit_operator_override_env(env: &mut std::collections::HashMap<String, String>) {
@@ -480,10 +472,6 @@ mod tests {
         assert!(
             !env.contains_key("HKASK_EMBEDDING_DIM"),
             "default embedding_dim must not be emitted"
-        );
-        assert!(
-            !env.contains_key("HKASK_OCR_CONCURRENCY"),
-            "default ocr_concurrency must not be emitted"
         );
         assert!(
             !env.contains_key("HKASK_OCR_SIMPLE_MAX"),
