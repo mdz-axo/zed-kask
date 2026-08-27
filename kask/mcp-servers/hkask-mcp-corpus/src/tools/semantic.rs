@@ -497,14 +497,14 @@ impl CorpusServer {
         let num_batches = batches.len();
 
         // Concurrent embedding: spawn one task per batch, gated by a semaphore.
-        // The concurrency limit defaults to 4 (matching the embedding batch_size
-        // default) — this keeps Ollama busy without overwhelming it. The
-        // semaphore ensures we don't fire all batches at once.
+        // The concurrency limit defaults to 32 — DeepInfra (the default embedding
+        // provider) handles high concurrency well. For local Ollama, set
+        // HKASK_EMBED_CONCURRENCY=1 or 2 to avoid overwhelming the CPU.
         let embed_concurrency = std::env::var("HKASK_EMBED_CONCURRENCY")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|&n| n > 0)
-            .unwrap_or(4);
+            .unwrap_or(32);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(embed_concurrency));
         let router = Arc::clone(&self.inference_router);
         let store = Arc::new(store);

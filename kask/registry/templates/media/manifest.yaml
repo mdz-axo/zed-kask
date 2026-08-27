@@ -93,7 +93,7 @@ templates:
 
   # ── Pre-defined pipelines (OpenMontage pattern; FlowDef, fixed topology) ──
   # The FlowDef executor chains tool outputs implicitly — no $references and
-  # no fal.ai response-shape coupling. The agent only supplies the subject /
+  # no DeepInfra/OpenRouter response-shape coupling. The agent only supplies the subject /
   # style / motion description; the step topology is fixed and known-good.
 
   - id: media/product-shot

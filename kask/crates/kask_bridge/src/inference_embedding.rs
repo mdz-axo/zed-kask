@@ -78,9 +78,13 @@ impl LanguageModelEmbeddingPort {
                     let model_id = crate::inference_providers::strip_provider_prefix(&req.model);
 
                     // Build and send the OpenAI-compatible /embeddings request.
+                    // `encoding_format: "float"` requests raw float arrays instead
+                    // of the default base64 encoding — avoids ~33% wire overhead
+                    // and a decode pass. DeepInfra and OpenAI both support this.
                     let body = serde_json::json!({
                         "model": model_id,
                         "input": req.texts,
+                        "encoding_format": "float",
                     });
                     let body_bytes = serde_json::to_vec(&body).map_err(|e| {
                         EmbeddingGenerationError::Json(format!(

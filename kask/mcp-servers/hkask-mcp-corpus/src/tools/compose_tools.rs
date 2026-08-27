@@ -63,12 +63,12 @@ fn load_cognition_config(
 
 /// Build a `CognitionConfig` inline when no YAML config path is provided.
 fn inline_cognition_config(author: &str) -> crate::compose::CognitionConfig {
-    let gen_model = embedding_model();
+    let embed_model = embedding_model();
     crate::compose::CognitionConfig {
         author: author.to_string(),
         jinja2_template: None,
         embedding: crate::compose::EmbeddingSection {
-            model: gen_model,
+            model: embed_model,
             dim: crate::embedding_dim(),
             centroid_entity_ref: format!("style:{}:centroid", author),
             retrieval: Default::default(),

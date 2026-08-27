@@ -5,7 +5,7 @@
 # $references). Invoked via action: flowdef from a parent skill.
 #
 # This pipeline demonstrates the local+cloud dual path: image generation and
-# image-to-video run on the cloud provider (fal.ai); the final video-to-gif
+# image-to-video run on the cloud provider (DeepInfra/OpenRouter); the final video-to-gif
 # conversion runs locally via ffmpeg (the local execution path referenced in
 # the refactor plan, WS-1/WS-11). No asset leaves the user's machine after the
 # cloud steps return — the GIF is produced locally from the downloaded clip.
@@ -21,13 +21,13 @@ description: >
 # primary_model is the model used by the generate step (the generate_image MCP
 # tool's default, overridable via HKASK_MEDIA_IMAGE_GEN_MODEL). The animate
 # step routes through the image_to_video MCP tool's configured model
-# (fal.ai/seedance-2.0/image-to-video by default); the to-gif step is local
+# (DeepInfra/Wan-AI/Wan2.2-T2V-A14B by default); the to-gif step is local
 # ffmpeg (no model).
-primary_model: "fal.ai/flux/dev"
+primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 
 # No fusion block — model selection is operator-configured via kask.fusion /
 # HKASK_FUSION_PANEL_MODELS. Recommend the default image generation model
-# (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the fal.ai
+# (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the DeepInfra/OpenRouter
 # seedance-2.0 image-to-video endpoint for the animate step.
 
 # rJoule: generate_image (flux/dev) + image_to_video (seedance, queue-mode) is

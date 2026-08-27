@@ -1,12 +1,12 @@
 # Media Derivation — Background Removal FlowDef
-# Routes to fal.ai Birefnet.
+# Routes to DeepInfra/OpenRouter Birefnet.
 
 template_type: FlowDef
 name: media_remove_background
 version: "1.0.0"
 description: "Remove background from an image"
 primary_model: "{{ vision_model }}"
-fallback_model: "fal.ai/birefnet"
+fallback_model: "DeepInfra/Bria/remove_background"
 parameters:
   - name: image_url
     type: string

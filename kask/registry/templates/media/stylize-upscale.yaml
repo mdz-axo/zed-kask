@@ -16,11 +16,11 @@ description: >
 # primary_model is the model used by the generate step (the generate_image MCP
 # tool's default, overridable via HKASK_MEDIA_IMAGE_GEN_MODEL). The stylize
 # step routes through the image_apply_style MCP tool's configured model.
-primary_model: "fal.ai/flux/dev"
+primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 
 # No fusion block — model selection is operator-configured via kask.fusion /
 # HKASK_FUSION_PANEL_MODELS. Recommend the default image generation model
-# (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the fal.ai
+# (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the DeepInfra/OpenRouter
 # flux/dev img2img endpoint for the style-transfer step.
 
 rjoule:

@@ -1613,13 +1613,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// ── Dead-surface removal pins ────────────────────────────────────────────
+// ── OMC consumer pin ────────────────────────────────────────────────────
 //
-// The MovieLabs OMC bridge was removed: it had zero call sites — write-only
-// documentation masquerading as architecture (the "advertised invariants need
-// enforcement points" trap). This test pins the removal so the module is not
-// re-added with a consumer. See kask/docs/plans/media-system-refactor.md
-// §6 (F-1).
+// The MovieLabs OMC bridge was recovered on 2026-08-26 with a consumer: the
+// `media_block::enrich_with_omc_and_provenance` function references
+// `omc::tool_to_omc` to bake OMC concept tags into the `display_hint` block
+// body. This test pins the ENFORCEMENT (the call site), not the absence —
+// per `.rules` "Advertised invariants need enforcement points", a module
+// with no consumer is dead surface regardless of its doc comments.
 #[cfg(test)]
 mod dead_surface_pins {
     /// The OMC bridge module was re-added on 2026-08-05 with a consumer: the
@@ -1760,7 +1761,12 @@ mod integration_tests {
 
         let mut canvas = image::DynamicImage::new_rgba8(canvas_w, canvas_h);
         let bg = image::Rgba([30u8, 30u8, 30u8, 255u8]);
-        for pixel in canvas.as_mut_rgba8().unwrap().pixels_mut() {
+        let Some(rgba) = canvas.as_mut_rgba8() else {
+            return Err(MediaError::Io(
+                "collage canvas must be RGBA8 — image crate invariant violated".into(),
+            ));
+        };
+        for pixel in rgba.pixels_mut() {
             *pixel = bg;
         }
 

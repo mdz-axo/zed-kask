@@ -1,12 +1,12 @@
 # Media Video — Image to Video FlowDef
-# Routes to fal.ai Seedance 2.0 or Kling 3.0 Pro for image animation.
+# Routes to DeepInfra/OpenRouter Seedance 2.0 or Kling 3.0 Pro for image animation.
 
 template_type: FlowDef
 name: media_image_to_video
 version: "1.0.0"
 description: "Animate a still image into a short video clip"
-primary_model: "fal.ai/seedance-2.0/image-to-video"
-fallback_model: "fal.ai/kling-video/v3/pro/image-to-video"
+primary_model: "DeepInfra/Wan-AI/Wan2.2-T2V-A14B"
+fallback_model: "OpenRouter/google/gemini-2.5-flash-video"
 parameters:
   - name: image_url
     type: string
