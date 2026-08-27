@@ -64,6 +64,9 @@ pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instr
 /// Default image generation model — FLUX-2-klein-4B via DeepInfra.
 pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";
 
+/// Default video generation model — Wan2.2 via DeepInfra.
+pub const DEFAULT_VIDEO_MODEL: &str = "DeepInfra/Wan-AI/Wan2.2-T2V-A14B";
+
 // ── Resolved model accessors (env var → default) ──────────────────────────
 
 /// Resolve the primary classifier: `HKASK_CLASSIFIER_MODEL` → default.
@@ -79,4 +82,9 @@ pub fn embedding_model() -> String {
 /// Resolve the OCR model: `HKASK_OCR_MODEL` → default.
 pub fn ocr_model() -> String {
     std::env::var("HKASK_OCR_MODEL").unwrap_or_else(|_| DEFAULT_OCR_MODEL.to_string())
+}
+
+/// Resolve a model name from an env var or fall back to a default.
+pub fn resolve(env_key: &str, default: &str) -> String {
+    std::env::var(env_key).unwrap_or_else(|_| default.to_string())
 }

@@ -401,7 +401,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // bridge to zed's LanguageModelRegistry, so the media process does
         // not read API keys directly. The key is allowlisted here so the
         // server can be configured to use a direct provider if needed.
-        credentials: Some(&["OPENROUTER_API_KEY"]),
+        credentials: Some(&["OPENROUTER_API_KEY", "DEEPINFRA_API_KEY"]),
         config_env: Some(&[
             // IPC bridge socket — required for vision/chat/media generation
             // routing through zed's LanguageModelRegistry.
@@ -416,6 +416,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_IMAGE_GEN_MODEL",
+            "HKASK_MEDIA_VIDEO_MODEL",
         ]),
     },
 ];

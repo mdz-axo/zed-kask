@@ -70,7 +70,7 @@ All inputs are parameterized. None are hardcoded.
 | `db_path` | string | yes | — | Path to the vector database file for embeddings and h_mems |
 | `passphrase` | string | yes | — | Passphrase for the encrypted vector DB. Resolve via `hkask_mcp_server::server::resolve_db_passphrase` helper if available, otherwise from credentials. |
 | `reference_author` | string | no | null | Author name for style exemplar construction (e.g. "John Brooks"). When provided, Stage 5 runs. |
-| `config_path` | string | no | null | Path to a style corpus config YAML. When provided, Stage 5 uses it instead of generating a default config. |
+| `config_path` | string | no | null | Path to a cognition config YAML (mashup or style synthesizer). When provided to `corpus_compose`, loads the Jinja2 system prompt template, embedding model, retrieval parameters, and validation thresholds from the file. |
 | `enable_qa` | boolean | no | true | Whether to run Stages 6–9 (QA generation and training dataset assembly) |
 | `max_tokens` | integer | no | 512 | Maximum tokens per chunk |
 | `overlap_tokens` | integer | no | 64 | Token overlap between adjacent chunks |
@@ -565,6 +565,9 @@ calls per chunk and will time out on large inputs (observed: timeout on
    - `author`: `{{ reference_author }}`
    - `db_path`: `{{ db_path }}`
    - `passphrase`: `{{ passphrase }}`
+   - `config_path`: `{{ config_path }}` (if provided — loads the
+     cognition YAML with the Jinja2 system prompt template and
+     validation thresholds; omit for the generic inline config)
 
 3. **Quality gate**: style centroid within validation thresholds.
    Call `lisp_eval`:

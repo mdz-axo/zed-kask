@@ -139,6 +139,10 @@ pub struct InferenceConfig {
 
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
+    /// DeepInfra — media generation (image, TTS, STT, background removal).
+    /// Base URL defaults to `https://api.deepinfra.com/v1/openai`.
+    pub deepinfra_base_url: String,
+    pub deepinfra_api_key: String,
     /// Ollama local inference — defaults to `http://localhost:11434`. The API key
     /// is optional (Ollama ignores it) but kept as `String` for consistency with the
     /// other backends and to support remote Ollama instances that require auth.
@@ -153,6 +157,8 @@ impl Default for InferenceConfig {
             default_provider: ProviderId::OpenRouter,
             openrouter_base_url: "https://openrouter.ai/api".to_string(),
             openrouter_api_key: String::new(),
+            deepinfra_base_url: "https://api.deepinfra.com".to_string(),
+            deepinfra_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_api_key: String::new(),
             default_model: crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string(),
@@ -173,11 +179,14 @@ impl InferenceConfig {
     pub fn from_env() -> Self {
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
+        let di = ProviderConfig::from_env("DeepInfra", "https://api.deepinfra.com");
 
         Self {
             default_provider: resolve_default_provider(),
             openrouter_base_url: or.base_url,
             openrouter_api_key: or.api_key,
+            deepinfra_base_url: di.base_url,
+            deepinfra_api_key: di.api_key,
             ollama_base_url: om.base_url,
             ollama_api_key: om.api_key,
             default_model: resolve_config_str("HKASK_DEFAULT_MODEL")

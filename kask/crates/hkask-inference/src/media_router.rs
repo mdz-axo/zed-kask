@@ -56,20 +56,41 @@ impl MediaRouter {
     /// pre:  none (reads config)
     /// post: returns MediaRouter whose registry holds all constructible providers
     #[must_use]
-    pub fn new(_config: InferenceConfig) -> Self {
-        // Register media backends here as they are (re-)added. A backend is
-        // pushed only when its constructor returns Ok (API key present); a
-        // failed construction emits a reg.inference warn and the backend is
-        // not registered. The registry is intentionally empty for now —
-        // ProviderRegistry::execute returns a clear "no provider configured
-        // for media op" error for every op.
-        let providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
+    pub fn new(config: InferenceConfig) -> Self {
+        let client = Arc::new(reqwest::Client::new());
+        let mut providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
+
+        // DeepInfra is registered first (preferred) for the ops it supports
+        // (image generation, TTS, STT, background removal, upscale).
+        match crate::media_providers::DeepInfraMediaProvider::new(&config, client.clone()) {
+            Ok(provider) => providers.push(Arc::new(provider)),
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.inference",
+                    error = %e,
+                    "DeepInfra media provider not registered"
+                );
+            }
+        }
+
+        // OpenRouter is registered second (fallback) for image generation,
+        // TTS, and STT via chat-completions-based media routing.
+        match crate::media_providers::OpenRouterMediaProvider::new(&config, client) {
+            Ok(provider) => providers.push(Arc::new(provider)),
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.inference",
+                    error = %e,
+                    "OpenRouter media provider not registered"
+                );
+            }
+        }
 
         if providers.is_empty() {
             tracing::warn!(
                 target: "reg.inference",
                 "no media providers configured — all media generation will fail \
-                 (no media backends are registered in MediaRouter::new)"
+                 (set DEEPINFRA_API_KEY and/or OPENROUTER_API_KEY)"
             );
         }
 

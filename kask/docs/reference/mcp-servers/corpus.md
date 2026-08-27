@@ -73,8 +73,8 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 | Tool | Description |
 |------|-------------|
-| `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. |
-| `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). |
+| `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. Accepts an optional `config_path` to load a cognition config YAML (mashup or style synthesizer) with a Jinja2 system prompt template. |
+| `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Accepts an optional `config_path` for a cognition config YAML. |
 
 ### Manage (4)
 

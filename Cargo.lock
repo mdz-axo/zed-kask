@@ -8825,6 +8825,8 @@ dependencies = [
 name = "hkask-inference"
 version = "0.38.0"
 dependencies = [
+ "base64 0.22.1",
+ "bytes 1.11.1",
  "futures-util",
  "hkask-types",
  "serde",
