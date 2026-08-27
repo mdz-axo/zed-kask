@@ -42,7 +42,11 @@ pub(crate) fn load_meme_font(font_path: Option<&str>) -> Result<ab_glyph::FontVe
 }
 
 /// Measure rendered text dimensions for centering.
-pub(crate) fn measure_text(font: &ab_glyph::FontVec, scale: ab_glyph::PxScale, text: &str) -> (u32, u32) {
+pub(crate) fn measure_text(
+    font: &ab_glyph::FontVec,
+    scale: ab_glyph::PxScale,
+    text: &str,
+) -> (u32, u32) {
     let mut total_width = 0.0f32;
     for c in text.chars() {
         let glyph_id = font.glyph_id(c);
@@ -101,4 +105,3 @@ pub(crate) fn draw_text_mut(
         pen.x += advance;
     }
 }
-

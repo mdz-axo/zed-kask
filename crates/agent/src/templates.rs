@@ -608,9 +608,7 @@ mod tests {
     #[test]
     fn test_curator_overlay_advertises_only_registered_tool_names() {
         use crate::thread::AgentTool;
-        use crate::tools::{
-            CuratorClearAlgedonicLogTool, CuratorDirectiveTool, CuratorStatusTool,
-        };
+        use crate::tools::{CuratorClearAlgedonicLogTool, CuratorDirectiveTool, CuratorStatusTool};
         const NAMES: &[&str] = &[
             <CuratorStatusTool as AgentTool>::NAME,
             <CuratorDirectiveTool as AgentTool>::NAME,
@@ -622,7 +620,9 @@ mod tests {
         let mut advertised: Vec<&str> = Vec::new();
         for segment in CURATOR_STATIC_CONTEXT.split('`') {
             let token = segment.trim();
-            if token.starts_with("curator_") && token.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+            if token.starts_with("curator_")
+                && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            {
                 advertised.push(token);
             }
         }

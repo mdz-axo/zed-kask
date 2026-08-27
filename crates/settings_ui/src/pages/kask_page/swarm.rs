@@ -326,8 +326,7 @@ pub(crate) fn render_swarm_page(
                                                 .get_or_insert_default()
                                                 .swarm
                                                 .get_or_insert_default()
-                                                .memory_passphrase =
-                                                Some(parsed_for_save);
+                                                .memory_passphrase = Some(parsed_for_save);
                                         },
                                     );
                                 });
@@ -339,12 +338,7 @@ pub(crate) fn render_swarm_page(
                                     "{KASK_CREDENTIAL_NAMESPACE}/hkask_swarm_memory_passphrase"
                                 );
                                 let _ = credentials_provider
-                                    .write_credentials(
-                                        &url,
-                                        "kask",
-                                        new_passphrase.as_bytes(),
-                                        &cx,
-                                    )
+                                    .write_credentials(&url, "kask", new_passphrase.as_bytes(), &cx)
                                     .await
                                     .log_err();
                                 mark_recently_written(&url);
@@ -497,7 +491,7 @@ pub(crate) fn render_swarm_page(
                         "SQLCipher passphrase for the local swarm semantic-memory store. \
                          Must be >=8 chars. Default 'allostery' (pre-release). \
                          Changing it re-encrypts the DB atomically — no data loss \
-                         on failure. If rotation fails, the old passphrase remains."
+                         on failure. If rotation fails, the old passphrase remains.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

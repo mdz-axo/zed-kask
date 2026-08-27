@@ -30,11 +30,11 @@ pub mod batch;
 pub mod config;
 pub mod inference_ipc_client;
 pub mod media_providers;
-pub mod scoring;
 pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
 pub mod provider;
+pub mod scoring;
 
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderId};
@@ -284,9 +284,8 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // This handles the case where the media MCP server runs
             // standalone (no zed process) with DEEPINFRA_API_KEY or
             // OPENROUTER_API_KEY set directly in the environment.
-            let router = crate::media_router::MediaRouter::new(
-                crate::config::InferenceConfig::from_env(),
-            );
+            let router =
+                crate::media_router::MediaRouter::new(crate::config::InferenceConfig::from_env());
             router.media_generate(&op, &params).await
         })
     }

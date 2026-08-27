@@ -1,8 +1,8 @@
 //! Generated-asset persistence — download/decode provider results into
 //! `{kask_data_dir}/mcp/media/generated/` and index them in the gallery.
 
-use crate::error::MediaError;
 use crate::MediaServer;
+use crate::error::MediaError;
 
 pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     let dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(

@@ -216,12 +216,9 @@ impl Database {
     /// to an already-existing table, so `ALTER TABLE` is needed for DBs
     /// created before this column was introduced. SQLite has no
     /// `ADD COLUMN IF NOT EXISTS`, so we check `PRAGMA table_info` first.
-    fn migrate_embeddings_passage_text(
-        conn: &rusqlite::Connection,
-    ) -> Result<(), DatabaseError> {
+    fn migrate_embeddings_passage_text(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {
         let mut stmt = conn.prepare("PRAGMA table_info(embeddings)")?;
-        let has_column = stmt
-            .query_map([], |row| row.get::<_, String>(1))?;
+        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let has_column = has_column
             .filter_map(|r| r.ok())
             .any(|name| name == "passage_text");

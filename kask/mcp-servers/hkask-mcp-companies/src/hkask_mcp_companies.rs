@@ -440,8 +440,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
-    use hkask_types::WebID;
     use crate::types::SymbolRequest;
+    use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
 
     fn make_server() -> CompaniesServer {
@@ -481,7 +481,9 @@ mod tool_behavior_tests {
         let error = parsed
             .get("error")
             .and_then(|e| e.as_str())
-            .unwrap_or_else(|| panic!("invalid symbol must yield an error envelope, got: {parsed}"));
+            .unwrap_or_else(|| {
+                panic!("invalid symbol must yield an error envelope, got: {parsed}")
+            });
         assert!(
             !error.is_empty(),
             "error envelope must carry a message, got: {parsed}"
@@ -494,7 +496,9 @@ mod tool_behavior_tests {
         let server = make_server();
         let long_symbol = "A".repeat(64);
         let output = server
-            .moat_check(Parameters(SymbolRequest { symbol: long_symbol }))
+            .moat_check(Parameters(SymbolRequest {
+                symbol: long_symbol,
+            }))
             .await;
         let parsed = parse_envelope(&output);
         assert!(

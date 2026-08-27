@@ -381,10 +381,7 @@ pub enum BridgeRotationError {
     },
     /// The old passphrase could not be resolved from the keychain.
     #[error("Could not resolve old passphrase for {db_path}: {error}")]
-    OldPassphraseResolve {
-        db_path: String,
-        error: String,
-    },
+    OldPassphraseResolve { db_path: String, error: String },
     /// The DB path could not be resolved (e.g., no agent provisioned).
     #[error("Could not resolve DB path: {0}")]
     PathResolve(String),
@@ -444,9 +441,7 @@ fn resolve_swarm_memory_db_path() -> String {
 /// If rotation fails, the old DB is untouched — the caller should NOT write
 /// the new passphrase to the keychain. The caller should write the new
 /// passphrase ONLY after this function returns `Ok(())`.
-pub fn rotate_curator_db_passphrase(
-    new_passphrase: &str,
-) -> Result<(), BridgeRotationError> {
+pub fn rotate_curator_db_passphrase(new_passphrase: &str) -> Result<(), BridgeRotationError> {
     let db_path = resolve_curator_db_path();
     let old_passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
         .map_err(|e| BridgeRotationError::OldPassphraseResolve {
@@ -491,17 +486,14 @@ pub fn rotate_curator_db_passphrase(
 ///
 /// If rotation fails, the old DB is untouched — the caller should NOT write
 /// the new passphrase to the keychain/settings.
-pub fn rotate_swarm_memory_db_passphrase(
-    new_passphrase: &str,
-) -> Result<(), BridgeRotationError> {
+pub fn rotate_swarm_memory_db_passphrase(new_passphrase: &str) -> Result<(), BridgeRotationError> {
     let db_path = resolve_swarm_memory_db_path();
-    let old_passphrase =
-        hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()
-            .map_err(|e| BridgeRotationError::OldPassphraseResolve {
-                db_path: db_path.clone(),
-                error: e.to_string(),
-            })?
-            .to_string();
+    let old_passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()
+        .map_err(|e| BridgeRotationError::OldPassphraseResolve {
+            db_path: db_path.clone(),
+            error: e.to_string(),
+        })?
+        .to_string();
 
     tracing::info!(
         target: "hkask.identity",

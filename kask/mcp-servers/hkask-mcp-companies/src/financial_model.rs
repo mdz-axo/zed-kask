@@ -359,7 +359,10 @@ impl HistoricalSnapshot {
             ));
             inventory.push((
                 year.to_string(),
-                entry.get("inventory").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                entry
+                    .get("inventory")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
             ));
             accounts_payable.push((
                 year.to_string(),
@@ -577,10 +580,7 @@ impl HistoricalSnapshot {
 
     /// Latest total stockholders equity.
     pub fn latest_equity(&self) -> f64 {
-        self.total_equity
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0)
+        self.total_equity.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
     /// Latest accounts receivable.
@@ -598,10 +598,7 @@ impl HistoricalSnapshot {
 
     /// Latest accounts payable.
     pub fn latest_ap(&self) -> f64 {
-        self.accounts_payable
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0)
+        self.accounts_payable.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
     /// Latest net PP&E.
@@ -611,18 +608,12 @@ impl HistoricalSnapshot {
 
     /// Latest interest expense.
     pub fn interest_expense(&self) -> f64 {
-        self.interest_expense
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0)
+        self.interest_expense.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
     /// Latest dividends paid.
     pub fn latest_dividends(&self) -> f64 {
-        self.dividends_paid
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0)
+        self.dividends_paid.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
     /// Dividend payout ratio: dividends / net income.
@@ -676,11 +667,7 @@ impl HistoricalSnapshot {
     /// Days inventory outstanding: inventory / (cogs / 365).
     pub fn dio_days(&self) -> f64 {
         let cogs = self.latest_cogs();
-        let inv = self
-            .inventory
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+        let inv = self.inventory.last().map(|(_, v)| *v).unwrap_or(0.0);
         if cogs > 0.0 {
             (inv / cogs * 365.0).clamp(0.0, 365.0)
         } else {
@@ -691,11 +678,7 @@ impl HistoricalSnapshot {
     /// Days payable outstanding: AP / (cogs / 365).
     pub fn dpo_days(&self) -> f64 {
         let cogs = self.latest_cogs();
-        let ap = self
-            .accounts_payable
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+        let ap = self.accounts_payable.last().map(|(_, v)| *v).unwrap_or(0.0);
         if cogs > 0.0 {
             (ap / cogs * 365.0).clamp(0.0, 365.0)
         } else {
@@ -720,11 +703,7 @@ impl HistoricalSnapshot {
 
     /// Inventory as fraction of NWC.
     pub fn inventory_to_nwc_ratio(&self) -> f64 {
-        let inv = self
-            .inventory
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+        let inv = self.inventory.last().map(|(_, v)| *v).unwrap_or(0.0);
         let nwc = self.latest_nwc().abs();
         if nwc > 0.0 {
             (inv / nwc).clamp(0.0, 1.0)
@@ -735,11 +714,7 @@ impl HistoricalSnapshot {
 
     /// AP as fraction of NWC.
     pub fn ap_to_nwc_ratio(&self) -> f64 {
-        let ap = self
-            .accounts_payable
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+        let ap = self.accounts_payable.last().map(|(_, v)| *v).unwrap_or(0.0);
         let nwc = self.latest_nwc().abs();
         if nwc > 0.0 {
             (ap / nwc).clamp(0.0, 1.0)
@@ -1209,6 +1184,5 @@ pub(crate) use scenario_impact::{
 // ── Driver-based three-statement model — `financial_model/driver_model.rs`
 mod driver_model;
 pub(crate) use driver_model::{
-    DriverAssumptions, NwcMethod, generate_markdown_report,
-    project_driver_model,
+    DriverAssumptions, NwcMethod, generate_markdown_report, project_driver_model,
 };

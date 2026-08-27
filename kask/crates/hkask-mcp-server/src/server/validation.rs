@@ -269,10 +269,16 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
 
     // Collect all allowed roots: CWD + data dir + artifacts dir.
     let mut allowed_roots = vec![cwd];
-    if let Some(data_dir) = hkask_types::agent_paths::resolve_data_dir().canonicalize().ok() {
+    if let Some(data_dir) = hkask_types::agent_paths::resolve_data_dir()
+        .canonicalize()
+        .ok()
+    {
         allowed_roots.push(data_dir);
     }
-    if let Some(artifacts_dir) = hkask_types::agent_paths::resolve_artifacts_dir().canonicalize().ok() {
+    if let Some(artifacts_dir) = hkask_types::agent_paths::resolve_artifacts_dir()
+        .canonicalize()
+        .ok()
+    {
         allowed_roots.push(artifacts_dir);
     }
 
@@ -286,11 +292,18 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
     })?;
 
     if !allowed_roots.iter().any(|root| resolved.starts_with(root)) {
-        let roots_display: Vec<String> = allowed_roots.iter().map(|r| r.display().to_string()).collect();
-        return Err(rejection(path, &allowed_roots[0], &format!(
-            "path escapes all allowed roots: {}",
-            roots_display.join(", ")
-        )));
+        let roots_display: Vec<String> = allowed_roots
+            .iter()
+            .map(|r| r.display().to_string())
+            .collect();
+        return Err(rejection(
+            path,
+            &allowed_roots[0],
+            &format!(
+                "path escapes all allowed roots: {}",
+                roots_display.join(", ")
+            ),
+        ));
     }
     Ok(resolved)
 }

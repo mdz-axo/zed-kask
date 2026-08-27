@@ -319,7 +319,10 @@ mod tests {
         let prompts = read_prompts(&path).expect("parse");
         assert_eq!(prompts.len(), 1);
         assert_eq!(prompts[0].chunk_id, "corpus:doc:1");
-        assert_eq!(prompts[0].text, "You generate QA pairs.\n\nChunk text here.");
+        assert_eq!(
+            prompts[0].text,
+            "You generate QA pairs.\n\nChunk text here."
+        );
         assert_eq!(
             prompts[0].bloom_levels.as_deref(),
             Some(&["analyze".to_string()][..])

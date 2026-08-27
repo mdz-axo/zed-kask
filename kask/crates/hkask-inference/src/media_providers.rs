@@ -65,11 +65,7 @@ impl DeepInfraMediaProvider {
     }
 
     /// POST JSON to a DeepInfra endpoint and return the JSON response.
-    async fn post_json(
-        &self,
-        url: &str,
-        body: Value,
-    ) -> Result<Value, InferenceError> {
+    async fn post_json(&self, url: &str, body: Value) -> Result<Value, InferenceError> {
         let resp = self
             .client
             .post(url)
@@ -116,9 +112,9 @@ impl DeepInfraMediaProvider {
                 sanitize_error_body(&text)
             )));
         }
-        resp.bytes()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("DeepInfra inference read failed: {e}")))
+        resp.bytes().await.map_err(|e| {
+            InferenceError::Connection(format!("DeepInfra inference read failed: {e}"))
+        })
     }
 
     /// Generate an image via DeepInfra's OpenAI-compatible images endpoint.
@@ -159,11 +155,8 @@ impl DeepInfraMediaProvider {
         if let Some(s) = strength {
             body["strength"] = serde_json::json!(s);
         }
-        self.post_json(
-            &format!("{}/v1/inference/{}", self.base_url, model),
-            body,
-        )
-        .await
+        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
+            .await
     }
 
     /// Remove background via DeepInfra native inference endpoint (Bria RMBG 2.0).
@@ -248,16 +241,15 @@ impl DeepInfraMediaProvider {
         let url = format!("{}/v1/inference/{}", self.base_url, model);
 
         // Build multipart form: audio file + optional language parameter.
-        let mut form = reqwest::multipart::Form::new()
-            .part(
-                "audio",
-                reqwest::multipart::Part::bytes(audio_bytes.to_vec())
-                    .file_name(filename)
-                    .mime_str(mime)
-                    .map_err(|e| {
-                        InferenceError::Connection(format!("multipart mime set failed: {e}"))
-                    })?,
-            );
+        let mut form = reqwest::multipart::Form::new().part(
+            "audio",
+            reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+                .file_name(filename)
+                .mime_str(mime)
+                .map_err(|e| {
+                    InferenceError::Connection(format!("multipart mime set failed: {e}"))
+                })?,
+        );
         if let Some(lang) = language {
             form = form.text("language", lang.to_string());
         }
@@ -299,11 +291,8 @@ impl DeepInfraMediaProvider {
         if let Some(dur) = duration {
             body["duration"] = serde_json::json!(dur);
         }
-        self.post_json(
-            &format!("{}/v1/inference/{}", self.base_url, model),
-            body,
-        )
-        .await
+        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
+            .await
     }
 
     /// Animate a still image into a video via DeepInfra native inference API.
@@ -323,11 +312,8 @@ impl DeepInfraMediaProvider {
         if let Some(dur) = duration {
             body["duration"] = serde_json::json!(dur);
         }
-        self.post_json(
-            &format!("{}/v1/inference/{}", self.base_url, model),
-            body,
-        )
-        .await
+        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
+            .await
     }
 }
 
@@ -364,13 +350,8 @@ impl MediaProvider for DeepInfraMediaProvider {
                         crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
                     );
                     let model = strip_prefix(&model, "DeepInfra/");
-                    self.generate_image(
-                        &prompt,
-                        params.size.as_deref(),
-                        params.count,
-                        &model,
-                    )
-                    .await
+                    self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
+                        .await
                 }
                 MediaOp::ImageToImage => {
                     let image_url = params.image_url.clone().unwrap_or_default();
@@ -692,7 +673,9 @@ impl OpenRouterMediaProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| InferenceError::Connection(format!("OpenRouter video submit failed: {e}")))?;
+            .map_err(|e| {
+                InferenceError::Connection(format!("OpenRouter video submit failed: {e}"))
+            })?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -706,9 +689,9 @@ impl OpenRouterMediaProvider {
         let json: Value = serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("OpenRouter video submit parse: {e}")))?;
 
-        let job_id = json["id"]
-            .as_str()
-            .ok_or_else(|| InferenceError::Connection("OpenRouter: no video job id in response".into()))?;
+        let job_id = json["id"].as_str().ok_or_else(|| {
+            InferenceError::Connection("OpenRouter: no video job id in response".into())
+        })?;
 
         self.poll_video(job_id, model).await
     }
@@ -740,7 +723,9 @@ impl OpenRouterMediaProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| InferenceError::Connection(format!("OpenRouter video submit failed: {e}")))?;
+            .map_err(|e| {
+                InferenceError::Connection(format!("OpenRouter video submit failed: {e}"))
+            })?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -754,9 +739,9 @@ impl OpenRouterMediaProvider {
         let json: Value = serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("OpenRouter video submit parse: {e}")))?;
 
-        let job_id = json["id"]
-            .as_str()
-            .ok_or_else(|| InferenceError::Connection("OpenRouter: no video job id in response".into()))?;
+        let job_id = json["id"].as_str().ok_or_else(|| {
+            InferenceError::Connection("OpenRouter: no video job id in response".into())
+        })?;
 
         self.poll_video(job_id, model).await
     }
@@ -771,7 +756,9 @@ impl OpenRouterMediaProvider {
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .send()
                 .await
-                .map_err(|e| InferenceError::Connection(format!("OpenRouter video poll failed: {e}")))?;
+                .map_err(|e| {
+                    InferenceError::Connection(format!("OpenRouter video poll failed: {e}"))
+                })?;
 
             let status = resp.status();
             if !status.is_success() {
@@ -847,13 +834,8 @@ impl MediaProvider for OpenRouterMediaProvider {
                         "openai/dall-e-3",
                     );
                     let model = strip_prefix(&model, "OpenRouter/");
-                    self.generate_image(
-                        &prompt,
-                        params.size.as_deref(),
-                        params.count,
-                        &model,
-                    )
-                    .await
+                    self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
+                        .await
                 }
                 MediaOp::GenerateSpeech => {
                     let text = params.text.clone().unwrap_or_default();
@@ -965,7 +947,12 @@ fn extract_image_url(content: &str) -> Option<Value> {
     }
 
     // Try raw URL
-    if trimmed.starts_with("http") && (trimmed.ends_with(".png") || trimmed.ends_with(".jpg") || trimmed.ends_with(".jpeg") || trimmed.ends_with(".webp")) {
+    if trimmed.starts_with("http")
+        && (trimmed.ends_with(".png")
+            || trimmed.ends_with(".jpg")
+            || trimmed.ends_with(".jpeg")
+            || trimmed.ends_with(".webp"))
+    {
         return Some(serde_json::json!({"url": trimmed}));
     }
 
@@ -987,7 +974,13 @@ fn extract_image_url(content: &str) -> Option<Value> {
         }
         if in_url && (*ch == ' ' || *ch == '\n' || *ch == '"') {
             let url = &trimmed[url_start..i];
-            if url.contains("://") && (url.contains(".png") || url.contains(".jpg") || url.contains(".jpeg") || url.contains(".webp") || url.contains("/image")) {
+            if url.contains("://")
+                && (url.contains(".png")
+                    || url.contains(".jpg")
+                    || url.contains(".jpeg")
+                    || url.contains(".webp")
+                    || url.contains("/image"))
+            {
                 return Some(serde_json::json!({"url": url}));
             }
             in_url = false;
@@ -1009,26 +1002,41 @@ mod tests {
 
     #[test]
     fn strip_prefix_removes_provider() {
-        assert_eq!(strip_prefix("DeepInfra/hexgrad/Kokoro-82M", "DeepInfra/"), "hexgrad/Kokoro-82M");
-        assert_eq!(strip_prefix("hexgrad/Kokoro-82M", "DeepInfra/"), "hexgrad/Kokoro-82M");
+        assert_eq!(
+            strip_prefix("DeepInfra/hexgrad/Kokoro-82M", "DeepInfra/"),
+            "hexgrad/Kokoro-82M"
+        );
+        assert_eq!(
+            strip_prefix("hexgrad/Kokoro-82M", "DeepInfra/"),
+            "hexgrad/Kokoro-82M"
+        );
     }
 
     #[test]
     fn extract_image_url_from_markdown() {
         let result = extract_image_url("![generated](https://example.com/image.png)");
-        assert_eq!(result, Some(serde_json::json!({"url": "https://example.com/image.png"})));
+        assert_eq!(
+            result,
+            Some(serde_json::json!({"url": "https://example.com/image.png"}))
+        );
     }
 
     #[test]
     fn extract_image_url_from_raw_url() {
         let result = extract_image_url("https://example.com/image.png");
-        assert_eq!(result, Some(serde_json::json!({"url": "https://example.com/image.png"})));
+        assert_eq!(
+            result,
+            Some(serde_json::json!({"url": "https://example.com/image.png"}))
+        );
     }
 
     #[test]
     fn extract_image_url_from_json() {
         let result = extract_image_url(r#"{"url": "https://example.com/image.png"}"#);
-        assert_eq!(result, Some(serde_json::json!({"url": "https://example.com/image.png"})));
+        assert_eq!(
+            result,
+            Some(serde_json::json!({"url": "https://example.com/image.png"}))
+        );
     }
 
     #[test]
@@ -1041,10 +1049,16 @@ mod tests {
     fn detect_audio_format_from_extension() {
         assert_eq!(detect_audio_format("https://example.com/audio.wav"), "wav");
         assert_eq!(detect_audio_format("https://example.com/audio.mp3"), "mp3");
-        assert_eq!(detect_audio_format("https://example.com/audio.flac"), "flac");
+        assert_eq!(
+            detect_audio_format("https://example.com/audio.flac"),
+            "flac"
+        );
         assert_eq!(detect_audio_format("https://example.com/audio.m4a"), "m4a");
         assert_eq!(detect_audio_format("https://example.com/audio.ogg"), "ogg");
-        assert_eq!(detect_audio_format("https://example.com/audio.webm"), "webm");
+        assert_eq!(
+            detect_audio_format("https://example.com/audio.webm"),
+            "webm"
+        );
         assert_eq!(detect_audio_format("https://example.com/audio.aac"), "aac");
     }
 

@@ -944,7 +944,8 @@ impl InferencePort for LanguageModelInferencePort {
         let Some(router) = &self.media_router else {
             return Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
-                    "no media router configured — set DEEPINFRA_API_KEY or OPENROUTER_API_KEY".into(),
+                    "no media router configured — set DEEPINFRA_API_KEY or OPENROUTER_API_KEY"
+                        .into(),
                 ))
             });
         };

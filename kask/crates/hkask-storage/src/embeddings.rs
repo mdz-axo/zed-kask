@@ -243,7 +243,11 @@ impl EmbeddingStore {
                 let er = row.get(1)?.as_text()?.to_string();
                 let blob = row.get(2)?.as_blob()?.to_vec();
                 let model = row.get(4)?.as_text()?.to_string();
-                let passage_text = row.get(5).ok().and_then(|v| v.as_text().ok()).map(|s| s.to_string());
+                let passage_text = row
+                    .get(5)
+                    .ok()
+                    .and_then(|v| v.as_text().ok())
+                    .map(|s| s.to_string());
                 let vector = Self::decode_vector(&blob, self.dim())?;
                 Ok(StoredEmbedding {
                     id,
@@ -307,7 +311,8 @@ impl EmbeddingStore {
         })?;
         let mut results = Vec::new();
         for row in rows {
-            let (id, distance, entity_ref, blob, model, passage_text) = row.map_err(EmbeddingError::Storage)?;
+            let (id, distance, entity_ref, blob, model, passage_text) =
+                row.map_err(EmbeddingError::Storage)?;
             let vector = Self::decode_vector(&blob, self.dim())?;
             results.push(SimilarityResult {
                 embedding: StoredEmbedding {
@@ -460,17 +465,13 @@ impl EmbeddingStore {
     /// Used by the corpus server to rebuild the in-memory vector index after a
     /// restart, so `corpus_query` returns full passage text without requiring
     /// a re-embed from the source JSONL.
-    pub fn all_with_text(
-        &self,
-    ) -> Result<Vec<(String, Vec<f32>, Option<String>)>, EmbeddingError> {
+    pub fn all_with_text(&self) -> Result<Vec<(String, Vec<f32>, Option<String>)>, EmbeddingError> {
         let dim = self.dim();
         let conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT entity_ref, vector, passage_text FROM embeddings",
-        )?;
+        let mut stmt = conn.prepare("SELECT entity_ref, vector, passage_text FROM embeddings")?;
         let rows = stmt.query_map([], |row| {
             let entity_ref: String = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;

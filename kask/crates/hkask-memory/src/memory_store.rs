@@ -422,7 +422,9 @@ impl MemoryStore {
         model: &str,
         passage_text: Option<&str>,
     ) -> Result<String, MemoryStoreError> {
-        Ok(self.embedding.store(entity_ref, vector, model, passage_text)?)
+        Ok(self
+            .embedding
+            .store(entity_ref, vector, model, passage_text)?)
     }
 
     pub fn search_similar(

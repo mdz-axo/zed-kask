@@ -458,7 +458,10 @@ fn project_industrial(
         .gross_margin
         .percent
         .unwrap_or_else(|| hist.gross_margin());
-    let sga_pct = assumptions.sga_pct.percent.unwrap_or_else(|| hist.sga_to_revenue());
+    let sga_pct = assumptions
+        .sga_pct
+        .percent
+        .unwrap_or_else(|| hist.sga_to_revenue());
     let capex_pct = assumptions
         .capex_pct
         .percent
@@ -486,7 +489,11 @@ fn project_industrial(
                 revenue * assumptions.da_pct.percent.unwrap_or(0.03)
             }
         } else {
-            revenue * assumptions.da_pct.percent.unwrap_or_else(|| hist.da_to_revenue())
+            revenue
+                * assumptions
+                    .da_pct
+                    .percent
+                    .unwrap_or_else(|| hist.da_to_revenue())
         };
 
         let ebit = gross_profit - sga - da;
@@ -633,8 +640,7 @@ fn project_industrial(
     let last_fcf = periods.last().map(|p| p.free_cash_flow).unwrap_or(0.0);
     let terminal_value = last_fcf * (1.0 + assumptions.terminal_growth)
         / (assumptions.discount_rate - assumptions.terminal_growth);
-    let terminal_df =
-        1.0 / (1.0 + assumptions.discount_rate).powi(total_years as i32);
+    let terminal_df = 1.0 / (1.0 + assumptions.discount_rate).powi(total_years as i32);
     let terminal_pv = terminal_value * terminal_df;
 
     // Enterprise to equity
@@ -763,9 +769,7 @@ fn project_financial_sector(
             cff: assumptions.debt_issuance - assumptions.debt_repayment
                 + assumptions.equity_issuance
                 - dividends,
-            net_cash_change: net_income
-                + assumptions.debt_issuance
-                - assumptions.debt_repayment
+            net_cash_change: net_income + assumptions.debt_issuance - assumptions.debt_repayment
                 + assumptions.equity_issuance
                 - dividends,
             cash_reconciliation: 0.0,
@@ -902,13 +906,9 @@ pub fn generate_markdown_report(
         "| Intrinsic value/share | ${:.2} |\n",
         model.intrinsic_per_share
     ));
-    md.push_str(&format!(
-        "| Current price | ${:.2} |\n",
-        current_price
-    ));
+    md.push_str(&format!("| Current price | ${:.2} |\n", current_price));
     if current_price > 0.0 {
-        let margin_of_safety =
-            (model.intrinsic_per_share - current_price) / current_price;
+        let margin_of_safety = (model.intrinsic_per_share - current_price) / current_price;
         md.push_str(&format!(
             "| Margin of safety | {:.1}% |\n",
             margin_of_safety * 100.0
@@ -995,12 +995,18 @@ pub fn generate_markdown_report(
     md.push_str("## Source Notes\n\n");
     md.push_str("- FCF formula: NOPAT + D&A - Capex - ΔNWC (Damodaran, *Investment Valuation*)\n");
     md.push_str("- SG&A included in EBIT (Fabozzi, *Financial Management & Analysis* Ch. 6)\n");
-    md.push_str("- Balance sheet identity enforced via cash plug (Fabozzi, three-statement linkage)\n");
-    md.push_str("- Interest expense linked to debt balance (Damodaran, *Applied Corporate Finance*)\n");
+    md.push_str(
+        "- Balance sheet identity enforced via cash plug (Fabozzi, three-statement linkage)\n",
+    );
+    md.push_str(
+        "- Interest expense linked to debt balance (Damodaran, *Applied Corporate Finance*)\n",
+    );
     md.push_str("- PP&E rolls forward: PP&E[t] = PP&E[t-1] + Capex - D&A\n");
     md.push_str("- Retained earnings: Equity[t] = Equity[t-1] + NI - Dividends + Issuance\n");
     if model.is_financial_sector {
-        md.push_str("- Financial-sector path: residual income = (ROE - COE) × equity (Damodaran Ch. 19)\n");
+        md.push_str(
+            "- Financial-sector path: residual income = (ROE - COE) × equity (Damodaran Ch. 19)\n",
+        );
     }
     md.push_str("- Terminal value: Gordon Growth perpetuity (FCF × (1+g) / (r-g))\n");
 
@@ -1187,7 +1193,8 @@ mod tests {
             "Retained earnings should be beginning RE + NI - dividends"
         );
         assert_eq!(
-            p.equity, p.paid_in_capital + p.retained_earnings + assumptions.equity_issuance,
+            p.equity,
+            p.paid_in_capital + p.retained_earnings + assumptions.equity_issuance,
             "Total equity should be paid-in capital + retained earnings + issuance"
         );
     }
@@ -1220,7 +1227,9 @@ mod tests {
             assert!(
                 (p.cash - expected_cash).abs() < 0.01,
                 "Cash in year {} should come from the cash flow statement, not a balance sheet plug. Expected {}, got {}",
-                p.year, expected_cash, p.cash
+                p.year,
+                expected_cash,
+                p.cash
             );
             prev_cash = p.cash;
         }

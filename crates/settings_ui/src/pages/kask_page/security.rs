@@ -21,8 +21,11 @@ pub(crate) fn render_security_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let credentials_provider = zed_credentials::global(cx);
-    let db_passphrase_configured =
-        has_credential(&credentials_provider, &[DB_PASSPHRASE_URL], "HKASK_DB_PASSPHRASE");
+    let db_passphrase_configured = has_credential(
+        &credentials_provider,
+        &[DB_PASSPHRASE_URL],
+        "HKASK_DB_PASSPHRASE",
+    );
 
     // DB passphrase — keychain-backed. Shows "Configured" card if the
     // passphrase exists, or an input field to set/change it. On confirm,
@@ -155,9 +158,7 @@ fn spawn_db_passphrase_rotation(new_passphrase: &str, cx: &mut App) -> Task<()> 
 
         match rotation_result {
             Ok(()) => {
-                log::info!(
-                    "DB passphrase rotation succeeded — writing new passphrase to keychain"
-                );
+                log::info!("DB passphrase rotation succeeded — writing new passphrase to keychain");
                 // 2. Write the new passphrase to the keychain. This triggers
                 //    nudge_mcp_servers via write_credential, which restarts
                 //    MCP servers with the new passphrase.

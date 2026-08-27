@@ -557,8 +557,7 @@ mod tests {
 
     #[test]
     fn detect_openrouter_batch_suffix() {
-        let (provider, model) =
-            detect_batch_provider("z-ai/glm-5.2:batch").expect("should detect");
+        let (provider, model) = detect_batch_provider("z-ai/glm-5.2:batch").expect("should detect");
         assert_eq!(provider, BatchProvider::OpenRouter);
         assert_eq!(model, "z-ai/glm-5.2");
     }
@@ -582,8 +581,8 @@ mod tests {
         // A model with both DeepInfra prefix AND :batch suffix —
         // the :batch suffix is checked first (OpenRouter convention),
         // so this routes to OpenRouter, not DeepInfra.
-        let (provider, model) =
-            detect_batch_provider("DeepInfra/Qwen/Qwen3-Embedding-0.6B:batch").expect("should detect");
+        let (provider, model) = detect_batch_provider("DeepInfra/Qwen/Qwen3-Embedding-0.6B:batch")
+            .expect("should detect");
         assert_eq!(provider, BatchProvider::OpenRouter);
         assert_eq!(model, "DeepInfra/Qwen/Qwen3-Embedding-0.6B");
     }

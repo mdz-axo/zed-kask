@@ -2,15 +2,15 @@
 //!
 //! Shared by the `face_*` MCP tools and the `gallery_refresh` orchestrator.
 
-use crate::error::{MediaError, map_media_error};
-use crate::gallery::vision;
 use crate::GalleryAccess;
 use crate::MediaServer;
+use crate::error::{MediaError, map_media_error};
+use crate::gallery::vision;
+use crate::types::FaceStatus;
 use crate::{blob_to_embedding, cosine_similarity, embedding_to_blob};
 use hkask_mcp_server::server::McpToolError;
-use sha2::Digest;
 use hkask_storage::database::value::DbValue;
-use crate::types::FaceStatus;
+use sha2::Digest;
 
 #[derive(Debug, serde::Deserialize)]
 struct FaceSidecar {
@@ -590,8 +590,6 @@ impl MediaServer {
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
         Ok(format!("data:image/jpeg;base64,{}", b64))
     }
-
-
 }
 
 /// Resolve the default face reference folder: `{kask_data_dir}/mcp/media/faces/`.

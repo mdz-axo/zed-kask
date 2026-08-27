@@ -394,7 +394,8 @@ pub(crate) async fn ingest_turn(
     match inference.embed(&embedding_model, &[task.to_string()]).await {
         Ok(vectors) => match vectors.into_iter().next() {
             Some(vector) => {
-                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model, None) {
+                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model, None)
+                {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         error = %error,

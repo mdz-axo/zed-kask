@@ -1160,34 +1160,47 @@ impl MediaServer {
     )]
     pub async fn gallery_delete_image(
         &self,
-        Parameters(GalleryDeleteImageRequest { image_index, delete_file }): Parameters<GalleryDeleteImageRequest>,
+        Parameters(GalleryDeleteImageRequest {
+            image_index,
+            delete_file,
+        }): Parameters<GalleryDeleteImageRequest>,
     ) -> String {
-        execute_tool_semantic(self, "gallery_delete_image", Self::ontology_anchor("gallery_delete_image"), async {
-            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
-            let image_path = if delete_file {
-                Some(self.resolve_image_path(image_index).map_err(map_media_error)?)
-            } else {
-                None
-            };
-            self.gallery_store
-                .delete_image(&image_id)
-                .map_err(|e| map_media_error(e.into()))?;
-            if let Some(path) = image_path {
-                if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        error = %e,
-                        "Failed to delete image file on disk (index entry already deleted)"
-                    );
+        execute_tool_semantic(
+            self,
+            "gallery_delete_image",
+            Self::ontology_anchor("gallery_delete_image"),
+            async {
+                let image_id = self
+                    .resolve_image_id(image_index)
+                    .map_err(map_media_error)?;
+                let image_path = if delete_file {
+                    Some(
+                        self.resolve_image_path(image_index)
+                            .map_err(map_media_error)?,
+                    )
+                } else {
+                    None
+                };
+                self.gallery_store
+                    .delete_image(&image_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                if let Some(path) = image_path {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        tracing::warn!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            error = %e,
+                            "Failed to delete image file on disk (index entry already deleted)"
+                        );
+                    }
                 }
-            }
-            Ok(serde_json::json!({
-                "deleted": true,
-                "image_id": image_id,
-                "file_deleted": delete_file,
-            }))
-        })
+                Ok(serde_json::json!({
+                    "deleted": true,
+                    "image_id": image_id,
+                    "file_deleted": delete_file,
+                }))
+            },
+        )
         .await
     }
 }

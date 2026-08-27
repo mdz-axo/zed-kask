@@ -61,7 +61,8 @@ pub(crate) fn decompose_gap(
     // contributions with the changed historical base.
     // Now: recompute the base from actual_hist with the original assumptions,
     // so each delta is pure driver effect.
-    let base_from_actual = project_model(actual_hist, projected_assumptions, 0.0).intrinsic_per_share;
+    let base_from_actual =
+        project_model(actual_hist, projected_assumptions, 0.0).intrinsic_per_share;
     let compute_delta = |assumptions: &ProjectionAssumptions| -> f64 {
         let alt_model = project_model(actual_hist, assumptions, 0.0);
         alt_model.intrinsic_per_share - base_from_actual

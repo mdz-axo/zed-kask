@@ -1418,8 +1418,8 @@ mod tests {
         // steps and must be rejected by the step/depth limit, never hang.
         // `define` has no function sugar — bind a lambda instead.
         let program = "(define loop (lambda (n) (loop (+ n 1)))) (loop 0)";
-        let err = eval_sandboxed_with_budget(program, &serde_json::json!({}), 1000, 64)
-            .unwrap_err();
+        let err =
+            eval_sandboxed_with_budget(program, &serde_json::json!({}), 1000, 64).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -1434,8 +1434,8 @@ mod tests {
         // Depth budget far below the real stack limit: the interpreter must
         // reject, not segfault.
         let program = "(define f (lambda (n) (+ 1 (f (+ n 1))))) (f 0)";
-        let err = eval_sandboxed_with_budget(program, &serde_json::json!({}), 1_000_000, 32)
-            .unwrap_err();
+        let err =
+            eval_sandboxed_with_budget(program, &serde_json::json!({}), 1_000_000, 32).unwrap_err();
         assert!(
             matches!(err, LispError::DepthLimitExceeded(32)),
             "expected depth limit, got: {err}"

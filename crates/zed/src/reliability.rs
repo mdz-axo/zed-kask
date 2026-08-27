@@ -669,10 +669,7 @@ mod tests {
     fn starting_counts_toward_total_but_not_healthy() {
         // A server stuck in Starting is the real degradation signal — it must
         // count toward total so the ratio drops below 1.0 and the alert fires.
-        let statuses = vec![
-            ContextServerStatus::Running,
-            ContextServerStatus::Starting,
-        ];
+        let statuses = vec![ContextServerStatus::Running, ContextServerStatus::Starting];
         let (healthy, total) = classify_fleet_health(&statuses);
         assert_eq!(healthy, 1);
         assert_eq!(total, 2);
@@ -723,10 +720,7 @@ mod tests {
     fn all_stopped_produces_zero_total_no_alert() {
         // When every server is deliberately stopped, total is 0 and the
         // sensor returns None (no signal) — no false-positive alert.
-        let statuses = vec![
-            ContextServerStatus::Stopped,
-            ContextServerStatus::Stopped,
-        ];
+        let statuses = vec![ContextServerStatus::Stopped, ContextServerStatus::Stopped];
         let (healthy, total) = classify_fleet_health(&statuses);
         assert_eq!(healthy, 0);
         assert_eq!(total, 0);

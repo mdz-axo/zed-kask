@@ -499,8 +499,7 @@ mod corpus_sweep_tests {
             // tdd-tracer's "verify the contract: it enforces…").
             for (idx, line) in stripped.lines().take(5).enumerate() {
                 let trimmed_line = line.trim();
-                if trimmed_line.starts_with("visibility:")
-                    || trimmed_line.starts_with("contract:")
+                if trimmed_line.starts_with("visibility:") || trimmed_line.starts_with("contract:")
                 {
                     leaked.push(format!(
                         "{}: line {} leaked header metadata `{}`",
@@ -513,7 +512,10 @@ mod corpus_sweep_tests {
             // A leading [inference] stanza must be gone (a mid-prose mention
             // is allowed).
             if stripped.trim_start().starts_with("[inference]") {
-                leaked.push(format!("{}: leading [inference] stanza survived", entry.display()));
+                leaked.push(format!(
+                    "{}: leading [inference] stanza survived",
+                    entry.display()
+                ));
             }
             // A template must retain SOME body — a stripper that eats
             // everything is worse than one that eats nothing.
@@ -522,7 +524,10 @@ mod corpus_sweep_tests {
             }
         }
 
-        assert!(checked > 200, "corpus scan found only {checked} templates — scan path broken");
+        assert!(
+            checked > 200,
+            "corpus scan found only {checked} templates — scan path broken"
+        );
         assert!(
             leaked.is_empty(),
             "{} templates leak metadata after stripping:\n{}",

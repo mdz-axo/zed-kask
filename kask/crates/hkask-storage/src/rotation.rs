@@ -68,10 +68,7 @@ pub enum RotationError {
     InvalidNewPassphrase(String),
     /// A filesystem operation failed during rotation.
     #[error("Filesystem error during rotation of {path}: {error}")]
-    Filesystem {
-        path: String,
-        error: std::io::Error,
-    },
+    Filesystem { path: String, error: std::io::Error },
     /// A SQL operation failed during the copy.
     #[error("SQL error during rotation of {path}: {error}")]
     Sql {
@@ -162,20 +159,22 @@ pub fn rotate_passphrase(
         path = %db_path,
         "Starting passphrase rotation — opening source DB with old passphrase"
     );
-    let source_db = Database::open(db_path, old_passphrase)
-        .map_err(|e| RotationError::OldPassphraseMismatch {
-            path: db_path.to_string(),
-            source: e,
-        })?;
-    // Force pool creation — this is where passphrase verification actually
-    // happens (the probe connection in `file_pool` runs `SELECT count(*) FROM
-    // sqlite_master`).
-    let source_pool = source_db.sqlite_pool().map_err(|e| {
+    let source_db = Database::open(db_path, old_passphrase).map_err(|e| {
         RotationError::OldPassphraseMismatch {
             path: db_path.to_string(),
             source: e,
         }
     })?;
+    // Force pool creation — this is where passphrase verification actually
+    // happens (the probe connection in `file_pool` runs `SELECT count(*) FROM
+    // sqlite_master`).
+    let source_pool =
+        source_db
+            .sqlite_pool()
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: db_path.to_string(),
+                source: e,
+            })?;
 
     // 2. Create the new DB file encrypted with the new passphrase.
     //    `Database::open` creates the salt file and parent dirs.
@@ -363,24 +362,20 @@ fn copy_all_tables(
     source_path: &str,
     new_path: &str,
 ) -> Result<(), RotationError> {
-    let source_conn = source_pool
-        .get()
-        .map_err(|e| RotationError::Sql {
-            path: source_path.to_string(),
-            error: rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-                Some(format!("source pool get: {e}")),
-            ),
-        })?;
-    let new_conn = new_pool
-        .get()
-        .map_err(|e| RotationError::Sql {
-            path: new_path.to_string(),
-            error: rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-                Some(format!("new pool get: {e}")),
-            ),
-        })?;
+    let source_conn = source_pool.get().map_err(|e| RotationError::Sql {
+        path: source_path.to_string(),
+        error: rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some(format!("source pool get: {e}")),
+        ),
+    })?;
+    let new_conn = new_pool.get().map_err(|e| RotationError::Sql {
+        path: new_path.to_string(),
+        error: rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some(format!("new pool get: {e}")),
+        ),
+    })?;
 
     // Get the list of user tables from the source DB.
     // Exclude: sqlite_* (internal), vec0* (virtual table shadow tables,
@@ -454,13 +449,12 @@ fn copy_all_tables(
         // CREATE would fail with "table already exists". We inject
         // `IF NOT EXISTS` to make it idempotent. For non-standard tables
         // (added by a store's init_schema), this creates them safely.
-        let create_sql = if create_sql.contains("IF NOT EXISTS")
-            || create_sql.contains("if not exists")
-        {
-            create_sql
-        } else {
-            create_sql.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
-        };
+        let create_sql =
+            if create_sql.contains("IF NOT EXISTS") || create_sql.contains("if not exists") {
+                create_sql
+            } else {
+                create_sql.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
+            };
 
         new_conn
             .execute_batch(&create_sql)
@@ -537,51 +531,39 @@ fn copy_all_tables(
 
         // Use query_map to read rows, then bind each to the insert.
         // We read values as raw ValueRef to avoid type assumptions.
-        let mut rows_iter = select_stmt
-            .query([])
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
+        let mut rows_iter = select_stmt.query([]).map_err(|e| RotationError::Sql {
+            path: source_path.to_string(),
+            error: e,
+        })?;
 
         let mut row_count = 0usize;
-        while let Some(row) = rows_iter
-            .next()
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?
-        {
+        while let Some(row) = rows_iter.next().map_err(|e| RotationError::Sql {
+            path: source_path.to_string(),
+            error: e,
+        })? {
             // Bind each column value from the source row.
             // We use rusqlite::Value to handle all types uniformly.
-            let mut params: Vec<rusqlite::types::Value> =
-                Vec::with_capacity(column_count);
+            let mut params: Vec<rusqlite::types::Value> = Vec::with_capacity(column_count);
             for i in 0..column_count {
-                let val = row
-                    .get_ref(i)
-                    .map_err(|e| RotationError::Sql {
-                        path: source_path.to_string(),
-                        error: e,
-                    })?;
+                let val = row.get_ref(i).map_err(|e| RotationError::Sql {
+                    path: source_path.to_string(),
+                    error: e,
+                })?;
                 let value = match val {
                     rusqlite::types::ValueRef::Null => rusqlite::types::Value::Null,
-                    rusqlite::types::ValueRef::Integer(i) => {
-                        rusqlite::types::Value::Integer(i)
-                    }
+                    rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
                     rusqlite::types::ValueRef::Real(f) => rusqlite::types::Value::Real(f),
                     rusqlite::types::ValueRef::Text(s) => {
-                        rusqlite::types::Value::Text(
-                            String::from_utf8_lossy(s).into_owned(),
-                        )
+                        rusqlite::types::Value::Text(String::from_utf8_lossy(s).into_owned())
                     }
-                    rusqlite::types::ValueRef::Blob(b) => {
-                        rusqlite::types::Value::Blob(b.to_vec())
-                    }
+                    rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
                 };
                 params.push(value);
             }
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+                .iter()
+                .map(|p| p as &dyn rusqlite::types::ToSql)
+                .collect();
             insert_stmt
                 .execute(param_refs.as_slice())
                 .map_err(|e| RotationError::Sql {

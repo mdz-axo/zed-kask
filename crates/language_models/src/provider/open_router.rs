@@ -1175,7 +1175,9 @@ mod tests {
                         id: Some("call_abc123".to_string()),
                         function: Some(FunctionChunk {
                             name: Some("corpus_query".to_string()),
-                            arguments: Some(r#"{"query":"investment philosophy","top_k":2}"#.to_string()),
+                            arguments: Some(
+                                r#"{"query":"investment philosophy","top_k":2}"#.to_string(),
+                            ),
                             thought_signature: None,
                         }),
                     }]),
@@ -1188,7 +1190,9 @@ mod tests {
         // The streaming ToolUse event (is_input_complete=false) should be
         // emitted because id and name are both non-empty and arguments parse.
         assert!(
-            tool_events.iter().any(|e| matches!(e, Ok(LanguageModelCompletionEvent::ToolUse(_)))),
+            tool_events
+                .iter()
+                .any(|e| matches!(e, Ok(LanguageModelCompletionEvent::ToolUse(_)))),
             "streaming ToolUse event should be emitted when id+name are present and args parse"
         );
 
@@ -1223,10 +1227,16 @@ mod tests {
             )
         });
         let has_tool_use_stop = stop_events.iter().any(|e| {
-            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+            matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+            )
         });
         let has_end_turn_stop = stop_events.iter().any(|e| {
-            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)))
+            matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            )
         });
 
         assert!(
@@ -1269,10 +1279,16 @@ mod tests {
         });
 
         let has_end_turn = stop_events.iter().any(|e| {
-            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)))
+            matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            )
         });
         let has_tool_use = stop_events.iter().any(|e| {
-            matches!(e, Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+            matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+            )
         });
 
         assert!(has_end_turn, "no tool calls → Stop(EndTurn)");

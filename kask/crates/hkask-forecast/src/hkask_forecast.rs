@@ -1059,7 +1059,10 @@ mod tests {
         let few = outside_view_adjustment(0.9, 0.2, 1);
         let many = outside_view_adjustment(0.9, 0.2, 100);
         // With many references the estimate converges toward the base rate.
-        assert!(many.0 > few.0, "more references should raise toward base rate");
+        assert!(
+            many.0 > few.0,
+            "more references should raise toward base rate"
+        );
         assert!(many.0 <= 0.9 + 1e-9);
     }
 
@@ -1126,8 +1129,7 @@ mod tests {
                 }],
             },
         ];
-        let combined =
-            combine_tree_probabilities(&nodes, &["root", "outcome"], "outcome").unwrap();
+        let combined = combine_tree_probabilities(&nodes, &["root", "outcome"], "outcome").unwrap();
         assert!(close(combined, 0.1 * 0.5 + 0.9 * 0.5));
     }
 

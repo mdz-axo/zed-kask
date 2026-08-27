@@ -57,7 +57,6 @@ use std::sync::{Arc, Mutex};
 const MAX_IMAGE_READ_BYTES: u64 = 32 * 1024 * 1024;
 use video::FfmpegRunner;
 
-
 // ── Model configuration ───────────────────────────────────────────────
 
 /// Default open-weight models for media processing.
@@ -1018,10 +1017,7 @@ mod tool_behavior_tests {
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<
-                        Output = Result<
-                            hkask_types::InferenceResult,
-                            hkask_types::InferenceError,
-                        >,
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
                     > + Send
                     + '_,
             >,
@@ -1050,7 +1046,9 @@ mod tool_behavior_tests {
         let error = parsed
             .get("error")
             .and_then(|e| e.as_str())
-            .unwrap_or_else(|| panic!("uninitialized gallery must yield an error envelope, got: {parsed}"));
+            .unwrap_or_else(|| {
+                panic!("uninitialized gallery must yield an error envelope, got: {parsed}")
+            });
         assert!(
             error.to_lowercase().contains("gallery"),
             "error should name the gallery state problem, got: {error}"

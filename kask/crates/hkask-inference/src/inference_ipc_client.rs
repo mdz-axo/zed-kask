@@ -82,22 +82,21 @@ const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 fn read_socket_path_from_file() -> Option<String> {
     // Use the actual UID from the environment, not a hardcoded 1000.
     // On Linux, `/proc/self` gives us the real UID without a libc dep.
-    let xdg = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| {
-            // Read /proc/self/status to find the real UID without a libc dep.
-            // Falls back to 1000 if the procfs read fails (non-Linux or
-            // restricted environment).
-            let uid = std::fs::read_to_string("/proc/self/status")
-                .ok()
-                .and_then(|s| {
-                    s.lines()
-                        .find(|l| l.starts_with("Uid:"))
-                        .and_then(|l| l.split_whitespace().nth(1))
-                        .and_then(|v| v.parse::<u32>().ok())
-                })
-                .unwrap_or(1000);
-            format!("/run/user/{uid}")
-        });
+    let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        // Read /proc/self/status to find the real UID without a libc dep.
+        // Falls back to 1000 if the procfs read fails (non-Linux or
+        // restricted environment).
+        let uid = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("Uid:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|v| v.parse::<u32>().ok())
+            })
+            .unwrap_or(1000);
+        format!("/run/user/{uid}")
+    });
     std::fs::read_to_string(format!("{xdg}/kask/inference-socket-path"))
         .ok()
         .map(|s| s.trim().to_string())
@@ -557,9 +556,10 @@ impl InferenceIpcClient {
         match response.outcome {
             InferenceOutcome::Media { media } => Ok(media),
             InferenceOutcome::Error { error } => Err(error.into()),
-            _ => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "non-Media"),
-            )),
+            _ => Err(InferenceError::Connection(unexpected_outcome_msg(
+                &method,
+                "non-Media",
+            ))),
         }
     }
 

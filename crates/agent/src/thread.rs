@@ -1489,9 +1489,8 @@ impl Thread {
         // this, a curator subagent's turns are ingested as user-perspective
         // records and the curator has no first-person memory of the
         // delegated work.
-        thread.kask = crate::kask_thread_state::KaskThreadState::inherit_from(
-            &parent_thread.read(cx).kask,
-        );
+        thread.kask =
+            crate::kask_thread_state::KaskThreadState::inherit_from(&parent_thread.read(cx).kask);
         thread.inherit_parent_settings(parent_thread, cx);
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
             thread.inherits_parent_model_settings = false;
@@ -4070,10 +4069,8 @@ impl Thread {
         // the zero-gain retry death spiral (Ashby variety-deficit).
         let tool_name_str = tool_use.name.as_ref();
         // zed-kask: .rules — tool retry death spiral prevention
-        let retry_warning: Option<String> = match self.kask.check_tool_retry(
-            tool_name_str,
-            &input,
-        ) {
+        let retry_warning: Option<String> = match self.kask.check_tool_retry(tool_name_str, &input)
+        {
             crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
                 let content =
                     crate::tool_retry_tracker::format_refusal(tool_name_str, attempt, reason);
@@ -4677,7 +4674,8 @@ impl Thread {
             };
 
             if !message.tool_results.contains_key(&tool_use.id) {
-                let cancel_message = if self.kask.last_completion_truncated() { // zed-kask: D25
+                let cancel_message = if self.kask.last_completion_truncated() {
+                    // zed-kask: D25
                     TOOL_TRUNCATED_MESSAGE
                 } else {
                     TOOL_CANCELED_MESSAGE
@@ -5147,22 +5145,21 @@ impl Thread {
         let open_paths = self.collect_open_file_paths(cx);
         let mentioned_paths = self.collect_mentioned_paths();
         let filter_digest = filter_inputs_digest(&open_paths, &mentioned_paths);
-        let filtered_project_context = if let Some(cached) =
-            self.kask.cached_filtered_context(&filter_digest)
-        {
-            cached.clone()
-        } else {
-            let context = self.project_context.read(cx);
-            let all_paths: Vec<&str> = open_paths
-                .iter()
-                .map(|s| s.as_str())
-                .chain(mentioned_paths.iter().map(|s| s.as_str()))
-                .collect();
-            let filtered = filter_conditional_rules(context.clone(), &all_paths);
-            self.kask
-                .cache_filtered_context(filter_digest, filtered.clone());
-            filtered
-        };
+        let filtered_project_context =
+            if let Some(cached) = self.kask.cached_filtered_context(&filter_digest) {
+                cached.clone()
+            } else {
+                let context = self.project_context.read(cx);
+                let all_paths: Vec<&str> = open_paths
+                    .iter()
+                    .map(|s| s.as_str())
+                    .chain(mentioned_paths.iter().map(|s| s.as_str()))
+                    .collect();
+                let filtered = filter_conditional_rules(context.clone(), &all_paths);
+                self.kask
+                    .cache_filtered_context(filter_digest, filtered.clone());
+                filtered
+            };
 
         // Compute a digest of the inputs that affect the rendered system
         // prompt. If it matches the cached digest, reuse the cached string.
@@ -11238,10 +11235,7 @@ mod tests {
                     "probability should be 1/(3+2) = 0.2, got {probability}"
                 );
             }
-            other => panic!(
-                "4th check should return AllowWithWarning, got {:?}",
-                other
-            ),
+            other => panic!("4th check should return AllowWithWarning, got {:?}", other),
         }
 
         // Record one more failure (total 4).
@@ -11254,7 +11248,10 @@ mod tests {
             thread.kask.check_tool_retry(tool_name, &input)
         });
         assert!(
-            matches!(verdict, crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { .. }),
+            matches!(
+                verdict,
+                crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { .. }
+            ),
             "5th check should return AllowWithWarning (4 < HARD_CAP), got {:?}",
             verdict
         );
