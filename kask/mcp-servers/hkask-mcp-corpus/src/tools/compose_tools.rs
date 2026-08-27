@@ -1,9 +1,9 @@
 //! Compose and rewrite tools — LLM-based prose generation.
 //!
 //! These tools generate prose in a specified style by prompting the LLM.
-//! They do NOT use style centroids or exemplar retrieval — the persona/
-//! centroid system was removed as dead surface. The LLM generates style-
-//! appropriate prose from the prompt alone.
+//! They do NOT use style centroids or exemplar retrieval — the style
+//! centroid system was removed. The LLM generates style-appropriate prose
+//! from the prompt alone.
 
 use std::path::PathBuf;
 

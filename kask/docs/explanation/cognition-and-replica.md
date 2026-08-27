@@ -398,7 +398,7 @@ The owner-scoped portfolio storage is P1 (User Sovereignty) and P12 (Authenticat
 | `build-prompts`        | ❌ No            | Salience + concepts only            |
 | `generate-qa`          | ❌ No            | Raw text → LLM                      |
 | `ingest-qa`            | ✅ Produces      | Embeds QAs AFTER generation         |
-| `corpus_build_persona` | ✅ Produces      | Embeds corpus for persona centroids |
+| `corpus_compose`         | ✅ Produces      | Embeds corpus for style exemplar centroids |
 
 ## Gap: Embeddings Not Used in QA Generation
 

@@ -2,7 +2,7 @@
 //!
 //! These tools are the "gather" stage of the unified corpus flow:
 //!
-//!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
 //! `corpus_discover` finds an author's body of work across multiple sources
 //! and generates a corpus.yaml. `corpus_cache_work` caches extracted text
@@ -76,7 +76,7 @@ pub(crate) struct CacheWorkRequest {
 #[tool_router(router = gather_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
+        description = "Discover an academic author's body of work and generate a corpus.yaml for style exemplar construction. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]
     pub async fn corpus_discover(&self, Parameters(params): Parameters<DiscoverRequest>) -> String {
         execute_tool_semantic(self, "corpus_discover", Self::ontology_anchor("corpus_discover"), async {
@@ -159,7 +159,7 @@ impl CorpusServer {
             );
 
             let result = DiscoverResult {
-                manifest_id: "mcp/replica-discovery".into(),
+                manifest_id: "mcp/corpus-discovery".into(),
                 parameters: manifest_params,
                 summary,
                 phases,
@@ -174,7 +174,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Cache an extracted work's content to disk for reuse by corpus_build_persona. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading."
+        description = "Cache an extracted work's content to disk for reuse by the embedding pipeline. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading."
     )]
     pub async fn corpus_cache_work(
         &self,

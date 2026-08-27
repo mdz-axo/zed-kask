@@ -282,12 +282,26 @@ for an IPC boundary and may be intentional during restore.
 | 12 | **Fix stale ERD diagram** at `kask/docs/diagrams/erd-credential-resolution.md:124-125` — says "auto-generate random English word if none" but provisioning now uses `"allostery"`. | — | Trivial. |
 | 13 | **Fix production `unwrap()`** at `hkask_mcp_media.rs:1802` — use `?` or `unwrap_or_else` with a fallback. | R8 | Trivial, but wait until the crate compiles. |
 
+### Backward-compatibility audit (no backward compatibility is a requirement)
+
+The architecture plan (`zed-host-architecture-plan.md` §1) states: "No
+backward compatibility." Any code, config, or doc that exists solely to
+preserve compatibility with a prior version should be removed. This is a
+sweep across all surfaces — not just the persona removal — to confirm no
+accommodations for old behavior remain.
+
+| # | Action | Fixes | Notes |
+|---|---|---|---|
+| 14 | **Audit for backward-compatibility affordances across all kask surfaces.** Grep for patterns like `// deprecated`, `// legacy`, `// backward`, `// compat`, `#[deprecated]`, `unwrap_or` on config reads that silently fall back to old defaults, and `#[serde(default)]` fields that exist only to tolerate old YAML/JSON shapes. Each hit should either be removed or have a documented reason to keep. The persona removal is one instance of this; the passphrase random-generation removal is another. The goal is to confirm there are no remaining shims for prior versions anywhere. | — | Per `zed-host-architecture-plan.md` §1: "No backward compatibility." This is a project-wide invariant, not a per-feature decision. |
+| 15 | **Remove persona backward-compatibility affordances.** The persona system removal left stale references that function as implicit backward-compat shims: `gather.rs` tool descriptions still mention `corpus_build_persona` (agents reading the description will try to call it), `golem.rs:128-132` maps dead tool names to ontology concepts, `hkask_mcp_corpus.rs:635` doc comment lists deleted tools, `corpus/discover/llm.rs:13` references `registry/templates/replica` which doesn't exist, `README.md` and `kask/docs/reference/mcp-servers/corpus.md` document deleted tools as if they exist. All of these should be removed — they serve no purpose except preserving the appearance of the old API. | R5, R7 | Being handled by the persona-removal agent; listed here for completeness under the backward-compat audit. |
+| 16 | **Remove `hkask-mcp-replica` references.** The corpus server was formed by merging `hkask-mcp-docproc` and `hkask-mcp-replica`, but the `replica` name persists in: `hkask_mcp_corpus.rs:5,20` ("Combines the former hkask-mcp-docproc and hkask-mcp-replica"), `corpus/discover/llm.rs:13` (`TEMPLATE_BASE = "registry/templates/replica"`), `README.md:4`, and `Cargo.toml:6` ("style replicas"). The `replica` concept is the persona concept under its original name — both are gone. Remove the references. | — | The `registry/templates/replica/` directory does not exist; `llm.rs:13` is a dangling path that will fail at runtime if hit. |
+
 ### Lower priority (can be deferred)
 
 | # | Action | Fixes | Notes |
 |---|---|---|---|
-| 14 | **Split `hkask_mcp_media.rs`** — move tool implementations into `tools/*.rs` modules matching the pattern of other MCP servers. | R9 | May be easier to do after the restore is complete and compiling. |
-| 15 | **Report tool-call drain fix upstream** to `zed-industries/zed` — it's a general OpenAI-compatible provider bug. | R10 | D31 and D32 set the precedent. |
+| 17 | **Split `hkask_mcp_media.rs`** — move tool implementations into `tools/*.rs` modules matching the pattern of other MCP servers. | R9 | May be easier to do after the restore is complete and compiling. |
+| 18 | **Report tool-call drain fix upstream** to `zed-industries/zed` — it's a general OpenAI-compatible provider bug. | R10 | D31 and D32 set the precedent. |
 
 ---
 
@@ -320,6 +334,16 @@ for an IPC boundary and may be intentional during restore.
    OpenAI-compatible provider bug, not kask-specific. D31 and D32 set the
    precedent for upstreaming upstream bug fixes with a "remove when
    upstream fixes" D-seam note.
+
+5. **Are there any backward-compatibility affordances remaining anywhere
+   in the kask surfaces?** The architecture plan says "No backward
+   compatibility" — this is a project-wide invariant. The persona removal
+   and the passphrase random-generation removal are two instances; a
+   full sweep should grep for `// deprecated`, `// legacy`, `// backward`,
+   `// compat`, `#[deprecated]`, silent `unwrap_or` fallbacks to old
+   defaults, and `#[serde(default)]` fields that exist only to tolerate
+   old config shapes. Any hit should either be removed or have a
+   documented reason to keep.
 
 ---
 

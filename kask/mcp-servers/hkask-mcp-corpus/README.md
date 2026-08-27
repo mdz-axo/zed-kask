@@ -1,8 +1,8 @@
 # hkask-mcp-corpus
 
-Unified corpus MCP server — gather, process, and output. Combines the former
-`hkask-mcp-docproc` and `hkask-mcp-replica` servers into a single server
-organized by corpus flow stage.
+Unified corpus MCP server — gather, process, and output. Combines document
+processing and style composition into a single server organized by corpus
+flow stage.
 
 ## Architecture
 
@@ -38,8 +38,7 @@ tools/
                         corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
                         (thin wrappers → ConsolidationService / PromptBuilderService)
   tagging/            — corpus_tag_chunks (ontology tagging with validate_ontology_tags)
-  persona/            — corpus_build_persona, corpus_compose, corpus_rewrite, corpus_mashup,
-                        corpus_compare, corpus_registry, corpus_explain
+  compose/             — corpus_compose, corpus_rewrite (prose generation)
   storage.rs          — corpus_cache, corpus_query, corpus_clear_index
 ocr/ (13 modules)
   pipeline.rs         — OcrExecutor trait, run_pipeline orchestrator, cross-validation
@@ -64,14 +63,14 @@ corpus/
 runtime/              — Section classifier + provider intelligence + adaptive monitor
 ```
 
-## Tools (24)
+## Tools (25)
 
 ### Gather (2)
 
 | Tool | Description |
 |------|-------------|
-| `corpus_discover` | Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
-| `corpus_cache_work` | Cache an extracted work's content to disk for reuse by corpus_build_persona. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading. |
+| `corpus_discover` | Discover an academic author's body of work and generate a corpus.yaml for style exemplar construction. Delegates to the corpus-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
+| `corpus_cache_work` | Cache an extracted work's content to disk for reuse by the embedding pipeline. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading. |
 
 ### Process (8)
 
@@ -97,17 +96,12 @@ runtime/              — Section classifier + provider intelligence + adaptive 
 | `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
 | `corpus_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
 
-### Persona/Style Output (7)
+### Compose Output (2)
 
 | Tool | Description |
 |------|-------------|
-| `corpus_build_persona` | Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid. |
-| `corpus_compose` | Generate prose in an author's style |
+| `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation |
 | `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific Gentle Lovelace quality dimension (gentle/schriver/hopper/lovelace/composite) |
-| `corpus_compare` | Compare all built author replicas, or evaluate a document against a persona's centroids |
-| `corpus_mashup` | Generate prose blending two authors' styles |
-| `corpus_registry` | Manage the registry of built author replicas |
-| `corpus_explain` | Explain what style centroids are and how the metadata layer works |
 
 ### Manage (3)
 
@@ -192,8 +186,8 @@ Corpus server integrates with hkask's shared service layer:
 - **Templates:** `registry/templates/docproc/{generate-qa,extract-hmems,rag-answer,tag-chunks,build-prompts,consolidate-chunks,ocr-extract}.j2`
 - **Regulation:** Daemon-backed event persistence for Curator consumption
 - **Inference:** `hkask-inference` router with provider-prefixed model names
-- **Compose:** `compose.rs` — `ComposeService` for prose generation (persona tools)
-- **Corpus:** `corpus/embed/service.rs` — `EmbedService::embed_corpus` (corpus_build_persona)
+- **Compose:** `compose.rs` — `ComposeService` for prose generation with exemplar retrieval
+- **Corpus:** `corpus/embed/service.rs` — `EmbedService::embed_corpus` (style exemplar embedding)
 - **Services:** `services/` — `ConvertService`, `TriplesService`, `ConsolidationService`, `PromptBuilderService`
 
 ## Quick Start

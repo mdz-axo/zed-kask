@@ -30,10 +30,10 @@ gather → process → output
 | Process | `tools/corpus/` | `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
 | QA Output | `tools/semantic/` | `corpus_generate_qa`, `corpus_generate_qa_batch` |
 | QA Output | `tools/corpus/` | `corpus_build_prompts`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
-| Persona Output | `tools/persona/` | `corpus_build_persona`, `corpus_compose`, `corpus_rewrite`, `corpus_mashup`, `corpus_compare`, `corpus_registry`, `corpus_explain` |
+| Compose | `tools/compose_tools.rs` | `corpus_compose`, `corpus_rewrite` |
 | Manage | `tools/storage.rs` | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
-## Tool Catalog (27)
+## Tool Catalog (25)
 
 Tool count verified against `#[tool(description = ...)]` annotations in
 `mcp-servers/hkask-mcp-corpus/src/` (2026-08-05 audit).
@@ -42,7 +42,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 | Tool | Description |
 |------|-------------|
-| `corpus_discover` | Discover an academic author's body of work and generate a `corpus.yaml` for `corpus_build_persona`. Multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts); agentic and curated modes. |
+| `corpus_discover` | Discover an academic author's body of work and generate a `corpus.yaml` for style exemplar construction. Multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts); agentic and curated modes. |
 | `corpus_cache_work` | Cache an extracted work's content to disk (`{cache_dir}/{slug}.txt`) so the embedding pipeline can skip re-downloading. |
 
 ### Process (9)
@@ -69,17 +69,12 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 | `corpus_ingest_qa` | Ingest generated QA pairs: parse, quality-filter, exact-match dedup, write training JSONL, store QA h_mems with 5W1H + Dublin Core / PKO metadata. |
 | `corpus_prepare_training_dataset` | Convert Alpaca-format QA JSONL to ChatML training format, apply the lora-training G-D1 dataset-size gate, and return PEFT config recommendations. Bridges the corpus pipeline to the training server. |
 
-### Persona Output (7)
+### Compose Output (2)
 
 | Tool | Description |
 |------|-------------|
-| `corpus_build_persona` | Embed a style corpus and create an authorial replica: downloads public-domain texts, chunks them, generates embeddings, computes a style centroid. |
-| `corpus_compose` | Generate prose in an author's style. |
+| `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. |
 | `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). |
-| `corpus_mashup` | Generate prose blending two authors' styles. |
-| `corpus_compare` | Compare all built author replicas, or evaluate a document against a persona's centroids. |
-| `corpus_registry` | Manage the registry of built author replicas. |
-| `corpus_explain` | Explain what style centroids are and how the metadata layer works. |
 
 ### Manage (4)
 

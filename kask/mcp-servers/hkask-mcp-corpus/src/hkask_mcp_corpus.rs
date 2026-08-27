@@ -2,12 +2,12 @@
 #![warn(clippy::let_underscore_future)]
 //! hKask MCP Corpus — Unified corpus MCP server.
 //!
-//! Combines the former `hkask-mcp-docproc` and `hkask-mcp-replica` servers into
-//! a single server organized by corpus flow stage:
+//! Combines document processing and style composition into a single server
+//! organized by corpus flow stage:
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
-//! Tools (27):
+//! Tools (25):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
 //!   corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
@@ -16,8 +16,6 @@
 //!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
 //! - Compose:    corpus_compose, corpus_rewrite (prose generation)
 //! - Manage:     corpus_cache, corpus_query, corpus_clear_index
-//!
-//! Supersedes `hkask-mcp-markitdown`, `hkask-mcp-doc-knowledge`, and `hkask-mcp-replica`.
 //!
 //! Server struct in lib.rs, tool methods in tools/ module.
 //! Helpers in helpers.rs (math/text); LLM JSON parsing comes from
@@ -632,8 +630,7 @@ impl CorpusServer {
     /// - Document processing (convert, OCR, chunk, tag, embed) → Dublin Core
     ///   `TEXT` / PKO `FUNCTION` / `ACTION` / `STEP_VERIFICATION`.
     /// - Knowledge extraction (extract_assertions, QA) → ESO `HAS_EVIDENCE`.
-    /// - Persona/narrative (build_persona, compose, rewrite, compare, mashup)
-    ///   → GOLEM `CREATIVE_WORK`.
+    /// - Compose/rewrite (corpus_compose, corpus_rewrite) → GOLEM `CREATIVE_WORK`.
     /// - Storage/query/gather → Dublin Core `DATASET` / PKO `ACTION`.
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
         match tool {

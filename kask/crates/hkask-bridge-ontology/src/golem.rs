@@ -47,7 +47,7 @@ pub const LOCATED_IN: GolemConcept = "golem:locatedIn";
 // ── Work and authorship (from replica golem.rs) ───────────────────────────
 
 /// A creative work — the narrative text itself.
-/// Maps to the corpus works that corpus_build_persona ingests.
+/// Maps to the corpus works that corpus_compose ingests.
 pub const CREATIVE_WORK: GolemConcept = "golem:G1_CreativeWork";
 
 /// The author/creator of a creative work.
@@ -122,14 +122,11 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
 
 // ── Mapping helpers (from replica golem.rs) ────────────────────────────────
 
-/// Map a replica server operation to its GOLEM concept.
+/// Map a corpus server operation to its GOLEM concept.
 pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {
     match op {
-        "corpus_build_persona" => Some(AUTHOR),
         "corpus_compose" => Some(CREATIVE_WORK),
-        "corpus_mashup" => Some(NARRATIVE_FUNCTION),
         "corpus_discover" => Some(CREATIVE_WORK),
-        "corpus_compare" => Some(CHARACTER),
         _ => None,
     }
 }
