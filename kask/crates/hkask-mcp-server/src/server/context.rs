@@ -135,7 +135,7 @@ impl ServerContext {
     ///
     /// Delegates to [`super::credentials::resolve_db_passphrase`] which checks
     /// `ctx.credentials` first, then `resolve_credential("HKASK_DB_PASSPHRASE")`
-    /// (env var → `hkask-keystore` keychain `hkask-db-passphrase`).
+    /// (env var → `hkask-keystore` keychain `kask://credentials/hkask_db_passphrase`).
     fn resolve_db_credential(&self) -> Result<String, McpError> {
         resolve_db_passphrase(&self.credentials).map_err(|e| {
             McpError::DatabasePassphrase(format!("Failed to resolve DB passphrase: {e}"))

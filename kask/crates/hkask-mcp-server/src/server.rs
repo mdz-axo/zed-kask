@@ -4,7 +4,7 @@
 //! No ambient authority — all identity and credentials flow through `ServerContext`.
 //
 //! ```rust,ignore
-//! use hkask_mcp::server::{run_stdio_server, CredentialRequirement, ServerContext};
+//! use hkask_mcp_server::{run_stdio_server, CredentialRequirement, ServerContext};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {

@@ -22,10 +22,6 @@
 //!    on first run — the user can change it later)
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
-use std::sync::Arc;
-
-use credentials_provider::CredentialsProvider;
-use gpui::{App, Task};
 use hkask_keystore::Keychain;
 use hkask_keystore::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
 use hkask_types::{WebID, agent_paths::sanitize_name};
@@ -134,81 +130,6 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
     })
 }
 
-/// Mirror the provisioned DB passphrase from the hkask-keystore keychain
-/// (`hkask-db-passphrase`, written by `provision_agent`) into zed's
-/// `CredentialsProvider` under `kask://credentials/hkask_db_passphrase`.
-///
-/// `build_mcp_server_env` reads the passphrase via the primary
-/// `ctx.credentials` tier of `resolve_db_passphrase`, which looks up this URL.
-/// Without the mirror, first-run provisioning only writes to the `hkask-keystore`
-/// keychain (`service=hkask`), so MCP servers reach the passphrase only via
-/// the fallback tier (`resolve_credential` → `hkask-db-passphrase`) — and
-/// `nudge_mcp_servers` never fires because `provision_agent` bypasses
-/// `write_credential`.
-///
-/// This bridges the two keychain backends at write time, reusing the
-/// canonical write path so the ordering dependency (provision before server
-/// launch) is explicit rather than implicit.
-///
-/// Failure modes (per the `.rules` trap on startup-failure signals):
-/// - Passphrase read fails → `tracing::warn!` naming the error; MCP servers
-///   fall back to the keystore tier of `resolve_db_passphrase`.
-/// - CredentialsProvider write fails → `tracing::warn!` naming the URL and
-///   error; same fallback applies.
-///
-/// The returned `Task` must be awaited (or detached) by the caller. It does
-/// NOT fire `nudge_mcp_servers` — at the call site in the deferred post-login
-/// task, the governed MCP servers have not launched yet, so they pick up the
-/// mirrored credential at launch via `build_mcp_server_env`.
-pub fn mirror_provisioned_db_passphrase(
-    credentials_provider: &Arc<dyn CredentialsProvider>,
-    cx: &mut App,
-) -> Task<()> {
-    // Read the provisioned passphrase from the keystore chain (env → keychain
-    // `hkask-db-passphrase`). `provision_agent` has already run by the time
-    // this is called, so the keychain entry exists on first run.
-    let passphrase = match hkask_keystore::keychain::resolve_db_passphrase_string() {
-        Ok(passphrase) => passphrase,
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.identity",
-                %error,
-                "Could not read provisioned DB passphrase for mirror — \
-                 MCP servers will rely on the fallback tier of resolve_db_passphrase"
-            );
-            return Task::ready(());
-        }
-    };
-
-    let credentials_provider = credentials_provider.clone();
-    cx.spawn(async move |cx| {
-        // Write to zed's CredentialsProvider so `build_mcp_server_env` finds
-        // the passphrase via the primary `ctx.credentials` tier.
-        let url = format!(
-            "{}/hkask_db_passphrase",
-            crate::credentials::KASK_CREDENTIAL_NAMESPACE
-        );
-        match credentials_provider
-            .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
-            .await
-        {
-            Ok(()) => tracing::info!(
-                target: "hkask.identity",
-                credential_url = %url,
-                "Mirrored provisioned DB passphrase to CredentialsProvider \
-                 so build_mcp_server_env picks it up via the primary ctx.credentials tier"
-            ),
-            Err(error) => tracing::warn!(
-                target: "hkask.identity",
-                %error,
-                credential_url = %url,
-                "Failed to mirror provisioned DB passphrase to CredentialsProvider — \
-                 MCP servers will rely on the fallback tier of resolve_db_passphrase"
-            ),
-        }
-    })
-}
-
 /// Username-independent DB passphrase provisioning for MCP server launch
 /// time.
 ///
@@ -266,11 +187,11 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
 ///
 /// Resolution order:
 /// 1. `HKASK_SWARM_MEMORY_PASSPHRASE` env var (user override).
-/// 2. Existing keychain entry `hkask-swarm-memory-passphrase` (returning user).
+/// 2. Existing keychain entry `kask://credentials/hkask_swarm_memory_passphrase` (returning user).
 /// 3. Use the default `"allostery"` and store it (first run).
 ///
-/// Returns the resolved passphrase so the caller can mirror it into zed's
-/// `CredentialsProvider` (see [`mirror_provisioned_swarm_memory_passphrase`]).
+/// Returns the resolved passphrase. The passphrase is stored directly in
+/// the unified `kask://credentials/*` namespace — no mirror step needed.
 ///
 /// # Errors
 ///
@@ -308,75 +229,6 @@ pub fn provision_swarm_memory_passphrase() -> Result<String, ProvisionError> {
         }
         Err(e) => Err(ProvisionError::KeychainRead(e.to_string())),
     }
-}
-
-/// Mirror the provisioned swarm memory passphrase from the hkask-keystore
-/// keychain (`hkask-swarm-memory-passphrase`, written by
-/// [`provision_swarm_memory_passphrase`]) into zed's `CredentialsProvider`
-/// under `kask://credentials/hkask_swarm_memory_passphrase`.
-///
-/// Mirrors [`mirror_provisioned_db_passphrase`] for the swarm memory store.
-/// `build_mcp_server_env` reads the passphrase via the primary
-/// `ctx.credentials` tier, which looks up this URL. Without the mirror, the
-/// swarm server reaches the passphrase only via the fallback tier
-/// (`resolve_credential` → `hkask-swarm-memory-passphrase`), and
-/// `nudge_mcp_servers` never fires because the provisioning bypasses
-/// `write_credential`.
-///
-/// Must be `.await`ed in the deferred post-login task before governed MCP
-/// server launch, alongside `mirror_provisioned_db_passphrase`, so the
-/// swarm server picks up the mirrored credential at launch via
-/// `build_mcp_server_env`.
-///
-/// Failure modes (per the `.rules` trap on startup-failure signals):
-/// - Passphrase read fails → `tracing::warn!` naming the error; the swarm
-///   server falls back to the keystore tier of `resolve_credential`.
-/// - CredentialsProvider write fails → `tracing::warn!` naming the URL and
-///   error; same fallback applies.
-pub fn mirror_provisioned_swarm_memory_passphrase(
-    credentials_provider: &Arc<dyn CredentialsProvider>,
-    cx: &mut App,
-) -> Task<()> {
-    let passphrase = match hkask_keystore::keychain::resolve_swarm_memory_passphrase_string() {
-        Ok(passphrase) => passphrase,
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.identity",
-                %error,
-                "Could not read provisioned swarm memory passphrase for mirror — \
-                 the swarm server will rely on the fallback tier of resolve_credential. \
-                 If that also fails, local knowledge tools will degrade."
-            );
-            return Task::ready(());
-        }
-    };
-
-    let credentials_provider = credentials_provider.clone();
-    cx.spawn(async move |cx| {
-        let url = format!(
-            "{}/hkask_swarm_memory_passphrase",
-            crate::credentials::KASK_CREDENTIAL_NAMESPACE
-        );
-        match credentials_provider
-            .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
-            .await
-        {
-            Ok(()) => tracing::info!(
-                target: "hkask.identity",
-                credential_url = %url,
-                "Mirrored provisioned swarm memory passphrase to CredentialsProvider \
-                 so build_mcp_server_env picks it up via the primary ctx.credentials tier"
-            ),
-            Err(error) => tracing::warn!(
-                target: "hkask.identity",
-                %error,
-                credential_url = %url,
-                "Failed to mirror provisioned swarm memory passphrase to \
-                 CredentialsProvider — the swarm server will rely on the fallback \
-                 tier of resolve_credential. If that also fails, local knowledge tools will degrade."
-            ),
-        }
-    })
 }
 
 // ── Passphrase rotation ──────────────────────────────────────────────────────

@@ -978,10 +978,9 @@ fn main() {
         // in `kask_bridge::inference_ipc_server` (fail-closed), the swarm card
         // `mcp_tools` allowlist, and the per-server MCP env allowlists.
 
-        // D5: Keystore uses the `keyring` crate directly for all keychain
-        // reads/writes (synchronous OS keychain I/O). API keys for inference
-        // providers are handled by zed's own CredentialsProvider through the
-        // LanguageModelRegistry.
+        // D5: Keystore uses `oo7` for all keychain reads/writes in the
+        // unified `kask://credentials/*` namespace (same as zed's
+        // CredentialsProvider). One keychain, one namespace.
         //
         // D3: McpRuntime is constructed above so it's available for both the
         // skill execution and the post-settings auto-launch. The
@@ -1370,8 +1369,9 @@ fn main() {
                 // with a real one. `provision_agent` handles first-run setup
                 // as lookups and directory creation — no interactive onboarding.
                 //
-                // The keystore uses the `keyring` crate directly
-                // (synchronous OS keychain I/O).
+                // The keystore writes to the unified `kask://credentials/*`
+                // namespace (same as zed's CredentialsProvider) — one keychain,
+                // one namespace. No mirror step needed.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| kask_settings.corpus.embedding_model.clone());
@@ -1379,33 +1379,38 @@ fn main() {
                 let username_for_provision = username.clone();
 
                 let provision_result = cx.background_spawn(async move {
+                    // One-time migration: copy any legacy `service=hkask`
+                    // keychain entries to the unified `kask://credentials/*`
+                    // namespace. Idempotent — skips keys that already exist.
+                    // Must run before `provision_agent` so provisioning sees
+                    // the migrated values and doesn't re-create with defaults.
+                    match hkask_keystore::migrate_legacy_hkask_entries() {
+                        Ok(report) => {
+                            if !report.migrated.is_empty() {
+                                log::info!(
+                                    "Migrated {} legacy keychain entries to kask://credentials/*: {}",
+                                    report.migrated.len(),
+                                    report.migrated.join(", ")
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Legacy keychain migration failed (non-fatal — \
+                                 provisioning will create fresh entries if needed): {e}"
+                            );
+                        }
+                    }
                     kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 
-                // Mirror the provisioned DB passphrase from the hkask-keystore
-                // keychain (`hkask-db-passphrase`, written by `provision_agent`)
-                // into zed's `CredentialsProvider` under
-                // `kask://credentials/hkask_db_passphrase` so `build_mcp_server_env`
-                // picks it up via the primary `ctx.credentials` tier. This must
-                // complete before the governed MCP servers launch below — they
-                // read the passphrase at launch via `build_mcp_server_env`, so we
-                // `.await` the mirror rather than detaching it. On failure the
-                // mirror warns and returns; MCP servers then fall back to the
-                // keystore tier of `resolve_db_passphrase`.
-                let db_passphrase_mirror_task = cx.update(|cx| {
-                    let credentials_provider = zed_credentials_provider::global(cx);
-                    kask_bridge::mirror_provisioned_db_passphrase(&credentials_provider, cx)
-                });
-                db_passphrase_mirror_task.await;
-
-                // zed-kask: provision the swarm memory SQLCipher passphrase and
-                // mirror it into zed's CredentialsProvider. Without this, the
-                // swarm server has no passphrase and local knowledge tools degrade
-                // (they require >=8 chars). `provision_swarm_memory_passphrase`
-                // uses the default "allostery" on first run and mirrors it into
-                // `kask://credentials/hkask_swarm_memory_passphrase` so the
-                // primary `ctx.credentials` tier works at launch. Both must
-                // `.await` before governed MCP server launch below.
+                // zed-kask: provision the swarm memory SQLCipher passphrase.
+                // Without this, the swarm server has no passphrase and local
+                // knowledge tools degrade (they require >=8 chars).
+                // `provision_swarm_memory_passphrase` uses the default
+                // "allostery" on first run. Both DB and swarm passphrases are
+                // written directly to the unified `kask://credentials/*`
+                // namespace — no mirror step needed.
                 let swarm_passphrase_provision_task = cx.background_spawn(async move {
                     kask_bridge::provision_swarm_memory_passphrase()
                 });
@@ -1415,14 +1420,6 @@ fn main() {
                          The swarm server will have no passphrase — local knowledge tools will degrade."
                     );
                 }
-                let swarm_passphrase_mirror_task = cx.update(|cx| {
-                    let credentials_provider = zed_credentials_provider::global(cx);
-                    kask_bridge::mirror_provisioned_swarm_memory_passphrase(
-                        &credentials_provider,
-                        cx,
-                    )
-                });
-                swarm_passphrase_mirror_task.await;
 
                 // zed-kask: mirror kask credential store keys to each provider's
                 // `api_url` in the Zed keychain. The kask settings UI writes keys
@@ -2171,9 +2168,9 @@ fn main() {
                         // receive `HKASK_INFERENCE_SOCKET` and route inference
                         // through this bridge rather than falling back to
                         // `MediaRouter::from_env()`. That fallback reads from
-                        // the `hkask` keychain namespace, which is empty in zed-kask
-                        // (inference keys live in zed's `CredentialsProvider` under
-                        // `kask://credentials/<key>`). Without the IPC server, MCP
+                        // the `kask://credentials/*` keychain namespace, which
+                        // may not have the key if the operator hasn't configured
+                        // it via the settings UI. Without the IPC server, MCP
                         // servers silently failed with "API key not configured" —
                         // an error operators could not trace to the missing socket.
                         // The `NoModelInferencePort` returns a clear diagnostic so

@@ -27,7 +27,7 @@ pub(crate) use hkask_mcp_server::server::map_memory_store_error;
 ///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
 ///    [`set_corpus_db_passphrase`].
 /// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore`
-///    keychain `hkask-db-passphrase`).
+///    keychain `kask://credentials/hkask_db_passphrase`).
 ///
 /// Returns an empty string when the credential is unset in all tiers.
 /// `Database::open` rejects empty passphrases with a clear error

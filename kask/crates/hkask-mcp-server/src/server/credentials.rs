@@ -64,7 +64,7 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
 
 /// Resolve `HKASK_DB_PASSPHRASE` using the canonical 2-tier chain:
 /// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
-/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore` keychain `hkask-db-passphrase`)
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore` keychain `kask://credentials/hkask_db_passphrase`)
 ///
 /// Returns `Ok(passphrase)` if found in any tier, or
 /// `Err(McpToolError::permission_denied(...))` if all tiers miss. The error
