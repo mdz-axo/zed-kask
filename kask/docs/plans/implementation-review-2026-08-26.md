@@ -345,7 +345,27 @@ accommodations for old behavior remain.
    old config shapes. Any hit should either be removed or have a
    documented reason to keep.
 
+   **TODO: please confirm there are no accommodations for backward
+   compatibility and remove affordances for backward compatibility which
+   is not a requirement.** The project's governing principle (architecture
+   plan §1: "No backward compatibility") means any code, config, or doc
+   that exists only to preserve compatibility with a prior API shape is a
+   violation. The persona system removal (completed in this session) and
+   the passphrase random-generation removal (commit `4b50b0f374`) are two
+   instances that have been cleaned up. A systematic sweep is needed to
+   find any remaining backward-compat shims across all kask surfaces.
+
 ---
 
 *Review conducted 2026-08-26. Verification by `cargo check`, `git diff`,
-`grep`, `git log`, and file inspection. No files were modified.*
+`grep`, `git log`, and file inspection. Persona system documentation
+cleanup completed during this review — stale references removed from
+`gather.rs` tool descriptions, `hkask_mcp_corpus.rs` doc comments,
+`compose_tools.rs` comments, `golem.rs` ontology mapping and comments,
+`axis.rs` keyword list, `llm.rs` template path, `Cargo.toml` description,
+`README.md`, `kask/docs/reference/mcp-servers/corpus.md`,
+`kask/docs/explanation/cognition-and-replica.md`,
+`kask/docs/explanation/company-corpus-design.md`,
+`kask/docs/explanation/training-and-adapters.md`,
+`kask/docs/architecture/core/MDS.md`, and
+`.agents/skills/build-corpus-pipeline/SKILL.md`.*

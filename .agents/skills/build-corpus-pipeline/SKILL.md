@@ -1,13 +1,13 @@
 ---
 name: build-corpus-pipeline
-description: "Ingest a folder of source documents through a complete text-processing pipeline (convert → chunk → embed → tag) with optional persona replica and QA pair generation for LoRA training. 10-stage PDCA pipeline grounded in PKO procedural ontology, Dublin Core metadata, and Bloom's Taxonomy for QA generation."
+description: "Ingest a folder of source documents through a complete text-processing pipeline (convert → chunk → embed → tag) with optional style exemplar construction and QA pair generation for LoRA training. 10-stage PDCA pipeline grounded in PKO procedural ontology, Dublin Core metadata, and Bloom's Taxonomy for QA generation."
 ---
 
 # Build Corpus Pipeline
 
 Ingest a folder of source documents through a complete text-processing
 pipeline: document conversion → segmentation → vectorization → ontology
-annotation, with optional persona replica construction and QA pair
+annotation, with optional style exemplar construction and QA pair
 generation for LoRA training.
 
 ## Ontological Anchors
@@ -34,7 +34,7 @@ Plan:  Stage 1 — Convert    → Extract text from all documents in the source 
 Do:    Stage 2 — Chunk      → Segment text into passages at configurable token granularity
 Do:    Stage 3 — Embed      → Generate ontology-anchored embedding vectors for ALL chunks
 Check: Stage 4 — Tag        → Annotate chunks in batches (5W1H + Dublin Core + PKO + FIBO/GOLEM)
-Do:    Stage 5 — Persona    → (Optional) Build authorial replica from the embedded corpus
+Do:    Stage 5 — Compose    → (Optional) Build style exemplar from the embedded corpus
 Do:    Stage 6 — QA Prompts → (Optional) Build QA generation prompts from tagged chunks
 Do:    Stage 7 — QA Gen     → (Optional) Batch-generate QA pairs from prompts
 Do:    Stage 8 — Ingest QA  → (Optional) Parse, quality-filter, dedup, write training JSONL
@@ -46,7 +46,7 @@ Act:   Stage 10 — Verify    → Grill-me interrogation + convergence check
 
 - You have a folder of source documents (PDFs, HTML, TXT, MD) and need to
   build a text corpus with embeddings for semantic retrieval.
-- You want to construct a persona replica (authorial style model) from a
+- You want to construct a style exemplar (authorial style model) from a
   corpus of authored works.
 - You want to generate QA pairs from a corpus for LoRA fine-tuning.
 - You need the full convert → chunk → embed → tag pipeline as a single
@@ -69,8 +69,8 @@ All inputs are parameterized. None are hardcoded.
 | `entity_ref_prefix` | string | yes | — | Prefix for entity references in chunk IDs (e.g. "john-brooks") |
 | `db_path` | string | yes | — | Path to the vector database file for embeddings and h_mems |
 | `passphrase` | string | yes | — | Passphrase for the encrypted vector DB. Resolve via `hkask_mcp_server::server::resolve_db_passphrase` helper if available, otherwise from credentials. |
-| `reference_persona` | string | no | null | Author name for persona replica construction (e.g. "John Brooks"). When provided, Stage 5 runs. |
-| `config_path` | string | no | null | Path to a persona replica config YAML. When provided, Stage 5 uses it instead of generating a default config. |
+| `reference_author` | string | no | null | Author name for style exemplar construction (e.g. "John Brooks"). When provided, Stage 5 runs. |
+| `config_path` | string | no | null | Path to a style corpus config YAML. When provided, Stage 5 uses it instead of generating a default config. |
 | `enable_qa` | boolean | no | true | Whether to run Stages 6–9 (QA generation and training dataset assembly) |
 | `max_tokens` | integer | no | 512 | Maximum tokens per chunk |
 | `overlap_tokens` | integer | no | 64 | Token overlap between adjacent chunks |
@@ -223,7 +223,7 @@ stage produces fewer outputs than expected, either:
 Do NOT create a "representative subset" or "sample" to bypass a timeout or
 failure. A 33,000-chunk corpus that gets reduced to 380 chunks is a 98.8%
 data loss — the pipeline's downstream stages would produce garbage
-embeddings and a meaningless persona. The quality gate exists to prevent
+embeddings and a meaningless style exemplar. The quality gate exists to prevent
 exactly this.
 
 ### Expected-range estimation
@@ -435,7 +435,7 @@ directory:
 **This stage embeds ALL chunks.** The `corpus_embed` tool accepts
 `tagged_jsonl` as an optional parameter — embeddings can be generated
 without tags. Tags (Stage 4) are only needed for QA generation, not for
-embedding or persona building.
+embedding or style exemplar building.
 
 1. Call `corpus_embed` on the full chunks JSONL:
    - `chunks_jsonl`: `corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl`
@@ -462,7 +462,7 @@ embedding or persona building.
    - `'partial`: log warning with failure rate, investigate failed chunks.
      Proceed only if the failures are isolated and explainable.
    - `'halt`: halt with error summary listing failed chunks. Do NOT
-     proceed to persona or QA with incomplete embeddings.
+     proceed to style exemplar or QA with incomplete embeddings.
 
 ### Stage 4 — Tag the chunks (batched, parallel)
 
@@ -550,21 +550,23 @@ calls per chunk and will time out on large inputs (observed: timeout on
    - `'fail`: halt with error: "tagging produced no output"
 
    **Note**: If `enable_qa` is false, Stage 4 can be skipped entirely —
-   embeddings (Stage 3) and persona (Stage 5) do not require tags.
+   embeddings (Stage 3) and style exemplar (Stage 5) do not require tags.
 
-### Stage 5 — Build persona replica (optional)
+### Stage 5 — Build style exemplar (optional)
 
-**Gate**: runs only if `reference_persona` is provided.
+**Gate**: runs only if `reference_author` is provided.
 
 1. If `config_path` is provided, use it. Otherwise, note that a config
-   YAML must exist or be generated for the persona.
+   YAML must exist or be generated for the style exemplar.
 
-2. Call `corpus_build_persona`:
-   - `config_path`: `{{ config_path }}`
+2. Call `corpus_compose` with the author's style config to build the
+   style centroid and validate it against the corpus embeddings:
+   - `prompt`: a brief description of the desired style
+   - `author`: `{{ reference_author }}`
    - `db_path`: `{{ db_path }}`
    - `passphrase`: `{{ passphrase }}`
 
-3. **Quality gate**: persona centroid within validation thresholds.
+3. **Quality gate**: style centroid within validation thresholds.
    Call `lisp_eval`:
    ```
    form: "(let ((dist centroid_distance)
@@ -574,11 +576,11 @@ calls per chunk and will time out on large inputs (observed: timeout on
                  (<= ex 10000)))"
    ```
    Substitute actual values as literals.
-   If false, log warning: "persona centroid outside validation thresholds"
-   but continue — QA generation can proceed without persona.
+   If false, log warning: "style centroid outside validation thresholds"
+   but continue — QA generation can proceed without the style exemplar.
 
-4. If `corpus_build_persona` fails, log the error and continue without
-   persona. Do not halt — the QA pipeline does not depend on the persona.
+4. If `corpus_compose` fails, log the error and continue without
+   the style exemplar. Do not halt — the QA pipeline does not depend on it.
 
 ### Stage 6 — Build QA prompts (optional)
 
@@ -717,7 +719,7 @@ step-up ramp.
    - **Rationale**: Why was chunk granularity set to {{ max_tokens }}? Appropriate?
    - **Edge cases**: HTML files converted correctly? PDFs skipped due to OCR?
      Were any batches dropped during tagging?
-   - **Synthesis**: Does the persona centroid match expected style? Would QA
+   - **Synthesis**: Does the style centroid match expected style? Would QA
      set produce a capable model?
 
 3. **Final convergence check**: Call `lisp_eval` with all stage results:
@@ -754,8 +756,8 @@ step-up ramp.
 | Tagging batch timeout | `corpus_tag_chunks` times out on a batch | Reduce concurrency to 2, retry. If still fails, reduce batch size to 100 and re-split. Do NOT skip batches. |
 | Tagging partial failures | Some chunks lack annotations | Re-run failed batches. If coverage < 90% after re-runs, HALT. |
 | Embedding failures | Per-chunk embedding errors | If >10% fail, halt with error summary. If ≤10%, proceed with warning. |
-| Embedding count mismatch | embedding_count != chunk_count | Investigate. If >10% missing, HALT. Do NOT proceed to persona with incomplete embeddings. |
-| Persona build failure | `corpus_build_persona` returns error | Log error, continue without persona (QA can proceed) — non-blocking |
+| Embedding count mismatch | embedding_count != chunk_count | Investigate. If >10% missing, HALT. Do NOT proceed to style exemplar with incomplete embeddings. |
+| Style exemplar build failure | `corpus_compose` returns error | Log error, continue without style exemplar (QA can proceed) — non-blocking |
 | Zero QA prompts | `corpus_build_prompts` produces 0 prompts | Warning, skip Stages 7–9 |
 | Zero QA pairs generated | `corpus_generate_qa_batch` produces 0 pairs | Warning, skip Stages 8–9 |
 | Zero QA pairs ingested | `corpus_ingest_qa` ingests 0 pairs | Warning: "all QA pairs filtered by quality checks" |
@@ -772,7 +774,7 @@ The pipeline is complete when ALL of the following hold:
 2. `corpus_chunk` produced >0 chunks AND chunk count is in the expected range
 3. `corpus_embed` embedded 100% of chunks (embedding_count == chunk_count)
 4. (If QA enabled) `corpus_tag_chunks` tagged ≥90% of chunks
-5. (If persona enabled) `corpus_build_persona` produced a style centroid within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
+5. (If style exemplar enabled) `corpus_compose` produced a style centroid within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
 6. (If QA enabled) `corpus_ingest_qa` ingested >0 QA pairs
 7. (If QA enabled) `training_assemble_dataset` produced >0 training examples
 8. `corpus_query` returns relevant results for a test question
@@ -780,10 +782,10 @@ The pipeline is complete when ALL of the following hold:
 
 If any criterion fails, log the failure and halt — do not continue to
 downstream stages with incomplete input. The only exceptions are:
-- Stage 5 (persona build) is non-blocking: a persona failure does not
+- Stage 5 (style exemplar build) is non-blocking: a style exemplar failure does not
   halt the QA pipeline.
 - Stage 4 (tagging) can be skipped if `enable_qa` is false, since
-  embeddings and persona do not require tags.
+  embeddings and style exemplar do not require tags.
 
 ## Constraints
 
@@ -809,9 +811,9 @@ downstream stages with incomplete input. The only exceptions are:
   must complete its assigned work unit independently. Plan batch sizes
   accordingly.
 - Stages 5–9 are optional and gated by their respective parameters.
-  A missing persona does not block QA generation.
+  A missing style exemplar does not block QA generation.
 - Stage 4 (tagging) can be skipped if `enable_qa` is false — embeddings
-  (Stage 3) and persona (Stage 5) do not require tags.
+  (Stage 3) and style exemplar (Stage 5) do not require tags.
 - Use `lisp_eval` for all deterministic invariant checks between stages.
   Do not eyeball counts. Substitute actual values as literals in the
   `form` parameter — the `env` parameter binding is unreliable.

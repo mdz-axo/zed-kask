@@ -252,7 +252,7 @@ The following Mermaid diagrams document the training pipeline.
 ### Full Training Pipeline (Rust + Reasoning Adapters)
 # Replica, Corpus, and Training Readiness Flowchart
 
-This reference flowchart distinguishes artifacts that exist from transitions that are not yet verified end-to-end. The replica server can dispatch four `corpus_*` write operations to `corpus-ingest`, but its pipeline executor cannot dispatch the manifest's Docproc or training steps. The `Library/Researcher` corpus has reached partial QA generation; it has not reached a verified John Brooks replica, durable training dataset, or RunPod-trained adapter.
+This reference flowchart distinguishes artifacts that exist from transitions that are not yet verified end-to-end. The corpus server can dispatch four `corpus_*` write operations to `corpus-ingest`, but its pipeline executor cannot dispatch the manifest's Docproc or training steps. The `Library/Researcher` corpus has reached partial QA generation; it has not reached a verified John Brooks style exemplar, durable training dataset, or RunPod-trained adapter.
 
 ```mermaid
 flowchart TD

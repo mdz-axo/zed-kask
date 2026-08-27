@@ -3,10 +3,10 @@
 //! Canonical predicate URIs for narrative concepts — characters, events,
 //! themes, literary devices, and interpretive relationships. Used by
 //! docproc extract_assertions for narrative passages (prose, fiction, memoir,
-//! biography, narrative nonfiction) and by replica tools for persona/style
+//! biography, narrative nonfiction) and by corpus tools for style
 //! ontology mapping.
 //!
-//! Consolidated from the former duplicated `golem.rs` in hkask-mcp-replica
+//! Consolidated from the former duplicated `golem.rs` in the corpus server
 //! and hkask-mcp-docproc — single owner for the unified corpus server.
 //!
 //! Pattern: thin mapping layer — canonical URI constants, no dependencies,
@@ -16,10 +16,10 @@
 /// A GOLEM concept URI.
 pub type GolemConcept = &'static str;
 
-// ── Narrative element classes (from replica golem.rs) ─────────────────────
+// ── Narrative element classes ─────────────────────
 
 /// A character in a narrative work — an agent with traits, relationships,
-/// and a narrative role. Maps to authorial personas in replica.
+/// and a narrative role. Maps to authorial style exemplars in the corpus.
 pub const CHARACTER: GolemConcept = "golem:G1_Character";
 
 /// An event or happening within a narrative — a plot point, a scene,
@@ -33,7 +33,7 @@ pub const SETTING: GolemConcept = "golem:G1_Setting";
 /// (e.g., Proppian functions, motifs, archetypes).
 pub const NARRATIVE_FUNCTION: GolemConcept = "golem:G10_Narrative_Function";
 
-// ── Relationships (from replica golem.rs) ─────────────────────────────────
+// ── Relationships ─────────────────────────────────
 
 /// Relationship between characters within a narrative.
 pub const CHARACTER_RELATIONSHIP: GolemConcept = "golem:G1_Relationship";
@@ -44,7 +44,7 @@ pub const PARTICIPATES_IN: GolemConcept = "golem:participatesIn";
 /// A character is located in a setting.
 pub const LOCATED_IN: GolemConcept = "golem:locatedIn";
 
-// ── Work and authorship (from replica golem.rs) ───────────────────────────
+// ── Work and authorship ───────────────────────────
 
 /// A creative work — the narrative text itself.
 /// Maps to the corpus works that corpus_compose ingests.
@@ -120,7 +120,7 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
     EVOKES,
 ];
 
-// ── Mapping helpers (from replica golem.rs) ────────────────────────────────
+// ── Mapping helpers ────────────────────────────────
 
 /// Map a corpus server operation to its GOLEM concept.
 pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {

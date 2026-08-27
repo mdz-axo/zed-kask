@@ -286,7 +286,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         "persona",
         "author",
         "corpus",
-        "replica",
+        // "replica" removed — persona/replica system deleted
     ]
     .iter()
     .any(|kw| matches_kw(kw))

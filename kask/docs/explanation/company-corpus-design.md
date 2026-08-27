@@ -176,7 +176,7 @@ corpus_discover_company / company_transcript
   → corpus_tag_chunks        # 5W1H + Dublin Core + PKO + FIBO (FIBO = financial anchor)
   → corpus_embed             # ontology-anchored vectors
   → corpus_extract_triples   # h_mems in the memory DB — the company knowledge graph
-  → centroid grouping        # per (company, theme) — reuses persona centroid machinery
+  → centroid grouping        # per (company, theme) — reuses style centroid machinery
   → corpus_query / KG traversal   # RAG surface
 ```
 

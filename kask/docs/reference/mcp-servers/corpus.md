@@ -12,7 +12,7 @@ mds_categories: [domain, composition]
 
 Unified corpus MCP server — gather, process, and output. Combines document
 processing, OCR, chunking, tagging, embedding, QA generation, training data
-preparation, style replicas, and prose composition in a single server organized
+preparation, style exemplar composition in a single server organized
 by corpus flow stage.[^rag-corpus-arch]
 
 ## Architecture
