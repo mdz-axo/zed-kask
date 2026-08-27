@@ -32,7 +32,10 @@ for path in \
     "$repo_root/.github/workflows/run_bundling.yml" \
     "$repo_root/crates/zed/resources/info" \
     "$repo_root/crates/zed/resources/windows" \
-    "$repo_root/.github/actions/run_tests_windows"; do
+    "$repo_root/.github/actions/run_tests_windows" \
+    "$repo_root/crates/auto_update" \
+    "$repo_root/crates/auto_update_helper" \
+    "$repo_root/crates/auto_update_ui"; do
     assert_absent "$path"
 done
 
@@ -45,6 +48,11 @@ if ! grep -q 'is disabled in zed-kask' "$repo_root/script/bundle-windows.ps1"; t
     fail "script/bundle-windows.ps1 is not fail-closed"
 fi
 
+# zed-kask: the auto_update, auto_update_helper, and auto_update_ui
+# crates are deleted (D7). App self-update is handled by the terminal-based
+# update-zed-kask.sh script. The assertions above pin that the crates stay
+# deleted. The old init-check is now vacuous (the crates don't exist),
+# but the crate-absence assertions supersede it.
 assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_update_ui::init' \
     "zed-kask initializes upstream Zed's updater"
 

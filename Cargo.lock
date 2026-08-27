@@ -223,7 +223,6 @@ name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auto_update",
  "editor",
  "extension_host",
  "fs",
@@ -1473,35 +1472,6 @@ dependencies = [
  "serde",
  "serde_json",
  "topological-sort",
-]
-
-[[package]]
-name = "auto_update"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "clock",
- "ctor",
- "db",
- "futures 0.3.32",
- "futures-lite 1.13.0",
- "gpui",
- "http_client",
- "log",
- "parking_lot",
- "paths",
- "release_channel",
- "semver",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "tempfile",
- "util",
- "which",
- "workspace",
- "zlog",
 ]
 
 [[package]]
@@ -16672,7 +16642,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
- "auto_update",
+ "client",
  "editor",
  "futures 0.3.32",
  "gpui",
@@ -16681,6 +16651,7 @@ dependencies = [
  "menu",
  "release_channel",
  "remote",
+ "remote_server_download",
  "semver",
  "settings",
  "theme",
@@ -16762,6 +16733,23 @@ dependencies = [
  "workspace",
  "worktree",
  "zlog",
+]
+
+[[package]]
+name = "remote_server_download"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "http_client",
+ "paths",
+ "release_channel",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
 ]
 
 [[package]]
@@ -20540,7 +20528,6 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "arrayvec",
- "auto_update",
  "call",
  "channel",
  "chrono",

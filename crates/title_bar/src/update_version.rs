@@ -1,10 +1,54 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType};
 use gpui::{Empty, Render};
 use semver::Version;
 use ui::{Tooltip, UpdateButton, prelude::*};
+
+// zed-kask: the `auto_update` crate was removed (D7). The `UpdateVersion`
+// entity is retained for the title-bar UI simulation (dev/test) but is
+// permanently `Idle` in production — the `AutoUpdater` it observed is gone.
+// App updates are handled by the terminal-based `update-zed-kask.sh` script.
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AutoUpdateStatus {
+    Idle,
+    Checking,
+    Downloading {
+        version: Version,
+        progress: Option<f32>,
+    },
+    Installing {
+        version: Version,
+    },
+    Updated {
+        version: Version,
+    },
+    UpToDate {
+        version: Version,
+    },
+    Errored {
+        error: Arc<anyhow::Error>,
+    },
+}
+
+impl AutoUpdateStatus {
+    pub fn is_updated(&self) -> bool {
+        matches!(self, Self::Updated { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateCheckType {
+    Automatic,
+    Manual,
+}
+
+impl UpdateCheckType {
+    pub fn is_manual(self) -> bool {
+        matches!(self, Self::Manual)
+    }
+}
 
 pub struct UpdateVersion {
     status: AutoUpdateStatus,
@@ -13,27 +57,11 @@ pub struct UpdateVersion {
 }
 
 impl UpdateVersion {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        if let Some(auto_updater) = AutoUpdater::get(cx) {
-            cx.observe(&auto_updater, |this, auto_update, cx| {
-                let auto_update = auto_update.read(cx);
-                this.status = auto_update.status();
-                this.update_check_type = auto_update.update_check_type();
-                this.dismissed_status = auto_update.dismissed_status();
-                cx.notify();
-            })
-            .detach();
-            Self {
-                status: auto_updater.read(cx).status(),
-                update_check_type: UpdateCheckType::Automatic,
-                dismissed_status: auto_updater.read(cx).dismissed_status(),
-            }
-        } else {
-            Self {
-                status: AutoUpdateStatus::Idle,
-                update_check_type: UpdateCheckType::Automatic,
-                dismissed_status: None,
-            }
+    pub fn new(_cx: &mut Context<Self>) -> Self {
+        Self {
+            status: AutoUpdateStatus::Idle,
+            update_check_type: UpdateCheckType::Automatic,
+            dismissed_status: None,
         }
     }
 
@@ -73,12 +101,6 @@ impl UpdateVersion {
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.dismissed_status = Some(self.status.clone());
-        if let Some(auto_updater) = AutoUpdater::get(cx) {
-            let status = self.status.clone();
-            auto_updater.update(cx, |auto_updater, cx| {
-                auto_updater.dismiss_status(status, cx)
-            });
-        }
         cx.notify()
     }
 
@@ -97,19 +119,9 @@ impl Render for UpdateVersion {
                 UpdateButton::checking().into_any_element()
             }
             AutoUpdateStatus::Downloading { version, progress } => {
-                let rendered_version = version.clone();
-                let tooltip = Tooltip::element(move |_, cx| {
-                    let status = AutoUpdater::get(cx).map(|updater| updater.read(cx).status());
-                    let message = match &status {
-                        Some(AutoUpdateStatus::Downloading { version, progress }) => {
-                            UpdateButton::downloading_tooltip_message(version, *progress)
-                        }
-                        _ => Self::version_tooltip_message(&rendered_version),
-                    };
-                    Label::new(message).into_any_element()
-                });
+                let message = UpdateButton::downloading_tooltip_message(version, *progress);
                 UpdateButton::downloading(*progress)
-                    .tooltip_fn(tooltip)
+                    .tooltip(Tooltip::text(message))
                     .into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {
@@ -140,6 +152,7 @@ impl Render for UpdateVersion {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use semver::Version;

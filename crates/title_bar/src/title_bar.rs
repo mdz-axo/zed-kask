@@ -21,7 +21,6 @@ use crate::application_menu::{
     ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
 };
 
-use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
@@ -1148,29 +1147,15 @@ impl TitleBar {
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
-                let auto_updater = auto_update::AutoUpdater::get(cx);
-                let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing { .. })
-                    | Some(AutoUpdateStatus::Downloading { .. })
-                    | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle)
-                    | Some(AutoUpdateStatus::UpToDate { .. })
-                    | Some(AutoUpdateStatus::Errored { .. })
-                    | None => "Please update Zed to Collaborate",
-                };
-
+                // zed-kask: auto_update crate removed (D7). The in-app update
+                // status widget is gone — the terminal-based
+                // `update-zed-kask.sh` script handles updates. Show a static
+                // label directing the user to run the updater.
                 Some(
-                    Button::new("connection-status", label)
+                    Button::new("connection-status", "Please update Zed-Kask to Collaborate")
                         .label_size(LabelSize::Small)
-                        .on_click(|_, window, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx)
-                                && auto_updater.read(cx).status().is_updated()
-                            {
-                                workspace::reload(cx);
-                                return;
-                            }
-                            auto_update::check(&Default::default(), window, cx);
+                        .on_click(|_, _window, cx| {
+                            workspace::reload(cx);
                         })
                         .into_any_element(),
                 )

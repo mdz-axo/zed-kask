@@ -18,7 +18,7 @@ test-support = ["remote/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-auto_update.workspace = true
+client.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -26,6 +26,7 @@ markdown.workspace = true
 menu.workspace = true
 release_channel.workspace = true
 remote.workspace = true
+remote_server_download.workspace = true
 semver.workspace = true
 settings.workspace = true
 theme_settings.workspace = true

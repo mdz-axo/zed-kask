@@ -494,7 +494,9 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
     ) -> Task<anyhow::Result<PathBuf>> {
         let this = self.clone();
         cx.spawn(async move |cx| {
-            AutoUpdater::download_remote_server_release(
+            let client = cx.update(|cx| client::Client::global(cx))?;
+            auto_update::download_remote_server_release(
+                client,
                 release_channel,
                 version.clone(),
                 platform.os.as_str(),
@@ -525,7 +527,9 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         cx: &mut AsyncApp,
     ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {
-            AutoUpdater::get_remote_server_release_url(
+            let client = cx.update(|cx| client::Client::global(cx))?;
+            auto_update::get_remote_server_release_url(
+                client,
                 release_channel,
                 version,
                 platform.os.as_str(),
@@ -660,7 +664,9 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
         cx.spawn(async move |cx| {
-            AutoUpdater::download_remote_server_release(
+            let client = cx.update(|cx| client::Client::global(cx))?;
+            auto_update::download_remote_server_release(
+                client,
                 release_channel,
                 version.clone(),
                 platform.os.as_str(),
@@ -691,7 +697,9 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
         cx: &mut AsyncApp,
     ) -> Task<Result<Option<String>>> {
         cx.spawn(async move |cx| {
-            AutoUpdater::get_remote_server_release_url(
+            let client = cx.update(|cx| client::Client::global(cx))?;
+            auto_update::get_remote_server_release_url(
+                client,
                 release_channel,
                 version,
                 platform.os.as_str(),
