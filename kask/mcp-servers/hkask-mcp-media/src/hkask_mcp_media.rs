@@ -977,3 +977,83 @@ mod integration_tests {
         assert!(store.get_generation(&other.id).unwrap().is_none());
     }
 }
+
+// ── Tool-behavior contract tests (check-mcp-tool-tests.sh) ─────────────────
+//
+// Drives the real `Parameters<T>` tool seam for `gallery_refresh`. The
+// contract pinned here: calling a gallery tool before any gallery is
+// initialized returns the structured `{"error", "kind"}` envelope (not a
+// panic, not raw text) — the degraded-state path operators hit first.
+#[cfg(test)]
+mod tool_behavior_tests {
+    use super::*;
+    use crate::types::GalleryRefreshRequest;
+    use rmcp::handler::server::wrapper::Parameters;
+    use std::sync::Arc;
+
+    fn make_server() -> MediaServer {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let gallery_store =
+            Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            Arc::new(std::sync::Mutex::new(None)),
+            gallery_store,
+            templates::create_env(),
+            video::ffmpeg::FfmpegRunner::detect(),
+        )
+    }
+
+    /// A no-op inference port — gallery_refresh without face analysis never
+    /// reaches inference, so this only satisfies the struct field.
+    struct NoopInferencePort;
+
+    impl hkask_types::ports::InferencePort for NoopInferencePort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &hkask_types::template::LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            hkask_types::InferenceResult,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "noop inference port — not configured for contract tests".into(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn gallery_refresh_before_init_returns_structured_error_envelope() {
+        let server = make_server();
+        let output = server
+            .gallery_refresh(Parameters(GalleryRefreshRequest {
+                recursive: false,
+                include_faces: false,
+                max_images: 10,
+            }))
+            .await;
+
+        let parsed: serde_json::Value = serde_json::from_str(&output)
+            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
+        let error = parsed
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or_else(|| panic!("uninitialized gallery must yield an error envelope, got: {parsed}"));
+        assert!(
+            error.to_lowercase().contains("gallery"),
+            "error should name the gallery state problem, got: {error}"
+        );
+    }
+}
