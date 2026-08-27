@@ -69,4 +69,6 @@ build-err.txt
 # Corpus pipeline — all intermediate and raw artifacts ignored.
 # Final outputs will be explicitly committed after the pipeline completes
 # and all gates pass verification.
-corpus/
+# Anchored to repo root so it doesn't ignore source dirs like
+# kask/mcp-servers/hkask-mcp-corpus/src/corpus/.
+/corpus/

@@ -1,10 +1,9 @@
-//! hKask Corpus Services — discovery and embedding pipeline.
+//! hKask Corpus Services — company-source manifests.
 //!
-//! Merged from `hkask-services-discover` and `hkask-services-embed`.
+//! The former discovery, style-embedding, and fetch subtrees were removed as
+//! unwired dead surface (zero production callers); the company manifest
+//! remains live via `corpus_discover_company`.
 
-mod discover;
-pub(crate) mod embed;
-pub(crate) mod fetch;
+mod company_manifest;
 
-pub(crate) use discover::CompanySourceManifest;
-pub(crate) use embed::{EmbedProgress, EmbedService};
+pub(crate) use company_manifest::CompanySourceManifest;

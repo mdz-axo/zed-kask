@@ -53,8 +53,6 @@ minijinja.workspace = true
 serde_yaml_neo.workspace = true
 
 # Folded-service dependencies
-uuid.workspace = true
-pdf-extract.workspace = true
 anyhow.workspace = true
 
 # Service layer (shared settings, models, paths)

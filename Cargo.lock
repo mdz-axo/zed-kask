@@ -8979,7 +8979,6 @@ dependencies = [
  "hkask-types",
  "image",
  "minijinja",
- "pdf-extract",
  "pptx-to-md",
  "regex",
  "rmcp",
@@ -8991,7 +8990,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
- "uuid",
  "zed-reqwest",
 ]
 

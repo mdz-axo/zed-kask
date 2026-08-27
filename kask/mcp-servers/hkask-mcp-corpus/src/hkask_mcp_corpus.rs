@@ -30,7 +30,7 @@ mod helpers;
 pub(crate) mod inference_svc;
 pub(crate) mod ocr;
 pub(crate) mod path_safety;
-pub(crate) mod runtime;
+
 pub(crate) mod services;
 pub(crate) mod template;
 pub(crate) mod text;
@@ -634,8 +634,7 @@ impl CorpusServer {
             | "corpus_generate_qa_batch"
             | "corpus_ingest_qa" => Some(eso::HAS_EVIDENCE),
             // Compose/rewrite → creative works.
-            "corpus_compose"
-            | "corpus_rewrite" => Some(golem::CREATIVE_WORK),
+            "corpus_compose" | "corpus_rewrite" => Some(golem::CREATIVE_WORK),
             // Gather → discovery actions.
             "corpus_discover" | "corpus_discover_company" => Some(pko::ACTION),
             // Storage/query/registry → dataset operations.

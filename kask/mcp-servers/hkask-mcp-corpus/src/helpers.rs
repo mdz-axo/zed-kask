@@ -62,27 +62,6 @@ pub(crate) fn map_database_error(
     }
 }
 
-/// Classify an `EmbeddingError` from an embedding-store operation into the
-/// appropriate `McpToolError` kind: missing refs → `not_found`, dimension
-/// mismatches → `invalid_argument` (caller stored vectors with a different
-/// model), infrastructure → shared `map_infra_error`, storage/decode →
-/// `internal`.
-pub(crate) fn map_embedding_error(
-    error: hkask_storage::EmbeddingError,
-    context: &str,
-) -> McpToolError {
-    use hkask_storage::EmbeddingError;
-    let message = format!("{context}: {error}");
-    match error {
-        EmbeddingError::NotFound(_) => McpToolError::not_found(message),
-        EmbeddingError::DimensionMismatch { .. } => McpToolError::invalid_argument(message),
-        EmbeddingError::Infrastructure(ref infra) => {
-            hkask_mcp_server::server::map_infra_error(infra, context)
-        }
-        EmbeddingError::Storage(_) | EmbeddingError::Decode(_) => McpToolError::internal(message), // rr0044-ok: storage-decode-failure
-    }
-}
-
 /// Classify a `ServiceError` from the compose pipeline into the appropriate
 /// `McpToolError` kind via its semantic `ErrorKind`: `NotFound` → `not_found`,
 /// `Forbidden` → `permission_denied`, `BadRequest` → `invalid_argument`,
