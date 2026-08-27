@@ -213,17 +213,33 @@ fn resolve_template_path(
 ///
 /// A template with neither convention passes through unchanged.
 fn strip_frontmatter(content: &str) -> String {
-    let mut working = content;
+    let mut working: &str = content;
 
     // ── Stanza 1: the header ─────────────────────────────────────
+    // Skip leading Jinja `{# … #}` comment lines first — ~30 templates carry
+    // a goal/ontology comment above the header.
+    loop {
+        let first = working.lines().next().unwrap_or("").trim();
+        if first.starts_with("{#") {
+            // Jinja comment — may span multiple lines. Skip through the line
+            // containing the closing `#}`.
+            match working.find("#}") {
+                Some(close_pos) => {
+                    working = &working[close_pos + 2..];
+                    working = working.trim_start_matches('\n');
+                }
+                None => break, // Unterminated comment — leave the rest alone.
+            }
+        } else {
+            break;
+        }
+    }
     let first_line = working.lines().next().unwrap_or("").trim();
     if first_line == "[inference]" {
         // Find the terminating lone `---` line and take everything after it.
-        if let Some(pos) = working.find('\n---\n') {
+        if let Some(pos) = working.find("\n---\n") {
             working = &working[pos + 1..];
-            working = working
-                .strip_prefix("---\n")
-                .unwrap_or(working);
+            working = working.strip_prefix("---\n").unwrap_or(working);
         }
     } else if working.starts_with("---") {
         // Legacy YAML frontmatter: everything after the second `---`.
@@ -233,25 +249,47 @@ fn strip_frontmatter(content: &str) -> String {
     }
 
     // ── Stanza 2: a body-leading [inference] param block ──────────
-    // Runs from the `[inference]` line through the first blank line. Only
-    // stripped at the very start of the body — an `[inference]` mention in
-    // running prose is left alone.
+    // Runs from the `[inference]` line through the first blank line. Leading
+    // blank lines and Jinja `{# comment #}` lines are skipped first — many
+    // templates carry an ontology comment between the header terminator and
+    // the param stanza. Only a stanza at the very start of the body is
+    // stripped; an `[inference]` mention in running prose is left alone.
     let trimmed = working.trim_start_matches('\n');
-    if trimmed.starts_with("[inference]") {
+    let mut scan = trimmed;
+    loop {
+        let first = scan.lines().next().unwrap_or("").trim();
+        if first.is_empty() && !scan.is_empty() {
+            scan = scan.strip_prefix('\n').unwrap_or(scan);
+        } else if first.starts_with("{#") && first.contains("#}") {
+            let line_len = scan.find('\n').map(|i| i + 1).unwrap_or(scan.len());
+            scan = &scan[line_len..];
+        } else {
+            break;
+        }
+    }
+    if scan.starts_with("[inference]") {
         let mut stanza_end = 0usize;
-        for (idx, line) in trimmed.lines().enumerate() {
+        for (idx, line) in scan.lines().enumerate() {
             if idx > 0 && line.trim().is_empty() {
                 stanza_end = idx;
                 break;
             }
             stanza_end = idx + 1;
         }
-        working = &trimmed[trimmed
+        // Cut the stanza out of `trimmed` (preserving any skipped comment
+        // lines) by slicing from the stanza start to its end.
+        let stanza_start = scan.as_ptr() as usize - trimmed.as_ptr() as usize;
+        let stanza_len: usize = scan
             .lines()
             .take(stanza_end)
             .map(|l| l.len() + 1)
-            .sum::<usize>()
-            .min(trimmed.len())..];
+            .sum::<usize>();
+        let cut_start = stanza_start.min(trimmed.len());
+        let cut_end = (cut_start + stanza_len).min(trimmed.len());
+        let mut kept = String::with_capacity(trimmed.len());
+        kept.push_str(&trimmed[..cut_start]);
+        kept.push_str(&trimmed[cut_end..]);
+        return kept.trim().to_string();
     }
 
     working.trim().to_string()
@@ -280,6 +318,72 @@ mod tests {
         let input = "---\nfoo: bar\n---\n";
         let result = strip_frontmatter(input);
         assert_eq!(result, "");
+    }
+
+    // ── The on-disk convention (219/315 templates) ─────────────────
+
+    #[test]
+    fn test_strip_inference_header_through_first_lone_terminator() {
+        // The dominant convention: [inference]-keyed header terminated by a
+        // lone `---` — NOT leading frontmatter. The old stripper matched 0
+        // templates because it required the file to START with `---`.
+        let input =
+            "[inference]\ncontract:\n  input: {}\nvisibility: Public\n---\nYou are a triage agent.";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "You are a triage agent.");
+        assert!(!result.contains("contract"));
+        assert!(!result.contains("visibility"));
+    }
+
+    #[test]
+    fn test_strip_body_inference_param_stanza() {
+        // The body's own [inference] block (temperature etc.) is tool-execution
+        // metadata and must not leak into the rendered prompt.
+        let input = "[inference]\ncontract: {}\nvisibility: Public\n---\n[inference]\ntemperature = 0.0\nwork_effort = \"low\"\n\nYou are a triage agent.";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "You are a triage agent.");
+        assert!(!result.contains("temperature"));
+        assert!(!result.contains("work_effort"));
+        assert!(!result.contains("[inference]"));
+    }
+
+    #[test]
+    fn test_body_inference_stanza_without_trailing_blank_line() {
+        // A stanza that runs to EOF (no blank line) is still stripped whole.
+        let input = "[inference]\ncontract: {}\n---\n[inference]\ntemperature = 0.1";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_inference_mention_in_running_prose_is_preserved() {
+        // Only a body-LEADING stanza is stripped; a mention in prose stays.
+        let input = "[inference]\ncontract: {}\n---\nUse the [inference] block to set temperature.";
+        let result = strip_frontmatter(input);
+        assert!(result.contains("Use the [inference] block"));
+    }
+
+    #[test]
+    fn test_real_triage_template_strips_clean() {
+        // The exact shape of kask/registry/templates/kanban-task-management/triage.j2.
+        let input = "[inference]\ncontract:\n  input:\n    project_description: string\n  output:\n    phase: string\nvisibility: Public\n---\n{# Ontology: PKO #}\n\n[inference]\ntemperature = 0.0\nwork_effort = \"low\"\nverbosity = \"concise\"\n\nYou are a kanban task management triage agent.";
+        let result = strip_frontmatter(input);
+        // The {# Ontology #} Jinja comment survives stripping (minijinja
+        // removes it at render time); everything else must be gone.
+        assert!(
+            result.contains("You are a kanban task management triage agent."),
+            "got: {result:?}"
+        );
+        assert!(!result.contains("[inference]"));
+        assert!(!result.contains("contract"));
+        assert!(!result.contains("visibility"));
+        assert!(!result.contains("temperature"));
+        assert!(!result.contains("work_effort"));
+        // Render through minijinja to confirm the comment is gone too.
+        let env = minijinja::Environment::new();
+        let rendered = env.render_str(&result, &()).unwrap();
+        assert!(rendered.contains("You are a kanban task management triage agent."));
+        assert!(!rendered.contains("{#"));
     }
 
     #[test]
@@ -363,5 +467,87 @@ mod tests {
             serde_json::from_value(input).expect("bare object must parse");
         assert_eq!(result.context.len(), 1);
         assert!(result.context.contains_key("task"));
+    }
+}
+
+#[cfg(test)]
+mod corpus_sweep_tests {
+    use super::*;
+
+    /// Corpus-wide pin: every shipped .j2 template, after stripping, must not
+    /// leak its `[inference]` header, contract block, or visibility line into
+    /// the renderable body — and must still contain its prose. This is the
+    /// C1 finding's enforcement point: the old stripper fired on 0 of 309
+    /// templates because it required a leading `---`.
+    #[test]
+    fn corpus_templates_strip_without_leaking_metadata() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates");
+        let base = base.canonicalize().expect("templates dir exists in repo");
+
+        let mut checked = 0usize;
+        let mut leaked = Vec::new();
+        let mut empty = Vec::new();
+        for entry in walkdir(&base) {
+            let content = std::fs::read_to_string(&entry).expect("read template");
+            let stripped = strip_frontmatter(&content);
+            checked += 1;
+
+            // The header's load-bearing markers must never survive as
+            // leading metadata. Checked only in the first few lines — the
+            // word `contract:` legitimately appears mid-prose later (e.g.
+            // tdd-tracer's "verify the contract: it enforces…").
+            for (idx, line) in stripped.lines().take(5).enumerate() {
+                let trimmed_line = line.trim();
+                if trimmed_line.starts_with("visibility:")
+                    || trimmed_line.starts_with("contract:")
+                {
+                    leaked.push(format!(
+                        "{}: line {} leaked header metadata `{}`",
+                        entry.display(),
+                        idx,
+                        trimmed_line
+                    ));
+                }
+            }
+            // A leading [inference] stanza must be gone (a mid-prose mention
+            // is allowed).
+            if stripped.trim_start().starts_with("[inference]") {
+                leaked.push(format!("{}: leading [inference] stanza survived", entry.display()));
+            }
+            // A template must retain SOME body — a stripper that eats
+            // everything is worse than one that eats nothing.
+            if stripped.is_empty() {
+                empty.push(entry.display().to_string());
+            }
+        }
+
+        assert!(checked > 200, "corpus scan found only {checked} templates — scan path broken");
+        assert!(
+            leaked.is_empty(),
+            "{} templates leak metadata after stripping:\n{}",
+            leaked.len(),
+            leaked.join("\n")
+        );
+        assert!(
+            empty.is_empty(),
+            "{} templates strip to empty (over-stripping):\n{}",
+            empty.len(),
+            empty.join("\n")
+        );
+    }
+
+    /// Recursive .j2 walk (mirrors agent_skills/build.rs's collector).
+    fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                out.extend(walkdir(&path));
+            } else if path.extension().is_some_and(|e| e == "j2") {
+                out.push(path);
+            }
+        }
+        out
     }
 }

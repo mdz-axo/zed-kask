@@ -2627,6 +2627,21 @@ description: A skill with no body content
             "shipped_template_seed must not be empty — build.rs scans kask/registry/templates/"
         );
 
+        // C2(a): the training chat templates are runtime-consumed non-.j2
+        // assets — the harness reads them by exact path at fine-tune launch.
+        // If the collector drops .jinja, fresh installs launch fine-tunes
+        // with no chat_template (degraded, warn-only).
+        for required in [
+            "training/chat-templates/qwen3.jinja",
+            "training/chat-templates/gemma4.jinja",
+        ] {
+            assert!(
+                seed.iter().any(|(rel, _)| *rel == required),
+                "shipped_template_seed must include `{required}` — the training \
+                 harness reads it from the seeded tree at launch"
+            );
+        }
+
         for (rel_path, expected_content) in seed {
             let full_path = target_dir.join(rel_path);
             assert!(

@@ -59,8 +59,15 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **T2**: Each `.j2` template has a comment header describing its purpose
    - **T3**: Each `.j2` template defines expected output fields (as comments
      or schema description)
-   - **T4**: No `[inference]` frontmatter in .j2 templates — templates are
-     resources, not executed code
+   - **T4**: `[inference]` blocks in .j2 templates follow the two-stanza
+     convention — templates ARE inference prompts, so the marker is the
+     metadata carrier, not a defect. The rule is about placement:
+     (a) the header `[inference]` block (contract + visibility) must be
+     terminated by a lone `---` line; (b) at most one body `[inference]`
+     param stanza (temperature/work_effort/verbosity/thinking_budget),
+     placed at the top of the body. `render_template` strips both; a
+     third `[inference]` block or a header missing its `---` terminator
+     is a fail.
    - **T5**: If a template is referenced for rendering via `render_template`,
      it is reachable from the `render_template` base path (registry templates
      directory, not the skill directory)
@@ -114,7 +121,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - SKILL.md has no "Constraints" section
    - SKILL.md instructions are vague ("the system will analyze...") instead
      of concrete ("call `lisp_eval` with form...")
-   - .j2 templates have `[inference]` frontmatter
+   - .j2 templates have a malformed `[inference]` header (no `---`
+     terminator) or more than two `[inference]` blocks
 2. Compute health scores from 0.0 to 1.0 using weighted penalties.
 3. Recommend deprecation or retirement based on health score thresholds:
    - 0.00-0.19: retirement

@@ -10,12 +10,12 @@
 //! `impl CorpusServer` block, so the tool methods stay here in `mod.rs`.
 
 mod assertions;
-mod batch_api;
+pub(crate) mod batch_api;
 mod ontology_io;
 pub(crate) mod qa;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::helpers::{default_corpus_passphrase, map_corpus_io_error};
+use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters, default_embedding_model,
@@ -23,10 +23,9 @@ use crate::{
     tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
-use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
+use qa::parse_qa_response;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::io::Write;
 
 // Re-export helpers used by other tool modules (corpus.rs imports these) and
 // make them available within this module via the module path.
@@ -131,211 +130,22 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_generate_qa_batch", Self::ontology_anchor("corpus_generate_qa_batch"), async {
-            // Read prompts from JSONL file (file-only mode)
-            let prompts_values =
-                read_jsonl::<serde_json::Value>(&prompts_jsonl, "prompts_jsonl")?;
-            let mut prompts_vec: Vec<BatchQaPrompt> = Vec::new();
-            for v in prompts_values {
-                // Map build_prompts output fields to BatchQaPrompt:
-                // chunk_ref -> chunk_id, system+user -> text, qa_type -> bloom_levels
-                let chunk_id = v
-                    .get("chunk_ref")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| v.get("chunk_id").and_then(|v| v.as_str()))
-                    .unwrap_or("")
-                    .to_string();
-                let system = v.get("system").and_then(|v| v.as_str()).unwrap_or("");
-                let user = v.get("user").and_then(|v| v.as_str()).unwrap_or("");
-                let text = if system.is_empty() && user.is_empty() {
-                    v.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string()
-                } else {
-                    format!("{system}\n\n{user}")
-                };
-                let bloom_levels = v
-                    .get("qa_type")
-                    .and_then(|v| v.as_str())
-                    .map(|qt| vec![qt.to_string()])
-                    .or_else(|| {
-                        v.get("bloom_levels").and_then(|v| v.as_array()).map(|arr| {
-                            arr.iter()
-                                .filter_map(|x| x.as_str().map(String::from))
-                                .collect()
-                        })
-                    });
-                let source = v
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let concepts = v
-                    .get("concepts")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect()
+        execute_tool_semantic(
+            self,
+            "corpus_generate_qa_batch",
+            Self::ontology_anchor("corpus_generate_qa_batch"),
+            async {
+                crate::services::qa_batch::QaBatchService::new(Arc::clone(&self.inference_router))
+                    .generate_qa_batch(crate::services::qa_batch::QaBatchRequest {
+                        prompts_jsonl,
+                        output,
+                        concurrency,
+                        model,
                     })
-                    .unwrap_or_default();
-                prompts_vec.push(BatchQaPrompt {
-                    text,
-                    chunk_id,
-                    bloom_levels,
-                    source,
-                    concepts,
-                });
-            }
-
-            if prompts_vec.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "prompts_jsonl contains no valid prompts",
-                ));
-            }
-
-            let selected_model = configured_qa_model(model);
-            let total = prompts_vec.len();
-
-            // When the model is batch-eligible (OpenRouter `:batch` suffix or
-            // DeepInfra prefix), route through the shared batch API in
-            // `hkask-inference::batch` instead of N concurrent synchronous
-            // IPC calls. This gives a 20–50% cost discount and no rate limits.
-            //
-            // Pass the ORIGINAL model string (with `:batch` suffix or
-            // `DeepInfra/` prefix) to `generate_batch` — the bridge calls
-            // `detect_batch_provider` again to strip the prefix and select
-            // the provider. Stripping here would cause the bridge's
-            // `detect_batch_provider` to return `None` (no `:batch` suffix,
-            // no `DeepInfra/` prefix) and fail with "not batch-eligible".
-            if let Some(ref model_str) = selected_model {
-                if hkask_inference::batch::detect_batch_provider(model_str).is_some() {
-                    return batch_api::generate_qa_via_batch_api(
-                        &self.inference_router,
-                        prompts_vec,
-                        model_str,
-                        &output,
-                        total,
-                    )
-                    .await;
-                }
-            }
-
-            // Concurrent processing with configurable semaphore
-            let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
-            let router = Arc::clone(&self.inference_router);
-
-            // Output file writer (with incremental flush every 10 completions)
-            let output_path = crate::path_safety::contain_for_write(&output)?;
-                        let file = std::fs::File::create(&output_path).map_err(|e| {
-                map_corpus_io_error(e, &format!("Cannot create output file '{}'", output))
-            })?;
-            let output_writer = Arc::new(Mutex::new(std::io::BufWriter::new(file)));
-            let write_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            // B5 fix: track failed prompts so the outcome can be classified as
-            // degraded when the failure rate exceeds the threshold.
-            let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-            let mut handles = Vec::with_capacity(total);
-            for prompt in prompts_vec {
-                let router = Arc::clone(&router);
-                let sem = Arc::clone(&sem);
-                let selected_model = selected_model.clone();
-                let output_writer = Arc::clone(&output_writer);
-                let write_count = Arc::clone(&write_count);
-                let failed_count = Arc::clone(&failed_count);
-
-                let handle = tokio::spawn(async move {
-                    let _permit = sem.acquire().await;
-
-                    let params = crate::services::qa_pipeline::qa_llm_parameters();
-
-                    let levels = prompt.bloom_levels.clone().unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
-                    let levels_str = levels.join(", ");
-                    let formatted = crate::services::qa_pipeline::format_single_chunk_prompt(
-                        &levels_str,
-                        &prompt.chunk_id,
-                        &prompt.text,
-                    );
-                    let (prompt_text, template_source) = (formatted.text, formatted.template_source);
-                    let response = match retry_with_backoff(
-                        MAX_RETRIES,
-                        "hkask.mcp.docproc.qa_batch",
-                        &prompt.chunk_id,
-                        || router.generate_with_model(&prompt_text, &params, selected_model.as_deref(), None),
-                    )
                     .await
-                    {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            let result = json!({"chunk_id": prompt.chunk_id, "error": format!("LLM failed after {} retries: {}", MAX_RETRIES, e)});
-                            failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            write_qa_result(&result, &output_writer, &write_count);
-                            return;
-                        }
-                    };
-                    // Process the successful response — same logic as before,
-                    // but now guaranteed to have a response (or we returned above).
-                    let content = &response.text;
-                    match parse_qa_response(&extract_json_from_response(content), &levels, None) {
-                        Ok(qa_response) => {
-                            // Write one JSONL line per QA pair in envelope format
-                            // (matches what corpus_ingest_qa's parse_qa_record expects)
-                            for pair in qa_response.qa_pairs {
-                                let result = crate::services::qa_pipeline::qa_result_envelope(
-                                    &prompt,
-                                    pair,
-                                    selected_model.as_deref().unwrap_or("router_default"),
-                                    template_source,
-                                    response.usage.total_tokens,
-                                );
-                                write_qa_result(&result, &output_writer, &write_count);
-                            }
-                        }
-                        Err(e) => {
-                            failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let result = crate::services::qa_pipeline::qa_error_envelope(
-                                &prompt.chunk_id,
-                                &format!("QA response rejected: {e}"),
-                            );
-                            write_qa_result(&result, &output_writer, &write_count);
-                        }
-                    }
-                });
-                handles.push(handle);
-            }
-
-            for handle in handles {
-                if let Err(join_err) = handle.await {
-                    tracing::warn!(
-                        target: "hkask.mcp.docproc.qa_batch",
-                        error = %join_err,
-                        "QA batch task join failed"
-                    );
-                }
-            }
-
-            {
-                let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = w.flush() {
-                    tracing::warn!(
-                        target: "hkask.mcp.docproc.qa_batch",
-                        error = %e,
-                        "failed to flush QA batch output writer"
-                    );
-                }
-            }
-            let written = write_count.load(std::sync::atomic::Ordering::Relaxed);
-            let failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
-            let result = json!({
-                "total": total,
-                "written": written,
-                "failed": failed,
-                "output": output,
-            });
-            // B5 fix: report degraded outcome when failure rate exceeds threshold.
-            let outcome = BatchOutcome::from_counts(failed, total);
-            outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
-            Ok(result)
-        }).await
+            },
+        )
+        .await
     }
 
     #[tool(

@@ -193,15 +193,17 @@ fn main() {
     }
 }
 
-/// Recursively collect .j2 files from a directory, computing relative paths
-/// from the base directory.
+/// Recursively collect .j2 and .jinja files from a directory, computing
+/// relative paths from the base directory. `.jinja` covers the training
+/// chat templates (`training/chat-templates/*.jinja`) — runtime-consumed
+/// non-prompt assets the training harness reads from the seeded tree.
 fn collect_template_files(base: &PathBuf, dir: &PathBuf, out: &mut Vec<(String, PathBuf)>) {
     for entry in fs::read_dir(dir).expect("read template directory") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
         if path.is_dir() {
             collect_template_files(base, &path, out);
-        } else if path.extension().is_some_and(|e| e == "j2") {
+        } else if path.extension().is_some_and(|e| e == "j2" || e == "jinja") {
             let rel = path
                 .strip_prefix(base)
                 .expect("template path under base")

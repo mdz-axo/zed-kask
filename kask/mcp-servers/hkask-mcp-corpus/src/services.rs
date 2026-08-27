@@ -21,4 +21,5 @@ pub(crate) mod cluster;
 pub(crate) mod consolidation;
 pub(crate) mod convert;
 pub(crate) mod prompt_builder;
+pub(crate) mod qa_batch;
 pub(crate) mod qa_pipeline;

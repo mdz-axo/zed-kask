@@ -74,7 +74,7 @@ Goal specification and verification. Extracts structured goals from user intent,
 | Template | Purpose |
 |----------|---------|
 | `create.j2` | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
-| `judge.j2` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
+| `judge.j2` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. Context: `goal_text` (string), `criteria` (array of criterion strings), `outcome_summary` (string), `artifacts` (array of produced artifact descriptions), `essentialist_report` (object or null — the essentialist 3-gate report when that skill ran). |
 | `judge_command.j2` | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
 | `judge_simple.j2` | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
 | `goal-activate.j2` | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |

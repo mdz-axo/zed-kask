@@ -69,7 +69,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 | `identify-criteria.j2` | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. |
 | `rank-alternatives.j2` | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance. |
 | `sensitivity-analysis.j2` | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. |
-| `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. |
+| `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. Context: `decision_question` (string), `criteria` (array of `{name, type}`), `alternatives` (array of `{name, scores}`), `weighting_method` (`direct` or `swing`). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
