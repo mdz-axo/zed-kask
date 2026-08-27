@@ -692,7 +692,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     None
                 }
             };
-            crate::tools::semantic::set_corpus_db_passphrase(db_passphrase);
+            crate::helpers::set_corpus_db_passphrase(db_passphrase);
 
             let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
                 &inference_port,

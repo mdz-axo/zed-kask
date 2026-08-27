@@ -15,12 +15,12 @@ mod ontology_io;
 pub(crate) mod qa;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::helpers::map_corpus_io_error;
+use crate::helpers::{default_corpus_passphrase, map_corpus_io_error};
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
-    Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters,
-    default_embedding_model, default_owner, execute_tool_semantic, extract_json_from_response,
-    json, read_jsonl, tool, tool_router,
+    Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters, default_embedding_model,
+    default_owner, execute_tool_semantic, extract_json_from_response, json, read_jsonl, tool,
+    tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
@@ -728,68 +728,4 @@ pub struct EmbedRequest {
 
 fn default_embed_batch_size() -> usize {
     50
-}
-
-/// Default passphrase for the corpus memory DB.
-///
-/// Resolves `HKASK_DB_PASSPHRASE` via a 2-tier chain:
-/// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
-///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
-///    [`set_corpus_db_passphrase`].
-/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore`
-///    keychain `hkask-db-passphrase`).
-///
-/// Returns an empty string when the credential is unset in all tiers.
-/// `Database::open` rejects empty passphrases with a clear error
-/// ("Passphrase cannot be empty"), so tools that use this default will fail
-/// with an actionable message rather than silently encrypting the DB with a
-/// publicly-known hardcoded passphrase. Production must set
-/// `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered via the registry
-/// `credentials` allowlist under governed launch).
-///
-/// The `OnceLock` is acceptable here because there is exactly one corpus
-/// server per process (MCP servers run as child processes). Tests that don't
-/// go through `run_server` leave the `OnceLock` unset and fall back to the
-/// env/keychain tier, preserving existing test behavior.
-static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-
-/// Initialize the process-wide corpus DB passphrase from `ctx.credentials`.
-///
-/// Called once from the `run_server` closure after resolving the passphrase
-/// via `hkask_mcp_server::resolve_db_passphrase`. Pass `None` when resolution
-/// failed (tools will then fall back to env/keychain per call). Idempotent —
-/// the first call wins; subsequent calls are no-ops (the `OnceLock` is set
-/// once at construction and never changed).
-pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
-    if CORPUS_DB_PASSPHRASE.set(passphrase).is_err() {
-        tracing::warn!(
-            target: "hkask.mcp.corpus",
-            "set_corpus_db_passphrase: hook already set — second wiring attempt \
-             dropped. The previously-wired passphrase remains active."
-        );
-    }
-}
-
-pub(crate) fn default_corpus_passphrase() -> String {
-    if let Some(Some(resolved)) = CORPUS_DB_PASSPHRASE.get() {
-        return resolved.clone();
-    }
-    // Fall back to env → keychain for tests or when construction didn't set
-    // the OnceLock (or set it to `None` after a resolution failure).
-    // Returns empty string on failure — callers must check and surface
-    // `permission_denied` (see `persona.rs::database_passphrase` for the
-    // canonical pattern). An empty passphrase must NOT be passed to a DB
-    // open call — it would silently create an unencrypted DB.
-    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE")
-        .map_err(|e| {
-            tracing::warn!(
-                target: "hkask.mcp.corpus",
-                error = %e,
-                "HKASK_DB_PASSPHRASE resolution failed — returning empty string; \
-                 callers must surface permission_denied"
-            );
-            e
-        })
-        .ok()
-        .unwrap_or_default()
 }

@@ -12,10 +12,8 @@ use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
-use crate::helpers::map_memory_store_error;
-use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
-use crate::{normalize_concept, normalize_in_place, render_docproc_template};
+use crate::{normalize_concept, render_docproc_template};
 
 /// Input for [`ConsolidationService::consolidate`].
 ///
@@ -74,63 +72,19 @@ impl ConsolidationService {
             dry_run,
         } = request;
 
-        let chunks = read_tagged_chunks(&tagged_jsonl)?;
-        if chunks.is_empty() {
-            return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
-        }
-
-        let store = crate::helpers::open_memory_store(&db_path, &passphrase)?;
-        let embeddings = store
-            .embeddings_by_prefix(&prefix)
-            .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
-
-        // Pre-normalize all vectors
-        let normalized: Vec<(String, Vec<f32>)> = embeddings
-            .into_iter()
-            .map(|(er, mut v)| {
-                normalize_in_place(&mut v);
-                (er, v)
-            })
-            .collect();
-        let norm_map: std::collections::HashMap<&str, &[f32]> = normalized
-            .iter()
-            .map(|(e, v)| (e.as_str(), v.as_slice()))
-            .collect();
-
-        // Group by source
-        let mut by_source: std::collections::HashMap<&str, Vec<usize>> =
-            std::collections::HashMap::new();
-        for (i, c) in chunks.iter().enumerate() {
-            by_source.entry(c.source.as_str()).or_default().push(i);
-        }
-
+        let input =
+            crate::services::cluster::load_clusters(&tagged_jsonl, &db_path, &passphrase, &prefix)?;
         let threshold = threshold as f32;
-
-        // Phase 1: Cluster
-        let mut all_clusters: Vec<Vec<usize>> = Vec::new();
-        let mut singletons = 0usize;
-        let mut multi = 0usize;
-
-        for indices in by_source.values() {
-            let clusters = cluster_within_source(
-                indices,
-                &chunks,
-                &norm_map,
-                threshold,
-                max_chunks_per_cluster,
-            );
-            for c in clusters {
-                if c.len() > 1 {
-                    multi += 1;
-                } else {
-                    singletons += 1;
-                }
-                all_clusters.push(c);
-            }
-        }
+        let all_clusters = input.cluster_by_source(threshold, max_chunks_per_cluster);
+        let chunks = input.chunks;
+        // Re-open for Phase 4 writes — `load_clusters` opens read-only for the
+        // embedding query and drops the handle.
+        let store = crate::helpers::open_memory_store(&db_path, &passphrase)?;
 
         let total_members: usize = all_clusters.iter().map(|c| c.len()).sum();
         let absorbed = total_members - all_clusters.len();
+        let singletons = all_clusters.iter().filter(|c| c.len() == 1).count();
+        let multi = all_clusters.len() - singletons;
 
         let stats = json!({
             "original": chunks.len(),
@@ -408,7 +362,9 @@ impl ConsolidationService {
                 match self.inference_router.embed(&emb_model, &texts).await {
                     Ok(vectors) => {
                         for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                            if let Err(e) = store.store_embedding(entity_ref, vector, &emb_model, None) {
+                            if let Err(e) =
+                                store.store_embedding(entity_ref, vector, &emb_model, None)
+                            {
                                 tracing::warn!(
                                     entity_ref = %entity_ref,
                                     error = %e,

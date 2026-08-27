@@ -11,25 +11,24 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{map_memory_store_error, read_text_capped};
+use crate::helpers::{default_corpus_passphrase, read_text_capped};
 use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
-use crate::tools::semantic::default_corpus_passphrase;
 use crate::{
     Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool_semantic, json,
-    normalize_in_place, owner_webid, tool, tool_router,
+    owner_webid, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-mod clustering;
+pub(crate) mod clustering;
 mod lora_config;
 mod qa_parsing;
 mod qa_types;
 
-pub(crate) use clustering::{cluster_within_source, read_tagged_chunks};
+pub(crate) use clustering::read_tagged_chunks;
 use lora_config::build_lora_config;
 use qa_parsing::{ParsedQa, parse_qa_record};
 pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
@@ -48,64 +47,35 @@ impl CorpusServer {
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> String {
         execute_tool_semantic(self, "corpus_dedup_chunks", Self::ontology_anchor("corpus_dedup_chunks"), async {
-            let chunks = read_tagged_chunks(&req.tagged_jsonl)?;
-            if chunks.is_empty() {
-                return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
-            }
-
-            let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
-            let embeddings = store
-                .embeddings_by_prefix(&req.prefix)
-                .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
-
-            // Pre-normalize all vectors
-            let normalized: Vec<(String, Vec<f32>)> = embeddings
-                .into_iter()
-                .map(|(er, mut v)| {
-                    normalize_in_place(&mut v);
-                    (er, v)
-                })
-                .collect();
-            let norm_map: std::collections::HashMap<&str, &[f32]> = normalized
-                .iter()
-                .map(|(e, v)| (e.as_str(), v.as_slice()))
-                .collect();
-
-            // Group by source
-            let mut by_source: std::collections::HashMap<&str, Vec<usize>> =
-                std::collections::HashMap::new();
-            for (i, c) in chunks.iter().enumerate() {
-                by_source.entry(c.source.as_str()).or_default().push(i);
-            }
-
+            let input = crate::services::cluster::load_clusters(
+                &req.tagged_jsonl,
+                &req.db_path,
+                &req.passphrase,
+                &req.prefix,
+            )?;
             let threshold = req.threshold as f32;
-            let mut keep_indices: Vec<usize> = Vec::new();
-            let mut clusters_total = 0usize;
+            let all_clusters = input.cluster_by_source(threshold, usize::MAX);
+            let chunks = input.chunks;
 
-            for indices in by_source.values() {
-                let clusters = cluster_within_source(
-                    indices,
-                    &chunks,
-                    &norm_map,
-                    threshold,
-                    usize::MAX, // no cap for dedup
-                );
-                clusters_total += clusters.len();
-                for cluster in &clusters {
-                    // Keep the first (highest-salience) member
-                    keep_indices.push(cluster[0]);
-                }
-            }
-
+            let mut keep_indices: Vec<usize> = all_clusters
+                .iter()
+                .map(|cluster| cluster[0]) // highest-salience survivor
+                .collect();
             keep_indices.sort_unstable();
             keep_indices.dedup();
+
+            let sources = chunks
+                .iter()
+                .map(|c| c.source.as_str())
+                .collect::<std::collections::HashSet<&str>>()
+                .len();
 
             let result = json!({
                 "original": chunks.len(),
                 "deduped": keep_indices.len(),
                 "removed": chunks.len() - keep_indices.len(),
-                "clusters": clusters_total,
-                "sources": by_source.len(),
+                "clusters": all_clusters.len(),
+                "sources": sources,
                 "reduction_pct": (1.0 - keep_indices.len() as f64 / chunks.len().max(1) as f64) * 100.0,
             });
 

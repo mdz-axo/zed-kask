@@ -18,6 +18,72 @@ pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
 /// stay readable.
 pub(crate) use hkask_mcp_server::server::map_memory_store_error;
 
+// ── Corpus DB passphrase ───────────────────────────────────────────────────
+
+/// Default passphrase for the corpus memory DB.
+///
+/// Resolves `HKASK_DB_PASSPHRASE` via a 2-tier chain:
+/// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
+///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
+///    [`set_corpus_db_passphrase`].
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore`
+///    keychain `hkask-db-passphrase`).
+///
+/// Returns an empty string when the credential is unset in all tiers.
+/// `Database::open` rejects empty passphrases with a clear error
+/// ("Passphrase cannot be empty"), so tools that use this default will fail
+/// with an actionable message rather than silently encrypting the DB with a
+/// publicly-known hardcoded passphrase. Production must set
+/// `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered via the registry
+/// `credentials` allowlist under governed launch).
+///
+/// The `OnceLock` is acceptable here because there is exactly one corpus
+/// server per process (MCP servers run as child processes). Tests that don't
+/// go through `run_server` leave the `OnceLock` unset and fall back to the
+/// env/keychain tier, preserving existing test behavior.
+static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Initialize the process-wide corpus DB passphrase from `ctx.credentials`.
+///
+/// Called once from the `run_server` closure after resolving the passphrase
+/// via `hkask_mcp_server::resolve_db_passphrase`. Pass `None` when resolution
+/// failed (tools will then fall back to env/keychain per call). Idempotent —
+/// the first call wins; subsequent calls are no-ops (the `OnceLock` is set
+/// once at construction and never changed).
+pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
+    if CORPUS_DB_PASSPHRASE.set(passphrase).is_err() {
+        tracing::warn!(
+            target: "hkask.mcp.corpus",
+            "set_corpus_db_passphrase: hook already set — second wiring attempt \
+             dropped. The previously-wired passphrase remains active."
+        );
+    }
+}
+
+/// Resolve the corpus DB passphrase: construction-time `ctx.credentials`
+/// capture first, then env → keychain per call.
+///
+/// Returns an empty string on failure — callers must check and surface
+/// `permission_denied`. An empty passphrase must NOT be passed to a DB
+/// open call — it would silently create an unencrypted DB.
+pub(crate) fn default_corpus_passphrase() -> String {
+    if let Some(Some(resolved)) = CORPUS_DB_PASSPHRASE.get() {
+        return resolved.clone();
+    }
+    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE")
+        .map_err(|e| {
+            tracing::warn!(
+                target: "hkask.mcp.corpus",
+                error = %e,
+                "HKASK_DB_PASSPHRASE resolution failed — returning empty string; \
+                 callers must surface permission_denied"
+            );
+            e
+        })
+        .ok()
+        .unwrap_or_default()
+}
+
 /// Classify a `TriageError` from the PDF triage pipeline into the appropriate
 /// `McpToolError` kind: an invalid page spec is caller input
 /// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn

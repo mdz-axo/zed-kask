@@ -175,7 +175,7 @@ impl CorpusServer {
                         }));
                     };
                     let passphrase = passphrase
-                        .unwrap_or_else(|| crate::tools::semantic::default_corpus_passphrase());
+                        .unwrap_or_else(crate::helpers::default_corpus_passphrase);
                     if passphrase.is_empty() {
                         return Err(McpToolError::permission_denied(
                             "HKASK_DB_PASSPHRASE not configured — corpus_query requires the DB passphrase. \
@@ -470,13 +470,12 @@ pub(crate) struct QueryRequest {
 /// - `"generate-answer"` (bool, default false) — generate LLM answer from results
 ///
 /// Returns `(query, top_k, include_text, min_score, generate_answer)`.
-fn parse_lisp_query(
-    expr: &str,
-) -> Result<(String, usize, bool, f32, bool), McpToolError> {
-    let result = hkask_lisp::eval_sandboxed_with_budget(expr, &serde_json::Value::Null, 100_000, 100)
-        .map_err(|e| McpToolError::invalid_argument(format!(
-            "Invalid Lisp query expression: {e}"
-        )))?;
+fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpToolError> {
+    let result =
+        hkask_lisp::eval_sandboxed_with_budget(expr, &serde_json::Value::Null, 100_000, 100)
+            .map_err(|e| {
+                McpToolError::invalid_argument(format!("Invalid Lisp query expression: {e}"))
+            })?;
 
     // The result can be either a JSON object (when `list` of pairs is
     // evaluated — the interpreter converts 2-element lists to key-value pairs)
@@ -488,7 +487,7 @@ fn parse_lisp_query(
         arr.to_vec()
     } else {
         return Err(McpToolError::invalid_argument(
-            "Lisp query expression must evaluate to an association list (array of pairs) or object"
+            "Lisp query expression must evaluate to an association list (array of pairs) or object",
         ));
     };
 
@@ -499,44 +498,55 @@ fn parse_lisp_query(
     let mut generate_answer = false;
 
     for pair in &alist {
-        let arr = pair.as_array().ok_or_else(|| McpToolError::invalid_argument(
-            "Each element in the Lisp query alist must be a 2-element array"
-        ))?;
+        let arr = pair.as_array().ok_or_else(|| {
+            McpToolError::invalid_argument(
+                "Each element in the Lisp query alist must be a 2-element array",
+            )
+        })?;
         if arr.len() != 2 {
             return Err(McpToolError::invalid_argument(format!(
                 "Each element in the Lisp query alist must be a 2-element array, got {} elements",
                 arr.len()
             )));
         }
-        let key = arr[0].as_str().ok_or_else(|| McpToolError::invalid_argument(
-            "First element of each query alist pair must be a string key"
-        ))?;
+        let key = arr[0].as_str().ok_or_else(|| {
+            McpToolError::invalid_argument(
+                "First element of each query alist pair must be a string key",
+            )
+        })?;
         let value = &arr[1];
         match key {
             "query" => {
-                nl_query = value.as_str().ok_or_else(|| McpToolError::invalid_argument(
-                    "\"query\" value must be a string"
-                ))?.to_string();
+                nl_query = value
+                    .as_str()
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument("\"query\" value must be a string")
+                    })?
+                    .to_string();
             }
             "top-k" => {
-                top_k = value.as_u64().ok_or_else(|| McpToolError::invalid_argument(
-                    "\"top-k\" value must be an integer"
-                ))? as usize;
+                top_k = value.as_u64().ok_or_else(|| {
+                    McpToolError::invalid_argument("\"top-k\" value must be an integer")
+                })? as usize;
             }
             "include-text" => {
-                include_text = value.as_bool().ok_or_else(|| McpToolError::invalid_argument(
-                    "\"include-text\" value must be a boolean (t or nil)"
-                ))?;
+                include_text = value.as_bool().ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "\"include-text\" value must be a boolean (t or nil)",
+                    )
+                })?;
             }
             "min-score" => {
-                min_score = value.as_f64().ok_or_else(|| McpToolError::invalid_argument(
-                    "\"min-score\" value must be a number"
-                ))? as f32;
+                min_score = value.as_f64().ok_or_else(|| {
+                    McpToolError::invalid_argument("\"min-score\" value must be a number")
+                })? as f32;
             }
             "generate-answer" => {
-                generate_answer = value.as_bool().ok_or_else(|| McpToolError::invalid_argument(
-                    "\"generate-answer\" value must be a boolean (t or nil)"
-                ))?;
+                generate_answer = value.as_bool().ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "\"generate-answer\" value must be a boolean (t or nil)",
+                    )
+                })?;
             }
             _ => {
                 return Err(McpToolError::invalid_argument(format!(
@@ -549,7 +559,7 @@ fn parse_lisp_query(
 
     if nl_query.is_empty() {
         return Err(McpToolError::invalid_argument(
-            "Lisp query expression must include a \"query\" key with a string value"
+            "Lisp query expression must include a \"query\" key with a string value",
         ));
     }
 
@@ -611,9 +621,9 @@ mod tests {
     #[test]
     fn search_returns_results_sorted_by_score() {
         let passages = vec![
-            make_passage("low match", vec![0.0, 1.0]),      // orthogonal → 0.0
-            make_passage("high match", vec![1.0, 0.0]),      // parallel → 1.0
-            make_passage("medium match", vec![1.0, 1.0]),    // 45° → ~0.707
+            make_passage("low match", vec![0.0, 1.0]), // orthogonal → 0.0
+            make_passage("high match", vec![1.0, 0.0]), // parallel → 1.0
+            make_passage("medium match", vec![1.0, 1.0]), // 45° → ~0.707
         ];
         let query = vec![1.0, 0.0];
         let results = search_passages(&passages, &query, 3, 0.0, false);
@@ -638,8 +648,8 @@ mod tests {
     #[test]
     fn search_min_score_filters() {
         let passages = vec![
-            make_passage("orthogonal", vec![0.0, 1.0]),  // score 0.0
-            make_passage("parallel", vec![1.0, 0.0]),      // score 1.0
+            make_passage("orthogonal", vec![0.0, 1.0]), // score 0.0
+            make_passage("parallel", vec![1.0, 0.0]),   // score 1.0
         ];
         let query = vec![1.0, 0.0];
         let results = search_passages(&passages, &query, 10, 0.5, false);
@@ -682,8 +692,7 @@ mod tests {
     #[test]
     fn parse_lisp_query_with_min_score() {
         let expr = r#"(list (list "query" "test") (list "min-score" 0.7) (list "top-k" 10))"#;
-        let (_, k, _, min_score, _) =
-            parse_lisp_query(expr).expect("should parse");
+        let (_, k, _, min_score, _) = parse_lisp_query(expr).expect("should parse");
         assert_eq!(k, 10);
         assert!((min_score - 0.7).abs() < 0.001);
     }
@@ -703,8 +712,7 @@ mod tests {
     #[test]
     fn parse_lisp_query_generate_answer() {
         let expr = r#"(list (list "query" "test") (list "generate-answer" t))"#;
-        let (_, _, _, _, gen_answer) =
-            parse_lisp_query(expr).expect("should parse");
+        let (_, _, _, _, gen_answer) = parse_lisp_query(expr).expect("should parse");
         assert!(gen_answer);
     }
 }
@@ -732,6 +740,6 @@ fn default_purge_passphrase() -> String {
     // Reuses the corpus server's 3-tier resolution chain (ctx.credentials →
     // env → keychain) via `default_corpus_passphrase`, which reads the
     // `OnceLock` set at server construction. See
-    // `crate::tools::semantic::set_corpus_db_passphrase`.
-    crate::tools::semantic::default_corpus_passphrase()
+    // `crate::helpers::set_corpus_db_passphrase`.
+    crate::helpers::default_corpus_passphrase()
 }
