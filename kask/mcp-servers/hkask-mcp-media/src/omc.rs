@@ -38,7 +38,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "gallery_timeline"
         | "gallery_organize"
         | "gallery_status"
-        | "gallery_refresh" => Some(ASSET),
+        | "gallery_refresh"
+        | "gallery_delete_image" => Some(ASSET),
         // Face management — faces are gallery assets (people identified within
         // images, NOT production participants).
         "face_register" | "face_validate" | "face_scan_folder" | "face_list" | "face_remove"

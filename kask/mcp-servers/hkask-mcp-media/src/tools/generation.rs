@@ -42,12 +42,19 @@ impl MediaServer {
                     .map_err(|e| classify_inference_error("Image generation failed", e))?;
                 // Persist the generated image to {data_dir}/mcp/media/generated/
                 // and add it to the gallery index.
-                if let Some(path) = persist_generated_asset(self, &result, "image").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "image").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Generated image persisted to data directory"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated image persisted to data directory"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 // Attach an OMC-tagged, provenance-carrying display hint so the
                 // media widget can dispatch the OMC-driven "Explain" affordance and
@@ -106,12 +113,19 @@ impl MediaServer {
                     .media_generate("image_to_image", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Image transform failed", e))?;
-                if let Some(path) = persist_generated_asset(self, &result, "image").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "image").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Transformed image persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Transformed image persisted"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
@@ -147,12 +161,19 @@ impl MediaServer {
                     .media_generate("upscale", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Upscale failed", e))?;
-                if let Some(path) = persist_generated_asset(self, &result, "image").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "image").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Upscaled image persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Upscaled image persisted"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
@@ -201,12 +222,19 @@ impl MediaServer {
                     .media_generate("generate_video", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Video generation failed", e))?;
-                if let Some(path) = persist_generated_asset(self, &result, "video").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "video").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Generated video persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated video persisted"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(

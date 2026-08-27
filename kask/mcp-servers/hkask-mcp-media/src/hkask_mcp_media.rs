@@ -1433,18 +1433,32 @@ fn default_face_folder() -> Option<std::path::PathBuf> {
     let dir =
         hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new("mcp/media/faces"));
     if let Some(parent) = dir.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                path = %parent.display(),
+                %error,
+                "Failed to create face folder — the subsequent scan will surface the failure"
+            );
+        }
     }
     Some(dir)
 }
 
 /// Resolve the generated assets directory: `{kask_data_dir}/mcp/media/generated/`.
-/// Creates it if it doesn't exist.
+/// Creates it if it doesn't exist, logging a failure instead of discarding it.
 fn generated_assets_dir() -> std::path::PathBuf {
-    let dir = hkask_types::agent_paths::resolve_under_data_dir(
-        std::path::Path::new("mcp/media/generated"),
-    );
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+        "mcp/media/generated",
+    ));
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(
+            target: "hkask.mcp.media",
+            path = %dir.display(),
+            %error,
+            "Failed to create generated-assets directory — the subsequent write will surface the failure"
+        );
+    }
     dir
 }
 
@@ -1467,7 +1481,7 @@ async fn persist_generated_asset(
     server: &MediaServer,
     result: &serde_json::Value,
     kind: &str,
-) -> Option<std::path::PathBuf> {
+) -> Result<std::path::PathBuf, MediaError> {
     let asset_dir = generated_assets_dir();
     let id = uuid::Uuid::new_v4();
 
@@ -1484,11 +1498,7 @@ async fn persist_generated_asset(
                 use base64::Engine;
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(b64)
-                    .map_err(|e| {
-                        tracing::warn!(target: "hkask.mcp.media", error = %e, "failed to decode b64_json");
-                        e
-                    })
-                    .ok()?;
+                    .map_err(|e| MediaError::AssetPersistence(format!("decode b64_json: {e}")))?;
                 (bytes, "png")
             }
             // OpenRouter: data[0].url — download
@@ -1517,7 +1527,10 @@ async fn persist_generated_asset(
                     (bytes, ext)
                 }
             } else {
-                return None;
+                return Err(MediaError::AssetPersistence(format!(
+                    "unrecognized {kind} provider response shape: no \
+                     data[0].b64_json / data[0].url / output_urls[0] field"
+                )));
             }
         }
         "video" => {
@@ -1535,7 +1548,9 @@ async fn persist_generated_asset(
                 let bytes = download_asset(url).await?;
                 (bytes, "mp4")
             } else {
-                return None;
+                return Err(MediaError::AssetPersistence(format!(
+                    "unrecognized {kind} provider response shape: no video_url / url field"
+                )));
             }
         }
         "audio" => {
@@ -1543,10 +1558,16 @@ async fn persist_generated_asset(
             if let Some(audio) = result.get("audio").and_then(|v| v.as_str()) {
                 decode_data_uri(audio)?
             } else {
-                return None;
+                return Err(MediaError::AssetPersistence(format!(
+                    "unrecognized {kind} provider response shape: no audio field"
+                )));
             }
         }
-        _ => return None,
+        _ => {
+            return Err(MediaError::AssetPersistence(format!(
+                "unknown asset kind '{kind}' (expected image, video, or audio)"
+            )));
+        }
     };
 
     let filename = format!("{id}.{ext}");
@@ -1554,13 +1575,10 @@ async fn persist_generated_asset(
 
     // Write the file.
     if let Err(e) = std::fs::write(&path, &bytes) {
-        tracing::warn!(
-            target: "hkask.mcp.media",
-            path = %path.display(),
-            error = %e,
-            "Failed to persist generated asset"
-        );
-        return None;
+        return Err(MediaError::AssetPersistence(format!(
+            "write {}: {e}",
+            path.display()
+        )));
     }
 
     // Add to gallery (images only — video/audio are not gallery-indexed).
@@ -1573,7 +1591,7 @@ async fn persist_generated_asset(
                     error = %e,
                     "Gallery not initialized — generated image not indexed"
                 );
-                return Some(path);
+                return Ok(path);
             }
         };
         let hash = {
@@ -1601,34 +1619,34 @@ async fn persist_generated_asset(
         }
     }
 
-    Some(path)
+    Ok(path)
 }
 
 /// Download asset bytes from an HTTP URL.
-async fn download_asset(url: &str) -> Option<Vec<u8>> {
+async fn download_asset(url: &str) -> Result<Vec<u8>, MediaError> {
     // Use a simple reqwest GET — the media server process has network access.
     let client = reqwest::Client::new();
-    match client.get(url).send().await {
-        Ok(resp) => match resp.bytes().await {
-            Ok(bytes) => Some(bytes.to_vec()),
-            Err(e) => {
-                tracing::warn!(target: "hkask.mcp.media", url = url, error = %e, "Failed to read asset bytes");
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.media", url = url, error = %e, "Failed to download asset");
-            None
-        }
-    }
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .and_then(|resp| resp.error_for_status())
+        .map_err(|e| MediaError::AssetPersistence(format!("download {url}: {e}")))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| MediaError::AssetPersistence(format!("read bytes from {url}: {e}")))?;
+    Ok(bytes.to_vec())
 }
 
 /// Decode a `data:{mime};base64,{data}` URI into bytes + extension.
-fn decode_data_uri(uri: &str) -> Option<(Vec<u8>, &'static str)> {
+fn decode_data_uri(uri: &str) -> Result<(Vec<u8>, &'static str), MediaError> {
     use base64::Engine;
     let parts: Vec<&str> = uri.splitn(2, ',').collect();
     if parts.len() != 2 {
-        return None;
+        return Err(MediaError::AssetPersistence(
+            "malformed data URI: no ',' separator".to_string(),
+        ));
     }
     let header = parts[0];
     let data = parts[1];
@@ -1651,8 +1669,8 @@ fn decode_data_uri(uri: &str) -> Option<(Vec<u8>, &'static str)> {
     };
     base64::engine::general_purpose::STANDARD
         .decode(data)
-        .ok()
         .map(|bytes| (bytes, ext))
+        .map_err(|e| MediaError::AssetPersistence(format!("decode data URI base64 payload: {e}")))
 }
 
 /// Infer image file extension from a URL.
@@ -1673,9 +1691,7 @@ fn infer_image_ext(url: &str) -> &'static str {
 
 /// Infer image dimensions from raw bytes using the `image` crate.
 fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
-    match image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-    {
+    match image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format() {
         Ok(reader) => match reader.into_dimensions() {
             Ok((w, h)) => (w, h),
             Err(_) => (0, 0),
@@ -1717,9 +1733,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_41_registered_tools() {
+    fn tool_surface_is_exactly_42_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 41, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 42, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.
@@ -1790,12 +1806,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
     // Build the GalleryStore. Durable (file-backed SQLite) at
     // `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact
-    // Storage), or override via `HKASK_MEDIA_DB`; otherwise in-memory
-    // (tag/face/lineage metadata is lost on restart — the G14 gap, now
-    // opt-in rather than forced). The file DB is unencrypted (gallery
-    // metadata is not a secret), so it does NOT use `HKASK_DB_PASSPHRASE` —
-    // avoiding leaking the global SQLCipher key to this child process. Schema
-    // is initialized by `from_driver()`.
+    // Storage), or override via `HKASK_MEDIA_DB`. Unlike kata-kanban there is
+    // no in-memory fallback: a gallery DB open failure aborts startup. The
+    // fallback silently degraded every subsequent tool call to "gallery
+    // empty" — a broken feedback loop (the operator cannot distinguish a DB
+    // outage from a genuinely empty gallery, and re-organizing against the
+    // throwaway in-memory DB loses tag/face/lineage metadata). The file DB is
+    // unencrypted (gallery metadata is not a secret), so it does NOT use
+    // `HKASK_DB_PASSPHRASE` — avoiding leaking the global SQLCipher key to
+    // this child process. Schema is initialized by `from_driver()`.
     let gallery_store = {
         let default_media_db = hkask_types::agent_paths::resolve_under_data_dir(
             &hkask_types::agent_paths::mcp_server_db("media", "gallery"),
@@ -1805,34 +1824,46 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             .filter(|s| !s.is_empty())
             .map(std::path::PathBuf::from)
             .unwrap_or(default_media_db);
+        if let Some(parent) = db_path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    path = %parent.display(),
+                    %error,
+                    "Failed to create gallery DB directory \
+                     — the subsequent DB open will surface the failure"
+                );
+            }
+        }
         let db_path_str = db_path.to_string_lossy().to_string();
-        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-            match SqliteDriver::file_pool(&db_path_str) {
-                Ok(pool) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %db_path_str,
-                        "Gallery store using durable file DB"
-                    );
-                    Arc::new(SqliteDriver::new_labeled(pool, db_path_str.as_str()))
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = {
+            let pool = SqliteDriver::file_pool(&db_path_str).map_err(|e| {
+                tracing::error!(
+                    target: "hkask.mcp.media",
+                    path = %db_path_str,
+                    error = %e,
+                    "Gallery DB open failed — refusing to start with an ephemeral \
+                     in-memory gallery (metadata would be lost on restart)"
+                );
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "gallery DB open".to_string(),
+                    detail: format!("{db_path_str}: {e}"),
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.media",
-                        path = %db_path_str,
-                        error = %e,
-                        "Gallery DB open failed — falling back to in-memory gallery DB"
-                    );
-                    SqliteDriver::in_memory_driver()
-                }
-            };
+            })?;
+            tracing::info!(
+                target: "hkask.mcp.media",
+                path = %db_path_str,
+                "Gallery store using durable file DB"
+            );
+            Arc::new(SqliteDriver::new_labeled(pool, db_path_str.as_str()))
+        };
         match GalleryStore::from_driver(driver) {
             Ok(store) => {
                 tracing::info!(target: "hkask.mcp.media", "Gallery store initialized");
                 Arc::new(store)
             }
             Err(e) => {
-                tracing::warn!(target: "hkask.mcp.media", error = %e, "Failed to create GalleryStore");
+                tracing::error!(target: "hkask.mcp.media", error = %e, "Failed to create GalleryStore");
                 return Err(e.into());
             }
         }

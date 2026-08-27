@@ -34,12 +34,19 @@ impl MediaServer {
                     .media_generate("remove_background", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Background removal failed", e))?;
-                if let Some(path) = persist_generated_asset(self, &result, "image").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "image").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Background-removed image persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Background-removed image persisted"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,
@@ -268,7 +275,14 @@ impl MediaServer {
             }
 
             let temp_dir = std::env::temp_dir().join("hkask-media");
-            let _ = std::fs::create_dir_all(&temp_dir);
+            if let Err(error) = std::fs::create_dir_all(&temp_dir) {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    path = %temp_dir.display(),
+                    %error,
+                    "Failed to create collage temp directory — the subsequent write will surface the failure"
+                );
+            }
             let output_path = temp_dir.join(format!("collage_{}.png", uuid::Uuid::new_v4()));
 
             canvas

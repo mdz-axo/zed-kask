@@ -43,6 +43,13 @@ pub enum MediaError {
     #[error("{0}")]
     VisionParse(String),
 
+    /// Generated-asset persistence failure. Persistence is best-effort
+    /// (the tool result already carries the provider URL/data), so callers
+    /// log-and-continue rather than failing the tool — but the reason must
+    /// be visible, not swallowed as `None`.
+    #[error("Generated asset not persisted: {0}")]
+    AssetPersistence(String),
+
     /// Face scan: no YAML sidecar found for an image (skippable).
     #[error("{0}: no YAML sidecar found")]
     SidecarNotFound(String),
@@ -93,6 +100,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         | MediaError::VisionApi(_)
         | MediaError::VisionParse(_)
         | MediaError::Template(_)
+        | MediaError::AssetPersistence(_)
         | MediaError::SidecarNotFound(_)
         | MediaError::SidecarInvalid(_)
         | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm

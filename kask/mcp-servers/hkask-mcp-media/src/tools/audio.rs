@@ -93,12 +93,19 @@ impl MediaServer {
                     .media_generate("generate_speech", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Speech generation failed", e))?;
-                if let Some(path) = persist_generated_asset(self, &result, "audio").await {
-                    tracing::info!(
+                match persist_generated_asset(self, &result, "audio").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Generated audio persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
                         target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated audio persisted"
-                    );
+                        %error,
+                        "Failed to persist generated asset (tool result still carries the provider URL)"
+                    ),
                 }
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,
