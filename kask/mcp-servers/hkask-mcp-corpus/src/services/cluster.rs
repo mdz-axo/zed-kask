@@ -91,3 +91,92 @@ impl ClusterInput {
         all_clusters
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_types::corpus::TaggedChunk;
+
+    fn chunk(entity_ref: &str, source: &str, salience: f32) -> TaggedChunk {
+        TaggedChunk {
+            entity_ref: entity_ref.to_string(),
+            source: source.to_string(),
+            salience,
+            ..Default::default()
+        }
+    }
+
+    fn input(chunks: Vec<TaggedChunk>, embeddings: Vec<(&str, Vec<f32>)>) -> ClusterInput {
+        let norm_map = embeddings
+            .into_iter()
+            .map(|(entity_ref, vector)| (entity_ref.to_string(), vector))
+            .collect();
+        ClusterInput { chunks, norm_map }
+    }
+
+    #[test]
+    fn identical_vectors_cluster_together() {
+        // Two chunks from the same source with identical (parallel) embeddings
+        // must land in one cluster; the higher-salience chunk is the survivor.
+        let chunks = vec![chunk("a", "doc.txt", 0.9), chunk("b", "doc.txt", 0.5)];
+        let embeddings = vec![("a", vec![1.0, 0.0]), ("b", vec![1.0, 0.0])];
+        let cluster_input = input(chunks, embeddings);
+        let clusters = cluster_input.cluster_by_source(0.85, usize::MAX);
+        assert_eq!(clusters.len(), 1);
+        // Both members in one cluster, salience-descending: the survivor
+        // (first element) is the higher-salience chunk.
+        assert_eq!(clusters[0], vec![0, 1]);
+    }
+
+    #[test]
+    fn orthogonal_vectors_stay_separate() {
+        let chunks = vec![chunk("a", "doc.txt", 0.9), chunk("b", "doc.txt", 0.5)];
+        let embeddings = vec![("a", vec![1.0, 0.0]), ("b", vec![0.0, 1.0])];
+        let cluster_input = input(chunks, embeddings);
+        let clusters = cluster_input.cluster_by_source(0.85, usize::MAX);
+        assert_eq!(clusters.len(), 2);
+    }
+
+    #[test]
+    fn different_sources_never_cluster_together() {
+        // Identical embeddings but different sources — grouping is per-source.
+        let chunks = vec![chunk("a", "one.txt", 0.9), chunk("b", "two.txt", 0.5)];
+        let embeddings = vec![("a", vec![1.0, 0.0]), ("b", vec![1.0, 0.0])];
+        let cluster_input = input(chunks, embeddings);
+        let clusters = cluster_input.cluster_by_source(0.85, usize::MAX);
+        assert_eq!(clusters.len(), 2);
+    }
+
+    #[test]
+    fn max_per_cluster_caps_cluster_size() {
+        let chunks = vec![
+            chunk("a", "doc.txt", 0.9),
+            chunk("b", "doc.txt", 0.8),
+            chunk("c", "doc.txt", 0.7),
+        ];
+        let embeddings = vec![
+            ("a", vec![1.0, 0.0]),
+            ("b", vec![1.0, 0.0]),
+            ("c", vec![1.0, 0.0]),
+        ];
+        let cluster_input = input(chunks, embeddings);
+        // Cap of 2: first two (highest salience) cluster, third starts a new one.
+        let clusters = cluster_input.cluster_by_source(0.85, 2);
+        assert_eq!(clusters.len(), 2);
+        assert_eq!(clusters[0].len(), 2);
+        assert_eq!(clusters[1], vec![2]);
+    }
+
+    #[test]
+    fn missing_embedding_becomes_singleton() {
+        // A chunk with no stored embedding cannot match anything — it must
+        // still appear as its own cluster rather than being silently dropped.
+        let chunks = vec![chunk("a", "doc.txt", 0.9), chunk("orphan", "doc.txt", 0.5)];
+        let embeddings = vec![("a", vec![1.0, 0.0])];
+        let cluster_input = input(chunks, embeddings);
+        let clusters = cluster_input.cluster_by_source(0.85, usize::MAX);
+        assert_eq!(clusters.len(), 2);
+        let flat: Vec<usize> = clusters.iter().flatten().copied().collect();
+        assert!(flat.contains(&1)); // orphan present
+    }
+}

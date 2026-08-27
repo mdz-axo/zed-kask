@@ -280,3 +280,93 @@ fn read_prompts(path: &str) -> Result<Vec<BatchQaPrompt>, McpToolError> {
 
     Ok(prompts_vec)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_temp_jsonl(name: &str, lines: &[serde_json::Value]) -> String {
+        // Path containment (path_safety) rejects /tmp — fixtures must live
+        // under the crate root. Use a scratch dir inside target/ so cargo
+        // gitignores it.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("qa-batch-test");
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        let path = dir.join(format!("{name}.jsonl"));
+        let body: String = lines
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("serialize"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, body).expect("write temp file");
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn read_prompts_maps_build_prompts_fields() {
+        // The canonical build_prompts output shape: chunk_ref + system/user +
+        // qa_type. All three must be aliased into BatchQaPrompt.
+        let line = json!({
+            "chunk_ref": "corpus:doc:1",
+            "system": "You generate QA pairs.",
+            "user": "Chunk text here.",
+            "qa_type": "analyze",
+            "source": "doc.pdf.txt",
+            "concepts": ["ROIC", "moat"],
+        });
+        let path = write_temp_jsonl("canonical", &[line]);
+        let prompts = read_prompts(&path).expect("parse");
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].chunk_id, "corpus:doc:1");
+        assert_eq!(prompts[0].text, "You generate QA pairs.\n\nChunk text here.");
+        assert_eq!(
+            prompts[0].bloom_levels.as_deref(),
+            Some(&["analyze".to_string()][..])
+        );
+        assert_eq!(prompts[0].source, "doc.pdf.txt");
+        assert_eq!(prompts[0].concepts, vec!["ROIC", "moat"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_prompts_accepts_preformatted_text_and_bloom_levels() {
+        // The alternative shape: chunk_id + combined text + bloom_levels array.
+        let line = json!({
+            "chunk_id": "c2",
+            "text": "Pre-formatted prompt.",
+            "bloom_levels": ["remember", "apply"],
+        });
+        let path = write_temp_jsonl("preformatted", &[line]);
+        let prompts = read_prompts(&path).expect("parse");
+        assert_eq!(prompts[0].chunk_id, "c2");
+        assert_eq!(prompts[0].text, "Pre-formatted prompt.");
+        assert_eq!(
+            prompts[0].bloom_levels,
+            Some(vec!["remember".to_string(), "apply".to_string()])
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_prompts_empty_file_is_invalid_argument() {
+        let path = write_temp_jsonl("empty", &[]);
+        let err = read_prompts(&path).expect_err("must fail on empty");
+        assert!(format!("{err}").contains("no valid prompts"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_prompts_missing_fields_default() {
+        // A line with no recognizable fields still yields a prompt with
+        // empty defaults — lenient by design (malformed lines are the
+        // caller's data-quality problem, surfaced downstream).
+        let line = json!({"unrelated": true});
+        let path = write_temp_jsonl("minimal", &[line]);
+        let prompts = read_prompts(&path).expect("parse");
+        assert_eq!(prompts[0].chunk_id, "");
+        assert_eq!(prompts[0].text, "");
+        assert!(prompts[0].bloom_levels.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+}
