@@ -482,7 +482,7 @@ impl LanguageModelInferencePort {
                             timeout_secs = inference_timeout.as_secs(),
                             "Streaming inference stream establishment timed out — returning Connection error"
                         );
-                        recent_timeouts.lock().unwrap().push(std::time::Instant::now());
+                        recent_timeouts.lock().unwrap_or_else(|e| e.into_inner()).push(std::time::Instant::now());
                         Err(InferenceError::Connection(format!(
                             "inference timed out after {}s",
                             inference_timeout.as_secs()
@@ -974,7 +974,7 @@ impl hkask_regulation::InferenceHealthSource for LanguageModelInferencePort {
 
     async fn recent_timeout_count(&self) -> u64 {
         let now = std::time::Instant::now();
-        let mut timeouts = self.recent_timeouts.lock().unwrap();
+        let mut timeouts = self.recent_timeouts.lock().unwrap_or_else(|e| e.into_inner());
         // Evict timeouts older than the window. This keeps the Vec bounded —
         // a long-running storm produces at most (rate × window) entries.
         timeouts.retain(|t| now.duration_since(*t) < RECENT_TIMEOUT_WINDOW);

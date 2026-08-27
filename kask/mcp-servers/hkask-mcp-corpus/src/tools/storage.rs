@@ -728,7 +728,7 @@ pub(crate) struct PurgeQaRequest {
     /// Path to the SQLCipher memory DB.
     pub db_path: String,
     /// Passphrase for the memory DB.
-    #[serde(default = "default_purge_passphrase")]
+    #[serde(default = "crate::helpers::default_corpus_passphrase")]
     pub passphrase: String,
 }
 
@@ -736,10 +736,4 @@ fn default_purge_prefix() -> String {
     "corpus:researcher:".to_string()
 }
 
-fn default_purge_passphrase() -> String {
-    // Reuses the corpus server's 3-tier resolution chain (ctx.credentials →
-    // env → keychain) via `default_corpus_passphrase`, which reads the
-    // `OnceLock` set at server construction. See
-    // `crate::helpers::set_corpus_db_passphrase`.
-    crate::helpers::default_corpus_passphrase()
-}
+

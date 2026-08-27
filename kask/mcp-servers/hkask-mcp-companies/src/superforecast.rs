@@ -285,3 +285,79 @@ pub(crate) fn within_tolerance(forecast: f64, actual: f64, tolerance: f64) -> bo
     }
     ((actual - forecast) / forecast).abs() <= tolerance
 }
+
+// ── Pin test ─────────────────────────────────────────────────────────────────
+// Enforces the R3 bridge contract: the JSON shape the scenarios server's
+// `emit_cmp_provenance` produces (pinned by
+// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` in
+// `hkask-mcp-scenarios`) round-trips through this crate's `EventTreeProjection`
+// deserializer with all 7 fields intact. If either side drifts, this test
+// breaks — catching silent degradation of the CMP provenance bridge.
+
+#[cfg(test)]
+mod tests {
+    use super::EventTreeProjection;
+
+    /// The real scenarios emitter populates all 7 CMP provenance fields. This
+    /// test deserializes that exact shape through `EventTreeProjection` and
+    /// asserts every field survives — the `#[serde(default)]` per field would
+    /// silently mask a dropped field, so each must be checked explicitly.
+    #[test]
+    fn cmp_provenance_round_trips_real_scenarios_emitter() {
+        // The JSON shape produced by `emit_cmp_provenance` in
+        // `hkask-mcp-scenarios` (pinned by the scenarios-side test of the same
+        // 7-field shape). Wrapped in the `tree` object shape that
+        // `scenario_from_cmp_indices` emits.
+        let tree_json = serde_json::json!({
+            "root_ids": ["cmp:policy_interest_rate:1m:increase"],
+            "nodes": [
+                {"id": "cmp:policy_interest_rate:1m:increase", "marginal_probability": 0.55}
+            ],
+            "cmp_provenance": [{
+                "id": "cmp:policy_interest_rate:1m:increase",
+                "family": "policy_interest_rate",
+                "tenor": "1m",
+                "orientation": "increase",
+                "venue": "kalshi",
+                "method": "interpolated",
+                "maturity_error_days": 0.5
+            }]
+        });
+
+        let projection: EventTreeProjection = serde_json::from_value(tree_json)
+            .expect("tree JSON must deserialize as EventTreeProjection");
+
+        assert_eq!(
+            projection.cmp_provenance.len(),
+            1,
+            "one CMP provenance entry in → one out"
+        );
+        let entry = &projection.cmp_provenance[0];
+        assert_eq!(entry.id, "cmp:policy_interest_rate:1m:increase");
+        assert_eq!(entry.family, "policy_interest_rate");
+        assert_eq!(entry.tenor, "1m");
+        assert_eq!(entry.orientation, "increase");
+        assert_eq!(entry.venue, "kalshi");
+        assert_eq!(entry.method, "interpolated");
+        assert_eq!(entry.maturity_error_days, 0.5);
+    }
+
+    /// `cmp_provenance` is optional (absent for raw-contract trees). The
+    /// `#[serde(default)]` on the outer field must tolerate its absence without
+    /// failing deserialization — a tree without CMP indices is the pre-R3
+    /// shape and must still deserialize cleanly.
+    #[test]
+    fn event_tree_projection_tolerates_missing_cmp_provenance() {
+        let tree_json = serde_json::json!({
+            "root_ids": ["evt-1"],
+            "nodes": [{"id": "evt-1", "marginal_probability": 0.3}]
+        });
+
+        let projection: EventTreeProjection = serde_json::from_value(tree_json)
+            .expect("raw-contract tree must deserialize without cmp_provenance");
+        assert!(
+            projection.cmp_provenance.is_empty(),
+            "absent cmp_provenance must default to empty, not fail"
+        );
+    }
+}

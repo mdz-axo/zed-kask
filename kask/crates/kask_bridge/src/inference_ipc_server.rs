@@ -352,8 +352,18 @@ impl InferenceIpcServer {
         let (tx, rx) = std::sync::mpsc::channel();
         let socket_path_for_bind = socket_path.clone();
         tokio_handle.spawn(async move {
-            // Remove any stale socket file.
-            let _ = std::fs::remove_file(&socket_path_for_bind);
+            // Remove any stale socket file. A failure here (file doesn't
+            // exist, permission denied) is expected on first launch — log
+            // rather than silently discarding so a persistent permission
+            // issue is visible.
+            if let Err(e) = std::fs::remove_file(&socket_path_for_bind) {
+                tracing::debug!(
+                    target: "hkask.inference.ipc",
+                    error = %e,
+                    path = %socket_path_for_bind.display(),
+                    "Stale socket removal (expected on first launch)"
+                );
+            }
             let result = UnixListener::bind(&socket_path_for_bind);
             let _ = tx.send(result);
         });

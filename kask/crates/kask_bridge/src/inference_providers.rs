@@ -40,6 +40,11 @@ pub struct InferenceProviderDescriptor {
     pub credential_key: &'static str,
     /// Dashboard URL where the user can obtain an API key.
     pub dashboard_url: &'static str,
+    /// Whether `credential_urls_for_mcp` injects this provider's key for MCP
+    /// servers. `false` when `DATA_SERVICES` handles injection (RunPod — the
+    /// same credential_key appears in both registries; DATA_SERVICES is the
+    /// single injector to avoid double-injection).
+    pub inject_for_mcp: bool,
 }
 
 /// The inference providers used for credential injection and embedding
@@ -55,6 +60,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "OPENROUTER_API_KEY",
         credential_key: "openrouter",
         dashboard_url: "https://openrouter.ai/",
+        inject_for_mcp: true,
     },
     // RunPod has a dedicated `LanguageModelProvider` (D29), not an
     // `openai_compatible` entry. It's listed here so
@@ -71,6 +77,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "RUNPOD_API_KEY",
         credential_key: "runpod",
         dashboard_url: "https://www.runpod.io/",
+        inject_for_mcp: false,
     },
     // Ollama is a local LLM/embedding service (default port 11434). It's
     // OpenAI-compatible at `/v1` and requires no API key — an empty `env_var`
@@ -86,6 +93,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "",
         credential_key: "ollama",
         dashboard_url: "https://ollama.com/",
+        inject_for_mcp: true,
     },
     // DeepInfra is a cloud inference platform serving Qwen embedding models
     // via an OpenAI-compatible `/v1/embeddings` endpoint. The default
@@ -98,6 +106,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "DEEPINFRA_API_KEY",
         credential_key: "deepinfra",
         dashboard_url: "https://deepinfra.com/",
+        inject_for_mcp: true,
     },
 ];
 
@@ -335,7 +344,7 @@ pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
     // RunPod is skipped (handled by DATA_SERVICES above).
     // Ollama is skipped (empty env_var — local, no key needed).
     for provider in INFERENCE_PROVIDERS {
-        if provider.credential_key == "runpod" || provider.env_var.is_empty() {
+        if !provider.inject_for_mcp || provider.env_var.is_empty() {
             continue;
         }
         urls.push((provider.env_var.to_string(), provider.credential_url()));
