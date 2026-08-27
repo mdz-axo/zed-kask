@@ -974,7 +974,10 @@ impl hkask_regulation::InferenceHealthSource for LanguageModelInferencePort {
 
     async fn recent_timeout_count(&self) -> u64 {
         let now = std::time::Instant::now();
-        let mut timeouts = self.recent_timeouts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut timeouts = self
+            .recent_timeouts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Evict timeouts older than the window. This keeps the Vec bounded —
         // a long-running storm produces at most (rate × window) entries.
         timeouts.retain(|t| now.duration_since(*t) < RECENT_TIMEOUT_WINDOW);

@@ -1,0 +1,21 @@
+[package]
+name = "remote_server_download"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/remote_server_download.rs"
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+paths.workspace = true
+release_channel.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+tempfile.workspace = true

@@ -219,4 +219,3 @@ impl HkaskSettings {
         std::fs::write(&path, json)
     }
 }
-

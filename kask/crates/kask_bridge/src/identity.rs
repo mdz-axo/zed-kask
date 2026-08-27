@@ -160,7 +160,7 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
             // later via the settings UI (which triggers DB rotation) or the
             // HKASK_DB_PASSPHRASE env var.
             let word = "allostery".to_string();
-            let keychain = Keychain::default();
+            let keychain = Keychain;
             keychain
                 .store_by_key(KEY_DB_PASSPHRASE, &word)
                 .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
@@ -216,7 +216,7 @@ pub fn provision_swarm_memory_passphrase() -> Result<String, ProvisionError> {
             //    can change it later via the settings UI (which triggers DB
             //    rotation) or the HKASK_SWARM_MEMORY_PASSPHRASE env var.
             let word = "allostery".to_string();
-            let keychain = Keychain::default();
+            let keychain = Keychain;
             keychain
                 .store_by_key(KEY_SWARM_MEMORY_PASSPHRASE, &word)
                 .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;

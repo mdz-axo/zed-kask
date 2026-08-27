@@ -109,7 +109,7 @@ impl CapabilityTier {
     /// Returns `true` if the keychain responds (even with "not found"),
     /// `false` only if the platform keychain itself is broken/unavailable.
     fn probe_keystore() -> bool {
-        match hkask_keystore::Keychain::default()
+        match hkask_keystore::Keychain
             .retrieve_by_key(hkask_keystore::keychain_keys::KEY_CAPABILITY_PROBE)
         {
             Ok(_) => true,

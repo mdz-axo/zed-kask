@@ -211,10 +211,8 @@ impl SwarmConfig {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.api_base_url);
-        let max_credits_per_dispatch = parse_env_warn(
-            "HKASK_ABW_MAX_CREDITS",
-            default.max_credits_per_dispatch,
-        );
+        let max_credits_per_dispatch =
+            parse_env_warn("HKASK_ABW_MAX_CREDITS", default.max_credits_per_dispatch);
         let curator_consent_default = parse_env_warn(
             "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
             default.curator_consent_default,
@@ -233,10 +231,7 @@ impl SwarmConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_swarms_dir);
         let local_swarms_dir = resolve_local_swarms_dir(&local_swarms_dir);
-        let a2a_http_enabled = parse_env_warn(
-            "HKASK_A2A_HTTP_ENABLE",
-            default.a2a_http_enabled,
-        );
+        let a2a_http_enabled = parse_env_warn("HKASK_A2A_HTTP_ENABLE", default.a2a_http_enabled);
         let allowed_tool_servers = std::env::var("HKASK_MCP_SERVER_IDS")
             .ok()
             .filter(|s| !s.trim().is_empty())

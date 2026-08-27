@@ -77,6 +77,7 @@ kask_bridge.workspace = true
 hkask-mcp.workspace = true
 hkask-tool-port.workspace = true
 hkask-types.workspace = true
+hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
 

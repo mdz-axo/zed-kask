@@ -735,5 +735,3 @@ pub(crate) struct PurgeQaRequest {
 fn default_purge_prefix() -> String {
     "corpus:researcher:".to_string()
 }
-
-

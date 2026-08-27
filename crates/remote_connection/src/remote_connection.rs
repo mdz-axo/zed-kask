@@ -2,7 +2,6 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use askpass::EncryptedPassword;
-use auto_update::AutoUpdater;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{
     AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter, Focusable, FontFeatures,
@@ -11,6 +10,7 @@ use gpui::{
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform};
+use remote_server_download as auto_update;
 use semver::Version;
 use settings::Settings;
 use theme_settings::ThemeSettings;
