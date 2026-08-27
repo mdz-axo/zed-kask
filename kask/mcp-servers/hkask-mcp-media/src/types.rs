@@ -499,3 +499,13 @@ pub struct GalleryReproduceRequest {
     /// Index of the gallery image to reproduce (re-runs its stored op + params).
     pub image_index: usize,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryDeleteImageRequest {
+    /// Index of the gallery image to delete from the index.
+    pub image_index: usize,
+    /// Whether to also delete the file on disk (default: false — only removes
+    /// the gallery index entry, leaving the file untouched).
+    #[serde(default)]
+    pub delete_file: bool,
+}

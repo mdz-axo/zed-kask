@@ -88,19 +88,25 @@ impl MediaServer {
                     ..Default::default()
                 };
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-                self.vision_port
+                let result = self
+                    .vision_port
                     .media_generate("generate_speech", &media_params)
                     .await
-                    .map_err(|e| classify_inference_error("Speech generation failed", e))
-                    .map(|result| {
-                        crate::media_block::enrich_with_omc_and_provenance(
-                            result,
-                            "generate_speech",
-                            "audio",
-                            args,
-                            None,
-                        )
-                    })
+                    .map_err(|e| classify_inference_error("Speech generation failed", e))?;
+                if let Some(path) = persist_generated_asset(self, &result, "audio").await {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        path = %path.display(),
+                        "Generated audio persisted"
+                    );
+                }
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "generate_speech",
+                    "audio",
+                    args,
+                    None,
+                ))
             },
         )
         .await

@@ -912,7 +912,7 @@ impl OpenAiEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
-                // Some models emit tool_call deltas during streaming but
+                // zed-kask: D36 — Some models emit tool_call deltas during streaming but
                 // finish with "stop" instead of "tool_calls". If we have
                 // accumulated tool calls, drain them before emitting the stop
                 // — otherwise the tool call is silently lost and only the

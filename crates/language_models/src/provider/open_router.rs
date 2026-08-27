@@ -874,7 +874,7 @@ impl OpenRouterEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
-                // Some models (e.g., GLM 5.2 via OpenRouter) emit tool_call
+                // zed-kask: D36 — Some models (e.g., GLM 5.2 via OpenRouter) emit tool_call
                 // deltas during streaming but finish with "stop" instead of
                 // "tool_calls". If we have accumulated tool calls, drain them
                 // before emitting the stop — otherwise the tool call is

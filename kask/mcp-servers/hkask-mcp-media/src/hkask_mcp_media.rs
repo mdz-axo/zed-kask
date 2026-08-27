@@ -1438,6 +1438,252 @@ fn default_face_folder() -> Option<std::path::PathBuf> {
     Some(dir)
 }
 
+/// Resolve the generated assets directory: `{kask_data_dir}/mcp/media/generated/`.
+/// Creates it if it doesn't exist.
+fn generated_assets_dir() -> std::path::PathBuf {
+    let dir = hkask_types::agent_paths::resolve_under_data_dir(
+        std::path::Path::new("mcp/media/generated"),
+    );
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Persist a generated asset to the data directory and add it to the gallery.
+///
+/// Downloads the asset from a URL or decodes a base64 data URI, saves it to
+/// `{data_dir}/mcp/media/generated/{uuid}.{ext}`, and registers it in the
+/// gallery store. Returns the local file path on success.
+///
+/// `kind` is "image", "video", or "audio" — determines the file extension.
+/// `result` is the raw provider response JSON. The function tries multiple
+/// response shapes:
+/// - `data[0].b64_json` (DeepInfra image generation)
+/// - `data[0].url` (OpenRouter image generation)
+/// - `output_urls[0]` (legacy format)
+/// - `audio` (TTS — base64 data URI)
+/// - `video_url` (DeepInfra video — data URI)
+/// - `url` (OpenRouter video — HTTP URL)
+async fn persist_generated_asset(
+    server: &MediaServer,
+    result: &serde_json::Value,
+    kind: &str,
+) -> Option<std::path::PathBuf> {
+    let asset_dir = generated_assets_dir();
+    let id = uuid::Uuid::new_v4();
+
+    // Extract the asset data from the provider response.
+    let (bytes, ext) = match kind {
+        "image" => {
+            // DeepInfra: data[0].b64_json
+            if let Some(b64) = result
+                .get("data")
+                .and_then(|d| d.get(0))
+                .and_then(|d| d.get("b64_json"))
+                .and_then(|v| v.as_str())
+            {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|e| {
+                        tracing::warn!(target: "hkask.mcp.media", error = %e, "failed to decode b64_json");
+                        e
+                    })
+                    .ok()?;
+                (bytes, "png")
+            }
+            // OpenRouter: data[0].url — download
+            else if let Some(url) = result
+                .get("data")
+                .and_then(|d| d.get(0))
+                .and_then(|d| d.get("url"))
+                .and_then(|v| v.as_str())
+            {
+                let bytes = download_asset(url).await?;
+                let ext = infer_image_ext(url);
+                (bytes, ext)
+            }
+            // Legacy: output_urls[0]
+            else if let Some(url) = result
+                .get("output_urls")
+                .and_then(|u| u.as_array())
+                .and_then(|u| u.first())
+                .and_then(|v| v.as_str())
+            {
+                if url.starts_with("data:") {
+                    decode_data_uri(url)?
+                } else {
+                    let bytes = download_asset(url).await?;
+                    let ext = infer_image_ext(url);
+                    (bytes, ext)
+                }
+            } else {
+                return None;
+            }
+        }
+        "video" => {
+            // DeepInfra: video_url (data URI)
+            if let Some(url) = result.get("video_url").and_then(|v| v.as_str()) {
+                if url.starts_with("data:") {
+                    decode_data_uri(url)?
+                } else {
+                    let bytes = download_asset(url).await?;
+                    (bytes, "mp4")
+                }
+            }
+            // OpenRouter: url
+            else if let Some(url) = result.get("url").and_then(|v| v.as_str()) {
+                let bytes = download_asset(url).await?;
+                (bytes, "mp4")
+            } else {
+                return None;
+            }
+        }
+        "audio" => {
+            // TTS: audio field (data URI)
+            if let Some(audio) = result.get("audio").and_then(|v| v.as_str()) {
+                decode_data_uri(audio)?
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    let filename = format!("{id}.{ext}");
+    let path = asset_dir.join(&filename);
+
+    // Write the file.
+    if let Err(e) = std::fs::write(&path, &bytes) {
+        tracing::warn!(
+            target: "hkask.mcp.media",
+            path = %path.display(),
+            error = %e,
+            "Failed to persist generated asset"
+        );
+        return None;
+    }
+
+    // Add to gallery (images only — video/audio are not gallery-indexed).
+    if kind == "image" {
+        let ga = match server.access_gallery() {
+            Ok(ga) => ga,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    error = %e,
+                    "Gallery not initialized — generated image not indexed"
+                );
+                return Some(path);
+            }
+        };
+        let hash = {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&bytes);
+            format!("{:x}", hasher.finalize())
+        };
+        let (width, height) = infer_image_dimensions(&bytes);
+        if let Err(e) = server.gallery_store.add_image(
+            &ga.gallery_id,
+            &filename,
+            path.to_str().unwrap_or(""),
+            &hash,
+            width,
+            height,
+            ext,
+            bytes.len() as u64,
+        ) {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                error = %e,
+                "Failed to add generated image to gallery"
+            );
+        }
+    }
+
+    Some(path)
+}
+
+/// Download asset bytes from an HTTP URL.
+async fn download_asset(url: &str) -> Option<Vec<u8>> {
+    // Use a simple reqwest GET — the media server process has network access.
+    let client = reqwest::Client::new();
+    match client.get(url).send().await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(bytes) => Some(bytes.to_vec()),
+            Err(e) => {
+                tracing::warn!(target: "hkask.mcp.media", url = url, error = %e, "Failed to read asset bytes");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.media", url = url, error = %e, "Failed to download asset");
+            None
+        }
+    }
+}
+
+/// Decode a `data:{mime};base64,{data}` URI into bytes + extension.
+fn decode_data_uri(uri: &str) -> Option<(Vec<u8>, &'static str)> {
+    use base64::Engine;
+    let parts: Vec<&str> = uri.splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let header = parts[0];
+    let data = parts[1];
+    let ext = if header.contains("image/png") {
+        "png"
+    } else if header.contains("image/jpeg") || header.contains("image/jpg") {
+        "jpg"
+    } else if header.contains("image/webp") {
+        "webp"
+    } else if header.contains("image/gif") {
+        "gif"
+    } else if header.contains("video/mp4") {
+        "mp4"
+    } else if header.contains("audio/mp3") || header.contains("audio/mpeg") {
+        "mp3"
+    } else if header.contains("audio/wav") {
+        "wav"
+    } else {
+        "bin"
+    };
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()
+        .map(|bytes| (bytes, ext))
+}
+
+/// Infer image file extension from a URL.
+fn infer_image_ext(url: &str) -> &'static str {
+    let lower = url.to_lowercase();
+    if lower.contains(".png") {
+        "png"
+    } else if lower.contains(".jpg") || lower.contains(".jpeg") {
+        "jpg"
+    } else if lower.contains(".webp") {
+        "webp"
+    } else if lower.contains(".gif") {
+        "gif"
+    } else {
+        "png"
+    }
+}
+
+/// Infer image dimensions from raw bytes using the `image` crate.
+fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
+    match image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+    {
+        Ok(reader) => match reader.into_dimensions() {
+            Ok((w, h)) => (w, h),
+            Err(_) => (0, 0),
+        },
+        Err(_) => (0, 0),
+    }
+}
+
 // ── Combined tool router (P5 Essentialism — modular tool groups) ──────────
 
 impl MediaServer {

@@ -882,6 +882,39 @@ impl GalleryStore {
         )?)
     }
 
+    /// Delete an image record and all its associated data (tags, face
+    /// associations, generation lineage). Does NOT delete the underlying
+    /// file on disk — only the gallery index entry.
+    ///
+    /// pre:  image_id is a valid gallery image ID
+    /// post: image record, tags, and generation lineage for image_id are deleted
+    /// post: returns NotFound if the image_id does not exist
+    pub fn delete_image(&self, image_id: &str) -> std::result::Result<(), GalleryStoreError> {
+        let affected = self.driver.execute(
+            "DELETE FROM gallery_images WHERE id = ?1",
+            &[DbValue::Text(image_id.to_string())],
+        )?;
+        if affected == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "image".to_string(),
+                id: format!("image_id={}", image_id),
+            }));
+        }
+        // Cascade: delete tags and generation lineage for this image.
+        // These are best-effort — if they fail, the image is already deleted
+        // and the orphaned tags/lineage are harmless (they reference a
+        // non-existent image_id).
+        let _ = self.driver.execute(
+            "DELETE FROM gallery_tags WHERE image_id = ?1",
+            &[DbValue::Text(image_id.to_string())],
+        );
+        let _ = self.driver.execute(
+            "DELETE FROM gallery_generation WHERE image_id = ?1",
+            &[DbValue::Text(image_id.to_string())],
+        );
+        Ok(())
+    }
+
     fn workflow_from_row(
         row: &crate::database::value::DbRow,
     ) -> std::result::Result<WorkflowRecord, crate::database::types::DbError> {

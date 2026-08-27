@@ -29,19 +29,25 @@ impl MediaServer {
                     ..Default::default()
                 };
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-                self.vision_port
+                let result = self
+                    .vision_port
                     .media_generate("remove_background", &media_params)
                     .await
-                    .map_err(|e| classify_inference_error("Background removal failed", e))
-                    .map(|result| {
-                        crate::media_block::enrich_with_omc_and_provenance(
-                            result,
-                            "image_remove_background",
-                            "image",
-                            args,
-                            None,
-                        )
-                    })
+                    .map_err(|e| classify_inference_error("Background removal failed", e))?;
+                if let Some(path) = persist_generated_asset(self, &result, "image").await {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        path = %path.display(),
+                        "Background-removed image persisted"
+                    );
+                }
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "image_remove_background",
+                    "image",
+                    args,
+                    None,
+                ))
             },
         )
         .await
