@@ -158,6 +158,17 @@ pub struct SkillLoadingIssuesUpdated {
     pub issues: Vec<SkillLoadingIssue>,
 }
 
+/// Emitted when persisting a thread's content to the threads database
+/// fails. Without this, a readonly or corrupted `threads.db` silently
+/// drops saves (the worker only logged) — the operator sees "no thread
+/// found with ID" only after a restart, by which point the content is
+/// unrecoverable.
+#[derive(Clone, Debug)]
+pub struct ThreadSaveFailed {
+    pub session_id: acp::SessionId,
+    pub error: Arc<anyhow::Error>,
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeAvailableSkill {
     pub name: String,
@@ -478,6 +489,7 @@ enum SkillsState {
 }
 
 impl gpui::EventEmitter<SkillLoadingIssuesUpdated> for NativeAgent {}
+impl gpui::EventEmitter<ThreadSaveFailed> for NativeAgent {}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
@@ -1017,8 +1029,9 @@ impl NativeAgent {
         let save_worker = cx.spawn({
             let pending_save = pending_save.clone();
             let session_id = session_id.clone();
-            async move |_this, cx| {
+            async move |this, cx| {
                 Self::run_save_worker(
+                    this,
                     session_id,
                     save_wake_rx,
                     pending_save,
@@ -1975,6 +1988,7 @@ impl NativeAgent {
     }
 
     async fn run_save_worker(
+        this: WeakEntity<Self>,
         id: acp::SessionId,
         mut wake: watch::Receiver<()>,
         pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
@@ -1989,18 +2003,37 @@ impl NativeAgent {
                 folder_paths,
                 db_thread,
             }) = payload
-                && let Some(database) = database_future
-                    .clone()
-                    .await
-                    .map_err(|err| anyhow!(err))
-                    .log_err()
             {
-                let db_thread = db_thread.await;
-                database
-                    .save_thread(id.clone(), db_thread, folder_paths)
-                    .await
-                    .log_err();
-                thread_store.update(cx, |store, cx| store.reload(cx));
+                match database_future.clone().await {
+                    Err(err) => {
+                        let error = Arc::new(anyhow!(err));
+                        log::error!("failed to connect threads database: {error:#}");
+                        this.update(cx, |_, cx| {
+                            cx.emit(ThreadSaveFailed {
+                                session_id: id.clone(),
+                                error,
+                            });
+                        })
+                        .ok();
+                    }
+                    Ok(database) => {
+                        let db_thread = db_thread.await;
+                        if let Err(error) = database
+                            .save_thread(id.clone(), db_thread, folder_paths)
+                            .await
+                        {
+                            log::error!("failed to save thread {id}: {error:#}");
+                            this.update(cx, |_, cx| {
+                                cx.emit(ThreadSaveFailed {
+                                    session_id: id.clone(),
+                                    error: Arc::new(error),
+                                });
+                            })
+                            .ok();
+                        }
+                        thread_store.update(cx, |store, cx| store.reload(cx));
+                    }
+                }
             }
             if closed {
                 break;

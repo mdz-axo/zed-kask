@@ -47,6 +47,18 @@ fi
 
 assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_update_ui::init' \
     "zed-kask initializes upstream Zed's updater"
+
+# zed-kask is not distributed as a flatpak. Upstream's CLI flatpak module
+# hard-codes upstream Zed's app ID (`dev.zed.Zed`) and binary layout, so a
+# zed-kask CLI running inside upstream Zed's sandbox would re-exec and
+# launch upstream Zed's editor. Similarly, honoring FLATPAK_XDG_* env vars
+# in paths.rs would point zed-kask at upstream Zed's data directories.
+# Both were removed under D7; these checks pin the removal against upstream
+# merges re-introducing them.
+assert_no_match "$repo_root/crates/cli/src/main.rs" 'mod flatpak|flatpak-spawn|FLATPAK_ID' \
+    "zed-kask CLI contains upstream Zed's flatpak sandbox-escape code"
+assert_no_match "$repo_root/crates/paths/src/paths.rs" 'FLATPAK_XDG_' \
+    "zed-kask paths honor upstream Zed's flatpak XDG overrides"
 assert_no_match "$repo_root/crates/zed/src/zed.rs" 'auto_update::|install_release_linux' \
     "zed-kask safe action reaches the upstream updater"
 assert_no_match "$repo_root/crates/zed/src/zed/app_menus.rs" 'auto_update::Check|auto_update::UpdateZedKask' \

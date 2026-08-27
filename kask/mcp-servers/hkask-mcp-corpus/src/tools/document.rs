@@ -13,11 +13,13 @@
 //! through the `corpus_convert` tool wrapper to preserve per-file Regulation
 //! spans; it does not call the OCR helpers directly.
 use crate::helpers::map_corpus_io_error;
-use crate::services::convert::ConvertService;
+use crate::services::convert::{
+    ConvertService, ExtractOutcome, extract_text, filter_outcome_to_pages,
+};
 use crate::{
-    CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,
-    convert, execute_tool_semantic, extract_text, filter_outcome_to_pages, json, sanitize_links,
-    serialize_passages, tokens_to_words, tool, tool_router,
+    CorpusServer, McpToolError, Parameters, chunk_structure, chunk_word_bounds, convert,
+    execute_tool_semantic, json, sanitize_links, serialize_passages, tokens_to_words, tool,
+    tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;

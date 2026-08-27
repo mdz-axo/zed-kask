@@ -14,7 +14,7 @@ use acp_thread::{
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
-    SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
+    SkillLoadingIssuesUpdated, ThreadSandbox, ThreadSaveFailed, VerifiedSandboxStatus,
 };
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
@@ -937,6 +937,26 @@ impl ThreadView {
                         .cloned()
                         .collect();
                     cx.notify();
+                },
+            ));
+
+            // A failed thread-content save is surfaced as a thread error so
+            // the operator learns immediately (a readonly/corrupt threads.db
+            // otherwise loses content silently until restart).
+            subscriptions.push(cx.subscribe(
+                &native_connection.0,
+                move |this: &mut Self, _agent, event: &ThreadSaveFailed, cx| {
+                    let session_id = this.thread.read(cx).session_id();
+                    if event.session_id != *session_id {
+                        return;
+                    }
+                    this.handle_thread_error(
+                        anyhow::anyhow!(
+                            "Failed to save this conversation: {:#}\n\nYour messages are still visible here, but they were not written to disk — restarting the app would lose them. Check the threads database (disk space, permissions, integrity).",
+                            event.error
+                        ),
+                        cx,
+                    );
                 },
             ));
 

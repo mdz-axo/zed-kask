@@ -130,25 +130,18 @@ impl crate::CorpusServer {
     #[tool(
         description = "Generate prose in an author's style using exemplar retrieval and centroid validation. When config_path is provided, loads a cognition config YAML (mashup or style synthesizer) for the Jinja2 system prompt and validation thresholds. The db_path and passphrase connect to the corpus memory DB for exemplar retrieval."
     )]
-    pub async fn corpus_compose(
-        &self,
-        Parameters(params): Parameters<ComposeRequest>,
-    ) -> String {
+    pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
         execute_tool_semantic(
             self,
             "corpus_compose",
             Self::ontology_anchor("corpus_compose"),
             async {
                 let gen_model = generation_model();
-                let config = resolve_cognition_config(
-                    params.config_path.as_deref(),
-                    &params.author,
-                )?;
+                let config =
+                    resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
-                let inference_ctx = InferenceContext::from_parts(
-                    Some(self.inference_router.clone()),
-                    &gen_model,
-                );
+                let inference_ctx =
+                    InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
 
                 let request = crate::compose::ComposeRequest {
                     prompt: params.prompt,
@@ -177,10 +170,7 @@ impl crate::CorpusServer {
     #[tool(
         description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). When config_path is provided, loads a cognition config YAML for the Jinja2 system prompt and validation thresholds. Delegates to corpus_compose with dimension-specific guidance."
     )]
-    pub async fn corpus_rewrite(
-        &self,
-        Parameters(params): Parameters<RewriteRequest>,
-    ) -> String {
+    pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> String {
         execute_tool_semantic(
             self,
             "corpus_rewrite",

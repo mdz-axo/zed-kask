@@ -183,20 +183,78 @@ fn resolve_template_path(
     }
 }
 
-/// Strip YAML frontmatter from a template file. The frontmatter is delimited
-/// by `---` at the start of the file. Everything between the first and second
-/// `---` is the frontmatter; everything after the second `---` is the body.
+/// Strip the template metadata header and inference-param stanzas from a
+/// template file, leaving only the renderable prompt body.
+///
+/// The on-disk convention (219 of 315 templates) is:
+///
+/// ```text
+/// [inference]
+/// contract: …
+/// visibility: Public
+/// ---
+/// <body>
+/// ```
+///
+/// i.e. an `[inference]`-keyed header (contract schema + visibility) that is
+/// NOT YAML-frontmatter and therefore not delimited by leading `---` — the
+/// terminator is a lone `---` line *after* the header. The old stripper only
+/// fired on a leading `---`, which matched 0 of 309 templates, so the header
+/// leaked verbatim into every rendered prompt.
+///
+/// Two stanzas are stripped:
+/// 1. **Header** — everything from a leading `[inference]` line through the
+///    first lone `---` line. Templates that still use legacy leading-`---`
+///    frontmatter keep working (same rule, different opener).
+/// 2. **Body param stanza** — a second `[inference]` block at the top of the
+///    body (temperature/work_effort/verbosity/thinking_budget render params).
+///    These are tool-execution metadata, not prompt text; minijinja would
+///    otherwise emit them verbatim.
+///
+/// A template with neither convention passes through unchanged.
 fn strip_frontmatter(content: &str) -> String {
-    if content.starts_with("---") {
-        content
-            .splitn(3, "---")
-            .nth(2)
-            .unwrap_or(content)
-            .trim()
-            .to_string()
-    } else {
-        content.to_string()
+    let mut working = content;
+
+    // ── Stanza 1: the header ─────────────────────────────────────
+    let first_line = working.lines().next().unwrap_or("").trim();
+    if first_line == "[inference]" {
+        // Find the terminating lone `---` line and take everything after it.
+        if let Some(pos) = working.find('\n---\n') {
+            working = &working[pos + 1..];
+            working = working
+                .strip_prefix("---\n")
+                .unwrap_or(working);
+        }
+    } else if working.starts_with("---") {
+        // Legacy YAML frontmatter: everything after the second `---`.
+        if let Some(after) = working.splitn(3, "---").nth(2) {
+            working = after;
+        }
     }
+
+    // ── Stanza 2: a body-leading [inference] param block ──────────
+    // Runs from the `[inference]` line through the first blank line. Only
+    // stripped at the very start of the body — an `[inference]` mention in
+    // running prose is left alone.
+    let trimmed = working.trim_start_matches('\n');
+    if trimmed.starts_with("[inference]") {
+        let mut stanza_end = 0usize;
+        for (idx, line) in trimmed.lines().enumerate() {
+            if idx > 0 && line.trim().is_empty() {
+                stanza_end = idx;
+                break;
+            }
+            stanza_end = idx + 1;
+        }
+        working = &trimmed[trimmed
+            .lines()
+            .take(stanza_end)
+            .map(|l| l.len() + 1)
+            .sum::<usize>()
+            .min(trimmed.len())..];
+    }
+
+    working.trim().to_string()
 }
 
 #[cfg(test)]

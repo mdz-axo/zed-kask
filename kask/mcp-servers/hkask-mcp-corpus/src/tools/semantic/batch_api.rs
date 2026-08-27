@@ -5,8 +5,8 @@
 //! the synchronous QA generation paths. The method is a free function that
 //! takes the inference router and the prompt/output parameters.
 
-use std::sync::Arc;
 use std::io::Write;
+use std::sync::Arc;
 
 use hkask_types::InferencePort;
 use hkask_types::inference_ipc::BatchPromptEntry;
@@ -39,13 +39,12 @@ pub(crate) async fn generate_qa_via_batch_api(
     let batch_prompts: Vec<BatchPromptEntry> = prompts_vec
         .iter()
         .map(|p| {
-            let levels = p.bloom_levels.clone().unwrap_or_else(qa_pipeline::default_bloom_levels);
+            let levels = p
+                .bloom_levels
+                .clone()
+                .unwrap_or_else(qa_pipeline::default_bloom_levels);
             let levels_str = levels.join(", ");
-            let user_text = qa_pipeline::format_batch_user_text(
-                &levels_str,
-                &p.chunk_id,
-                &p.text,
-            );
+            let user_text = qa_pipeline::format_batch_user_text(&levels_str, &p.chunk_id, &p.text);
             BatchPromptEntry {
                 custom_id: p.chunk_id.clone(),
                 system: qa_pipeline::BATCH_SYSTEM_PROMPT.to_string(),
@@ -63,11 +62,9 @@ pub(crate) async fn generate_qa_via_batch_api(
     // Write results to the output file in the same format as the
     // synchronous path.
     let output_path = crate::path_safety::contain_for_write(output)?;
-    let file = std::fs::File::create(&output_path).map_err(|e| {
-        map_corpus_io_error(e, &format!("Cannot create output file '{}'", output))
-    })?;
-    let output_writer =
-        Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file)));
+    let file = std::fs::File::create(&output_path)
+        .map_err(|e| map_corpus_io_error(e, &format!("Cannot create output file '{}'", output)))?;
+    let output_writer = Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file)));
     let write_count = std::sync::atomic::AtomicUsize::new(0);
 
     // Build a lookup map from custom_id to result

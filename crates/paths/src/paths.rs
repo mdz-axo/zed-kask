@@ -131,12 +131,12 @@ pub fn config_dir() -> &'static PathBuf {
                 .expect("failed to determine RoamingAppData directory")
                 .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
-                flatpak_xdg_config.into()
-            } else {
-                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE)
+            // zed-kask: no flatpak XDG override (D7). zed-kask is not
+            // distributed as a flatpak; honoring upstream Zed's sandbox env
+            // vars would point zed-kask at upstream Zed's config directory.
+            dirs::config_dir()
+                .expect("failed to determine XDG_CONFIG_HOME directory")
+                .join(APP_NAME_LOWERCASE)
         } else {
             home_dir().join(".config").join(APP_NAME_LOWERCASE)
         }
@@ -166,12 +166,10 @@ pub fn data_dir() -> &'static PathBuf {
                 .join("Library/Application Support")
                 .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
-                flatpak_xdg_data.into()
-            } else {
-                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE)
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            dirs::data_local_dir()
+                .expect("failed to determine XDG_DATA_HOME directory")
+                .join(APP_NAME_LOWERCASE)
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -190,12 +188,10 @@ pub fn state_dir() -> &'static PathBuf {
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
-                flatpak_xdg_state.into()
-            } else {
-                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE);
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            return dirs::state_dir()
+                .expect("failed to determine XDG_STATE_HOME directory")
+                .join(APP_NAME_LOWERCASE);
         } else {
             // Windows
             return dirs::data_local_dir()
@@ -222,12 +218,10 @@ pub fn temp_dir() -> &'static PathBuf {
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
-                flatpak_xdg_cache.into()
-            } else {
-                dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE);
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            return dirs::cache_dir()
+                .expect("failed to determine XDG_CACHE_HOME directory")
+                .join(APP_NAME_LOWERCASE);
         }
 
         home_dir().join(".cache").join(APP_NAME_LOWERCASE)
@@ -347,10 +341,9 @@ pub fn agents_file() -> &'static PathBuf {
 ///
 /// Windows doesn't recognize `~` as the home directory, so the env-var
 /// form (`%APPDATA%`) is used there instead. Note that this is the
-/// *typical* location: a user with `XDG_CONFIG_HOME` set or running in a
-/// Flatpak sandbox would see a different `agents_file()` at runtime than
-/// this displays. The display string trades that precision for
-/// readability in announcement copy.
+/// *typical* location: a user with `XDG_CONFIG_HOME` set would see a
+/// different `agents_file()` at runtime than this displays. The display
+/// string trades that precision for readability in announcement copy.
 #[cfg(target_os = "windows")]
 pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
     const_format::concatcp!("%APPDATA%\\", APP_NAME, "\\AGENTS.md");

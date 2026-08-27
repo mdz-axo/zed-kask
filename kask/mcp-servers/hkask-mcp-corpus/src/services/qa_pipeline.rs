@@ -12,7 +12,7 @@
 use serde_json::json;
 
 use crate::tools::semantic::qa::{BatchQaPrompt, QaPair};
-use crate::{render_docproc_template, CONTENT_GUARD_INSTRUCTION};
+use crate::{CONTENT_GUARD_INSTRUCTION, render_docproc_template};
 
 /// The LLM parameters used by all QA generation paths.
 ///
@@ -41,8 +41,7 @@ pub(crate) fn default_bloom_levels() -> Vec<String> {
 ///
 /// The synchronous paths embed this in the single prompt string; the batch
 /// API path sends it as a separate system message.
-pub(crate) const BATCH_SYSTEM_PROMPT: &str =
-    "You are a training data generator. Generate ONE question-answer pair grounded in the passage's actual content.";
+pub(crate) const BATCH_SYSTEM_PROMPT: &str = "You are a training data generator. Generate ONE question-answer pair grounded in the passage's actual content.";
 
 /// A formatted QA generation prompt.
 pub(crate) struct FormattedQaPrompt {
@@ -94,7 +93,11 @@ pub(crate) fn format_cross_reference_prompt(
 ) -> FormattedQaPrompt {
     let mut text = String::new();
     for (i, p) in passages.iter().enumerate() {
-        text.push_str(&format!("[Passage {}]\n{}\n\n", i + 1, crate::guard_content(p)));
+        text.push_str(&format!(
+            "[Passage {}]\n{}\n\n",
+            i + 1,
+            crate::guard_content(p)
+        ));
     }
     FormattedQaPrompt {
         text: format!(
@@ -110,11 +113,7 @@ pub(crate) fn format_cross_reference_prompt(
 /// Same as [`format_single_chunk_prompt`] but without the content-guard
 /// prefix — the batch API path composes system + user messages separately,
 /// and the guard instruction lives in the system message.
-pub(crate) fn format_batch_user_text(
-    levels_str: &str,
-    chunk_id: &str,
-    text: &str,
-) -> String {
+pub(crate) fn format_batch_user_text(levels_str: &str, chunk_id: &str, text: &str) -> String {
     let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     vars.insert("levels", levels_str.to_string());
     vars.insert("chunk_id", chunk_id.to_string());
@@ -183,7 +182,10 @@ mod tests {
     #[test]
     fn default_bloom_levels_are_factual_and_conceptual() {
         let levels = default_bloom_levels();
-        assert_eq!(levels, vec!["factual".to_string(), "conceptual".to_string()]);
+        assert_eq!(
+            levels,
+            vec!["factual".to_string(), "conceptual".to_string()]
+        );
     }
 
     #[test]
