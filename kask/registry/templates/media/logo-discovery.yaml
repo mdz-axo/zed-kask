@@ -6,12 +6,6 @@ template_type: FlowDef
 name: media_logo_discovery
 version: "1.0.0"
 description: "Map business identity inputs to formal logo design parameters before generation"
-rjoule:
-  cap: 1
-  alert_threshold: 0.8
-  hard_limit: true
-
-parameters:
   - name: name
     type: string
     required: true

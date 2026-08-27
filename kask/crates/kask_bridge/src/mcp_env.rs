@@ -13,8 +13,8 @@
 
 use crate::settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings,
-    KaskTrainingSettings,
+    KaskGeneralSettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -29,6 +29,25 @@ pub(crate) fn emit_data_dir_env(
     env: &mut std::collections::HashMap<String, String>,
 ) {
     env.insert("HKASK_DATA_DIR".to_string(), data_dir.to_string());
+}
+
+/// Emit general settings that MCP servers consume — the process-wide
+/// concurrency ceiling from `KaskGeneralSettings.max_concurrency`.
+/// MCP servers use this as the default for their own concurrency limits
+/// (e.g. the corpus embedding concurrency) instead of hardcoding magic
+/// numbers. Only non-default values are emitted; servers fall back to
+/// their own defaults when the env var is absent.
+pub(crate) fn emit_general_env(
+    general: &KaskGeneralSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let default = KaskGeneralSettings::default();
+    if general.max_concurrency != default.max_concurrency {
+        env.insert(
+            "HKASK_MAX_CONCURRENCY".to_string(),
+            general.max_concurrency.to_string(),
+        );
+    }
 }
 
 pub(crate) fn emit_curator_webid_env(env: &mut std::collections::HashMap<String, String>) {

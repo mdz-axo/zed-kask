@@ -19,18 +19,10 @@ description: >
 # and upscale steps route through their own MCP tools' configured models.
 primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 
-# rJoule: image generation + upscale are the costly steps (two DeepInfra/OpenRouter calls,
 # one queue-mode). No fusion block — model selection is operator-configured
 # via kask.fusion / HKASK_FUSION_PANEL_MODELS; recommend the default image
 # generation model (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step.
 
-# rJoule: generate_image (flux/dev) + image_remove_background + upscale_image.
-rjoule:
-  cap: 3
-  alert_threshold: 0.8
-  hard_limit: true
-
-parameters:
   - name: product_description
     type: string
     required: true

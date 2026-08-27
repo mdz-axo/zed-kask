@@ -1761,12 +1761,7 @@ mod integration_tests {
 
         let mut canvas = image::DynamicImage::new_rgba8(canvas_w, canvas_h);
         let bg = image::Rgba([30u8, 30u8, 30u8, 255u8]);
-        let Some(rgba) = canvas.as_mut_rgba8() else {
-            return Err(MediaError::Io(
-                "collage canvas must be RGBA8 — image crate invariant violated".into(),
-            ));
-        };
-        for pixel in rgba.pixels_mut() {
+        for pixel in canvas.as_mut_rgba8().unwrap().pixels_mut() {
             *pixel = bg;
         }
 

@@ -661,6 +661,7 @@ impl KaskSettings {
             })
         };
         crate::mcp_env::emit_data_dir_env(&data_dir, &mut env);
+        crate::mcp_env::emit_general_env(&self.general, &mut env);
         crate::mcp_env::emit_curator_webid_env(&mut env);
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
         crate::mcp_env::emit_condenser_env(&self.condenser, &mut env);

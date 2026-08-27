@@ -7,17 +7,9 @@ version: "1.0.0"
 description: "Generate logo candidates, critique with vision LLM, refine the best one"
 
 # This sub-manifest is invoked via action: flowdef from logo-builder step 4.
-# The parent caps gas/rjoule to its remaining budget; these caps are the
 # sub-cascade's declared allocation (parent may reduce them further).
 
-# rJoule: inference energy for generate_image + describe_image calls.
 # Logo generation is image-model-heavy (DeepInfra/OpenRouter/flux-pro) — needs a real budget.
-rjoule:
-  cap: 4
-  alert_threshold: 0.8
-  hard_limit: true
-
-primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 critique_model: "{{ default_model }}"
 parameters:
   - name: name

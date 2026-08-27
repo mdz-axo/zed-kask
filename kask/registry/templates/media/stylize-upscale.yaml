@@ -23,12 +23,6 @@ primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 # (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the DeepInfra/OpenRouter
 # flux/dev img2img endpoint for the style-transfer step.
 
-rjoule:
-  cap: 3
-  alert_threshold: 0.8
-  hard_limit: true
-
-parameters:
   - name: subject
     type: string
     required: true

@@ -122,6 +122,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `emit_operator_override_env`. Without this entry an operator
             // override is silently dropped under governed launch.
             "HKASK_EMBED_CONCURRENCY",
+            // Process-wide concurrency ceiling from KaskGeneralSettings —
+            // used as the default for embedding concurrency when
+            // HKASK_EMBED_CONCURRENCY is not set.
+            "HKASK_MAX_CONCURRENCY",
             "HKASK_OCR_CONCURRENCY",
             "HKASK_OCR_SIMPLE_MAX",
             "HKASK_OCR_MODERATE_MAX",

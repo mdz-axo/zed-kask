@@ -30,14 +30,7 @@ primary_model: "DeepInfra/black-forest-labs/FLUX-2-klein-4b"
 # (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the DeepInfra/OpenRouter
 # seedance-2.0 image-to-video endpoint for the animate step.
 
-# rJoule: generate_image (flux/dev) + image_to_video (seedance, queue-mode) is
 # the costly pair; video_to_gif is local ffmpeg (no inference cost).
-rjoule:
-  cap: 4
-  alert_threshold: 0.8
-  hard_limit: true
-
-parameters:
   - name: scene_description
     type: string
     required: true
