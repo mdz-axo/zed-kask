@@ -267,9 +267,30 @@ impl hkask_types::InferencePort for LazyInferencePort {
             )))
         })
     }
-}
 
-/// Inference stub for MCP servers without the IPC bridge. Every method returns
+    fn media_generate<'a>(
+        &'a self,
+        op: &str,
+        params: &hkask_types::MediaGenerateParams,
+    ) -> hkask_types::MediaFuture<'a> {
+        let op = op.to_string();
+        let params = params.clone();
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.call_media_generate(&op, &params).await;
+            }
+            // Fall back to a standalone MediaRouter with env-var keys.
+            // This handles the case where the media MCP server runs
+            // standalone (no zed process) with DEEPINFRA_API_KEY or
+            // OPENROUTER_API_KEY set directly in the environment.
+            let router = crate::media_router::MediaRouter::new(
+                crate::config::InferenceConfig::from_env(),
+            );
+            router.media_generate(&op, &params).await
+        })
+    }
+}
 /// a clear, socket-named error so callers can distinguish "dispatch
 /// unavailable" from "no models" / "backend doesn't implement vision" / other
 /// failures. The trait's default impls are overridden for `generate_vision`,

@@ -2720,7 +2720,7 @@ impl Element for MarkdownElement {
                                 let is_viz_block = matches!(
                                     kind,
                                     CodeBlockKind::FencedLang(lang)
-                                        if lang == "graph" || lang == "kanban" || lang == "portfolio" || lang == "scenarios" || lang == "swarm_delegate_results"
+                                        if lang == "graph" || lang == "kanban" || lang == "portfolio" || lang == "scenarios" || lang == "swarm_delegate_results" || lang == "media"
                                 );
                                 if is_viz_block {
                                     let block_source = &parsed_markdown.source[range.clone()];

@@ -298,13 +298,22 @@ fn cache_key(body: &str) -> u64 {
 /// pan/zoom/evidence state and avoiding redundant work across re-renders.
 pub fn block_renderer() -> BlockRenderer {
     let factories = viz_factories();
-    Box::new(move |body, _window, cx| {
+    Box::new(move |body, window, cx| {
         let key = cache_key(body);
 
         // Cache hit — reuse the cached entity.
         let cached_element =
             VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
         if let Some(element) = cached_element {
+            return Some(element);
+        }
+
+        // Cache miss — try media first (discriminates on `kind`, needs `Window`),
+        // then the registered viz widgets (discriminate on `viz`).
+        if let Some(entity) = hkask_media_widget::create_media_widget(body, window, cx) {
+            let cached = CachedWidget::new(entity);
+            let element = cached.render();
+            VIZ_CACHE.with(|cache| cache.borrow_mut().insert(key, cached));
             return Some(element);
         }
 
@@ -358,6 +367,7 @@ mod tests {
             "portfolio",
             "scenarios",
             "swarm_delegate_results",
+            "media",
         ];
         admitted.sort_unstable();
         assert_eq!(
@@ -365,6 +375,7 @@ mod tests {
             [
                 "graph",
                 "kanban",
+                "media",
                 "portfolio",
                 "scenarios",
                 "swarm_delegate_results"

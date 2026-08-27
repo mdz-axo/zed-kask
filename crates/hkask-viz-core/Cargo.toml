@@ -18,6 +18,7 @@ hkask_kanban_widget.workspace = true
 hkask_portfolio_widget.workspace = true
 hkask_scenarios_widget.workspace = true
 hkask_swarm_widget.workspace = true
+hkask_media_widget.workspace = true
 
 [lints]
 workspace = true
