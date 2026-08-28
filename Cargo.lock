@@ -8984,6 +8984,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-mcp-server",
  "hkask-types",
+ "regex",
  "rmcp",
  "rusqlite",
  "schemars 1.0.4",
