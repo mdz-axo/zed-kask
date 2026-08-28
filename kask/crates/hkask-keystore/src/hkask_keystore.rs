@@ -27,7 +27,7 @@ pub mod passphrase;
 pub use encryption::derive_key;
 pub use error::KeystoreError;
 pub use keychain::{
-    Keychain, KeychainError, MigrationReport, migrate_legacy_hkask_entries, resolve,
-    resolve_db_passphrase_string, resolve_swarm_memory_passphrase_string,
+    Keychain, KeychainError, purge_legacy_hkask_entries, resolve, resolve_db_passphrase_string,
+    resolve_swarm_memory_passphrase_string,
 };
 pub use passphrase::DEFAULT_PASSPHRASE;

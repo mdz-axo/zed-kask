@@ -385,7 +385,7 @@ impl CyberneticsLoop {
     /// Set or clear the alert escalation sink after construction.
     ///
     /// Used by the composition root to lazily wire the escalation queue after
-    /// the curator DB passphrase resolves (post-login deferred task), mirroring
+    /// the curator DB passphrase resolves (deferred task), mirroring
     /// `set_event_sink`. Pass `None` to disable escalation-queue persistence.
     pub fn set_alert_escalation_sink(
         &mut self,
@@ -434,7 +434,7 @@ impl CyberneticsLoop {
     ///
     /// Used by the composition root to upgrade from `NoopEventSink` to a
     /// durable `RegulationArchive` once the curator DB passphrase resolves
-    /// (post-login deferred task).
+    /// (deferred task).
     pub fn set_event_sink(&mut self, sink: Arc<dyn RegulationSink>) {
         self.event_sink = Some(sink);
     }
@@ -476,7 +476,7 @@ impl CyberneticsLoop {
     /// Wire an inference health source after construction.
     ///
     /// Used by the composition root to lazily wire the sensor after the
-    /// `LanguageModelInferencePort` is created (in the deferred post-login
+    /// `LanguageModelInferencePort` is created (in the deferred task
     /// task). The `with_inference_health_source` builder method can't be used
     /// there because the loop is already wrapped in `Arc<RwLock<...>>` by the
     /// time the port exists.
@@ -561,7 +561,7 @@ impl CyberneticsLoop {
     /// Wire a memory health source after construction.
     ///
     /// Used by the composition root to lazily wire the sensor after the
-    /// memory store is opened (in the deferred post-login task).
+    /// memory store is opened (in the deferred task).
     pub fn set_memory_health_source(
         &mut self,
         source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,

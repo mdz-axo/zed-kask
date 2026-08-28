@@ -445,7 +445,7 @@ impl McpRuntime {
     ///
     /// Used by the composition root to upgrade from `NoopEventSink` to a
     /// durable `RegulationArchive` once the curator DB passphrase resolves
-    /// (post-login deferred task). No-op when governance is not configured.
+    /// (deferred task). No-op when governance is not configured.
     pub fn set_event_sink(&self, sink: Arc<dyn hkask_types::RegulationSink>) {
         if let Some(governance) = &self.governance
             && let Ok(mut guard) = governance.event_sink.write()

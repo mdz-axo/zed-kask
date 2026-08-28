@@ -8,7 +8,7 @@
 //!
 //! The port is injected via a global hook (`agent::set_memory_port`) so the
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
-//! wired (pre-login), the thread's ingest call site no-ops on `None`.
+//! wired (at startup), the thread's ingest call site no-ops on `None`.
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
 use hkask_storage::open_or_repair;

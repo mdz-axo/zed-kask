@@ -633,7 +633,7 @@ fn main() {
         // At startup, env vars aren't set yet (they come from kask settings,
         // loaded in the deferred task below), so `try_from_env()` returns
         // `None` and the sink stays unwired. The deferred task re-wires it
-        // from `KaskSettings` after the user resolves.
+        // from `KaskSettings` at startup.
         //
         // When email is never configured, the sink stays `None` for the
         // entire session — the cybernetics loop silently skips the email
@@ -1004,7 +1004,7 @@ fn main() {
         // skill execution and the post-settings auto-launch. The
         // model-dependent wiring (skill execution, guard, panel) is
         // deferred to after language_model::init(). The memory port is wired
-        // in the deferred task once the Zed user resolves (thread.rs no-ops
+        // in the deferred task (thread.rs no-ops
         // when the hook is unset).
 
         if let Some(app_commit_sha) = app_commit_sha {
@@ -1022,7 +1022,7 @@ fn main() {
 
         // zed-kask: D3/D9 — F9: kask_settings_for_mcp + MCP server launch list.
         // Determine which kask MCP servers to auto-launch based on KaskSettings.
-        // The actual launch is deferred until the Zed user resolves (see the
+        // The actual launch is in the deferred task (see the
         // deferred task below) so MCP servers can route inference through zed's
         // LanguageModelRegistry via the IPC socket.
         // (`kask_settings_for_mcp` was defined above, before the algedonic-threshold
@@ -1346,7 +1346,7 @@ fn main() {
             let servers_to_start_clone = servers_to_start;
             let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
             // Captures for the model-dependent wiring block (moved here from
-            // the synchronous startup so it runs after the user resolves and
+            // the synchronous startup so it runs in the deferred task and
             // the LanguageModelRegistry is populated). See the
             // "Process-global hooks set at runtime need a startup-failure
             // signal" trap in .rules — these OnceLock-based hooks must be
@@ -1399,25 +1399,24 @@ fn main() {
                 let username_for_provision = username.clone();
 
                 let provision_result = cx.background_spawn(async move {
-                    // One-time migration: copy any legacy `service=hkask`
-                    // keychain entries to the unified `kask://credentials/*`
-                    // namespace. Idempotent — skips keys that already exist.
-                    // Must run before `provision_agent` so provisioning sees
-                    // the migrated values and doesn't re-create with defaults.
-                    match hkask_keystore::migrate_legacy_hkask_entries() {
-                        Ok(report) => {
-                            if !report.migrated.is_empty() {
-                                log::info!(
-                                    "Migrated {} legacy keychain entries to kask://credentials/*: {}",
-                                    report.migrated.len(),
-                                    report.migrated.join(", ")
-                                );
-                            }
+                    // Purge ALL legacy `service=hkask` keychain entries.
+                    // The old namespace was replaced by `kask://credentials/*`.
+                    // The migration copied entries but never deleted the originals,
+                    // leaving duplicate secrets in the keychain — a security liability.
+                    // This deletes every `service=hkask` entry, regardless of key name.
+                    // Idempotent — returns 0 if no legacy entries exist.
+                    match hkask_keystore::purge_legacy_hkask_entries() {
+                        Ok(deleted) if deleted > 0 => {
+                            log::info!(
+                                "Purged {} legacy service=hkask keychain entries",
+                                deleted
+                            );
                         }
+                        Ok(_) => {}
                         Err(e) => {
                             log::warn!(
-                                "Legacy keychain migration failed (non-fatal — \
-                                 provisioning will create fresh entries if needed): {e}"
+                                "Legacy keychain purge failed (non-fatal — \
+                                 new namespace entries are unaffected): {e}"
                             );
                         }
                     }
@@ -1856,7 +1855,7 @@ fn main() {
                 //
                 // This block was originally in the synchronous startup, but
                 // moved here because LanguageModelRegistry::default_model()
-                // returns None until the user authenticates. Running it at
+                // returns None until the model registry has a default model. Running it at
                 // startup left all OnceLock-based hooks (skill execution,
                 // panel tool invoker, scoped inference, regulation status,
                 // thread condenser) unwired when no model was configured at
@@ -1976,7 +1975,7 @@ fn main() {
 
                 // zed-kask: Registry path resolution is now handled by the
                 // model-dependent skill execution task (below the deferred
-                // task block), which doesn't need user login. The skill
+                // task block), which doesn't need the deferred task. The skill
                 // execution is the only consumer of the registry paths, and
                 // it's wired by that separate task. The IPC server and MCP
                 // server launch below don't need the registry paths.

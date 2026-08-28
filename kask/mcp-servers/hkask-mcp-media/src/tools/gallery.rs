@@ -1098,6 +1098,50 @@ impl MediaServer {
         .await
     }
 
+    /// Get complete details for a gallery asset in a single call — the image
+    /// record (path, dimensions, format, media_type), all AI-generated tags,
+    /// generation lineage (if recorded), and face registry entries. This is
+    /// the inspector-panel data source.
+    #[tool(
+        description = "Get complete details for a gallery asset — record, tags, lineage, and face associations in a single call. The inspector-panel data source."
+    )]
+    pub async fn gallery_asset_detail(
+        &self,
+        Parameters(GalleryAssetDetailRequest { image_index }): Parameters<GalleryAssetDetailRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_asset_detail",
+            Self::ontology_anchor("gallery_asset_detail"),
+            async {
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let image = self
+                    .gallery_store
+                    .get_image(&ga.gallery_id, Some(image_index), None)
+                    .map_err(|e| map_media_error(e.into()))?;
+                let tags = self
+                    .gallery_store
+                    .get_tags(&image.id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                let lineage = self
+                    .gallery_store
+                    .get_generation(&image.id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                let faces = self
+                    .gallery_store
+                    .get_faces_for_image(&image.id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::json!({
+                    "image": &image,
+                    "tags": &tags,
+                    "lineage": &lineage,
+                    "faces": &faces,
+                }))
+            },
+        )
+        .await
+    }
+
     #[tool(
         description = "Re-run the generation that produced a gallery image, using its stored lineage (op + prompt + params). For image-ops (image_to_image, upscale, image_to_video) the current gallery image is used as the source. Returns the new generation result. Call gallery_record_generation first to record lineage."
     )]

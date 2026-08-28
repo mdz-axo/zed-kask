@@ -1,6 +1,6 @@
 //! Inference IPC socket path management (D8).
 //!
-//! The inference IPC socket path is set by the deferred post-login task in
+//! The inference IPC socket path is set by the deferred task in
 //! `main.rs` when the `InferenceIpcServer` starts. It must be re-settable
 //! because the IPC server can restart — e.g. when the real model is configured
 //! after the no-op fallback, or when the user re-logs in. A `OnceLock` cannot

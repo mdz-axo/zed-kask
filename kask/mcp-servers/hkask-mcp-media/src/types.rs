@@ -622,3 +622,13 @@ pub struct GalleryAddAudioRequest {
     /// Absolute path to the audio file.
     pub path: String,
 }
+
+// ── Asset detail request types ──────────────────────────────────────────
+
+/// Request to get complete details for a gallery asset — record, tags,
+/// lineage, and face associations in a single call.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryAssetDetailRequest {
+    /// Index of the gallery asset to inspect.
+    pub image_index: usize,
+}

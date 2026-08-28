@@ -700,6 +700,26 @@ impl GalleryStore {
             id: format!("face_id={}", face_id),
         }))
     }
+
+    /// Get all face registry entries associated with a specific image.
+    ///
+    /// pre:  image_id is a valid gallery image ID
+    /// post: returns Vec of face registry entries for this image
+    #[must_use = "result must be used"]
+    pub fn get_faces_for_image(
+        &self,
+        image_id: &str,
+    ) -> std::result::Result<Vec<FaceRegistryRecord>, GalleryStoreError> {
+        Ok(query_map(
+            &*self.driver,
+            "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+             FROM face_registry WHERE image_id = ?1
+             ORDER BY created_at DESC",
+            &[DbValue::Text(image_id.to_string())],
+            Self::face_from_row,
+        )?)
+    }
+
     /// Remove a face from the registry by ID.
     ///
     /// expect: "The system provides durable storage for gallery data"

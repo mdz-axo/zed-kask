@@ -643,8 +643,8 @@ pub async fn build_mcp_server_env(
 /// The default ("allostery") is a stated first-run requirement: DB-backed
 /// MCP servers must open their SQLCipher databases without login or manual
 /// keychain configuration. The default used to be provisioned only in zed's
-/// deferred post-login task (`provision_agent` + keychain mirrors in
-/// `main.rs`), but servers resolve their launch env before login resolves —
+/// deferred task (`provision_agent` + keychain mirrors in
+/// `main.rs`), but servers resolve their launch env before the deferred task runs —
 /// on a machine that never signs in, the default never landed and every
 /// DB-backed server failed with `permission_denied`. Provisioning at the
 /// canonical env path guarantees the default regardless of launch ordering.

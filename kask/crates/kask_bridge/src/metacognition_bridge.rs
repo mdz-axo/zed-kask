@@ -18,7 +18,7 @@ pub struct BridgeMetacognitionProvider {
     /// Memory-health probe — the curator's self-awareness of its own memory
     /// outage. When set, the snapshot includes a `memory` section so the
     /// curator (and `CuratorStatusTool` callers) can distinguish "regulation
-    /// healthy, memory down" from "all healthy". `None` pre-login or when
+    /// healthy, memory down" from "all healthy". `None` at startup or when
     /// the real memory port failed to construct.
     memory_port: Option<Arc<crate::memory::RealMemoryPort>>,
 }
@@ -31,7 +31,7 @@ impl BridgeMetacognitionProvider {
         }
     }
 
-    /// Attach the memory-health probe (composition root, post-login).
+    /// Attach the memory-health probe (composition root, deferred task).
     pub fn with_memory_port(mut self, port: Arc<crate::memory::RealMemoryPort>) -> Self {
         self.memory_port = Some(port);
         self

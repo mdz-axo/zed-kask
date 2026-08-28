@@ -6,13 +6,10 @@
 //! so `hkask-keystore` and zed's `CredentialsProvider` read and write the
 //! same entries. One keychain, one namespace, one attribute schema.
 //!
-//! Previous architecture had two namespaces: `service=hkask` (via the
-//! `keyring` crate) and `kask://credentials/*` (via zed's `oo7`-backed
-//! `CredentialsProvider`). The `service=hkask` namespace was never updated
-//! after passphrase rotation (the settings UI wrote to `kask://credentials/*`
-//! but the resolve path read from `service=hkask`), causing stale-passphrase
-//! failures on direct-launched MCP servers. Unifying eliminates this class
-//! of bug — there is only one copy of each secret.
+//! The legacy `service=hkask` namespace was fully removed. All entries in
+//! that namespace are purged at startup via `purge_legacy_hkask_entries`.
+//! No code reads from or writes to the old namespace — it is dead surface.
+//! There is exactly one copy of each secret, in `kask://credentials/*`.
 
 use crate::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
 use hkask_types::NotFound;
@@ -81,16 +78,6 @@ impl From<oo7::Error> for KeychainError {
         // platform-level failure (D-Bus, I/O, etc.).
         KeychainError::Platform(err.to_string())
     }
-}
-
-/// Report from a legacy-namespace migration pass.
-#[derive(Debug, Default)]
-pub struct MigrationReport {
-    /// Keys that were copied from the old `service=hkask` namespace to
-    /// `kask://credentials/*`.
-    pub migrated: Vec<String>,
-    /// Keys that already existed in the new namespace (skipped).
-    pub skipped: Vec<String>,
 }
 
 /// Keychain — unified `kask://credentials/*` namespace.
@@ -205,7 +192,12 @@ impl Keychain {
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  url is non-empty, secret is non-empty
     /// post: secret stored with label `zed-github-account`, attribute `url=<url>`
-    pub fn store_by_url(&self, url: &str, username: &str, secret: &str) -> Result<(), KeychainError> {
+    pub fn store_by_url(
+        &self,
+        url: &str,
+        username: &str,
+        secret: &str,
+    ) -> Result<(), KeychainError> {
         let url = url.to_string();
         let username = username.to_string();
         let secret = secret.to_string();
@@ -239,7 +231,9 @@ impl Keychain {
                 if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
                     item.unlock().await?;
                     let secret = item.secret().await?;
-                    return Ok(Zeroizing::new(String::from_utf8_lossy(&secret).into_owned()));
+                    return Ok(Zeroizing::new(
+                        String::from_utf8_lossy(&secret).into_owned(),
+                    ));
                 }
             }
             Err(KeychainError::NotFound(NotFound {
@@ -270,60 +264,46 @@ impl Keychain {
         })
     }
 
-    /// Migrate entries from the old `service=hkask` namespace to
-    /// `kask://credentials/*`.
+    /// Purge ALL entries from the old `service=hkask` namespace.
     ///
-    /// For each key in the mapping, if the new entry doesn't exist but the
-    /// old one does, copies the value. Idempotent — skips keys that already
-    /// exist in the new namespace.
+    /// The legacy namespace was replaced by the unified `kask://credentials/*`
+    /// namespace. The old entries were copied (not moved) during the migration,
+    /// leaving duplicate secrets in the keychain — a security liability.
+    /// This function deletes every entry with `service=hkask` attribute,
+    /// regardless of its key name.
     ///
-    /// This is a one-time migration path for existing installations. New
-    /// installations never have old-namespace entries.
-    pub fn migrate_legacy_entries(&self) -> Result<MigrationReport, KeychainError> {
-        // Old hyphenated key → new underscored credential key.
-        let mapping = [
-            ("hkask-db-passphrase", KEY_DB_PASSPHRASE),
-            ("hkask-swarm-memory-passphrase", KEY_SWARM_MEMORY_PASSPHRASE),
-        ];
-
-        let mut report = MigrationReport::default();
-
-        for (old_key, new_key) in mapping {
-            // Skip if the new entry already exists.
-            if self.retrieve_by_key(new_key).is_ok() {
-                report.skipped.push(new_key.to_string());
-                continue;
-            }
-
-            // Search for the old entry by its `service=hkask` + `username` attributes.
-            let old_key_owned = old_key.to_string();
-            let old_secret = block_on(async move {
-                let keyring = oo7::Keyring::new().await?;
-                keyring.unlock().await?;
-                let items = keyring
-                    .search_items(&[("service", "hkask"), ("username", old_key_owned.as_str())])
-                    .await?;
-                if let Some(item) = items.into_iter().next() {
-                    let secret = item.secret().await?;
-                    return Ok(Some(secret));
+    /// Idempotent — if no legacy entries exist, returns 0.
+    ///
+    /// Returns the count of deleted entries.
+    pub fn purge_legacy_entries(&self) -> Result<usize, KeychainError> {
+        block_on(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            let items = keyring.search_items(&[("service", "hkask")]).await?;
+            let mut deleted = 0;
+            for item in items {
+                let label = item.label().await.unwrap_or_default();
+                match item.delete().await {
+                    Ok(()) => {
+                        tracing::info!(
+                            target: "hkask.identity",
+                            label = %label,
+                            "Deleted legacy service=hkask keychain entry"
+                        );
+                        deleted += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.identity",
+                            label = %label,
+                            error = %e,
+                            "Failed to delete legacy service=hkask keychain entry"
+                        );
+                    }
                 }
-                Ok::<_, KeychainError>(None)
-            })?;
-
-            if let Some(secret_bytes) = old_secret {
-                let secret_str = String::from_utf8_lossy(&secret_bytes);
-                self.store_by_key(new_key, &secret_str)?;
-                report.migrated.push(new_key.to_string());
-                tracing::info!(
-                    target: "hkask.identity",
-                    old_key = %old_key,
-                    new_key = %new_key,
-                    "Migrated legacy keychain entry to unified kask://credentials/* namespace"
-                );
             }
-        }
-
-        Ok(report)
+            Ok(deleted)
+        })
     }
 }
 
@@ -375,9 +355,12 @@ pub fn resolve_swarm_memory_passphrase_string() -> Result<Zeroizing<String>, Key
 /// Migrate legacy `service=hkask` keychain entries to the unified
 /// `kask://credentials/*` namespace.
 ///
-/// Convenience wrapper around `Keychain::migrate_legacy_entries`.
-pub fn migrate_legacy_hkask_entries() -> Result<MigrationReport, KeychainError> {
-    Keychain.migrate_legacy_entries()
+/// Purge ALL legacy `service=hkask` keychain entries.
+///
+/// Convenience wrapper around `Keychain::purge_legacy_entries`.
+/// Returns the count of deleted entries.
+pub fn purge_legacy_hkask_entries() -> Result<usize, KeychainError> {
+    Keychain.purge_legacy_entries()
 }
 
 /// Resolve a SecretRef to actual secret bytes.
@@ -479,7 +462,7 @@ fn normalize_master_key_bytes(
 //   2. `delete_by_key` removes it (subsequent `retrieve_by_key` → NotFound)
 //   3. `resolve_db_passphrase_string` finds an entry written by `store_by_key`
 //      (proves the resolve path and the store path hit the same namespace)
-//   4. `migrate_legacy_entries` copies old `service=hkask` entries to the
+//   4. `purge_legacy_entries` deletes old `service=hkask` entries (security cleanup)
 //      unified `kask://credentials/*` namespace
 //
 // They use a sentinel key (`__hkask_test_round_trip__`) to avoid touching
@@ -560,37 +543,23 @@ mod integration_tests {
 
     #[test]
     #[ignore]
-    fn migrate_legacy_entries_copies_old_namespace_to_unified() {
-        // This test verifies the migration path for existing installations:
-        // entries in the old `service=hkask` namespace should be copied to
-        // `kask://credentials/*`.
-        //
-        // Precondition: the old namespace has `hkask-db-passphrase` (the
-        // real passphrase). The test verifies that after migration,
-        // `kask://credentials/hkask_db_passphrase` exists and contains
-        // the same value.
-        let report =
-            migrate_legacy_hkask_entries().expect("migrate_legacy_hkask_entries should not error");
-
-        // The DB passphrase should either be migrated or skipped (if already
-        // in the new namespace).
-        let db_in_new = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE);
+    fn purge_legacy_entries_deletes_old_namespace() {
+        // This test verifies that `purge_legacy_entries` deletes ALL entries
+        // with the `service=hkask` attribute, regardless of key name.
+        // Run manually after confirming legacy entries exist:
+        //   secret-tool search --all service hkask
+        let deleted =
+            purge_legacy_hkask_entries().expect("purge_legacy_hkask_entries should not error");
         assert!(
-            db_in_new.is_ok(),
-            "After migration, kask://credentials/hkask_db_passphrase must exist. \
-             Migrated: {:?}, Skipped: {:?}",
-            report.migrated,
-            report.skipped
+            deleted > 0,
+            "Expected at least one legacy entry to be deleted"
         );
-
-        // If it was migrated, verify it matches the old value.
-        if report.migrated.contains(&KEY_DB_PASSPHRASE.to_string()) {
-            let new_val = db_in_new
-                .as_ref()
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default();
-            assert!(!new_val.is_empty(), "Migrated passphrase must be non-empty");
-        }
+        // Verify no legacy entries remain
+        let second_pass = purge_legacy_hkask_entries().expect("second purge should succeed");
+        assert_eq!(
+            second_pass, 0,
+            "No legacy entries should remain after purge"
+        );
     }
 
     #[test]

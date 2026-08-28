@@ -135,8 +135,8 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 /// time.
 ///
 /// `provision_agent` (and thus the "allostery" first-run default) runs in
-/// zed's deferred post-login task, but MCP servers resolve their launch env
-/// before login resolves — on a machine that never signs in, the default
+/// zed's deferred task, but MCP servers resolve their launch env
+/// before the deferred task runs — on a machine that never signs in, the default
 /// never landed and every DB-backed server failed with `permission_denied`.
 /// This wrapper exposes the username-independent passphrase half so the
 /// canonical env path (`build_mcp_server_env`) can provision it at launch
