@@ -1023,4 +1023,99 @@ impl MediaServer {
         )
         .await
     }
+
+    /// Download a video from a URL (YouTube, Vimeo, direct file, etc.) to
+    /// local storage, index it in the gallery, and return a media block for
+    /// immediate viewing. Uses `yt-dlp` for platform URLs. Complements the
+    /// streaming widget (W1): stream for immediate viewing, fetch for
+    /// persistence.
+    #[tool(
+        description = "Download a video from a URL (YouTube, Vimeo, direct file) to local storage, index it in the gallery, and return a media block for viewing. Requires yt-dlp for platform URLs."
+    )]
+    pub async fn video_fetch(
+        &self,
+        Parameters(VideoFetchRequest { url }): Parameters<VideoFetchRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "video_fetch",
+            Self::ontology_anchor("video_fetch"),
+            async {
+                if url.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("url must not be empty"));
+                }
+                let ytdlp = self.require_yt_dlp()?;
+
+                // Download to {data_dir}/mcp/media/generated/{uuid}.mp4
+                let asset_dir = crate::assets::generated_assets_dir();
+                let id = uuid::Uuid::new_v4();
+                let filename = format!("{id}.mp4");
+                let output_path = asset_dir.join(&filename);
+
+                ytdlp.fetch(&url, &output_path)
+                    .await
+                    .map_err(map_media_error)?;
+
+                if !output_path.exists() {
+                    return Err(McpToolError::internal(format!(
+                        "yt-dlp completed but output file not found: {}",
+                        output_path.display()
+                    )));
+                }
+
+                let bytes = std::fs::read(&output_path).map_err(|e| {
+                    McpToolError::internal(format!("read downloaded file: {e}"))
+                })?;
+                let hash = {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&bytes);
+                    format!("{:x}", hasher.finalize())
+                };
+
+                // Index in the gallery (best-effort — gallery may not be initialized).
+                let local_path = output_path.to_string_lossy().to_string();
+                if let Ok(ga) = self.access_gallery() {
+                    if let Err(e) = self.gallery_store.add_media(
+                        &ga.gallery_id,
+                        &filename,
+                        &local_path,
+                        &hash,
+                        0,
+                        0,
+                        "mp4",
+                        bytes.len() as u64,
+                        "video",
+                    ) {
+                        tracing::warn!(
+                            target: "hkask.mcp.media",
+                            error = %e,
+                            "Failed to add fetched video to gallery"
+                        );
+                    }
+                }
+
+                // Return a media block for immediate viewing in the widget.
+                let block = crate::media_block::media_block_with_omc(
+                    "video",
+                    &local_path,
+                    Self::ontology_anchor("video_fetch"),
+                    Some(&crate::media_block::Provenance::for_tool(
+                        "video_fetch",
+                        serde_json::json!({"url": url}),
+                        None,
+                    )),
+                );
+                Ok(serde_json::json!({
+                    "status": "fetched",
+                    "source_url": url,
+                    "local_path": local_path,
+                    "size_bytes": bytes.len(),
+                    "hash": hash,
+                    "display_hint": block,
+                }))
+            },
+        )
+        .await
+    }
 }

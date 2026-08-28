@@ -759,3 +759,13 @@ pub struct AudioConcatRequest {
     /// List of audio file URLs or paths to concatenate, in order.
     pub audio_urls: Vec<String>,
 }
+
+// ── Video fetch request types ───────────────────────────────────────────
+
+/// Request to download a video from a URL (YouTube, Vimeo, direct file, etc.)
+/// to local storage and index it in the gallery.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VideoFetchRequest {
+    /// URL of the video to download (YouTube, Vimeo, direct file URL, etc.).
+    pub url: String,
+}

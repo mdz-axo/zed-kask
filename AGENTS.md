@@ -1,4 +1,4 @@
-<!-- Always-on context: keep minimal. Derivable data belongs in skills, not here. See .rules "Rules Hygiene". -->
+<!-- Manual-read orientation doc. NOT auto-loaded into the system prompt — `.rules` shadows `AGENTS.md` in the rules-file priority order (see `RULES_FILE_NAMES` in `prompt_store/src/prompts.rs`). `.rules` is the auto-loaded file; this is the human/agent reference. See .rules "Rules Hygiene". -->
 
 # Agent Operating Guide — hKask
 
@@ -7,26 +7,6 @@
 ---
 
 ## Skill System
-
-### Execution Model
-
-Skills execute via **upstream Zed body injection**: the `skill` tool reads the `SKILL.md` body from disk and injects it into the conversation as a `<skill_content>` envelope. The model reads the body and follows the instructions. The model IS the executor.
-
-### Skill Tools
-
-Two built-in tools support skill composition beyond what upstream Zed provides:
-
-- **`lisp_eval`** — sandboxed Lisp interpreter. No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation: convergence signals, invariant checks, scoring, counting items in structured output.
-- **`render_template`** — renders prompt templates from `kask/registry/templates/` with context variables. Path traversal protection via `canonicalize` + `starts_with`. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. The model calls it when a SKILL.md instructs structured prompt scaffolding for a specific step.
-
-### PDCA Loops
-
-PDCA (Plan-Do-Check-Act) loops are **model-coordinated**. The SKILL.md body describes:
-- What to do (the methodology)
-- Convergence criteria (when to stop iterating)
-- Maximum iteration count (when to escalate)
-
-The model executes each full iteration, evaluates the convergence criteria (optionally using `lisp_eval` for deterministic checks), and re-enters the cycle if convergence is not met. The agent loop's token budget and tool permissions are the only limits.
 
 ### Skill Authoring
 
@@ -50,8 +30,6 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 `zed-kask` is a minimal-divergence fork of Zed. **`DIVERGENCE.md`** (repo root) is the authoritative map of every upstream edit — the D1–D32 seams. Everything under `kask/` is ours (additive; upstream never touches → near-zero merge conflict). Everything else tracks upstream; the only divergences are the D-seams + the `[workspace.members]` / `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-- **Don't "fix" upstream files speculatively.** Push behavior into `kask/` behind a D-seam. If an upstream edit is unavoidable, add a D-seam entry + a pinning test in the same PR.
-- **Every `// zed-kask:` comment** disabling upstream behavior needs a test pinning the disabled behavior.
 - Before touching `crates/` (upstream), consult `DIVERGENCE.md` for the relevant seam and its pinning tests.
 - **Governing invariant (§13.1):** hKask crates NEVER depend on zed-kask crates; zed-kask depends on hKask. The sole bidirectional seam is `kask_bridge` (D8). Enforced by `kask/scripts/check-hkask-no-zed-deps.sh`.
 - Upstream-sync runbook: `DIVERGENCE.md` §"Upstream-sync runbook" (`git fetch upstream && git merge upstream/main` → resolve only D-seam conflicts → `./script/clippy` under `--deny warnings`).
@@ -65,7 +43,7 @@ hKask ships **10 MCP servers** launched by zed's `context_server` as child proce
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
 - **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training.
 - **Catalog + per-tool contracts:** `kask/docs/reference/mcp-servers/README.md` (server catalog) + `kask/docs/qa/per-tool-contracts.md` (per-tool input struct, output shape, LLM I/O boundary).
-- **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8). Tool responses are `{"content": ...}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
+- **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8).
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
 
 ---
@@ -121,7 +99,6 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 
 ## Build & Test
 
-- Lint: `./script/clippy` (not `cargo clippy`)
 - Build: `cargo build`
 - Test: `cargo test`
 - Docs health: `docs/ci/verify-docs.sh`

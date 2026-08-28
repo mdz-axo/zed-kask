@@ -5,5 +5,7 @@
 //! - AI: image_to_video (routed through inference router)
 
 pub mod ffmpeg;
+pub mod ytdlp;
 
 pub use ffmpeg::FfmpegRunner;
+pub use ytdlp::YtDlpRunner;

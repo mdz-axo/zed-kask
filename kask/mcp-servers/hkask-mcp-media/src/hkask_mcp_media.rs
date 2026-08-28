@@ -57,6 +57,7 @@ use std::sync::{Arc, Mutex};
 /// process's address space.
 const MAX_IMAGE_READ_BYTES: u64 = 32 * 1024 * 1024;
 use video::FfmpegRunner;
+use video::YtDlpRunner;
 
 // ── Model configuration ───────────────────────────────────────────────
 
@@ -120,6 +121,8 @@ hkask_mcp_server::mcp_server!(
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
         pub ffmpeg: FfmpegRunner,
+        /// yt-dlp runner for video downloading (video_fetch tool).
+        pub ytdlp: YtDlpRunner,
         /// In-memory generation job store for async job tracking (OMC `Task`).
         pub job_store: jobs::JobStore,
     }
@@ -255,6 +258,18 @@ impl MediaServer {
         }
     }
 
+    /// Return the yt-dlp runner or an error if yt-dlp is not installed.
+    fn require_yt_dlp(&self) -> Result<&YtDlpRunner, McpToolError> {
+        if self.ytdlp.available {
+            Ok(&self.ytdlp)
+        } else {
+            Err(McpToolError::unavailable(
+                "yt-dlp not found on system PATH — video_fetch unavailable. \
+                 Install via: pip install yt-dlp  (or apt install yt-dlp on Ubuntu 24.04+)",
+            ))
+        }
+    }
+
     /// Return the best available vision model or an error if none is configured.
     async fn require_vision(&self) -> Result<(&'static str, &'static str), McpToolError> {
         self.resolve_vision_model().await.ok_or_else(|| {
@@ -363,9 +378,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_66_registered_tools() {
+    fn tool_surface_is_exactly_67_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 66, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 67, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.
@@ -520,6 +535,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 gallery_store.clone(),
                 templates::create_env(),
                 FfmpegRunner::detect(),
+                YtDlpRunner::detect(),
                 jobs::new_job_store(),
             ))
         },
@@ -1018,6 +1034,7 @@ mod tool_behavior_tests {
             gallery_store,
             templates::create_env(),
             video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
         )
     }
