@@ -33,6 +33,9 @@ path = "src/hkask_mcp_kata_kanban.rs"
 name = "hkask-mcp-kata-kanban"
 path = "src/main.rs"
 
+[build-dependencies]
+regex.workspace = true
+
 [dev-dependencies]
 # idempotent_creates.rs drives the real tool surface end-to-end (replay
 # protection through kanban_task_create/board_create/task_spawn).

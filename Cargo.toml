@@ -291,6 +291,7 @@ members = [
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
     "crates/hkask-kanban-widget",
+    "crates/hkask-steer",
     "crates/hkask-portfolio-widget",
     "crates/hkask-scenarios-widget",
     "crates/hkask-swarm-widget",
@@ -388,6 +389,7 @@ hkask_conversation_injector = { path = "crates/hkask-conversation-injector", pac
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
+hkask_steer = { path = "crates/hkask-steer", package = "hkask-steer" }
 hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
 hkask_swarm_widget = { path = "crates/hkask-swarm-widget", package = "hkask-swarm-widget" }
@@ -901,6 +903,7 @@ hkask-storage = { path = "kask/crates/hkask-storage" }
 hkask-services-core = { path = "kask/crates/hkask-services-core" }
 hkask-condenser = { path = "kask/crates/hkask-condenser" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
+hkask-mcp-kata-kanban = { path = "kask/mcp-servers/hkask-mcp-kata-kanban" }
 hkask-mcp-swarm = { path = "kask/mcp-servers/hkask-mcp-swarm" }
 hkask-mcp-media = { path = "kask/mcp-servers/hkask-mcp-media" }
 ed25519-dalek = "2"

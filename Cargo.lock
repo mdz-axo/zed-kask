@@ -8937,6 +8937,7 @@ dependencies = [
  "hkask-mcp-swarm",
  "hkask-storage",
  "hkask-types",
+ "regex",
  "rmcp",
  "schemars 1.0.4",
  "serde",
@@ -9253,6 +9254,19 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "hkask-steer"
+version = "0.38.0"
+dependencies = [
+ "agent",
+ "agent_ui",
+ "fs",
+ "gpui",
+ "log",
+ "project",
+ "workspace",
 ]
 
 [[package]]
@@ -10620,6 +10634,8 @@ dependencies = [
  "gpui",
  "gpui_util",
  "hkask-kanban-widget",
+ "hkask-mcp-kata-kanban",
+ "hkask-steer",
  "hkask-tool-invoker",
  "hkask-types",
  "marketplace_ui_common",
@@ -19536,7 +19552,9 @@ dependencies = [
  "fs",
  "gpui",
  "hkask-conversation-injector",
+ "hkask-mcp-kata-kanban",
  "hkask-mcp-swarm",
+ "hkask-steer",
  "hkask-tool-invoker",
  "hkask-types",
  "kask_bridge",

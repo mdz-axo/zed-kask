@@ -1,0 +1,21 @@
+[package]
+name = "hkask-steer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared Steer-mode surface for kask panels: owns the scoped curator ConversationView lifecycle (construction, lazy init, invalidation) and the advertised-tool verification that keeps panel steer prompts truthful against the MCP server's generated TOOL_NAMES."
+
+[lib]
+path = "src/hkask_steer.rs"
+
+[dependencies]
+agent.workspace = true
+agent_ui.workspace = true
+fs.workspace = true
+gpui.workspace = true
+log.workspace = true
+project.workspace = true
+workspace.workspace = true
+
+[lints]
+workspace = true

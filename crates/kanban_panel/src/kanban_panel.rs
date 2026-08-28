@@ -31,6 +31,7 @@ use gpui::{
 use gpui_util::ResultExt;
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
 use hkask_kanban_widget::view::KanbanWidget;
+use hkask_steer::{SteerContext, SteerSurface};
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
@@ -50,8 +51,7 @@ use workspace::{
 // kanban panel hosts all swarm-agent kanban coordination. The curator can
 // create tasks, spawn subagents, move tasks, and decompose work via the
 // kanban MCP tools.
-use agent::ThreadStore;
-use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
+
 
 pub mod panel_button;
 pub mod task_actions;
@@ -301,42 +301,13 @@ pub fn init(cx: &mut App) {
 /// the curator it is scoped to the kanban MCP server and can use all kanban
 /// tools for board and task management, including spawning subagents and
 /// coordinating with swarms.
-/// The `kanban_*` tool names the Steer prompt is allowed to advertise, mirrored
-/// from the `#[tool]` fns in `hkask-mcp-kata-kanban`. The swarm panel keeps the
-/// same contract for its own prompt (`swarm_panel::parse::KANBAN_TOOLS` plus a
-/// `debug_assert!`); this crate does not depend on `swarm_panel`, so it carries
-/// its own list rather than inverting the dependency direction.
 ///
-/// Advertising a tool the server does not expose is worse than omitting it: the
-/// model calls a name that cannot resolve and the turn fails at dispatch. The
+/// The advertised tool names are verified against
+/// `hkask_mcp_kata_kanban::TOOL_NAMES` (build.rs-generated from the server's
+/// `#[tool]` fns — the single source of truth). Advertising a tool the server
+/// does not expose is worse than omitting it: the model calls a name that
+/// cannot resolve and the turn fails at dispatch. The
 /// `steer_prompt_advertises_only_known_tools` test is the enforcement point.
-const ADVERTISED_KANBAN_TOOLS: &[&str] = &[
-    "kanban_board_create",
-    "kanban_board_list",
-    "kanban_board_delete",
-    "kanban_board_export",
-    "kanban_board_import",
-    "kanban_task_create",
-    "kanban_task_list",
-    "kanban_task_move",
-    "kanban_task_assign",
-    "kanban_task_unassign",
-    "kanban_task_update",
-    "kanban_task_delete",
-    "kanban_task_verify",
-    "kanban_task_reopen",
-    "kanban_task_add_rjoules",
-    "kanban_task_comment",
-    "kanban_task_comments_since",
-    "kanban_task_add_deliverable",
-    "kanban_task_spawn",
-    "kanban_task_delegate_result",
-    "kanban_task_kata_coaching",
-    "kanban_task_kata_improvement",
-    "kanban_task_kata_practice",
-    "contract_propose_expect",
-];
-
 fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
     let board_clause = match selected_board_id {
         Some(id) => format!(
@@ -367,22 +338,14 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          Pass the swarm id to `kanban_task_spawn` (the `swarm_id` arg) whenever the task is \
          scoped to a swarm — this stamps the durable `Task.swarm_id` link.",
     );
-    // Mirrors the swarm panel's `steer_system_prompt` guard: a `kanban_*` name
-    // in the prompt that the server does not expose degrades to "tool not
-    // found" at dispatch time, so catch it here in dev builds. The
-    // `steer_prompt_advertises_only_known_tools` test is the CI enforcement.
-    debug_assert!(
-        prompt
-            .split('`')
-            .skip(1)
-            .step_by(2)
-            .map(|span| span
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect::<String>())
-            .filter(|name| name.starts_with("kanban_") || name.starts_with("contract_"))
-            .all(|name| ADVERTISED_KANBAN_TOOLS.contains(&name.as_str())),
-        "steer_system_prompt advertises a kanban_* tool not in ADVERTISED_KANBAN_TOOLS"
+    // A `kanban_*`/`contract_*` name in the prompt that the server does not
+    // expose degrades to "tool not found" at dispatch time, so catch it here
+    // in dev builds. The `steer_prompt_advertises_only_known_tools` test is
+    // the CI enforcement.
+    hkask_steer::verify_tool_advertisement(
+        &prompt,
+        hkask_mcp_kata_kanban::TOOL_NAMES,
+        &["kanban_", "contract_"],
     );
     prompt.into()
 }
@@ -532,11 +495,10 @@ pub struct KanbanPanel {
     create_board_editor: Option<Entity<Editor>>,
     /// The active panel mode (Browse or Steer).
     mode: PanelMode,
-    /// Lazily-constructed ConversationView for Steer mode, scoped to the
-    /// kanban MCP server. None until the operator first selects Steer.
-    steer_conversation: Option<Entity<ConversationView>>,
-    /// Connection store for the Steer mode ConversationView.
-    steer_connection_store: Option<Entity<AgentConnectionStore>>,
+    /// The Steer-mode surface: owns the scoped curator ConversationView
+    /// lifecycle (construction + invalidation). Empty until the operator
+    /// first selects Steer.
+    steer: SteerSurface,
     /// Project entity (needed for ConversationView construction).
     project: Option<Entity<project::Project>>,
     /// Filesystem (needed for CuratorAgentServer).
@@ -577,8 +539,7 @@ impl KanbanPanel {
                 spawn_task_form: None,
                 create_board_editor: None,
                 mode: PanelMode::Browse,
-                steer_conversation: None,
-                steer_connection_store: None,
+                steer: SteerSurface::new(),
                 project: Some(project),
                 fs: Some(fs),
                 workspace_handle: Some(workspace_handle),
@@ -1431,9 +1392,6 @@ impl KanbanPanel {
     /// kanban MCP server. The curator can create tasks, spawn subagents,
     /// move tasks, and decompose work via the kanban MCP tools.
     fn ensure_steer_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.steer_conversation.is_some() {
-            return;
-        }
         let Some(project) = self.project.clone() else {
             return;
         };
@@ -1444,36 +1402,20 @@ impl KanbanPanel {
             return;
         };
 
-        let thread_store = ThreadStore::global(cx);
-        let agent_server = std::rc::Rc::new(
-            agent::CuratorAgentServer::new(fs, thread_store.clone())
-                .with_extra_static_context(steer_system_prompt(self.selected_board_id.as_deref()))
-                .with_mcp_server_scope(KANBAN_SERVER.into()),
-        );
-
-        let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
-        self.steer_connection_store = Some(connection_store.clone());
-
-        let thread_id = agent_ui::ThreadId::new();
-        let conversation_view = cx.new(|cx| {
-            ConversationView::new(
-                agent_server,
-                connection_store,
-                Agent::Curator,
-                None,
-                Some(thread_id),
-                None,
-                None,
-                None,
-                workspace,
+        hkask_steer::ensure_steer(
+            &mut self.steer,
+            SteerContext {
+                server_scope: KANBAN_SERVER.into(),
+                system_prompt: steer_system_prompt(self.selected_board_id.as_deref()),
+                fs,
                 project,
-                Some(thread_store),
-                AgentThreadSource::AgentPanel,
-                window,
-                cx,
-            )
-        });
-        self.steer_conversation = Some(conversation_view);
+                workspace,
+            },
+            hkask_mcp_kata_kanban::TOOL_NAMES,
+            &["kanban_", "contract_"],
+            window,
+            cx,
+        );
     }
 
     fn select_board(&mut self, board_id: String, cx: &mut Context<Self>) {
@@ -1495,9 +1437,9 @@ impl KanbanPanel {
         // `selected_board_id` once). Switching boards while Steer is open would
         // leave the curator creating and moving tasks on the previously selected
         // board. Drop the conversation so the next Steer selection rebuilds with
-        // the new board. Mirrors `set_swarm_mode` in the swarm panel, which
-        // drops its Steer conversation for the same reason.
-        self.steer_conversation = None;
+        // the new board. Mirrors the swarm panel, which invalidates its Steer
+        // surface on backend-mode change for the same reason.
+        self.steer.invalidate();
         self.fetch_tasks(cx);
         cx.notify();
     }
@@ -2013,7 +1955,7 @@ impl Render for KanbanPanel {
 
         // Lazily initialize the Steer mode conversation when the operator
         // switches to Steer (ConversationView::new needs a Window).
-        if self.mode == PanelMode::Steer && self.steer_conversation.is_none() {
+        if self.mode == PanelMode::Steer && self.steer.conversation().is_none() {
             self.ensure_steer_conversation(window, cx);
         }
 
@@ -2093,7 +2035,7 @@ impl Render for KanbanPanel {
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 if mode == PanelMode::Steer {
-                    if let Some(conversation) = &self.steer_conversation {
+                    if let Some(conversation) = self.steer.conversation() {
                         this.child(conversation.clone()).into_any_element()
                     } else {
                         this.child(Label::new("Initializing Steer mode…").color(Color::Muted))
@@ -2192,11 +2134,10 @@ impl SerializableItem for KanbanPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL,
-        BoardInfo, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
-        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
-        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay, refresh_target,
-        steer_system_prompt,
+        BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL, BoardInfo, IDEMPOTENT_TOOLS,
+        MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
+        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
+        mutation_retry_delay, refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2485,25 +2426,13 @@ mod tests {
             steer_system_prompt(Some("board-1")),
             steer_system_prompt(None),
         ] {
-            // Backtick-delimited spans sit at odd indices when splitting on '`'.
-            let advertised = prompt
-                .split('`')
-                .skip(1)
-                .step_by(2)
-                .map(|span| {
-                    span.chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect::<String>()
-                })
-                .filter(|name| name.starts_with("kanban_") || name.starts_with("contract_"));
-
-            for name in advertised {
+            for name in hkask_steer::advertised_tool_names(&prompt, &["kanban_", "contract_"]) {
                 assert!(
-                    ADVERTISED_KANBAN_TOOLS.contains(&name.as_str()),
+                    hkask_mcp_kata_kanban::TOOL_NAMES.contains(&name.as_str()),
                     "steer prompt advertises `{name}`, which is not in \
-                     ADVERTISED_KANBAN_TOOLS — either the tool was renamed in \
-                     hkask-mcp-kata-kanban or the prompt names a tool that does \
-                     not exist"
+                     hkask_mcp_kata_kanban::TOOL_NAMES — either the tool was \
+                     renamed in hkask-mcp-kata-kanban or the prompt names a \
+                     tool that does not exist"
                 );
             }
         }
@@ -2540,26 +2469,18 @@ mod tests {
         );
     }
 
-    /// The allowlist is only meaningful if the prompt actually exercises it, and
-    /// only correct if it has no duplicates.
+    /// The prompt is the operator's map of the server surface — every tool
+    /// the server exposes should be advertised, or the curator cannot
+    /// discover it in Steer mode.
     #[test]
-    fn advertised_kanban_tools_are_unique_and_referenced() {
-        let mut sorted = ADVERTISED_KANBAN_TOOLS.to_vec();
-        sorted.sort_unstable();
-        let before = sorted.len();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            before,
-            "duplicate entries in ADVERTISED_KANBAN_TOOLS"
-        );
-
+    fn server_tools_are_all_advertised() {
         let prompt = steer_system_prompt(Some("board-1"));
-        for tool in ADVERTISED_KANBAN_TOOLS {
+        for tool in hkask_mcp_kata_kanban::TOOL_NAMES {
             assert!(
                 prompt.contains(tool),
-                "ADVERTISED_KANBAN_TOOLS lists `{tool}` but the Steer prompt \
-                 never mentions it — drop it from the list or advertise it"
+                "hkask_mcp_kata_kanban::TOOL_NAMES lists `{tool}` but the Steer \
+                 prompt never mentions it — advertise it or the curator cannot \
+                 discover it"
             );
         }
     }

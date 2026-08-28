@@ -33,7 +33,12 @@ pub fn init(
 ) {
     hang_detection::start(client.clone(), cx);
     start_memory_usage_logging(workspace_store.clone(), cx);
-    start_context_server_health_polling(workspace_store, context_server_health_source, cx);
+    start_context_server_health_polling(
+        workspace_store,
+        context_server_health_source,
+        client.clone(),
+        cx,
+    );
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -174,6 +179,7 @@ fn start_memory_usage_logging(workspace_store: Entity<WorkspaceStore>, cx: &App)
 fn start_context_server_health_polling(
     workspace_store: Entity<WorkspaceStore>,
     health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    client: Arc<Client>,
     cx: &App,
 ) {
     let (update_sender, mut update_receiver) = futures::channel::mpsc::unbounded();
@@ -181,7 +187,11 @@ fn start_context_server_health_polling(
         async move |cx| {
             while update_receiver.next().await.is_some() {
                 cx.update(|cx| {
-                    let snapshot = compute_context_server_health_snapshot(&workspace_store, cx);
+                    let snapshot = compute_context_server_health_snapshot(
+                        &workspace_store,
+                        context_server_fleet_observable(client.user_id()),
+                        cx,
+                    );
                     health_source.update(snapshot.0, snapshot.1);
                 });
             }
@@ -205,16 +215,35 @@ fn start_context_server_health_polling(
 /// tick cadence (10s) so the sensor sees a stuck server within one tick.
 const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Whether the context-server fleet snapshot can be meaningfully measured.
+///
+/// Before the Zed user resolves (no credentials), kask's deferred servers
+/// have not launched yet and credential-gated servers are stuck in
+/// `Starting` — measuring then produced a constant false-positive
+/// `ContextServerFleetDegraded` alert storm every tick. Gate on
+/// `Client::user_id` (the same predicate the deferred post-login task
+/// waits on via `UserStore::watch_current_user`).
+fn context_server_fleet_observable(user_id: Option<u64>) -> bool {
+    user_id.is_some()
+}
+
 /// Compute `(healthy_count, total_count)` across all open projects'
 /// `ContextServerStore`s. Delegates the status-classification logic to
 /// [`classify_fleet_health`], which is unit-tested separately.
+///
+/// When `observable` is false (pre-login), returns `(0, 0)` so the sensor
+/// reports no signal instead of a false-positive degradation.
 ///
 /// Deduplicates by `ContextServerStore` entity id (a project opened in two
 /// windows shares one store).
 fn compute_context_server_health_snapshot(
     workspace_store: &Entity<WorkspaceStore>,
+    observable: bool,
     cx: &App,
 ) -> (usize, usize) {
+    if !observable {
+        return (0, 0);
+    }
     let workspaces = workspace_store
         .read(cx)
         .workspaces()
@@ -649,7 +678,7 @@ impl FormExt for Form {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_fleet_health;
+    use super::{classify_fleet_health, context_server_fleet_observable};
     use project::context_server_store::ContextServerStatus;
     use std::sync::Arc;
 
@@ -764,5 +793,17 @@ mod tests {
         let (healthy, total) = classify_fleet_health(&[]);
         assert_eq!(healthy, 0);
         assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn pre_login_fleet_is_unobservable() {
+        // No credentials → gate is closed → snapshot reports (0, 0) → the
+        // sensor emits no signal. This pins the false-positive-storm fix.
+        assert!(!context_server_fleet_observable(None));
+    }
+
+    #[test]
+    fn resolved_user_opens_the_gate() {
+        assert!(context_server_fleet_observable(Some(7)));
     }
 }

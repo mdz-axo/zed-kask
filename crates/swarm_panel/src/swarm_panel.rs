@@ -79,8 +79,6 @@ use workspace::{
 // curator's `SkillTool` invokes the `swarm-intelligence` cascade when the
 // operator asks to compose/steer a swarm. See
 // `kask/docs/plans/abw-swarm-intelligence.md` §13.
-use agent::ThreadStore;
-use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
 use gpui::SharedString;
 
 actions!(
@@ -302,26 +300,13 @@ fn steer_system_prompt(
 The kanban panel (View → Kanban Board) is the durable coordination source of truth for task state. It hosts all kanban tools — board/task CRUD, task spawn, delegate results, and kata coaching. Open the kanban panel's Steer mode to decompose work, create tasks, and spawn subagents. The swarm↔kanban bridge is `kanban_task_spawn` (pass the swarm_id arg to link the task to this swarm).
 "#
     );
-    debug_assert!(
-        prompt
-            .split('`')
-            .enumerate()
-            .filter(|(i, _)| i % 2 == 1)
-            .all(|(_, seg)| {
-                let name: String = seg
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                if name.starts_with("swarm_") && name.len() > "swarm_".len() {
-                    return parse::SWARM_TOOLS.contains(&name.as_str());
-                }
-                if name.starts_with("kanban_") && name.len() > "kanban_".len() {
-                    return parse::KANBAN_TOOLS.contains(&name.as_str());
-                }
-                true
-            }),
-        "steer_system_prompt advertises a swarm_* or kanban_* tool not in SWARM_TOOLS/KANBAN_TOOLS"
-    );
+    // A `swarm_*`/`kanban_*` name in the prompt that the server does not
+    // expose degrades to "tool not found" at dispatch time, so catch it here
+    // in dev builds. The `steer_prompt_mentions_only_known_tools` test is
+    // the CI enforcement. Both name lists are re-exports of the servers'
+    // build.rs-generated `TOOL_NAMES` — the single source of truth.
+    hkask_steer::verify_tool_advertisement(&prompt, parse::SWARM_TOOLS, &["swarm_"]);
+    hkask_steer::verify_tool_advertisement(&prompt, parse::KANBAN_TOOLS, &["kanban_"]);
     prompt.into()
 }
 
@@ -667,14 +652,11 @@ pub struct SwarmPanel {
     pending_composition_prompt: Option<PendingCompositionPrompt>,
     /// Composition form state.
     compose: ComposeForm,
-    /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
-    /// swarm MCP server. `None` until the operator first selects Steer.
-    /// Uses the retained-view pattern (one `ConversationView`, reused across
-    /// re-renders).
-    steer_conversation: Option<Entity<ConversationView>>,
-    /// Per-view connection store for the Steer `ConversationView`. One store =
-    /// one connection = one prompt, preventing cross-view prompt bleed.
-    steer_connection_store: Option<Entity<AgentConnectionStore>>,
+    /// The Steer-mode surface: owns the scoped curator `ConversationView`
+    /// lifecycle (construction + invalidation). Empty until the operator
+    /// first selects Steer. Uses the retained-view pattern (one
+    /// `ConversationView`, reused across re-renders).
+    steer: hkask_steer::SteerSurface,
     /// Last-seen `kask.swarm.mode` value, used to detect mode changes that
     /// invalidate the Steer conversation's baked-in system prompt. The Steer
     /// prompt interpolates the mode at construction (`ensure_steer_conversation`),
@@ -857,7 +839,7 @@ impl SwarmPanel {
             let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
                 let mode = Self::current_swarm_mode(cx);
                 if this.last_swarm_mode.as_ref() != Some(&mode) {
-                    this.steer_conversation = None;
+                    this.steer.invalidate();
                     // The settings change is an explicit backend declaration —
                     // carry it into the panel's creation context too, and sync
                     // the open form so its toggle doesn't go stale (the
@@ -939,8 +921,7 @@ impl SwarmPanel {
                 pending_author_reset: false,
                 pending_composition_prompt: None,
                 compose,
-                steer_conversation: None,
-                steer_connection_store: None,
+                steer: hkask_steer::SteerSurface::new(),
                 last_swarm_mode: Some(Self::current_swarm_mode(cx)),
                 spend: SpendState {
                     in_flight: None,
@@ -1129,8 +1110,8 @@ impl SwarmPanel {
             PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
             PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
             PanelMode::Steer => self
-                .steer_conversation
-                .as_ref()
+                .steer
+                .conversation()
                 .map(|c| c.read(cx).focus_handle(cx))
                 .unwrap_or_else(|| self.query_editor.read(cx).focus_handle(cx)),
         };
@@ -1216,49 +1197,21 @@ impl SwarmPanel {
     /// `window` is required because `ConversationView::new` may focus its
     /// inner `MessageEditor`.
     fn ensure_steer_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.steer_conversation.is_some() {
-            return;
-        }
-
-        let thread_store = ThreadStore::global(cx);
         let mode = Self::current_swarm_mode(cx);
-        let agent_server = std::rc::Rc::new(
-            agent::CuratorAgentServer::new(self.fs.clone(), thread_store.clone())
-                .with_extra_static_context(steer_system_prompt(
-                    self.selected_workspace.as_deref(),
-                    mode,
-                ))
-                .with_mcp_server_scope(SWARM_SERVER.into()),
+        hkask_steer::ensure_steer(
+            &mut self.steer,
+            hkask_steer::SteerContext {
+                server_scope: SWARM_SERVER.into(),
+                system_prompt: steer_system_prompt(self.selected_workspace.as_deref(), mode),
+                fs: self.fs.clone(),
+                project: self.project.clone(),
+                workspace: self.workspace.clone(),
+            },
+            parse::SWARM_TOOLS,
+            &["swarm_"],
+            window,
+            cx,
         );
-
-        let connection_store = self
-            .steer_connection_store
-            .get_or_insert_with(|| cx.new(|cx| AgentConnectionStore::new(self.project.clone(), cx)))
-            .clone();
-
-        let thread_id = agent_ui::ThreadId::new();
-        let conversation_view = cx.new(|cx| {
-            ConversationView::new(
-                agent_server,
-                connection_store,
-                Agent::Curator,
-                None, // no resume session
-                Some(thread_id),
-                None, // no work_dirs
-                None, // no title
-                None, // no initial content — the system prompt is injected
-                // via `with_extra_static_context`; the input editor starts
-                // empty so the operator types their composition intent.
-                self.workspace.clone(),
-                self.project.clone(),
-                Some(thread_store),
-                AgentThreadSource::AgentPanel,
-                window,
-                cx,
-            )
-        });
-
-        self.steer_conversation = Some(conversation_view);
     }
 
     /// Launch the pending swarm-intelligence plan by injecting a message into
@@ -1632,7 +1585,7 @@ impl SwarmPanel {
                                 this.selected_workspace = Some(id.clone());
                                 // Drop any existing Steer conversation so the
                                 // next construction bakes in the new swarm.
-                                this.steer_conversation = None;
+                                this.steer.invalidate();
                                 this.set_mode(PanelMode::Steer, window, cx);
                                 // Queue the composition prompt for injection
                                 // after `render` constructs the Steer
@@ -1798,7 +1751,7 @@ impl SwarmPanel {
                         // Navigate to Steer with the new swarm selected.
                         if let Some(id) = workspace_id {
                             this.selected_workspace = Some(id.clone());
-                            this.steer_conversation = None;
+                            this.steer.invalidate();
                             this.set_mode(PanelMode::Steer, window, cx);
                             // Queue the composition prompt for injection
                             // (same as the local path).
@@ -3283,7 +3236,7 @@ impl Render for SwarmPanel {
                                             this.launch_plan_in_steer(window, cx);
                                         })),
                                 );
-                            match &self.steer_conversation {
+                            match self.steer.conversation() {
                                 Some(view) => this
                                     .child(launch_button)
                                     .child(view.clone())
@@ -3356,8 +3309,8 @@ impl Focusable for SwarmPanel {
             PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
             PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
             PanelMode::Steer => self
-                .steer_conversation
-                .as_ref()
+                .steer
+                .conversation()
                 .map(|c| c.read(cx).focus_handle(cx))
                 .unwrap_or_else(|| self.query_editor.read(cx).focus_handle(cx)),
         }

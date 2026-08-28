@@ -213,46 +213,18 @@ pub(crate) struct LocalSwarmInfo {
 /// server's live `combined_router()` surface, so a rename/add/remove in the
 /// server surfaces here rather than degrading to "tool not found" at runtime.
 /// The Steer-mode system prompt's backticked `swarm_*` mentions are
-/// `debug_assert!`ed against this list in `steer_system_prompt`, and asserted
+/// verified against this list in `steer_system_prompt`, and asserted
 /// in `steer_prompt_mentions_only_known_tools`.
 pub(crate) use hkask_mcp_swarm::TOOL_NAMES as SWARM_TOOLS;
 
-/// The kanban MCP server's `#[tool]` fn names, mirrored from
-/// `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
-/// adding/removing a server tool — the `steer_system_prompt` `debug_assert!`
-/// and the `kanban_tool_names_match_server` test catch drift. One tool
+/// The kanban MCP server's canonical tool-name list — re-exported from
+/// `hkask_mcp_kata_kanban::TOOL_NAMES` (build.rs-generated from the server's
+/// `#[tool]` fns), the single source of truth. The Steer-mode system prompt's
+/// backticked `kanban_*` mentions are verified against this list in
+/// `steer_system_prompt` and asserted in
+/// `steer_prompt_mentions_only_known_tools`. One tool
 /// (`contract_propose_expect`) does not use the `kanban_` prefix.
-pub(crate) const KANBAN_TOOLS: &[&str] = &[
-    // Board tools.
-    "kanban_board_create",
-    "kanban_board_list",
-    "kanban_board_delete",
-    "kanban_board_export",
-    "kanban_board_import",
-    // Task tools.
-    "kanban_task_create",
-    "kanban_task_list",
-    "kanban_task_move",
-    "kanban_task_assign",
-    "kanban_task_verify",
-    "kanban_task_add_rjoules",
-    "kanban_task_comment",
-    "kanban_task_comments_since",
-    "kanban_task_add_deliverable",
-    "kanban_task_reopen",
-    "kanban_task_delete",
-    "kanban_task_unassign",
-    "kanban_task_update",
-    // Kata prompt tools.
-    "kanban_task_kata_coaching",
-    "kanban_task_kata_improvement",
-    "kanban_task_kata_practice",
-    // Swarm delegation bridge (kanban → swarm).
-    "kanban_task_spawn",
-    "kanban_task_delegate_result",
-    // Contract grounding proposals (no `kanban_` prefix).
-    "contract_propose_expect",
-];
+pub(crate) use hkask_mcp_kata_kanban::TOOL_NAMES as KANBAN_TOOLS;
 
 /// Extract the algedonic wallet balance from a tool response (the
 /// `with_wallet` shape: `content.wallet.balance`). Returns `None` when
