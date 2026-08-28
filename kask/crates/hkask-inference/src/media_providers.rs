@@ -351,10 +351,12 @@ impl MediaProvider for DeepInfraMediaProvider {
             match op {
                 MediaOp::GenerateImage => {
                     let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_IMAGE_GEN_MODEL",
-                        crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+                            crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
                         .await
@@ -362,10 +364,12 @@ impl MediaProvider for DeepInfraMediaProvider {
                 MediaOp::ImageToImage => {
                     let image_url = params.image_url.clone().unwrap_or_default();
                     let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_IMAGE_GEN_MODEL",
-                        crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+                            crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.image_to_image(
                         &image_url,
@@ -387,38 +391,46 @@ impl MediaProvider for DeepInfraMediaProvider {
                 MediaOp::GenerateSpeech => {
                     let text = params.text.clone().unwrap_or_default();
                     let voice = params.voice.clone().unwrap_or_else(|| "Rachel".to_string());
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_TTS_MODEL",
-                        crate::model_constants::DEFAULT_TTS_MODEL,
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_TTS_MODEL",
+                            crate::model_constants::DEFAULT_TTS_MODEL,
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_speech(&text, &voice, &model).await
                 }
                 MediaOp::Transcribe => {
                     let audio_url = params.audio_url.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_STT_MODEL",
-                        crate::model_constants::DEFAULT_STT_MODEL,
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_STT_MODEL",
+                            crate::model_constants::DEFAULT_STT_MODEL,
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.transcribe(&audio_url, params.language.as_deref(), &model)
                         .await
                 }
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_VIDEO_MODEL",
-                        "Wan-AI/Wan2.2-T2V-A14B",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_VIDEO_MODEL",
+                            "Wan-AI/Wan2.2-T2V-A14B",
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_video(&prompt, params.duration, &model).await
                 }
                 MediaOp::ImageToVideo => {
                     let image_url = params.image_url.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_VIDEO_MODEL",
-                        "Wan-AI/Wan2.2-T2V-A14B",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_VIDEO_MODEL",
+                            "Wan-AI/Wan2.2-T2V-A14B",
+                        )
+                    });
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.image_to_video(
                         &image_url,
@@ -841,10 +853,12 @@ impl MediaProvider for OpenRouterMediaProvider {
             match op {
                 MediaOp::GenerateImage => {
                     let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_IMAGE_GEN_MODEL",
-                        "openai/dall-e-3",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+                            "openai/dall-e-3",
+                        )
+                    });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
                         .await
@@ -852,38 +866,46 @@ impl MediaProvider for OpenRouterMediaProvider {
                 MediaOp::GenerateSpeech => {
                     let text = params.text.clone().unwrap_or_default();
                     let voice = params.voice.clone().unwrap_or_else(|| "alloy".to_string());
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_TTS_MODEL",
-                        "openai/gpt-4o-mini-tts",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_TTS_MODEL",
+                            "openai/gpt-4o-mini-tts",
+                        )
+                    });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.generate_speech(&text, &voice, &model).await
                 }
                 MediaOp::Transcribe => {
                     let audio_url = params.audio_url.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_STT_MODEL",
-                        "openai/whisper-large-v3",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_STT_MODEL",
+                            "openai/whisper-large-v3",
+                        )
+                    });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.transcribe(&audio_url, params.language.as_deref(), &model)
                         .await
                 }
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_VIDEO_MODEL",
-                        "google/gemini-2.5-flash-video",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_VIDEO_MODEL",
+                            "google/gemini-2.5-flash-video",
+                        )
+                    });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.generate_video(&prompt, params.duration, &model).await
                 }
                 MediaOp::ImageToVideo => {
                     let image_url = params.image_url.clone().unwrap_or_default();
-                    let model = crate::model_constants::resolve(
-                        "HKASK_MEDIA_VIDEO_MODEL",
-                        "google/gemini-2.5-flash-video",
-                    );
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_VIDEO_MODEL",
+                            "google/gemini-2.5-flash-video",
+                        )
+                    });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.image_to_video(
                         &image_url,

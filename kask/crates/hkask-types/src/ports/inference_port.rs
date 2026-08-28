@@ -61,6 +61,11 @@ pub struct MediaGenerateParams {
     /// Mask image (base64 data URI or URL) for region-selective editing (inpainting).
     /// White regions are edited; black regions are preserved. None for whole-image transform.
     pub mask: Option<String>,
+    /// Model override. When set, the provider uses this model id instead of
+    /// the env/default resolution (`model_constants::resolve`). Makes the
+    /// model browser (`model_list` / `model_info`) actionable: a listed id can
+    /// be passed through to the generation call.
+    pub model: Option<String>,
 }
 
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.

@@ -31,6 +31,10 @@ pub enum MediaError {
     #[error("ffmpeg not available")]
     FfmpegUnavailable,
 
+    /// yt-dlp not installed on the system (video_fetch unavailable).
+    #[error("yt-dlp not available")]
+    YtDlpUnavailable,
+
     /// ffmpeg command execution failures.
     #[error("{0}")]
     FfmpegFailed(String),
@@ -88,13 +92,15 @@ impl From<GalleryStoreError> for MediaError {
 ///
 /// - `GalleryNotInitialized`, `ImageNotFound` → `invalid_argument` (user error)
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
-/// - `FfmpegUnavailable` → `unavailable` (system unavailable)
+/// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (system unavailable)
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
         MediaError::GalleryNotInitialized | MediaError::ImageNotFound(_) => {
             McpToolError::invalid_argument(e.to_string())
         }
-        MediaError::FfmpegUnavailable => McpToolError::unavailable(e.to_string()),
+        MediaError::FfmpegUnavailable | MediaError::YtDlpUnavailable => {
+            McpToolError::unavailable(e.to_string())
+        }
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)

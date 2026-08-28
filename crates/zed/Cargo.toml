@@ -84,6 +84,7 @@ hkask-email.workspace = true
 swarm_panel.workspace = true
 kanban_panel.workspace = true
 portfolio_panel.workspace = true
+media_panel.workspace = true
 agent.workspace = true
 agent_servers = { workspace = true, optional = true }
 agent_settings.workspace = true

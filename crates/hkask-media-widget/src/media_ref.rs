@@ -104,6 +104,21 @@ impl MediaStorage for PathMediaStorage {
                 bytes: None,
                 url: Some(SharedString::from(src)),
             })
+        } else if let Some(path_str) = src.strip_prefix("file://") {
+            // file:// URL — resolve to the underlying filesystem path so the
+            // widget's local-file branches (image read, VideoPlayer::open)
+            // handle it. Without this, `file://` falls into the plain-path
+            // branch where `PathBuf::from("file://...").exists()` fails.
+            let path = PathBuf::from(path_str);
+            if !path.exists() {
+                return Err(anyhow::anyhow!("media file not found: {src}"));
+            }
+            Ok(ResolvedMedia {
+                kind,
+                path: Some(path),
+                bytes: None,
+                url: None,
+            })
         } else {
             // Filesystem path — check it exists.
             let path = PathBuf::from(src);

@@ -54,7 +54,7 @@ impl YtDlpRunner {
         output_path: &std::path::Path,
     ) -> Result<(), crate::MediaError> {
         if !self.available {
-            return Err(crate::MediaError::FfmpegUnavailable);
+            return Err(crate::MediaError::YtDlpUnavailable);
         }
 
         let output_template = output_path.to_string_lossy().to_string();

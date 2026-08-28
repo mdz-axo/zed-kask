@@ -8961,6 +8961,7 @@ dependencies = [
  "image",
  "minijinja",
  "nom-exif",
+ "regex",
  "rmcp",
  "schemars 1.0.4",
  "serde",
@@ -12156,6 +12157,28 @@ dependencies = [
  "foreign-types 0.5.0",
  "metal",
  "objc",
+]
+
+[[package]]
+name = "media_panel"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "agent_ui",
+ "anyhow",
+ "editor",
+ "fs",
+ "gpui",
+ "hkask-mcp-media",
+ "hkask-steer",
+ "hkask-tool-invoker",
+ "marketplace_ui_common",
+ "project",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -25134,6 +25157,7 @@ dependencies = [
  "lsp_locations",
  "markdown",
  "markdown_preview",
+ "media_panel",
  "menu",
  "migrator",
  "mimalloc",

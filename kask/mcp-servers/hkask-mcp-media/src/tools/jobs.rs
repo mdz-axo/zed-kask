@@ -9,6 +9,48 @@ use crate::types::{
 };
 use crate::*;
 
+/// Marks a job `failed` when dropped without being defused — a panic or
+/// abort inside the spawned generation task must not leave the record in
+/// "running" forever (the operator could not distinguish a live job from a
+/// dead one). Defused on the normal completion path.
+struct JobPanicGuard {
+    job_store: crate::jobs::JobStore,
+    job_id: String,
+    defused: bool,
+}
+
+impl JobPanicGuard {
+    fn new(job_store: crate::jobs::JobStore, job_id: String) -> Self {
+        Self {
+            job_store,
+            job_id,
+            defused: false,
+        }
+    }
+
+    /// Disarm the guard — the task completed and updated the record itself.
+    fn defuse(mut self) {
+        self.defused = true;
+    }
+}
+
+impl Drop for JobPanicGuard {
+    fn drop(&mut self) {
+        if self.defused {
+            return;
+        }
+        if let Ok(mut store) = self.job_store.lock()
+            && let Some(job) = store.get_mut(&self.job_id)
+            && job.status != "cancelled"
+        {
+            job.status = "failed".to_string();
+            job.error =
+                Some("job task terminated unexpectedly (panic or abort)".to_string());
+            job.completed_at = Some(hkask_types::time::now_rfc3339());
+        }
+    }
+}
+
 #[tool_router(router = jobs_router, vis = "pub")]
 impl MediaServer {
     /// Submit an async media generation job. Returns a job ID immediately;
@@ -75,6 +117,12 @@ impl MediaServer {
                         }
                     }
 
+                    // If the generation future panics or the task is aborted,
+                    // this guard marks the job failed on drop instead of
+                    // leaving it stuck in "running".
+                    let guard =
+                        JobPanicGuard::new(job_store.clone(), job_id_for_task.clone());
+
                     let result = vision_port
                         .media_generate(&op_for_task, &media_params)
                         .await;
@@ -107,6 +155,9 @@ impl MediaServer {
                             }
                         }
                     }
+
+                    // Normal completion — disarm the panic guard.
+                    guard.defuse();
                 });
 
                 Ok(serde_json::json!({
@@ -167,7 +218,10 @@ impl MediaServer {
                     .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
                 let job = store.get(&job_id).ok_or_else(|| {
                     McpToolError::not_found(format!(
-                        "Job not found: {job_id}. Call job_list to see known jobs."
+                        "Job not found: {job_id}. The job store is in-memory — if the \
+                         media server restarted, all job records were lost (persistent \
+                         lineage survives in gallery_record_generation). Call job_list \
+                         to see known jobs."
                     ))
                 })?;
                 Ok(serde_json::to_value(job)

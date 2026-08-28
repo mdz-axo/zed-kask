@@ -460,7 +460,7 @@ impl MediaServer {
             image_index,
             prompt,
             duration,
-            model: _model,
+            model,
         }): Parameters<ImageToVideoRequest>,
     ) -> String {
         execute_tool_semantic(
@@ -481,6 +481,7 @@ impl MediaServer {
                     image_url: Some(image_url.clone()),
                     prompt: prompt.clone(),
                     duration,
+                    model,
                     ..Default::default()
                 };
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);

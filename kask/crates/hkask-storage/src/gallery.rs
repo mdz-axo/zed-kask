@@ -276,12 +276,24 @@ impl GalleryStore {
         // Migration: add media_type column to gallery_images for DBs created
         // before this column existed. CREATE TABLE IF NOT EXISTS won't add
         // the column to an already-existing table, so ALTER TABLE is needed.
-        // SQLite's ALTER TABLE ADD COLUMN is idempotent-safe via the try/catch
-        // pattern — if the column already exists, the error is ignored.
-        let _ = driver.execute(
-            "ALTER TABLE gallery_images ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
-            &[],
-        );
+        // Guarded by a PRAGMA table_info column-exists check so a real
+        // failure (locked DB, corrupt schema) surfaces as an error instead
+        // of being silently discarded alongside the benign
+        // duplicate-column case.
+        let columns = driver
+            .query("PRAGMA table_info(gallery_images)", &[])
+            .map_err(InfrastructureError::from)?;
+        let has_media_type = columns.iter().any(|row| {
+            row.get_str(1)
+                .map(|name| name == "media_type")
+                .unwrap_or(false)
+        });
+        if !has_media_type {
+            driver.execute(
+                "ALTER TABLE gallery_images ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
+                &[],
+            )?;
+        }
         Ok(())
     }
     /// Create a new gallery. Returns the gallery record.
@@ -1238,6 +1250,71 @@ mod tests {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
         let driver = SqliteDriver::new(pool);
         GalleryStore::from_driver(Arc::new(driver)).expect("gallery store init")
+    }
+
+    /// A DB created before the `media_type` column existed must be migrated
+    /// by `init_schema`: the column is added with default 'image', and
+    /// re-running `init_schema` on the migrated DB is idempotent.
+    #[test]
+    fn init_schema_migrates_pre_media_type_databases_idempotently() {
+        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
+        let driver =
+            Arc::new(SqliteDriver::new(pool)) as Arc<dyn crate::database::driver::DatabaseDriver>;
+        // Pre-migration schema: gallery_images WITHOUT media_type.
+        driver
+            .execute_batch(
+                "CREATE TABLE galleries (
+                    id TEXT PRIMARY KEY,
+                    root_path TEXT NOT NULL UNIQUE,
+                    mode TEXT NOT NULL DEFAULT 'read-only',
+                    image_count INTEGER NOT NULL DEFAULT 0,
+                    total_size_bytes INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE gallery_images (
+                    id TEXT PRIMARY KEY,
+                    gallery_id TEXT NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
+                    relative_path TEXT NOT NULL,
+                    absolute_path TEXT NOT NULL,
+                    hash TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    format TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    added_at TEXT NOT NULL
+                );",
+            )
+            .expect("pre-migration schema");
+        driver
+            .execute(
+                "INSERT INTO galleries (id, root_path, mode, image_count, total_size_bytes, created_at, updated_at) \
+                 VALUES ('g1', '/tmp/g', 'read-only', 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                &[],
+            )
+            .expect("seed gallery");
+        driver
+            .execute(
+                "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at) \
+                 VALUES ('i1', 'g1', 'a.png', '/tmp/g/a.png', 'aaa', 100, 200, 'png', 1024, '2026-01-01T00:00:00Z')",
+                &[],
+            )
+            .expect("seed image");
+
+        // Migration: init_schema adds media_type with default 'image'.
+        GalleryStore::from_driver(driver.clone()).expect("migrated store init");
+        let rows = driver
+            .query("SELECT media_type FROM gallery_images WHERE id = 'i1'", &[])
+            .expect("read migrated column");
+        assert_eq!(
+            rows.first().and_then(|row| row.get_str(0).ok()),
+            Some("image"),
+            "pre-migration rows must default to media_type='image'"
+        );
+
+        // Idempotency: re-running init_schema on the migrated DB succeeds
+        // (the column-exists guard skips the duplicate ALTER).
+        GalleryStore::from_driver(driver).expect("idempotent re-init");
     }
 
     #[test]

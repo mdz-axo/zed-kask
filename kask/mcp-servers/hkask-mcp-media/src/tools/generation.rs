@@ -353,15 +353,40 @@ impl MediaServer {
                     .map_err(|e| classify_inference_error("Variant generation failed", e))?;
 
                 // The provider may return multiple images in data[]. Extract
-                // each one, persist it, and build a media block for it.
-                let data_array = result
-                    .get("data")
-                    .and_then(|d| d.as_array());
-                let variants = if let Some(data) = data_array {
-                    let mut blocks = Vec::with_capacity(data.len());
-                    for item in data {
-                        // Construct a single-image result for persistence.
-                        let single_result = serde_json::json!({ "data": [item] });
+                // each one, persist it, and build a media block for it. When the
+                // provider returns a single image per call (no data[] array),
+                // issue additional calls until `count` variants are collected
+                // (capped at `count` total provider calls).
+                let mut variants: Vec<serde_json::Value> = Vec::with_capacity(count as usize);
+                let mut pending_result = Some(result);
+                let mut attempts = 0;
+                while variants.len() < count as usize && attempts < count as usize {
+                    attempts += 1;
+                    let result = match pending_result.take() {
+                        Some(first) => first,
+                        None => self
+                            .vision_port
+                            .media_generate("generate_image", &media_params)
+                            .await
+                            .map_err(|e| {
+                                classify_inference_error("Variant generation failed", e)
+                            })?,
+                    };
+                    let single_results: Vec<serde_json::Value> = match result
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                    {
+                        Some(data) => data
+                            .iter()
+                            .map(|item| serde_json::json!({ "data": [item] }))
+                            .collect(),
+                        // Provider returned a single-image response — use it as-is.
+                        None => vec![result],
+                    };
+                    for single_result in single_results {
+                        if variants.len() >= count as usize {
+                            break;
+                        }
                         match persist_generated_asset(self, &single_result, "image").await {
                             Ok(path) => {
                                 tracing::info!(
@@ -376,48 +401,36 @@ impl MediaServer {
                                 "Failed to persist variant (tool result still carries the provider URL)"
                             ),
                         }
-                        let block = crate::media_block::enrich_with_omc_and_provenance(
+                        variants.push(crate::media_block::enrich_with_omc_and_provenance(
                             single_result,
                             "generate_variants",
                             "image",
                             serde_json::to_value(&media_params)
                                 .unwrap_or(serde_json::Value::Null),
                             None,
-                        );
-                        blocks.push(block);
+                        ));
                     }
-                    blocks
-                } else {
-                    // Provider returned a single-image response — persist and
-                    // return as a single-element array.
-                    match persist_generated_asset(self, &result, "image").await {
-                        Ok(path) => {
-                            tracing::info!(
-                                target: "hkask.mcp.media",
-                                path = %path.display(),
-                                "Variant persisted to data directory"
-                            );
-                        }
-                        Err(error) => tracing::warn!(
-                            target: "hkask.mcp.media",
-                            %error,
-                            "Failed to persist variant"
-                        ),
-                    }
-                    vec![crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "generate_variants",
-                        "image",
-                        serde_json::to_value(&media_params)
-                            .unwrap_or(serde_json::Value::Null),
-                        None,
-                    )]
-                };
+                }
+                // Top-level display_hints (one fenced media block per variant)
+                // follows the system-prompt contract used by gallery_search /
+                // gallery_find_similar, so the model can copy each block into its
+                // reply for grid display. The per-variant detail (with its own
+                // display_hint) stays in `variants`.
+                let display_hints: Vec<String> = variants
+                    .iter()
+                    .filter_map(|variant| {
+                        variant
+                            .get("display_hint")
+                            .and_then(|hint| hint.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect();
                 Ok(serde_json::json!({
                     "prompt": prompt,
                     "count_requested": count,
                     "count_returned": variants.len(),
                     "variants": variants,
+                    "display_hints": display_hints,
                 }))
             },
         )

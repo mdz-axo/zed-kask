@@ -638,6 +638,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let swarm_panel_button = cx.new(|_| swarm_panel::panel_button::new());
         let kanban_panel_button = cx.new(|_| kanban_panel::panel_button::new());
         let portfolio_panel_button = cx.new(|_| portfolio_panel::panel_button::new());
+        let media_panel_button = cx.new(|_| media_panel::panel_button::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -649,6 +650,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_right_item(swarm_panel_button, window, cx);
             status_bar.add_right_item(kanban_panel_button, window, cx);
             status_bar.add_right_item(portfolio_panel_button, window, cx);
+            status_bar.add_right_item(media_panel_button, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);

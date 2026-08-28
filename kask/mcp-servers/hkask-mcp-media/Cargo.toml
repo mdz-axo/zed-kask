@@ -42,6 +42,9 @@ path = "src/hkask_mcp_media.rs"
 name = "hkask-mcp-media"
 path = "src/main.rs"
 
+[build-dependencies]
+regex.workspace = true
+
 [lints]
 workspace = true
 
