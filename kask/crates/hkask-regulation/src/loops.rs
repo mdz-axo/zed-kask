@@ -27,6 +27,7 @@ pub(crate) mod signals;
 pub(crate) use actions::{ActionType, RegulatoryAction};
 pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
 pub use core::CurationInput;
+pub use core::{LoopView, Reading, SenseReading, LoopModel, OutcomeTrust, LivenessTrust};
 pub(crate) use core::ImpactReport;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics, TriggerOrigin};
 pub(crate) use signals::Signal;

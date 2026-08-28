@@ -96,6 +96,10 @@ pub struct HealthSnapshot {
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
     pub escalation_count: usize,
+    /// Trust/absence assembly verdict (Fermi `LoopView`). Composes liveness,
+    /// loop_model, panel_absence, and outcome_trust into a single `Reading`
+    /// that distinguishes wiring-closed from turning from working.
+    pub loop_view: crate::loops::LoopView,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -239,6 +243,69 @@ impl MetacognitionLoop {
         }
     }
 
+    /// Compute the `LoopView` (trust/absence assembly) from the current
+    /// ledger health and regulation health.
+    ///
+    /// Derives the four module readings:
+    /// - `liveness_trust`: `NeverRun` if `total_cycles == 0`, otherwise `Live`.
+    /// - `loop_model`: `NotProducing` if `total_cycles == 0`, `Stalled` if
+    ///   cycles ran but no actions were verified, `Producing` if actions exist.
+    /// - `panel_absence`: `Idle` if `total_cycles == 0`, otherwise `Empty`
+    ///   (the sensor ticked and returned a real deficit value, including 0).
+    /// - `outcome_trust`: `Unverified` if no verified actions, `Trusted` if
+    ///   effectiveness >= 0.5, `Untrusted` if effectiveness < 0.5.
+    fn compute_loop_view(
+        regulation_health: &hkask_types::regulation::RegulationHealth,
+    ) -> crate::loops::LoopView {
+        use crate::loops::{LivenessTrust, LoopModel, OutcomeTrust, SenseReading};
+
+        let total_cycles = regulation_health.total_cycles;
+        let total_verified =
+            regulation_health.accepted + regulation_health.staged + regulation_health.blocked;
+
+        // Liveness: has the writer ever run?
+        let liveness_trust = if total_cycles == 0 {
+            LivenessTrust::NeverRun
+        } else {
+            LivenessTrust::Live
+        };
+
+        // Loop model: does the chain produce?
+        let loop_model = if total_cycles == 0 {
+            LoopModel::NotProducing
+        } else if total_verified == 0 {
+            LoopModel::Stalled
+        } else {
+            LoopModel::Producing
+        };
+
+        // Panel absence: is the sense input a real zero or an absence?
+        let panel_absence = if total_cycles == 0 {
+            SenseReading::Idle
+        } else {
+            SenseReading::Empty
+        };
+
+        // Outcome trust: does output carry the signal?
+        let outcome_trust = if total_verified == 0 {
+            OutcomeTrust::Unverified
+        } else {
+            let effectiveness = regulation_health.effectiveness();
+            if effectiveness >= 0.5 {
+                OutcomeTrust::Trusted
+            } else {
+                OutcomeTrust::Untrusted
+            }
+        };
+
+        crate::loops::LoopView::new(
+            loop_model,
+            panel_absence,
+            outcome_trust,
+            liveness_trust,
+        )
+    }
+
     /// Execute one sense→compare→compute→act cycle.
     pub async fn tick(&self) {
         // ── Sense ──────────────────────────────────────────────────────
@@ -253,6 +320,7 @@ impl MetacognitionLoop {
             variety_deficit: ledger_health.overall_deficit,
             critical_alerts: ledger_health.critical_count,
             regulation_effectiveness: regulation_health.effectiveness(),
+            loop_view: Self::compute_loop_view(&regulation_health),
             ledger_health,
             regulation_health,
             // Filled in after `compare` produces the alerts below.

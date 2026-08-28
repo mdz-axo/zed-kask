@@ -128,7 +128,7 @@ impl TaskBoard {
         let status = match evaluator_pass {
             Some(true) => TaskStatus::Complete,
             Some(false) => TaskStatus::Failed,
-            None => TaskStatus::Complete, // no evaluator + non-empty response = complete
+            None => TaskStatus::Complete, // no evaluator = complete (the caller decides to call this only on a non-error delegation)
         };
 
         if let Some(entry) = self.tasks.iter_mut().find(|t| t.task_id == task_id) {
@@ -381,5 +381,73 @@ mod tests {
 
         // Clean up.
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn task_board_persists_across_load_cycles() {
+        // Pins the PDCA loop-closure property: `swarm_execute_plan_local`
+        // writes to the board, and `swarm_task_board` reads it. The board
+        // must survive a save → load cycle with all fields intact so ORIENT
+        // can see durable task progress ("task 3 failed twice, task 5
+        // succeeded") across PDCA iterations.
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-task-board-persist-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let swarm_id = "pdca-test-swarm";
+
+        // First PDCA iteration: two tasks, one pass one fail.
+        let mut board = TaskBoard::default();
+        board.record_attempt("task-analyst-aaa", "analyst", "analyze market", Some(true), Some("bullish".into()));
+        board.record_failure("task-researcher-bbb", "researcher", "search news", "timeout");
+        board.save(dir.to_str().unwrap(), swarm_id).expect("save iteration 1");
+
+        // Second PDCA iteration: reload, retry the failed task, it passes.
+        let mut board = TaskBoard::load(dir.to_str().unwrap(), swarm_id).expect("load iteration 2");
+        assert_eq!(board.tasks.len(), 2, "both tasks survived the cycle");
+        board.record_attempt("task-researcher-bbb", "researcher", "search news", Some(true), Some("found article".into()));
+        board.save(dir.to_str().unwrap(), swarm_id).expect("save iteration 2");
+
+        // Third PDCA iteration: reload and verify the accumulated state.
+        let loaded = TaskBoard::load(dir.to_str().unwrap(), swarm_id).expect("load iteration 3");
+        assert_eq!(loaded.tasks.len(), 2, "no new tasks — same task_id updated");
+
+        let analyst = loaded.tasks.iter().find(|t| t.agent_name == "analyst").expect("analyst task");
+        assert_eq!(analyst.status, TaskStatus::Complete);
+        assert_eq!(analyst.attempt_count, 1);
+        assert_eq!(analyst.fail_count, 0);
+
+        let researcher = loaded.tasks.iter().find(|t| t.agent_name == "researcher").expect("researcher task");
+        assert_eq!(researcher.status, TaskStatus::Complete, "retried task now passes");
+        assert_eq!(researcher.attempt_count, 2, "two attempts: first failed, second passed");
+        assert_eq!(researcher.fail_count, 1, "one failure from the first attempt");
+
+        // The board reports all tasks terminal — ORIENT can see the swarm
+        // has no pending work.
+        assert!(loaded.all_terminal(), "all tasks are terminal after retry");
+        assert!(loaded.all_complete(), "all tasks are complete after retry");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn task_board_load_returns_empty_for_nonexistent_swarm() {
+        // A swarm with no task board file must return an empty board, not an
+        // error — absence ≠ error (mirrors LocalSwarmRegistry's missing-dir
+        // policy).
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-task-board-empty-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let board = TaskBoard::load(dir.to_str().unwrap(), "nonexistent-swarm").expect("load");
+        assert!(board.tasks.is_empty());
+        assert!(!board.all_terminal(), "empty board is NOT all_terminal");
+        assert!(!board.all_complete(), "empty board is NOT all_complete");
     }
 }

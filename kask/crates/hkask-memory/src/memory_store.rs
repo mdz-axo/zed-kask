@@ -1174,4 +1174,76 @@ mod tests {
         assert_eq!(normalize_value("  multiple   spaces  "), "multiple spaces");
         assert_eq!(normalize_value(""), "");
     }
+
+    #[test]
+    fn normalize_value_strips_punctuation_from_numeric_strings() {
+        // Documents the aggressive punctuation stripping: all ASCII
+        // punctuation is removed, not just trailing. This means "3.14" and
+        // "314" normalize to the same key. This is intentional for ticker-like
+        // values ("AAPL." == "aapl") but may surprise for decimal strings.
+        // Non-string JSON values (numbers) are skipped by dedup entirely, so
+        // this only affects numeric values stored as JSON strings.
+        assert_eq!(normalize_value("3.14"), "314");
+        assert_eq!(normalize_value("3,14"), "314");
+        assert_eq!(normalize_value("3-14"), "314");
+        // Values that differ only in punctuation are treated as duplicates.
+        assert_eq!(normalize_value("3.14"), normalize_value("314"));
+        // But values with different digits are NOT duplicates.
+        assert_ne!(normalize_value("3.14"), normalize_value("3.15"));
+    }
+
+    #[test]
+    fn h_mems_by_entity_prefix_finds_both_curator_and_shared_turns() {
+        // The curator_memory_extract tool queries both `chat:thread:<id>`
+        // (curator-perspective turns) and `curator:thread:<id>` (shared copies
+        // of all turns including non-curator). This test pins that both
+        // prefixes return results when h_mems are stored under them, so
+        // non-curator turns are not invisible to extraction.
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        // Store a curator-perspective turn under `chat:thread:`.
+        let curator_turn = hkask_storage::HMem::new(
+            "chat:thread:test-thread",
+            "chatted",
+            serde_json::Value::String("curator turn content".to_string()),
+            webid,
+        );
+        store.store(curator_turn).expect("store curator turn");
+
+        // Store a shared (non-curator) turn under `curator:thread:`.
+        let shared_turn = hkask_storage::HMem::new(
+            "curator:thread:test-thread",
+            "turn",
+            serde_json::Value::String("shared turn content".to_string()),
+            webid,
+        );
+        store.store(shared_turn).expect("store shared turn");
+
+        // Query the `chat:thread:` prefix — finds the curator turn.
+        let chat_results = store
+            .h_mems_by_entity_prefix("chat:thread:test-thread")
+            .expect("query chat prefix");
+        assert_eq!(
+            chat_results.len(),
+            1,
+            "chat:thread: prefix finds the curator-perspective turn"
+        );
+
+        // Query the `curator:thread:` prefix — finds the shared turn.
+        let curator_results = store
+            .h_mems_by_entity_prefix("curator:thread:test-thread")
+            .expect("query curator prefix");
+        assert_eq!(
+            curator_results.len(),
+            1,
+            "curator:thread: prefix finds the shared turn"
+        );
+
+        // Neither prefix alone finds both — the tool must query both.
+        assert_ne!(
+            chat_results[0].entity, curator_results[0].entity,
+            "the two prefixes return different h_mems"
+        );
+    }
 }

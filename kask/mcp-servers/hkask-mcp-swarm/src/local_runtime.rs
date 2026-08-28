@@ -510,23 +510,43 @@ impl LocalSwarmRuntime {
         // it does NOT debit the ledger.
         let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
-        // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
-        // `execution_fee`), summed across tool-loop rounds.
-        //
-        // `cost` stays capped at `credits_authorized` — that is the operator's
-        // declared budget and what the ledger charges. But the cap makes the
-        // recorded figure UNDER-state real spend whenever a delegation overruns
-        // it, and the local ledger is now purely a reconciliation surface, so a
-        // silent understatement corrupts the only data that surface exists to
-        // provide. `cost_uncapped` is carried alongside so the gap is visible,
-        // and a bounded overrun is warned about rather than swallowed.
+        Ok(self.debit_and_build(
+            raw,
+            &agent.agent_id,
+            credits_authorized,
+            started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        ))
+    }
+
+    /// Compute cost, record the spend, and build a `LocalDelegateResult` from
+    /// a raw delegate result. Shared by `delegate` (sequential) and
+    /// `delegate_batch` (parallel) so the debit logic stays in one place.
+    ///
+    /// `cost` stays capped at `credits_authorized` — the operator's declared
+    /// budget and what the ledger charges. The cap makes the recorded figure
+    /// under-state real spend on overruns; `cost_uncapped` is carried alongside
+    /// so the gap is visible, and a bounded overrun is warned about rather
+    /// than swallowed.
+    ///
+    /// `balance` stays `None` when it could not be measured. It must NOT fall
+    /// back to a number: SENSE reads this as the Onto4MAT `energy` property and
+    /// DECIDE branches on it, so a fabricated value would be read as a real
+    /// measurement (the `.rules` "unwrap_or(0) on regulation sense inputs is a
+    /// broken feedback loop" trap — a failed read is not a measured zero).
+    fn debit_and_build(
+        &self,
+        raw: RawDelegateResult,
+        agent_id: &str,
+        credits_authorized: u32,
+        latency_ms: u64,
+    ) -> LocalDelegateResult {
         let tokens = raw.tokens_used;
         let cost_uncapped = std::cmp::max(1, tokens / 1000);
         let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
         if cost_uncapped > cost {
             tracing::warn!(
                 target: "hkask.mcp.swarm",
-                agent = %agent.agent_id,
+                agent = %agent_id,
                 tokens,
                 recorded_cost = cost,
                 actual_cost = cost_uncapped,
@@ -537,35 +557,23 @@ impl LocalSwarmRuntime {
             );
         }
 
-        // Record the spend after the agent run succeeds. Accounting only: a
-        // failure here must not fail a delegation that already happened (and
-        // already consumed the operator's inference credentials). Losing the
-        // record is a reconciliation gap, so it is logged loudly.
-        //
-        // `balance` stays `None` when it could not be measured. It must NOT fall
-        // back to a number: SENSE reads this as the Onto4MAT `energy` property and
-        // DECIDE branches on it, so a fabricated value would be read as a real
-        // measurement (the `.rules` "unwrap_or(0) on regulation sense inputs is a
-        // broken feedback loop" trap — a failed read is not a measured zero).
-        let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
+        let reference = format!("delegate-{agent_id}-{}", uuid::Uuid::new_v4());
         let new_balance: Option<i64> = match self.record_spend(cost, &reference) {
             Ok(balance) => Some(balance),
             Err(error) => {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
-                    agent = %agent.agent_id,
+                    agent = %agent_id,
                     cost,
                     %error,
                     "local spend could not be recorded - the delegation succeeded but the \
                      ledger is now behind by this amount (reconciliation gap)"
                 );
-                // Try one direct read: the commit may have failed while the
-                // balance remains readable. Still `None` if that also fails.
                 let fallback = self.balance();
                 if fallback.is_none() {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
-                        agent = %agent.agent_id,
+                        agent = %agent_id,
                         "balance is unmeasurable after a failed spend record - reporting \
                          null rather than a fabricated value"
                     );
@@ -574,25 +582,21 @@ impl LocalSwarmRuntime {
             }
         };
 
-        Ok(LocalDelegateResult {
-            agent_id: agent.agent_id.clone(),
+        LocalDelegateResult {
+            agent_id: agent_id.to_string(),
             response: raw.text,
             model: raw.model,
             tokens_used: tokens,
             cost,
             cost_uncapped,
             balance: new_balance,
-            latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            latency_ms,
             tool_calls: raw.tool_calls,
-            // The server cannot judge task success — the executor (Curator or
-            // human) stamps this after running a declared deterministic
-            // evaluator against `response`. Left `None` here; ORIENT reads it
-            // from the executor-populated `delegate_results`.
             task_success: None,
             bind_matched: None,
             rollout_id: Some(raw.rollout_id),
             reasoning_steps: raw.reasoning_steps,
-        })
+        }
     }
 
     /// Run N delegations concurrently (inference calls in parallel), then
@@ -651,13 +655,30 @@ impl LocalSwarmRuntime {
             match join_result {
                 Ok((index, result)) => raw_results.push((index, result)),
                 Err(e) => {
-                    // A panicked task — record as an error at an unknown index.
-                    // This is rare but must not crash the batch.
+                    // A panicked task loses its index (JoinError does not carry
+                    // it). Log and fill the gap after all joins complete.
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         error = %e,
-                        "parallel delegation task panicked"
+                        "parallel delegation task panicked — filling missing index after join"
                     );
+                }
+            }
+        }
+        // Fill missing indices (panicked tasks) with errors so the sort + zip
+        // with agent_ids stays aligned. Without this, a missing entry shifts
+        // every subsequent result to the wrong agent.
+        if raw_results.len() < total {
+            let present: std::collections::HashSet<usize> =
+                raw_results.iter().map(|(i, _)| *i).collect();
+            for index in 0..total {
+                if !present.contains(&index) {
+                    raw_results.push((
+                        index,
+                        Err(LocalSwarmError::InvalidInput(
+                            "parallel delegation task panicked".to_string(),
+                        )),
+                    ));
                 }
             }
         }
@@ -669,8 +690,9 @@ impl LocalSwarmRuntime {
 
         // Phase 2: debit the ledger sequentially (TOCTOU-safe).
         let mut results = Vec::with_capacity(total);
-        for (raw_result, agent_id) in raw_results.into_iter().zip(agent_ids.iter()) {
-            let credits_authorized = credits[results.len()];
+        for (raw_result, (agent_id, credits_authorized)) in
+            raw_results.into_iter().zip(agent_ids.iter().zip(credits.iter()))
+        {
             let raw = match raw_result {
                 Ok(r) => r,
                 Err(e) => {
@@ -678,49 +700,7 @@ impl LocalSwarmRuntime {
                     continue;
                 }
             };
-            let tokens = raw.tokens_used;
-            let cost_uncapped = std::cmp::max(1, tokens / 1000);
-            let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
-            if cost_uncapped > cost {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    agent = %agent_id,
-                    tokens,
-                    recorded_cost = cost,
-                    actual_cost = cost_uncapped,
-                    credits_authorized,
-                    "parallel delegation exceeded its authorized budget"
-                );
-            }
-            let reference = format!("delegate-{agent_id}-{}", uuid::Uuid::new_v4());
-            let new_balance: Option<i64> = match self.record_spend(cost, &reference) {
-                Ok(balance) => Some(balance),
-                Err(error) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent = %agent_id,
-                        cost,
-                        %error,
-                        "parallel spend could not be recorded - reconciliation gap"
-                    );
-                    self.balance()
-                }
-            };
-            results.push(Ok(LocalDelegateResult {
-                agent_id: agent_id.clone(),
-                response: raw.text,
-                model: raw.model,
-                tokens_used: tokens,
-                cost,
-                cost_uncapped,
-                balance: new_balance,
-                latency_ms: 0,
-                tool_calls: raw.tool_calls,
-                task_success: None,
-                bind_matched: None,
-                rollout_id: Some(raw.rollout_id),
-                reasoning_steps: raw.reasoning_steps,
-            }));
+            results.push(Ok(self.debit_and_build(raw, agent_id, *credits_authorized, 0)));
         }
         results
     }

@@ -290,6 +290,253 @@ impl LoopMetrics {
     }
 }
 
+
+// ── Trust/absence assembly layer (Fermi LoopView) ──────────────────────────
+
+/// Four-way absence distinction for sense inputs (Fermi `panel_absence` module).
+///
+/// The `.rules` `unwrap_or(0)` trap exists because this distinction is missing:
+/// a DB outage returning 0 is read as "no deviation." This enum makes the
+/// distinction a type — `Empty` is a real zero, `Fault` is an error, `Unknown`
+/// is a None, and `Idle` means the sensor hasn't ticked yet.
+///
+/// Fermi's defining discipline: empty is never blank. `idle` / `fault` /
+/// `unknown` are distinct; unobserved counters are neither healthy nor broken.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SenseReading {
+    /// No data — counter at 0, but the sensor ticked and returned 0. This is
+    /// a real measurement, not an absence.
+    Empty,
+    /// Wired but not yet ticked — the sensor has never run. Distinct from
+    /// `Empty` (which is a real zero) and `Fault` (which is an error).
+    Idle,
+    /// Tick fired but returned an error — the sensor is broken. Distinct
+    /// from `Unknown` (which is a None, not an error).
+    Fault,
+    /// Tick fired but returned None — the sensor can't tell. Distinct from
+    /// `Fault` (which is an error) and `Empty` (which is a real zero).
+    Unknown,
+}
+
+/// Does the loop's output chain produce? (Fermi `loop_model` module)
+///
+/// Answers: is the loop emitting actions in response to deviations? A loop
+/// that is wired but never ticks is `NotProducing`; a loop that ticks but
+/// emits no actions is `Stalled`; a loop that ticks and emits actions is
+/// `Producing`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopModel {
+    /// The chain is producing — ticks fire and actions are emitted.
+    Producing,
+    /// The chain is stalled — ticks fire but no actions are emitted. The loop
+    /// is turning but not producing output.
+    Stalled,
+    /// The chain is not producing — ticks are not firing. The loop is wired
+    /// but not turning.
+    NotProducing,
+}
+
+/// Does the output carry the signal? (Fermi `outcome_trust` module)
+///
+/// Answers: when the loop produces actions, do those actions actually move
+/// the metric? This is the impact-verification layer — `Trusted` means the
+/// action improved the metric (verified via `ImpactReport`), `Untrusted` means
+/// the action worsened it, and `Unverified` means no impact report exists.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeTrust {
+    /// Output is trusted — impact verified, action improved the metric.
+    Trusted,
+    /// Output is untrusted — impact verified, action worsened the metric.
+    Untrusted,
+    /// Output is unverified — no impact reports, can't tell. Distinct from
+    /// `Trusted` (which means verified-and-good) and `Untrusted` (which means
+    /// verified-and-bad). `Unverified` means we don't know.
+    Unverified,
+}
+
+/// Has the writer ever run? (Fermi `liveness_trust` module)
+///
+/// Answers: has the loop's tick ever fired? `NeverRun` means the loop is wired
+/// but has never ticked (the dominant failure mode — a loop that reports
+/// success while having never run). `Stale` means the loop has run before but
+/// the last tick is outside the expected interval. `Live` means the loop is
+/// ticking within the expected interval.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LivenessTrust {
+    /// The writer has run recently — last tick within the expected interval.
+    Live,
+    /// The writer has run before but is stale — last tick outside the interval.
+    Stale,
+    /// The writer has never run — no tick history. This is the wiring-closed
+    /// state: the loop is wired but has never turned.
+    NeverRun,
+}
+
+/// The composite reading from the trust/absence assembly layer.
+///
+/// This is the Fermi `LoopView.reading` — the four modules compose into a
+/// single verdict that distinguishes wiring-closed from turning from working.
+/// The defining discipline: **wiring-closed ≠ turning ≠ working**.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Reading {
+    /// The loop is turning and producing verified impact. This is the
+    /// "working" state — the loop is actually doing its job.
+    Turning,
+    /// The loop is wired but not turning — ticks are not firing. This is the
+    /// dominant failure mode: a loop that reports success while having never
+    /// run. Distinct from `Broken` (which means the loop IS turning but not
+    /// working).
+    WiringClosed,
+    /// The loop is turning but not working — actions are not improving
+    /// metrics, or the sensor is broken. Distinct from `WiringClosed` (which
+    /// means the loop is not turning at all).
+    Broken,
+    /// The loop is unobserved — not enough data to tell. Distinct from all
+    /// other variants: we genuinely cannot determine the state.
+    Unobserved,
+}
+
+impl std::fmt::Display for Reading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Reading::Turning => write!(f, "turning"),
+            Reading::WiringClosed => write!(f, "wiring-closed"),
+            Reading::Broken => write!(f, "broken"),
+            Reading::Unobserved => write!(f, "unobserved"),
+        }
+    }
+}
+
+/// Trust/absence assembly layer (Fermi `LoopView`).
+///
+/// Composes four modules into a `Reading`:
+/// - `loop_model` — does the chain produce?
+/// - `panel_absence` — is empty idle/faulty/unknowable?
+/// - `outcome_trust` — does output carry the signal?
+/// - `liveness_trust` — has the writer ever run?
+///
+/// The defining discipline: **wiring-closed ≠ turning ≠ working**. The
+/// dominant failure mode is a loop that reports success while having never
+/// run — `LoopMetrics` alone cannot distinguish "wired but never ticked"
+/// from "ticked but returned no impact reports." `LoopView` makes this
+/// distinction by composing liveness (has the writer run?) with loop_model
+/// (does the chain produce?) and outcome_trust (does output carry the
+/// signal?).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LoopView {
+    /// Does the chain produce? (Fermi `loop_model`)
+    pub loop_model: LoopModel,
+    /// Is empty idle/faulty/unknowable? (Fermi `panel_absence`)
+    pub panel_absence: SenseReading,
+    /// Does output carry the signal? (Fermi `outcome_trust`)
+    pub outcome_trust: OutcomeTrust,
+    /// Has the writer ever run? (Fermi `liveness_trust`)
+    pub liveness_trust: LivenessTrust,
+    /// The composite reading — wiring-closed, turning, broken, or unobserved.
+    pub reading: Reading,
+}
+
+impl LoopView {
+    /// Construct a `LoopView` from the four module readings, computing the
+    /// composite `Reading` via [`compute_reading`](Self::compute_reading).
+    pub fn new(
+        loop_model: LoopModel,
+        panel_absence: SenseReading,
+        outcome_trust: OutcomeTrust,
+        liveness_trust: LivenessTrust,
+    ) -> Self {
+        let reading =
+            Self::compute_reading(loop_model, panel_absence, outcome_trust, liveness_trust);
+        Self {
+            loop_model,
+            panel_absence,
+            outcome_trust,
+            liveness_trust,
+            reading,
+        }
+    }
+
+    /// Compute the composite `Reading` from the four module readings.
+    ///
+    /// Priority order (first match wins):
+    /// 1. `NeverRun` -> `WiringClosed` — the loop is wired but has never
+    ///    ticked. This is the dominant failure mode.
+    /// 2. `Fault` -> `Broken` — the sensor is broken, so the loop is turning
+    ///    but can't sense.
+    /// 3. `Unknown` -> `Unobserved` — we can't read the sensor.
+    /// 4. `NotProducing` -> `WiringClosed` — the chain is wired but not
+    ///    turning (no ticks firing).
+    /// 5. `Untrusted` -> `Broken` — the loop is turning but actions are
+    ///    making things worse.
+    /// 6. `Trusted` + `Producing` -> `Turning` — the loop is turning and
+    ///    working.
+    /// 7. Default -> `Unobserved` — not enough data to tell (e.g.,
+    ///    `Unverified` outcome, or `Stalled` loop model).
+    pub fn compute_reading(
+        loop_model: LoopModel,
+        panel_absence: SenseReading,
+        outcome_trust: OutcomeTrust,
+        liveness_trust: LivenessTrust,
+    ) -> Reading {
+        // Priority 1: If the writer has never run, the loop is wired but not
+        // turning. This is the dominant failure mode — a loop that reports
+        // success while having never run.
+        if liveness_trust == LivenessTrust::NeverRun {
+            return Reading::WiringClosed;
+        }
+
+        // Priority 2: If the sensor is broken, the loop is turning but can't
+        // sense. This is distinct from `WiringClosed` (the loop IS running,
+        // it just can't read its inputs).
+        if panel_absence == SenseReading::Fault {
+            return Reading::Broken;
+        }
+
+        // Priority 3: If we can't read the sensor, we can't tell the state.
+        if panel_absence == SenseReading::Unknown {
+            return Reading::Unobserved;
+        }
+
+        // Priority 4: If the chain is not producing, the loop is wired but
+        // not turning — ticks are not firing.
+        if loop_model == LoopModel::NotProducing {
+            return Reading::WiringClosed;
+        }
+
+        // Priority 5: If the output is untrusted, the loop is turning but
+        // not working — actions are making things worse.
+        if outcome_trust == OutcomeTrust::Untrusted {
+            return Reading::Broken;
+        }
+
+        // Priority 6: If the output is trusted and the chain is producing,
+        // the loop is turning and working.
+        if outcome_trust == OutcomeTrust::Trusted && loop_model == LoopModel::Producing {
+            return Reading::Turning;
+        }
+
+        // Default: not enough data to tell. This covers:
+        // - `Unverified` outcome (running but no impact reports)
+        // - `Stalled` loop model (ticks fire but no actions)
+        // - `Idle` panel absence (sensor hasn't ticked yet, but writer has)
+        Reading::Unobserved
+    }
+}
 // ── Inter-loop channel types ───────────────────────────────────────────────
 
 /// Cybernetics sends `Alert` through the `mpsc::Sender<CurationInput>` channel.
@@ -407,5 +654,154 @@ mod tests {
         // gain and fidelity are 1.0 because no deviations (healthy state).
         assert_eq!(metrics.gain, 1.0);
         assert_eq!(metrics.fidelity_score, 1.0);
+    }
+
+    // ── LoopView tests (F2 + F5) ───────────────────────────────────────────
+
+    /// Pin F5: `SenseReading` has four distinct variants. Empty is never
+    /// blank — idle, fault, and unknown are distinct states, not a single
+    /// "no data" bucket.
+    #[test]
+    fn sense_reading_distinguishes_four_states() {
+        assert_ne!(SenseReading::Empty, SenseReading::Idle);
+        assert_ne!(SenseReading::Empty, SenseReading::Fault);
+        assert_ne!(SenseReading::Empty, SenseReading::Unknown);
+        assert_ne!(SenseReading::Idle, SenseReading::Fault);
+        assert_ne!(SenseReading::Idle, SenseReading::Unknown);
+        assert_ne!(SenseReading::Fault, SenseReading::Unknown);
+    }
+
+    /// Pin F2: `LoopView` composes four modules into a `Reading`. The
+    /// composition logic must distinguish wiring-closed (never ran) from
+    /// turning (running and verified) from broken (running but failing)
+    /// from unobserved (can't tell).
+    #[test]
+    fn loop_view_composes_four_modules_into_reading() {
+        // NeverRun -> WiringClosed (dominant failure mode: wired but never ticked)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Empty,
+            OutcomeTrust::Trusted,
+            LivenessTrust::NeverRun,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::WiringClosed,
+            "NeverRun -> WiringClosed regardless of other modules"
+        );
+
+        // Live + Fault -> Broken (sensor is broken, loop is turning but can't sense)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Fault,
+            OutcomeTrust::Trusted,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Broken,
+            "Fault sensor -> Broken (turning but can't sense)"
+        );
+
+        // Live + Unknown -> Unobserved (can't read the sensor)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Unknown,
+            OutcomeTrust::Trusted,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Unobserved,
+            "Unknown sensor -> Unobserved"
+        );
+
+        // Live + Empty + NotProducing -> WiringClosed (chain not producing)
+        let view = LoopView::new(
+            LoopModel::NotProducing,
+            SenseReading::Empty,
+            OutcomeTrust::Unverified,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::WiringClosed,
+            "NotProducing -> WiringClosed (wired but not turning)"
+        );
+
+        // Live + Empty + Producing + Untrusted -> Broken (actions making things worse)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Empty,
+            OutcomeTrust::Untrusted,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Broken,
+            "Untrusted -> Broken (turning but not working)"
+        );
+
+        // Live + Empty + Producing + Trusted -> Turning (working!)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Empty,
+            OutcomeTrust::Trusted,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Turning,
+            "Trusted + Producing + Live -> Turning"
+        );
+
+        // Live + Empty + Stalled + Unverified -> Unobserved (can't tell)
+        let view = LoopView::new(
+            LoopModel::Stalled,
+            SenseReading::Empty,
+            OutcomeTrust::Unverified,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Unobserved,
+            "Stalled + Unverified -> Unobserved (not enough data)"
+        );
+
+        // Stale + Empty + Producing + Trusted -> Turning (was running, still verified)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Empty,
+            OutcomeTrust::Trusted,
+            LivenessTrust::Stale,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Turning,
+            "Stale + Trusted + Producing -> Turning (stale but still verified)"
+        );
+
+        // Live + Idle + Producing + Unverified -> Unobserved (sensor hasn't ticked)
+        let view = LoopView::new(
+            LoopModel::Producing,
+            SenseReading::Idle,
+            OutcomeTrust::Unverified,
+            LivenessTrust::Live,
+        );
+        assert_eq!(
+            view.reading,
+            Reading::Unobserved,
+            "Idle sensor + Unverified -> Unobserved"
+        );
+    }
+
+    /// Pin F2: `Reading::Display` produces a human-readable string for each
+    /// variant. The Fermi `LoopView` produces "a Reading and a sentence."
+    #[test]
+    fn reading_display_provides_human_readable_string() {
+        assert_eq!(Reading::Turning.to_string(), "turning");
+        assert_eq!(Reading::WiringClosed.to_string(), "wiring-closed");
+        assert_eq!(Reading::Broken.to_string(), "broken");
+        assert_eq!(Reading::Unobserved.to_string(), "unobserved");
     }
 }

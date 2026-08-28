@@ -65,7 +65,7 @@ Do NOT use for:
 
 ```
 Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet
-Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5)
+Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Inspect `delegate_results[].reasoning_steps` for reasoning-loop detection (C1).
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
 Do:    Phase 5  — ACT              → Emit gated swarm_hire / swarm_delegate / swarm_delegate_local
@@ -121,7 +121,7 @@ sets/sums must be tracked consistently across loop iterations.
 | Component                           | What                                                                                                                                                                                                            | Enforcement point                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **C0** task-success `s`             | Deterministic evaluator verdict → fourth axis of `d`                                                                                                                                                            | CHECK template + manifest `task_success` input                                                                                                                                                                                                                                                                                                  |
-| **C1** second-order monitor         | Reasoning-loop + sensor-truth-divergence detection over the iteration log                                                                                                                                       | `swarm.second_order_monitor` `lisp_eval` call (step 9)                                                                                                                                                                                                                                                                                          |
+| **C1** second-order monitor         | Reasoning-loop + sensor-truth-divergence detection over the iteration log. When `reasoning_steps` are present in `delegate_results`, a model recording many `continue` steps without `final_answer` is a reasoning-loop signal. | `swarm.second_order_monitor` `lisp_eval` call (step 9)                                                                                                                                                                                                                                                                                          |
 | **C2** Go See cadence               | Scheduled human check every N convergences + event trigger                                                                                                                                                      | `cadence_every` param in the monitor; SENSE surfaces `go_see`                                                                                                                                                                                                                                                                                   |
 | **C3** failed-edit memory           | Anti-loop set; the FILTER drops moves matching prior failed signatures                                                                                                                                          | `swarm.filter_proposed_moves` `lisp_eval` call (step 4)                                                                                                                                                                                                                                                                                         |
 | **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
@@ -189,11 +189,30 @@ call `swarm_execute_plan_local` with the plan, collect the returned
 (`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
 `cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
 `executed_skills[]` (each `{skill, ok, error?}`), `task_success` (optional
-deterministic verdict). ORIENT attributes fault from
+deterministic verdict), `reasoning_steps[]` (each `{title, reasoning, action?,
+next_action, confidence?, round}` — present when the agent opts into reasoning
+via `capabilities.reasoning: true`). ORIENT attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and
 `delegate_results[].tool_calls[].ok` / `executed_skills[].ok`; `fault_count`
-accumulates; C6 reconfigures the most-blamed agent. Absent `delegate_results`,
-C5/C6 are inert (the planning process has no execution telemetry).
+accumulates; C6 reconfigures the most-blamed agent. When `reasoning_steps` is
+present, ORIENT inspects the trace for reasoning-loop detection (C1) — a model
+that records many `continue` steps without converging on `final_answer` is a
+second-order monitor signal, not a fault attribution signal. Absent
+`delegate_results`, C5/C6 are inert (the planning process has no execution
+telemetry).
+
+### The task board (durable task progress)
+
+When `swarm_execute_plan_local` is called with a `swarm_id`, task progress
+(status, attempt count, fail count, last result summary) is persisted to the
+swarm's task board (`<swarm_dir>/<swarm_id>/task_board.json`). The
+`swarm_task_board` MCP tool queries this board. ORIENT calls `swarm_task_board`
+when a `swarm_id` is available to see durable task progress across PDCA
+iterations ("task 3 failed twice, task 5 succeeded") without re-deriving it
+from `delegate_results`. The task board's `all_complete()` / `all_terminal()`
+flags are NOT convergence signals — convergence is the swarm-state distance
+`d` (see Convergence criterion). The board is an ORIENT input for fault
+attribution context, not a DECIDE input for convergence.
 
 ## Known limitations (audit 2026-08-03)
 

@@ -323,21 +323,25 @@ impl SwarmServer {
                     // Parallel mode: run inference concurrently, debit
                     // sequentially. Resolves the TOCTOU concern by deferring
                     // the debit, not by serializing the inference.
-                    let delegations: Vec<_> = req
-                        .delegations
-                        .iter()
-                        .filter_map(|entry| {
-                            self.local_registry
-                                .get(&entry.agent_name)
-                                .map(|agent| (agent, entry.task.clone(), entry.credits_authorized))
-                        })
-                        .collect();
-                    let not_found: Vec<_> = req
-                        .delegations
-                        .iter()
-                        .filter(|e| self.local_registry.get(&e.agent_name).is_none())
-                        .map(|e| e.agent_name.clone())
-                        .collect();
+                    //
+                    // Save the side-effect context (agent_name, task, produces)
+                    // for each found delegation so we can run validate_produces +
+                    // ingest_turn after delegate_batch returns — the batch
+                    // consumes the owned cards.
+                    let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
+                    let mut delegations: Vec<(LocalAgentCard, String, u32)> = Vec::new();
+                    let mut not_found: Vec<String> = Vec::new();
+                    for entry in &req.delegations {
+                        match self.local_registry.get(&entry.agent_name) {
+                            Some(agent) => {
+                                found_context.push((entry, agent.clone()));
+                                delegations.push((agent, entry.task.clone(), entry.credits_authorized));
+                            }
+                            None => {
+                                not_found.push(entry.agent_name.clone());
+                            }
+                        }
+                    }
                     let raw_results = runtime.delegate_batch(delegations, ceiling).await;
                     let mut results = Vec::new();
                     let mut failed = 0usize;
@@ -351,9 +355,34 @@ impl SwarmServer {
                             &format!("agent '{name}' not found in local registry"),
                         ));
                     }
-                    for result in raw_results {
+                    for (result, (entry, agent)) in raw_results.into_iter().zip(found_context.iter()) {
                         match result {
                             Ok(r) => {
+                                self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                                // Stigmergy (ACO pheromone trail) — mirrors
+                                // swarm_delegate_local so parallel fan-out
+                                // delegations record performance annotations.
+                                // Non-fatal.
+                                local_knowledge::record_delegation(
+                                    &self.local_memory,
+                                    &entry.agent_name,
+                                    r.latency_ms,
+                                    r.task_success.as_ref().map(|t| t.pass),
+                                    &r.response,
+                                )
+                                .await;
+                                // Episodic turn memory (shared knowledgebase) — mirrors
+                                // the sequential path so parallel fan-out delegations
+                                // build the KB too. Non-fatal.
+                                local_knowledge::ingest_turn(
+                                    &self.local_memory,
+                                    &runtime.inference(),
+                                    &entry.agent_name,
+                                    &entry.task,
+                                    &r.response,
+                                    &r.model,
+                                )
+                                .await;
                                 total_cost += r.cost;
                                 total_cost_uncapped += r.cost_uncapped;
                                 total_tokens += r.tokens_used;
@@ -362,7 +391,7 @@ impl SwarmServer {
                             Err(e) => {
                                 failed += 1;
                                 results.push(LocalDelegateResult::error_json(
-                                    "unknown",
+                                    &entry.agent_name,
                                     &e.to_string(),
                                 ));
                             }
@@ -408,6 +437,17 @@ impl SwarmServer {
                     {
                         Ok(r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            // Stigmergy (ACO pheromone trail) — mirrors
+                            // swarm_delegate_local so fan-out delegations
+                            // record performance annotations. Non-fatal.
+                            local_knowledge::record_delegation(
+                                &self.local_memory,
+                                &entry.agent_name,
+                                r.latency_ms,
+                                r.task_success.as_ref().map(|t| t.pass),
+                                &r.response,
+                            )
+                            .await;
                             // Episodic turn memory (shared knowledgebase) — mirrors
                             // swarm_delegate_local so fan-out delegations build
                             // the KB too. Non-fatal.
@@ -2204,6 +2244,26 @@ impl SwarmServer {
                     .map_err(map_local_swarm_error)?;
                 let ceiling = self.client.config().max_credits_per_dispatch;
 
+                // Load the task board when a swarm_id is provided so eval
+                // results persist across regression runs.
+                let swarm_id = req.swarm_id.clone();
+                let mut task_board = if let Some(ref sid) = swarm_id {
+                    match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
+                        Ok(board) => Some(board),
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                swarm_id = %sid,
+                                error = %e,
+                                "Failed to load task board for eval suite — progress will not persist"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 let mut case_results = Vec::with_capacity(req.cases.len());
                 let mut passed = 0usize;
                 let mut failed = 0usize;
@@ -2232,6 +2292,7 @@ impl SwarmServer {
                             .await
                         {
                             Ok(mut r) => {
+                                self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                                 case_cost += r.cost;
                                 case_tokens += r.tokens_used;
                                 if let Some(ev) = &entry.evaluator {
@@ -2253,6 +2314,48 @@ impl SwarmServer {
                                         case_pass = false;
                                     }
                                 }
+                                // Stigmergy + KB ingestion — mirrors
+                                // swarm_execute_plan_local so eval delegations
+                                // build the shared KB and pheromone trails.
+                                // Non-fatal.
+                                local_knowledge::record_delegation(
+                                    &self.local_memory,
+                                    &entry.agent_name,
+                                    r.latency_ms,
+                                    r.task_success.as_ref().map(|t| t.pass),
+                                    &r.response,
+                                )
+                                .await;
+                                local_knowledge::ingest_turn(
+                                    &self.local_memory,
+                                    &runtime.inference(),
+                                    &entry.agent_name,
+                                    &entry.task,
+                                    &r.response,
+                                    &r.model,
+                                )
+                                .await;
+                                // Record on the task board when a swarm_id is set.
+                                if let Some(ref mut board) = task_board {
+                                    let tid = entry.task_id.clone().unwrap_or_else(|| {
+                                        crate::task_board::derive_task_id(
+                                            &entry.agent_name,
+                                            &entry.task,
+                                        )
+                                    });
+                                    let summary = if r.response.len() > 200 {
+                                        format!("{}...", &r.response[..200])
+                                    } else {
+                                        r.response.clone()
+                                    };
+                                    board.record_attempt(
+                                        &tid,
+                                        &entry.agent_name,
+                                        &entry.task,
+                                        r.task_success.as_ref().map(|t| t.pass),
+                                        Some(summary),
+                                    );
+                                }
                                 delegation_results.push(serde_json::json!({
                                     "agent_name": entry.agent_name,
                                     "ok": true,
@@ -2263,6 +2366,21 @@ impl SwarmServer {
                             }
                             Err(e) => {
                                 case_pass = false;
+                                // Record the failure on the task board.
+                                if let Some(ref mut board) = task_board {
+                                    let tid = entry.task_id.clone().unwrap_or_else(|| {
+                                        crate::task_board::derive_task_id(
+                                            &entry.agent_name,
+                                            &entry.task,
+                                        )
+                                    });
+                                    board.record_failure(
+                                        &tid,
+                                        &entry.agent_name,
+                                        &entry.task,
+                                        &e.to_string(),
+                                    );
+                                }
                                 delegation_results.push(serde_json::json!({
                                     "agent_name": entry.agent_name,
                                     "ok": false,
@@ -2289,6 +2407,32 @@ impl SwarmServer {
                     }));
                 }
 
+                // Persist the task board if it was loaded.
+                if let Some(ref board) = task_board {
+                    if let Some(ref sid) = swarm_id {
+                        if let Err(e) = board.save(self.local_swarms.dir(), sid) {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                swarm_id = %sid,
+                                error = %e,
+                                "Failed to save task board for eval suite — progress not persisted"
+                            );
+                        }
+                    }
+                }
+                let task_summary = task_board.as_ref().map(|b| {
+                    let c = b.counts();
+                    serde_json::json!({
+                        "total": c.total,
+                        "pending": c.pending,
+                        "in_progress": c.in_progress,
+                        "complete": c.complete,
+                        "failed": c.failed,
+                        "all_terminal": b.all_terminal(),
+                        "all_complete": b.all_complete(),
+                    })
+                });
+
                 let balance: Option<i64> = runtime.balance();
                 let pass_rate = if req.cases.is_empty() {
                     0.0
@@ -2306,6 +2450,7 @@ impl SwarmServer {
                     "total_tokens": total_tokens,
                     "balance": balance,
                     "status": if failed == 0 { "PASSED" } else { "FAILED" },
+                    "task_board": task_summary,
                 }))
             },
         )

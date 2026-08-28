@@ -1306,16 +1306,14 @@ fn main() {
         });
         AppState::set_global(app_state.clone(), cx);
 
-        // D6/D11/MCP-launch (deferred): Wait for the Zed user to resolve, then
-        // replace the logging memory port with a real one, wire the context
-        // injector, and launch MCP servers.
+        // D6/D11/MCP-launch (deferred task): Provision the kask agent,
+        // wire the memory port, context injector, and launch MCP servers.
         //
-        // The agent name is derived from User::username (the GitHub-style
-        // login from the Zed account) via sanitize_name().
-        //
-        // If the user is already logged in (session restored), the upgrade
-        // happens immediately on the first watch tick. If not, the task waits
-        // until `authenticate()` (spawned below) completes.
+        // zed-kask: This task no longer blocks on the Zed user. The kask
+        // system has its own identity (curator WebID), its own DB passphrase
+        // (from the keychain), and its own DB paths. If the Zed user hasn't
+        // resolved, a fallback identity ("kask") is used. See the comment
+        // at the top of the spawn block for the full rationale.
         //
         // Clone `tool_port` for the model-dependent skill execution task
         // (below) before it's moved into the deferred task. The model-dependent
@@ -1326,7 +1324,7 @@ fn main() {
             tool_port.clone();
         {
             let user_store = app_state.user_store.clone();
-            let mcp_runtime_for_deferred = mcp_runtime_for_startup;
+            let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
             let servers_to_start_clone = servers_to_start;
             let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
             // Captures for the model-dependent wiring block (moved here from
@@ -1340,34 +1338,38 @@ fn main() {
             let _panel_regulation_ledger_deferred = panel_regulation_ledger;
             let app_state_for_deferred = app_state.clone();
             cx.spawn(async move |cx| {
-                let mut current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
-
-                // Wait for the user to resolve.
-                while current_user.borrow().is_none() {
-                    // postage::watch::Receiver implements Stream — `.next()` yields
-                    // the latest value when it changes.
-                    if current_user.next().await.is_none() {
-                        // Stream ended (store dropped).
-                        break;
+                // zed-kask: The kask system does NOT depend on the Zed user.
+                // The curator has its own identity (WebID::from_persona(b"curator")),
+                // the DB passphrase is username-independent (from the keychain),
+                // and the curator's DB path is resolved independently
+                // (curator_db_path, not the user's agent path).
+                //
+                // We use the Zed username if available (for log messages and
+                // the user's agent directory), but we do NOT block the kask
+                // wiring on it. If the Zed user hasn't resolved, we use a
+                // fallback identity ("kask") and proceed immediately.
+                let current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
+                let (username, agent_name) = if let Some(user) = current_user.borrow().clone() {
+                    let username = user.username.to_string();
+                    match kask_bridge::agent_name_from_username(&username) {
+                        Some(name) => (username, name),
+                        None => {
+                            log::warn!("Zed username '{username}' sanitized to empty — using fallback 'kask'");
+                            ("kask".to_string(), "kask".to_string())
+                        }
                     }
-                }
-
-                let Some(user) = current_user.borrow().clone() else {
-                    log::warn!("Zed user stream ended without resolving — kask memory stays in logging mode");
-                    return;
+                } else {
+                    // Zed user not yet resolved — proceed with fallback.
+                    // The kask system is fully functional without the Zed user.
+                    log::info!("Zed user not yet resolved — proceeding with fallback identity 'kask' for kask wiring");
+                    ("kask".to_string(), "kask".to_string())
                 };
 
-                let username = user.username.to_string();
-                let Some(agent_name) = kask_bridge::agent_name_from_username(&username) else {
-                    log::warn!("Zed username '{username}' sanitized to empty — kask memory stays in logging mode");
-                    return;
-                };
+                log::info!("kask agent name: {agent_name}");
 
-                log::info!("Zed user resolved — kask agent name: {agent_name}");
-
-                // D6: Provision the agent's storage and replace the logging memory port
-                // with a real one. `provision_agent` handles first-run setup
-                // as lookups and directory creation — no interactive onboarding.
+                // D6: Provision the agent's storage and wire the memory port.
+                // `provision_agent` handles first-run setup as lookups and
+                // directory creation — no interactive onboarding.
                 //
                 // The keystore writes to the unified `kask://credentials/*`
                 // namespace (same as zed's CredentialsProvider) — one keychain,
@@ -2440,6 +2442,7 @@ fn main() {
             client.clone(),
             app_state.workspace_store.clone(),
             context_server_health_source_for_poller,
+            mcp_runtime_for_startup.clone(),
             cx,
         );
         extension_host::init(

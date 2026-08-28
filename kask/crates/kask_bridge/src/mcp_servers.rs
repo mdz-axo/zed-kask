@@ -475,6 +475,15 @@ pub fn filter_credentials_for_server(
     }
 }
 
+/// Tracks `(server_id, env_var)` pairs already warned about being missing.
+/// `build_mcp_server_env` is called on every `SettingsStore` observer fire
+/// (for env-diffing, not just launching), so without deduplication a missing
+/// credential spams the log every time any unrelated setting changes. A pair
+/// is warned at most once per process lifetime; restarting Zed resets the set.
+static WARNED_MISSING_CREDENTIALS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+> = std::sync::OnceLock::new();
+
 /// The single canonical env-construction path for a kask MCP server child
 /// process.
 ///
@@ -581,13 +590,26 @@ pub async fn build_mcp_server_env(
         // the operator can distinguish "not configured" from "configured
         // but broken" — without this, a missing keychain entry looks
         // identical to a server that ran but returned no results.
-        tracing::warn!(
-            target: "reg.mcp",
-            server_id = %server_id,
-            env_var = %env_var,
-            "Credential {env_var} for server {server_id} is not set or empty — \
-             the server will fail with permission_denied when it tries to use it"
-        );
+        //
+        // Dedup: `build_mcp_server_env` is called on every `SettingsStore`
+        // observer fire (for env-diffing), so without this guard the same
+        // missing credential would spam the log dozens of times during
+        // startup. `HashSet::insert` returns `true` only on first insertion.
+        let warned_set = WARNED_MISSING_CREDENTIALS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+        let is_new = warned_set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert((server_id.to_string(), env_var.clone()));
+        if is_new {
+            tracing::warn!(
+                target: "reg.mcp",
+                server_id = %server_id,
+                env_var = %env_var,
+                "Credential {env_var} for server {server_id} is not set or empty — \
+                 the server will fail with permission_denied when it tries to use it"
+            );
+        }
     }
 
     // 3. Inference IPC socket — not in any allowlist; every server may route

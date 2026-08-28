@@ -1102,8 +1102,9 @@ pub struct TaskBoardRequest {
 /// not measure-improve-remeasure.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvalSuiteLocalRequest {
-    /// The swarm id to evaluate. Task progress is recorded to the swarm's
-    /// task board when set.
+    /// Optional swarm id. When set, task progress for each case's delegations
+    /// is recorded to the swarm's task board so regression runs are durable
+    /// across invocations.
     #[serde(default)]
     pub swarm_id: Option<String>,
     /// The test cases to run, in order. Capped at 10.

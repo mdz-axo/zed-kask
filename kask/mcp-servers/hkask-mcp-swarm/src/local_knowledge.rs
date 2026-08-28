@@ -759,4 +759,104 @@ mod tests {
         assert!(agent_ids.contains("agent_a"));
         assert!(agent_ids.contains("agent_b"));
     }
+
+    /// `record_delegation` writes stigmergy annotations (latency, task_success,
+    /// response) to the agent's entity prefix. This test pins that the
+    /// stigmergy path produces retrievable h_mems — the parallel fan-out path
+    /// now calls `record_delegation` alongside `ingest_turn`, and this test
+    /// verifies the stigmergy write is not a no-op.
+    #[tokio::test]
+    async fn record_delegation_writes_stigmergy_annotations() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+
+        record_delegation(
+            &memory,
+            "test_agent",
+            42,
+            Some(true),
+            "the agent succeeded",
+        )
+        .await;
+
+        // The stigmergy annotations are stored under the agent's entity prefix.
+        // We verify by recalling — the embedding stub returns a unit vector,
+        // so recall returns all entries (KNN with dim>0 matches everything).
+        // Instead, query the store directly for the agent's entity.
+        let store = memory.get().await.expect("store opens");
+        let h_mems = store
+            .h_mems_by_entity_prefix("agent:test_agent")
+            .expect("query succeeds");
+        assert!(
+            !h_mems.is_empty(),
+            "record_delegation must write stigmergy h_mems under the agent prefix"
+        );
+        // Verify the latency annotation is present.
+        let has_latency = h_mems
+            .iter()
+            .any(|h| h.attribute == "delegation:latency_ms");
+        assert!(
+            has_latency,
+            "record_delegation must write the latency annotation"
+        );
+        // Verify the task_success annotation is present (only when a verdict
+        // was supplied).
+        let has_success = h_mems
+            .iter()
+            .any(|h| h.attribute == "delegation:task_success");
+        assert!(
+            has_success,
+            "record_delegation must write the task_success annotation when a verdict is supplied"
+        );
+    }
+
+    /// `ingest_turn` + `record_delegation` together produce both episodic
+    /// turn memory (retrievable by semantic recall) and stigmergy annotations
+    /// (retrievable by entity prefix). This pins that the parallel fan-out
+    /// path's side effects are not silent no-ops — both writes land in the
+    /// shared KB.
+    #[tokio::test]
+    async fn ingest_turn_and_record_delegation_both_write_to_shared_kb() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+
+        // Simulate what the parallel fan-out path does after delegate_batch
+        // returns a successful result.
+        ingest_turn(
+            &memory,
+            &inference,
+            "parallel_agent",
+            "analyze market trends",
+            "market is bullish",
+            "test-model",
+        )
+        .await;
+        record_delegation(
+            &memory,
+            "parallel_agent",
+            100,
+            None, // no evaluator in fan-out
+            "market is bullish",
+        )
+        .await;
+
+        // Episodic turn memory: retrievable by semantic recall.
+        let turns = recall_turns(&memory, &inference, "market", 10)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(turns.len(), 1, "ingest_turn wrote a retrievable turn");
+        assert_eq!(turns[0].agent_id, "parallel_agent");
+
+        // Stigmergy: retrievable by entity prefix.
+        let store = memory.get().await.expect("store opens");
+        let h_mems = store
+            .h_mems_by_entity_prefix("agent:parallel_agent")
+            .expect("query succeeds");
+        assert!(
+            !h_mems.is_empty(),
+            "record_delegation wrote stigmergy annotations"
+        );
+    }
 }

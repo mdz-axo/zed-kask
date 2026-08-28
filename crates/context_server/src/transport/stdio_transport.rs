@@ -10,7 +10,6 @@ use futures::{
 };
 use gpui::AsyncApp;
 
-use util::TryFutureExt as _;
 use util::process::Child;
 use util::shell::Shell;
 use util::shell_builder::ShellBuilder;
@@ -102,9 +101,23 @@ impl StdioTransport {
 
         let log_server_id = server_id.clone();
         cx.spawn(async move |_| {
-            Self::handle_output(stdin, stdout_receiver, log_server_id)
-                .log_err()
-                .await
+            let output_server_id = log_server_id.clone();
+            if let Err(error) = Self::handle_output(stdin, stdout_receiver, output_server_id).await
+            {
+                // A broken pipe is expected when the child exits (clean
+                // shutdown, credential failure, crash) — `handle_output`
+                // already logs it at debug with the server_id. Only surface
+                // unexpected errors at warn so the operator can distinguish
+                // a real transport failure from a normal child exit.
+                let is_broken_pipe = error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+                });
+                if !is_broken_pipe {
+                    log::warn!("context server {log_server_id} output loop error: {error}");
+                }
+            }
         })
         .detach();
 

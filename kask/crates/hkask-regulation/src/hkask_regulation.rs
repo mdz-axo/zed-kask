@@ -27,6 +27,7 @@ pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
 
 pub use loops::CurationInput;
+pub use loops::{LoopView, Reading, SenseReading, LoopModel, OutcomeTrust, LivenessTrust};
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use sensor_provider::ContextServerHealthSource;

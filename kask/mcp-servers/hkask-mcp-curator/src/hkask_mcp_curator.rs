@@ -1192,10 +1192,20 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            let entity_prefix = format!("chat:thread:{}", req.thread_id);
-            let h_mems = memory
-                .h_mems_by_entity_prefix(&entity_prefix)
-                .map_err(|e| map_memory_store_error(e, "Failed to query thread turns"))?;
+            // Query both entity prefixes: curator-perspective turns are stored
+            // under `chat:thread:<id>` (curator turns only), and shared copies
+            // of all turns (including non-curator) are under `curator:thread:<id>`.
+            // Without both, non-curator turns are invisible to extraction.
+            let chat_prefix = format!("chat:thread:{}", req.thread_id);
+            let curator_prefix = format!("curator:thread:{}", req.thread_id);
+            let mut h_mems = memory
+                .h_mems_by_entity_prefix(&chat_prefix)
+                .map_err(|e| map_memory_store_error(e, "Failed to query curator-perspective thread turns"))?;
+            h_mems.extend(
+                memory
+                    .h_mems_by_entity_prefix(&curator_prefix)
+                    .map_err(|e| map_memory_store_error(e, "Failed to query shared thread turns"))?,
+            );
 
             let candidates: Vec<serde_json::Value> = h_mems
                 .iter()

@@ -29,6 +29,7 @@ pub fn init(
     client: Arc<Client>,
     workspace_store: Entity<WorkspaceStore>,
     context_server_health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    mcp_runtime: Arc<hkask_mcp::McpRuntime>,
     cx: &mut App,
 ) {
     hang_detection::start(client.clone(), cx);
@@ -37,6 +38,7 @@ pub fn init(
         workspace_store,
         context_server_health_source,
         client.clone(),
+        mcp_runtime,
         cx,
     );
 
@@ -180,20 +182,26 @@ fn start_context_server_health_polling(
     workspace_store: Entity<WorkspaceStore>,
     health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
     client: Arc<Client>,
+    mcp_runtime: Arc<hkask_mcp::McpRuntime>,
     cx: &App,
 ) {
     let (update_sender, mut update_receiver) = futures::channel::mpsc::unbounded();
     cx.spawn({
         async move |cx| {
             while update_receiver.next().await.is_some() {
-                cx.update(|cx| {
-                    let snapshot = compute_context_server_health_snapshot(
+                // Read ContextServerStore statuses synchronously on the foreground.
+                let css_statuses = cx.update(|cx| {
+                    read_context_server_statuses(
                         &workspace_store,
                         context_server_fleet_observable(client.user_id()),
                         cx,
-                    );
-                    health_source.update(snapshot.0, snapshot.1);
+                    )
                 });
+                // Query McpRuntime running servers asynchronously.
+                let mrt_running = mcp_runtime.running_server_ids().await;
+                // Merge and update.
+                let (healthy, total) = merge_fleet_health(css_statuses, mrt_running);
+                health_source.update(healthy, total);
             }
         }
     })
@@ -229,20 +237,21 @@ fn context_server_fleet_observable(user_id: Option<u64>) -> bool {
 
 /// Compute `(healthy_count, total_count)` across all open projects'
 /// `ContextServerStore`s. Delegates the status-classification logic to
-/// [`classify_fleet_health`], which is unit-tested separately.
+/// Read ContextServerStore statuses (per-project) as a map of server_id → is_healthy.
 ///
-/// When `observable` is false (pre-login), returns `(0, 0)` so the sensor
-/// reports no signal instead of a false-positive degradation.
-///
-/// Deduplicates by `ContextServerStore` entity id (a project opened in two
-/// windows shares one store).
-fn compute_context_server_health_snapshot(
+/// Only servers expected to be running count toward the map: `Starting`,
+/// `Running`, and `Error`. Servers in `Stopped`, `AuthRequired`, etc. are
+/// excluded — they are legitimate non-running states, not fleet degradation.
+fn read_context_server_statuses(
     workspace_store: &Entity<WorkspaceStore>,
     observable: bool,
     cx: &App,
-) -> (usize, usize) {
+) -> std::collections::HashMap<String, bool> {
+    use project::context_server_store::ContextServerStatus;
+    use std::collections::HashMap;
+
     if !observable {
-        return (0, 0);
+        return HashMap::new();
     }
     let workspaces = workspace_store
         .read(cx)
@@ -250,7 +259,7 @@ fn compute_context_server_health_snapshot(
         .filter_map(|workspace| workspace.upgrade())
         .collect::<Vec<_>>();
     let mut seen_stores = HashSet::new();
-    let mut statuses: Vec<project::context_server_store::ContextServerStatus> = Vec::new();
+    let mut statuses: HashMap<String, bool> = HashMap::new();
     for workspace in workspaces {
         let project = workspace.read(cx).project().clone();
         let context_server_store = project.read(cx).context_server_store();
@@ -260,11 +269,47 @@ fn compute_context_server_health_snapshot(
         let store = context_server_store.read(cx);
         for server_id in store.server_ids() {
             if let Some(status) = store.status_for_server(server_id) {
-                statuses.push(status);
+                let is_counted = matches!(
+                    status,
+                    ContextServerStatus::Starting
+                        | ContextServerStatus::Running
+                        | ContextServerStatus::Error(_)
+                );
+                if is_counted {
+                    let is_healthy = matches!(status, ContextServerStatus::Running);
+                    statuses.insert(server_id.0.to_string(), is_healthy);
+                }
             }
         }
     }
-    classify_fleet_health(&statuses)
+    statuses
+}
+
+/// Merge ContextServerStore and McpRuntime fleet health into (healthy, total).
+///
+/// A server is healthy if it is `Running` in the ContextServerStore OR has a
+/// live connection in the McpRuntime. The total is the union of all server IDs
+/// from both paths — no double-counting.
+fn merge_fleet_health(
+    css_statuses: std::collections::HashMap<String, bool>,
+    mrt_running: Vec<String>,
+) -> (usize, usize) {
+    use std::collections::HashSet;
+
+    let mut all_servers: HashSet<String> = HashSet::new();
+    all_servers.extend(css_statuses.keys().cloned());
+    all_servers.extend(mrt_running.iter().cloned());
+
+    let total = all_servers.len();
+    let healthy = all_servers
+        .iter()
+        .filter(|id| {
+            *css_statuses.get(*id).unwrap_or(&false)
+                || mrt_running.iter().any(|mrt_id| mrt_id == *id)
+        })
+        .count();
+
+    (healthy, total)
 }
 
 /// Classify context-server fleet health from a slice of server statuses.
@@ -279,6 +324,7 @@ fn compute_context_server_health_snapshot(
 /// Returns `(healthy_count, total_count)` where `healthy_count` is the
 /// number of `Running` servers and `total_count` is the number of servers
 /// expected to be running (`Starting` + `Running` + `Error`).
+#[cfg(test)]
 fn classify_fleet_health(
     statuses: &[project::context_server_store::ContextServerStatus],
 ) -> (usize, usize) {
@@ -805,5 +851,66 @@ mod tests {
     #[test]
     fn resolved_user_opens_the_gate() {
         assert!(context_server_fleet_observable(Some(7)));
+    }
+
+    // ── merge_fleet_health tests ──────────────────────────────────────
+
+    #[test]
+    fn merge_both_paths_running_is_fully_healthy() {
+        // Both ContextServerStore and McpRuntime have the same servers running.
+        let css = std::collections::HashMap::from([
+            ("curator".to_string(), true),
+            ("corpus".to_string(), true),
+        ]);
+        let mrt = vec!["curator".to_string(), "corpus".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn merge_mrt_only_server_is_healthy() {
+        // A server only in McpRuntime (not in ContextServerStore) is still healthy.
+        let css = std::collections::HashMap::from([
+            ("curator".to_string(), true),
+        ]);
+        let mrt = vec!["curator".to_string(), "companies".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn merge_css_error_mrt_running_is_healthy() {
+        // A server in Error state in ContextServerStore but running in McpRuntime
+        // is healthy — the McpRuntime path compensates.
+        let css = std::collections::HashMap::from([
+            ("media".to_string(), false), // Error in CSS
+        ]);
+        let mrt = vec!["media".to_string()]; // Running in MRT
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn merge_both_empty_is_zero() {
+        let css = std::collections::HashMap::new();
+        let mrt = vec![];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn merge_no_double_counting() {
+        // Same server in both paths — counted once.
+        let css = std::collections::HashMap::from([
+            ("curator".to_string(), true),
+        ]);
+        let mrt = vec!["curator".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
     }
 }

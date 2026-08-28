@@ -31,8 +31,11 @@ const REASONING_TOOL_NAME: &str = "reasoning/think";
 /// A single reasoning step recorded by the model via the `reasoning/think`
 /// tool. Inspired by Agno's `ReasoningTools.think`/`analyze` pattern: each
 /// call appends a step, and the full history is returned to the model so it
-/// can decide whether to continue. Termination is model-driven via
-/// `next_action: "final_answer"`.
+/// can decide whether to continue. `next_action: "final_answer"` is advisory
+/// — the model is told to stop calling tools, but the executor does NOT enforce
+/// early termination on it. The real termination gate is `MAX_TOOL_ROUNDS`.
+/// This keeps the round budget deterministic and prevents a model from
+/// silently extending its tool loop by never signaling `final_answer`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReasoningStep {
     /// Short title for the step (what the model is reasoning about).
@@ -43,8 +46,10 @@ pub struct ReasoningStep {
     /// delegate to analyst").
     pub action: Option<String>,
     /// The model's signal for what to do next: `"continue"`, `"validate"`,
-    /// or `"final_answer"`. When `"final_answer"`, the model should emit
-    /// its final response without further tool calls.
+    /// or `"final_answer"`. Advisory only — the executor does NOT enforce
+    /// early termination on `"final_answer"`. The real termination gate is
+    /// `MAX_TOOL_ROUNDS`. The field is surfaced to the Curator's ORIENT phase
+    /// as a reasoning-trace signal, not a control signal.
     pub next_action: String,
     /// Optional self-assessed confidence (0.0–1.0). Not calibrated — the
     /// Curator's Brier-scored outcomes calibrate confidence, not this.

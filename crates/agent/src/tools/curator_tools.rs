@@ -95,6 +95,11 @@ pub struct CuratorStatusOutput {
     /// before they are evicted unread. `None` when the metacognition provider
     /// isn't wired.
     pub alert_log_approaching_cap: Option<bool>,
+    /// Trust/absence assembly verdict (Fermi `LoopView.reading`). Distinguishes
+    /// wiring-closed (wired but never ticked) from turning (running and
+    /// verified) from broken (running but failing) from unobserved (can't
+    /// tell). `None` when the metacognition provider isn't wired.
+    pub loop_reading: Option<String>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -133,6 +138,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_count: None,
                 alert_log_cap: None,
                 alert_log_approaching_cap: None,
+                loop_reading: None,
             })?;
 
             // Distinguish "provider not wired" from "provider wired but
@@ -151,6 +157,7 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
+                loop_reading: None,
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
@@ -164,6 +171,7 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
+                loop_reading: None,
                 });
             };
             let effectiveness = snapshot
@@ -201,6 +209,12 @@ impl AgentTool for CuratorStatusTool {
             let alert_log_approaching_cap = snapshot
                 .get("alert_log_approaching_cap")
                 .and_then(|d| d.as_bool());
+            // Trust/absence assembly verdict — the Fermi LoopView reading.
+            // Distinguishes wiring-closed from turning from working.
+            let loop_reading = snapshot
+                .get("loop_reading")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             // A degraded curator memory store is a health signal in its own
             // right — surface it in `status` so a caller reading only the
             // status line (not the structured fields) still sees it.
@@ -228,6 +242,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_count,
                 alert_log_cap,
                 alert_log_approaching_cap,
+                loop_reading,
             })
         })
     }
@@ -242,7 +257,8 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
              Memory: {}\n\
-             Algedonic Log: {}",
+             Algedonic Log: {}\n\
+             Loop Reading: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -281,6 +297,10 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 }
                 _ => "not available".to_string(),
             },
+            output
+                .loop_reading
+                .as_deref()
+                .unwrap_or("not available"),
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
     }

@@ -61,6 +61,15 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "alert_log_count": s.ledger_health.alert_log_count,
                 "alert_log_cap": s.ledger_health.alert_log_cap,
                 "alert_log_approaching_cap": s.ledger_health.alert_log_approaching_cap,
+                // Trust/absence assembly verdict (Fermi LoopView). The reading
+                // distinguishes wiring-closed from turning from working — the
+                // dominant failure mode is a loop that reports success while
+                // having never run.
+                "loop_reading": s.loop_view.reading.to_string(),
+                "loop_model": format!("{:?}", s.loop_view.loop_model).to_lowercase(),
+                "panel_absence": format!("{:?}", s.loop_view.panel_absence).to_lowercase(),
+                "outcome_trust": format!("{:?}", s.loop_view.outcome_trust).to_lowercase(),
+                "liveness_trust": format!("{:?}", s.loop_view.liveness_trust).to_lowercase(),
             });
             // Merge the memory-health section — flat keys, so the merge is
             // just inserting the `memory` object. A degraded curator memory

@@ -454,6 +454,21 @@ impl McpRuntime {
         }
     }
 
+    /// Server IDs that have a live (non-closed) connection.
+    ///
+    /// Used by the fleet health poller to count McpRuntime-managed servers
+    /// alongside ContextServerStore-managed servers. A server is "running"
+    /// if it has a connection whose transport is not closed.
+    #[must_use = "result must be used"]
+    pub async fn running_server_ids(&self) -> Vec<String> {
+        let connections = self.connections.read().await;
+        connections
+            .iter()
+            .filter(|(_, conn)| !conn.peer.is_transport_closed())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     /// Register an MCP server (metadata only, no live connection).
     pub async fn register_server(&self, server: McpServer) {
         let mut servers = self.servers.write().await;
