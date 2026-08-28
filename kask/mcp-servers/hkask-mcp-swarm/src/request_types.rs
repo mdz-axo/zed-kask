@@ -1153,3 +1153,304 @@ pub struct EvalAgentLocalRequest {
     /// call with real token cost.
     pub repeats: Option<u32>,
 }
+
+// ── App primitive — direct CRUD (fermi v0.10.15+) ──────────────────────────
+//
+// fermi's App primitive has full server-side CRUD beyond the Xaman-session
+// materialization path (`swarm_create_app`). These request types mirror
+// fermi's `handlers::apps` request shapes so the MCP tools validate the
+// same fields the server validates.
+
+/// Register a new App directly — `POST /api/apps`. Mirrors fermi's
+/// `CreateAppRequest` (`src/handlers/apps.rs`). Unlike `swarm_create_app`
+/// (which materializes from a Xaman session), this takes the full manifest
+/// and creates the App in one call. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateAppDirectRequest {
+    /// App slug — 3–64 chars, lowercase letters, digits, underscores. Must
+    /// not be a reserved origin tag.
+    pub slug: String,
+    /// Human-readable name. If omitted, fermi derives it from the slug.
+    pub name: Option<String>,
+    /// One-line tagline for catalogue surfacing.
+    pub tagline: Option<String>,
+    /// Longer description.
+    pub description: Option<String>,
+    /// Optional homepage URL.
+    pub homepage_url: Option<String>,
+    /// Optional icon URL.
+    pub icon_url: Option<String>,
+    /// Composition slug (links to a fleet/composition).
+    pub composition_slug: Option<String>,
+    /// Schema slug (references a registered document schema).
+    pub schema_slug: Option<String>,
+    /// Inline JSON schema for the canonical document.
+    pub schema_json: Option<serde_json::Value>,
+    /// Workspace template: initial_budget, auto_hire, initial_files, etc.
+    pub workspace_template: Option<serde_json::Value>,
+    /// Arbitrary metadata.
+    pub metadata: Option<serde_json::Value>,
+    /// Visibility: "private" (default), "unlisted", or "public".
+    pub visibility: Option<String>,
+}
+
+/// Update an existing App — `PUT /api/apps/:slug`. Mirrors fermi's
+/// `UpdateAppRequest`. All fields optional; only supplied fields are updated.
+/// Owner only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateAppRequest {
+    /// App slug to update.
+    pub slug: String,
+    pub name: Option<String>,
+    pub tagline: Option<String>,
+    pub homepage_url: Option<String>,
+    pub icon_url: Option<String>,
+    pub composition_slug: Option<String>,
+    pub schema_slug: Option<String>,
+    pub schema_json: Option<serde_json::Value>,
+    pub workspace_template: Option<serde_json::Value>,
+    pub description: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub visibility: Option<String>,
+}
+
+/// Publish an App — `POST /api/apps/:slug/publish`. Promotes visibility to
+/// "public". Admin/owner only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PublishAppRequest {
+    /// App slug to publish.
+    pub slug: String,
+}
+
+/// Archive an App — `POST /api/apps/:slug/archive`. Archived apps cannot
+/// spawn new workspaces. Admin/owner only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ArchiveAppRequest {
+    /// App slug to archive.
+    pub slug: String,
+}
+
+/// Get a single App — `GET /api/apps/:slug`. Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetAppRequest {
+    /// App slug.
+    pub slug: String,
+}
+
+/// Spawn a workspace from an App — `POST /api/apps/:slug/workspaces`.
+/// Creates a new workspace seeded with the App's workspace_template
+/// (initial_budget, auto_hire, initial_files). Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpawnAppWorkspaceRequest {
+    /// App slug to spawn from.
+    pub slug: String,
+    /// Optional workspace name override. Defaults to the App's
+    /// `default_name_pattern` if omitted.
+    pub name: Option<String>,
+    /// Optional workspace description.
+    pub description: Option<String>,
+    /// Extra credits on top of the App's `initial_budget`.
+    pub extra_budget: Option<i32>,
+    /// Override the App's `auto_hire` list.
+    pub auto_hire_override: Option<Vec<String>>,
+    /// Arbitrary parameters bound to this workspace instance (written to
+    /// `.app/params.json`).
+    pub params: Option<serde_json::Value>,
+    /// Upstream workspace IDs this workspace depends on.
+    pub depends_on: Option<Vec<String>>,
+}
+
+/// List workspaces spawned from an App — `GET /api/apps/:slug/workspaces`.
+/// Returns the caller's workspaces spawned from this App. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListAppWorkspacesRequest {
+    /// App slug.
+    pub slug: String,
+}
+
+/// Get an App's canonical document schema — `GET /api/apps/:slug/schema`.
+/// Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetAppSchemaRequest {
+    /// App slug.
+    pub slug: String,
+}
+
+/// Fork a workspace into an App draft — `POST /api/workspaces/:id/fork-to-app`.
+/// Server-side introspection of the workspace state produces a draft App
+/// manifest for the operator to review and edit before registering via
+/// `swarm_create_app_direct`. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ForkWorkspaceToAppRequest {
+    /// Workspace id to fork into an App draft.
+    pub workspace_id: String,
+}
+
+// ── Workspace action protocol (fermi v0.10.15+) ────────────────────────────
+//
+// The generalised workspace action protocol: agents propose mutations,
+// humans confirm. Six action types + list/pending/accept/reject +
+// annotations. These mirror fermi's `handlers::workspace::actions` request
+// shapes.
+
+/// List recent actions on a workspace — `GET /api/workspaces/:id/actions`.
+/// Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListWorkspaceActionsRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+}
+
+/// List pending actions awaiting human confirmation —
+/// `GET /api/workspaces/:id/actions/pending`. Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListPendingActionsRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+}
+
+/// Propose a document mutation — `POST /api/workspaces/:id/actions/mutate_document`.
+/// With `confirmation: "auto"`, the mutation is applied immediately. With
+/// `confirmation: "ask"` (or `force_ask: true`), it pends for human review via
+/// `swarm_workspace_accept_action` / `swarm_workspace_reject_action`.
+/// Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MutateDocumentRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// App schema slug (e.g. "kask_simops"). Used for validation + logging.
+    pub app_schema: Option<String>,
+    /// Document path relative to workspace root (e.g. "simops/process.yaml").
+    pub path: String,
+    /// The patch to apply. Format is app-specific; stored verbatim.
+    pub patch: serde_json::Value,
+    /// Human-readable rationale for the change.
+    pub rationale: Option<String>,
+    /// "auto" = apply immediately; "ask" = pend for human confirmation.
+    /// Server always treats as "ask" when `force_ask` is true.
+    pub confirmation: Option<String>,
+    /// Always pend regardless of `confirmation` value. The kask client uses
+    /// this to gate all mutate_document actions behind a diff modal.
+    pub force_ask: Option<bool>,
+    /// The serialised new document content (after applying the patch).
+    pub content: Option<String>,
+    /// Optional source message id (links the action to the agent message
+    /// that proposed it).
+    pub source_message_id: Option<String>,
+}
+
+/// Create a named variant of the canonical document —
+/// `POST /api/workspaces/:id/actions/fork_state`. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ForkStateRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// App schema slug.
+    pub app_schema: Option<String>,
+    /// Name for the new variant.
+    pub name: String,
+    /// Slug of source state; "base" or a variant slug.
+    pub from: Option<String>,
+    /// The patch to apply to the source state.
+    pub patch: serde_json::Value,
+    /// Optional hypothesis for the fork.
+    pub hypothesis: Option<String>,
+    /// Optional source message id.
+    pub source_message_id: Option<String>,
+}
+
+/// Accept a pending action — `POST /api/workspaces/:id/actions/:action_id/accept`.
+/// For `mutate_document` actions where content was not supplied at creation,
+/// supply the final content here. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AcceptActionRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// The pending action id to accept.
+    pub action_id: String,
+    /// The final content to write (for mutate_document actions where content
+    /// was not supplied at action creation time).
+    pub content: Option<String>,
+    /// Apply result to record (for actions applied client-side, e.g. compare).
+    pub apply_result: Option<serde_json::Value>,
+}
+
+/// Reject a pending action — `POST /api/workspaces/:id/actions/:action_id/reject`.
+/// Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RejectActionRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// The pending action id to reject.
+    pub action_id: String,
+    /// Optional rejection note.
+    pub note: Option<String>,
+}
+
+/// Add an annotation to a workspace —
+/// `POST /api/workspaces/:id/actions/annotate`. Annotations are structured
+/// notes (insight, critique, risk, decision) attached to a target.
+/// Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnnotateWorkspaceRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// App schema slug.
+    pub app_schema: Option<String>,
+    /// Annotation kind: "critique", "insight", "risk", or "decision".
+    pub kind: String,
+    /// Target identifier (e.g. "stage:fermentation", "process",
+    /// "variation:co2-capture").
+    pub target: String,
+    /// Annotation body text.
+    pub body: String,
+    /// Severity: "info", "warn", or "block".
+    pub severity: Option<String>,
+    /// Optional source message id.
+    pub source_message_id: Option<String>,
+}
+
+/// List annotations on a workspace — `GET /api/workspaces/:id/annotations`.
+/// Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListAnnotationsRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+}
+
+// ── Workspace files (fermi v0.10.15+) ───────────────────────────────────────
+//
+// Direct file read/write on the workspace git repo. The action protocol's
+// `mutate_document` writes through git with audit logging; these endpoints
+// are the direct file-access surface (no action log, no confirmation).
+
+/// List files in a workspace — `GET /api/workspaces/:id/files`. Read-only.
+/// Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListWorkspaceFilesRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+}
+
+/// Read a file from a workspace — `GET /api/workspaces/:id/files/*path`.
+/// Read-only. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadWorkspaceFileRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// File path relative to workspace root.
+    pub path: String,
+}
+
+/// Write a file to a workspace — `PUT /api/workspaces/:id/files/*path`.
+/// Direct git write (no action log, no confirmation). For audited mutations,
+/// use `swarm_workspace_mutate_document` instead. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WriteWorkspaceFileRequest {
+    /// Workspace id.
+    pub workspace_id: String,
+    /// File path relative to workspace root.
+    pub path: String,
+    /// File content to write.
+    pub content: String,
+}

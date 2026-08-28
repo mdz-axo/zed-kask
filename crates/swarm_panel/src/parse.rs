@@ -207,6 +207,72 @@ pub(crate) struct LocalSwarmInfo {
     pub(crate) cloud_workspace_id: Option<String>,
 }
 
+// ── Workspace action protocol response (fermi v0.10.15+) ─────────────────────
+//
+// `swarm_workspace_pending_actions` returns the pending action log entries.
+// The response shape is not part of the verified ABW surface, so every field
+// is `Option`/defaulting — a malformed entry degrades to an empty row rather
+// than failing the whole list parse (same defensive pattern as `WorkspaceInfo`).
+
+/// A single pending workspace action (from `swarm_workspace_pending_actions`).
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct PendingActionInfo {
+    /// The action id (UUID). Used for accept/reject calls.
+    #[serde(default)]
+    pub(crate) action_id: String,
+    /// Action type: "mutate_document", "fork_state", "compare",
+    /// "invoke_member", "annotate_schema", "annotate".
+    #[serde(default)]
+    pub(crate) action_type: String,
+    /// Document path (for mutate_document). Empty for non-file actions.
+    #[serde(default)]
+    pub(crate) path: String,
+    /// Human-readable rationale for the change.
+    #[serde(default)]
+    pub(crate) rationale: String,
+    /// The proposed new content (for mutate_document). Empty when content
+    /// is supplied at accept time.
+    #[serde(default)]
+    pub(crate) content: String,
+    /// Who proposed the action ("user" or an agent id).
+    #[serde(default)]
+    pub(crate) proposed_by: String,
+    /// ISO-8601 timestamp of when the action was proposed.
+    #[serde(default)]
+    pub(crate) created_at: String,
+}
+
+/// Response from `swarm_workspace_pending_actions`. The pending actions may
+/// be a top-level array or under an `actions` key — parsed defensively.
+#[derive(Debug, Deserialize)]
+pub(crate) struct PendingActionsResponse {
+    #[serde(default)]
+    pub(crate) actions: Vec<PendingActionInfo>,
+}
+
+/// Parse the pending-actions response defensively across plausible envelope
+/// shapes (top-level array, `actions` key, or `data.actions`). Returns an
+/// empty vec when no array is found — never `None`, because an empty pending
+/// list is a valid state (no actions awaiting confirmation).
+pub(crate) fn parse_pending_actions(content: serde_json::Value) -> Vec<PendingActionInfo> {
+    let candidates = [Some(&content), content.get("data")];
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(arr) = candidate.as_array() {
+            return arr
+                .iter()
+                .filter_map(|a| serde_json::from_value::<PendingActionInfo>(a.clone()).ok())
+                .collect();
+        }
+        if let Some(arr) = candidate.get("actions").and_then(|a| a.as_array()) {
+            return arr
+                .iter()
+                .filter_map(|a| serde_json::from_value::<PendingActionInfo>(a.clone()).ok())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
 /// The canonical list of tool names exposed by the `swarm` MCP server —
 /// re-exported from `hkask_mcp_swarm::TOOL_NAMES`, the single source of truth.
 /// `panel_tool_names_match_server` asserts the panel's copy matches the

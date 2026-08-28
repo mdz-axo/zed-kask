@@ -8,7 +8,7 @@
 
 use hkask_bridge_ontology::omc::OmcConcept;
 use hkask_bridge_ontology::omc::{
-    ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, SHOT, TASK, VERSION,
+    ASSET, CREATIVE_WORK, MEDIA_SOURCE, PARTICIPANT, SCENE, SEQUENCE, SHOT, TASK, VERSION,
 };
 
 // Re-export the shared explain-tool dispatch so the media server's tests and
@@ -60,6 +60,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "video_extract_frames" => Some(SHOT),
         // Generation lineage — produces/reads task records (production work).
         "gallery_record_generation" | "gallery_lineage" | "gallery_reproduce" => Some(TASK),
+        // Model browser — the model/provider is a participant in the creation task.
+        "model_list" | "model_info" => Some(PARTICIPANT),
         // Unknown tool — no OMC concept.
         _ => None,
     }
@@ -170,6 +172,12 @@ mod tests {
     #[test]
     fn generation_lineage_maps_to_task() {
         assert_eq!(tool_to_omc("gallery_record_generation"), Some(TASK));
+    }
+
+    #[test]
+    fn model_browser_maps_to_participant() {
+        assert_eq!(tool_to_omc("model_list"), Some(PARTICIPANT));
+        assert_eq!(tool_to_omc("model_info"), Some(PARTICIPANT));
     }
 
     #[test]

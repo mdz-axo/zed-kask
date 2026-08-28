@@ -536,6 +536,153 @@ impl SwarmPanel {
                     )
                 },
             )
+            // ── Pending actions review queue (cloud swarms only) ──────────
+            //
+            // The fermi action protocol: agents propose mutations, the
+            // operator confirms. This section surfaces pending actions with
+            // Accept / Reject buttons. Local swarms have no action protocol
+            // (no ABW backend), so `pending_actions` is `None` for them.
+            .when_some(self.detail.pending_actions.clone(), |this, pa| {
+                this.child(
+                    v_flex()
+                        .gap_1()
+                        .mt_2()
+                        .pt_2()
+                        .border_t_1()
+                        .border_color(border)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    Label::new("Pending Actions")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Default),
+                                )
+                                .when(!pa.actions.is_empty(), |this| {
+                                    this.child(
+                                        Label::new(format!("({})", pa.actions.len()))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Accent),
+                                    )
+                                })
+                                .child(div().flex_1())
+                                .when(pa.loading, |this| {
+                                    this.child(
+                                        Label::new("Loading…")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        )
+                        .when_some(pa.error.clone(), |this, err| {
+                            this.child(
+                                Label::new(err)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Warning),
+                            )
+                        })
+                        .when(
+                            pa.actions.is_empty() && !pa.loading && pa.error.is_none(),
+                            |this| {
+                                this.child(
+                                    Label::new("No pending actions.")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            },
+                        )
+                        .children(pa.actions.iter().map(|action| {
+                            let action_id = action.action_id.clone();
+                            let action_workspace = pa.workspace_id.clone();
+                            let action_type = action.action_type.clone();
+                            let action_path = action.path.clone();
+                            let action_rationale = action.rationale.clone();
+                            let action_proposed_by = action.proposed_by.clone();
+                            let action_loading = pa.loading;
+                            v_flex()
+                                .gap_1()
+                                .pt_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Label::new(action_type)
+                                                .color(Color::Accent)
+                                                .size(LabelSize::XSmall),
+                                        )
+                                        .when(!action_path.is_empty(), |this| {
+                                            this.child(
+                                                Label::new(action_path)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                                    .truncate(),
+                                            )
+                                        })
+                                        .when(!action_proposed_by.is_empty(), |this| {
+                                            this.child(
+                                                Label::new(format!("by {action_proposed_by}"))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                        }),
+                                )
+                                .when(!action_rationale.is_empty(), |this| {
+                                    this.child(
+                                        Label::new(action_rationale)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall)
+                                            .truncate(),
+                                    )
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Button::new(
+                                                SharedString::from(format!(
+                                                    "accept-action-{action_id}"
+                                                )),
+                                                "Accept",
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .label_size(LabelSize::XSmall)
+                                            .disabled(action_loading || pending)
+                                            .on_click(
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.accept_pending_action(
+                                                        action_workspace.clone(),
+                                                        action_id.clone(),
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            Button::new(
+                                                SharedString::from(format!(
+                                                    "reject-action-{action_id}"
+                                                )),
+                                                "Reject",
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .label_size(LabelSize::XSmall)
+                                            .disabled(action_loading || pending)
+                                            .on_click(
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.reject_pending_action(
+                                                        action_workspace.clone(),
+                                                        action_id.clone(),
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        ),
+                                )
+                        })),
+                )
+            })
     }
 
     /// Render the confirmation banner for a pending destructive action.

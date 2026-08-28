@@ -517,6 +517,11 @@ struct SpendState {
 struct DetailState {
     swarm_detail: Option<SwarmDetailView>,
     run_status: Option<RunStatusView>,
+    /// Pending workspace actions awaiting human confirmation (cloud swarms
+    /// only). Fetched when a cloud swarm detail is opened; rendered as a
+    /// review queue below the roster. `None` for local swarms and when no
+    /// detail is open.
+    pending_actions: Option<PendingActionsView>,
     add_agent_editor: Entity<Editor>,
     /// Editors for the edit-metadata form (local swarms only). Reused across
     /// opens; populated from the loaded swarm when edit mode is entered.
@@ -763,6 +768,19 @@ struct RunStatusView {
     messages: Vec<String>,
 }
 
+/// Pending workspace actions awaiting human confirmation (fermi v0.10.15+
+/// action protocol). Fetched when a cloud swarm detail is opened; rendered as
+/// a review queue with Accept / Reject buttons. Local swarms have no action
+/// protocol (no ABW backend), so this is `None` for local swarms.
+#[derive(Clone, Debug)]
+struct PendingActionsView {
+    workspace_id: String,
+    loading: bool,
+    error: Option<SharedString>,
+    /// Pending actions, newest first.
+    actions: Vec<crate::parse::PendingActionInfo>,
+}
+
 /// AI Assist suggestion result (action: "suggest"). Each field is a suggested
 /// completion for the corresponding form field; an empty string means the field
 /// was already filled or the model had no suggestion. `surface` records which
@@ -932,6 +950,7 @@ impl SwarmPanel {
                 detail: DetailState {
                     swarm_detail: None,
                     run_status: None,
+                    pending_actions: None,
                     add_agent_editor: swarm_add_agent_editor,
                     edit_name_editor,
                     edit_mission_editor,

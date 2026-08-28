@@ -5,7 +5,7 @@
 //! imported from `hkask_types` — not re-defined here.
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // ── Generation request types ─────────────────────────────────────────────
 
@@ -508,4 +508,40 @@ pub struct GalleryDeleteImageRequest {
     /// the gallery index entry, leaving the file untouched).
     #[serde(default)]
     pub delete_file: bool,
+}
+
+// ── Model browser request types ─────────────────────────────────────────
+
+/// Information about an available media generation model.
+/// Returned by `model_list` and `model_info` tools. Maps to the OMC `Participant`
+/// concept — the model/provider is a participant in the creation task.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MediaModelInfo {
+    /// Unique model identifier (the full prefixed name, e.g. "DeepInfra/black-forest-labs/FLUX-2-klein-4b").
+    pub id: String,
+    /// Human-readable model name without provider prefix.
+    pub name: String,
+    /// Provider name (e.g. "deepinfra", "openrouter").
+    pub provider: String,
+    /// Media modality: "image", "video", "audio", or "vision".
+    pub modality: String,
+    /// List of supported media operations (e.g. ["generate_image", "image_to_image"]).
+    pub capabilities: Vec<String>,
+    /// Whether this is the configured default model for its modality.
+    pub is_default: bool,
+    /// Optional human-readable description.
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ModelListRequest {
+    /// Optional provider filter (e.g. "deepinfra", "openrouter").
+    /// If omitted, lists models from all providers.
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ModelInfoRequest {
+    /// The model id to look up (the full prefixed name returned by `model_list`).
+    pub model_id: String,
 }

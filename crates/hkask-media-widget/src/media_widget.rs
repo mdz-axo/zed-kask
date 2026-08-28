@@ -349,7 +349,7 @@ impl MediaWidget {
         let url = url.to_string();
         self.video_load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { crate::streaming::resolve_stream_url(&url) })
+                .background_spawn(async move { crate::streaming::resolve_stream_url(&url).await })
                 .await;
             this.update(cx, |widget, cx| {
                 widget.video_loading = false;

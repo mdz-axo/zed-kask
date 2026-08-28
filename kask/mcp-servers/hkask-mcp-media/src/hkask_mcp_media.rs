@@ -332,6 +332,7 @@ impl MediaServer {
             + Self::processing_router()
             + Self::audio_router()
             + Self::generation_router()
+            + Self::models_router()
     }
 
     /// Map a tool name to its OMC concept URI. The concept tags the
@@ -357,9 +358,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_42_registered_tools() {
+    fn tool_surface_is_exactly_44_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 42, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 44, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.
@@ -389,9 +390,18 @@ mod tool_surface_tests {
         let sequence = MediaServer::ontology_anchor("video_clip");
         let shot = MediaServer::ontology_anchor("video_extract_frames");
         let task = MediaServer::ontology_anchor("gallery_record_generation");
-        // Eight distinct concepts across eight tool families.
+        let participant = MediaServer::ontology_anchor("model_list");
+        // Nine distinct concepts across nine tool families.
         let concepts = [
-            creative, version, scene, asset, source, sequence, shot, task,
+            creative,
+            version,
+            scene,
+            asset,
+            source,
+            sequence,
+            shot,
+            task,
+            participant,
         ];
         for (i, a) in concepts.iter().enumerate() {
             for (j, b) in concepts.iter().enumerate() {
@@ -411,6 +421,7 @@ mod tool_surface_tests {
         assert_eq!(sequence, Some("omc:Sequence"));
         assert_eq!(shot, Some("omc:Shot"));
         assert_eq!(task, Some("omc:Task"));
+        assert_eq!(participant, Some("omc:Participant"));
     }
 }
 

@@ -9,6 +9,7 @@ use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 
 use crate::DestructiveAction;
+use crate::PendingActionsView;
 use crate::RunStatusView;
 use crate::SWARM_SERVER;
 use crate::SwarmDetailView;
@@ -167,6 +168,18 @@ impl SwarmPanel {
                             json!({ "workspace_id": workspace_id }),
                         )
                         .await;
+                    // Fetch pending actions in parallel for cloud swarms.
+                    // The action protocol is ABW-only; local swarms have no
+                    // pending-actions surface. A failed fetch must NOT blank
+                    // the roster — the roster is the authority; pending
+                    // actions are a best-effort enrichment.
+                    let pending_result = invoker
+                        .invoke_tool(
+                            SWARM_SERVER,
+                            "swarm_workspace_pending_actions",
+                            json!({ "workspace_id": workspace_id }),
+                        )
+                        .await;
                     this.update(cx, |this, cx| {
                         let Some(detail) = this.detail.swarm_detail.as_mut() else {
                             return;
@@ -189,6 +202,21 @@ impl SwarmPanel {
                                     Some(format!("Failed to fetch roster: {err}").into());
                             }
                         }
+                        // Parse pending actions defensively — a failed or
+                        // unparseable response yields an empty list, not an
+                        // error (the roster is the authority).
+                        let pending_actions = match &pending_result {
+                            Ok(output) => parse_tool_response(output)
+                                .map(crate::parse::parse_pending_actions)
+                                .unwrap_or_default(),
+                            Err(_) => Vec::new(),
+                        };
+                        this.detail.pending_actions = Some(PendingActionsView {
+                            workspace_id: workspace_id.clone(),
+                            loading: false,
+                            error: None,
+                            actions: pending_actions,
+                        });
                         cx.notify();
                     })
                     .ok();
@@ -201,6 +229,7 @@ impl SwarmPanel {
     /// Back out of the roster drill-down.
     pub(crate) fn close_swarm_detail(&mut self, cx: &mut Context<Self>) {
         self.detail.swarm_detail = None;
+        self.detail.pending_actions = None;
         cx.notify();
     }
 
@@ -1316,6 +1345,177 @@ impl SwarmPanel {
                         Err(err) => {
                             this.spend.hire_error =
                                 Some(format!("Failed to pull ABW swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ── Workspace action protocol (fermi v0.10.15+) ──────────────────────────
+    //
+    // The action protocol is the human-in-the-loop confirmation surface:
+    // agents propose mutations (mutate_document, fork_state), the panel
+    // surfaces them as pending actions, and the operator accepts or rejects.
+    // These three methods wire the panel's review queue to the MCP tools.
+
+    /// Accept a pending workspace action. Calls `swarm_workspace_accept_action`
+    /// and refreshes the pending-actions list on success.
+    pub(crate) fn accept_pending_action(
+        &mut self,
+        workspace_id: String,
+        action_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        // Mark loading so the UI shows a spinner on the accept button.
+        if let Some(pa) = self.detail.pending_actions.as_mut() {
+            pa.loading = true;
+            pa.error = None;
+        }
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_workspace_accept_action",
+                        json!({
+                            "workspace_id": workspace_id,
+                            "action_id": action_id,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(_) => {
+                            // Refresh the pending-actions list. A failed
+                            // refresh is non-fatal — the accept succeeded.
+                            this.refresh_pending_actions(cx);
+                        }
+                        Err(err) => {
+                            if let Some(pa) = this.detail.pending_actions.as_mut() {
+                                pa.loading = false;
+                                pa.error = Some(format!("Failed to accept action: {err}").into());
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Reject a pending workspace action. Calls `swarm_workspace_reject_action`
+    /// and refreshes the pending-actions list on success.
+    pub(crate) fn reject_pending_action(
+        &mut self,
+        workspace_id: String,
+        action_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        if let Some(pa) = self.detail.pending_actions.as_mut() {
+            pa.loading = true;
+            pa.error = None;
+        }
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_workspace_reject_action",
+                        json!({
+                            "workspace_id": workspace_id,
+                            "action_id": action_id,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(_) => {
+                            this.refresh_pending_actions(cx);
+                        }
+                        Err(err) => {
+                            if let Some(pa) = this.detail.pending_actions.as_mut() {
+                                pa.loading = false;
+                                pa.error = Some(format!("Failed to reject action: {err}").into());
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Refresh the pending-actions list for the currently-open cloud swarm
+    /// detail. Called after accept/reject and available as a manual refresh.
+    /// No-op when no cloud swarm detail is open.
+    pub(crate) fn refresh_pending_actions(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            return;
+        };
+        let Some(detail) = self.detail.swarm_detail.as_ref() else {
+            return;
+        };
+        // Only cloud swarms have the action protocol.
+        if detail.source == AgentSource::Local {
+            return;
+        }
+        let workspace_id = detail.workspace_id.clone();
+        if let Some(pa) = self.detail.pending_actions.as_mut() {
+            pa.loading = true;
+            pa.error = None;
+        }
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_workspace_pending_actions",
+                        json!({ "workspace_id": workspace_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(output) => {
+                            let actions = parse_tool_response(&output)
+                                .map(crate::parse::parse_pending_actions)
+                                .unwrap_or_default();
+                            this.detail.pending_actions = Some(PendingActionsView {
+                                workspace_id,
+                                loading: false,
+                                error: None,
+                                actions,
+                            });
+                        }
+                        Err(err) => {
+                            if let Some(pa) = this.detail.pending_actions.as_mut() {
+                                pa.loading = false;
+                                pa.error =
+                                    Some(format!("Failed to load pending actions: {err}").into());
+                            }
                         }
                     }
                     cx.notify();

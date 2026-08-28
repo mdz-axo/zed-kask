@@ -2,9 +2,8 @@
 //!
 //! Scans `src/*.rs` for `pub(crate) async fn swarm_<name>` and emits a
 //! `pub const TOOL_NAMES: &[&str]` with the discovered fn names. This is the
-//! canonical tool-name list — the `tool_surface_is_exactly_53_registered_tools`
-//! test in `hkask_mcp_swarm.rs` asserts it matches the live
-//! `combined_router().list_all()` surface, so drift is caught at test time.
+//! canonical tool-name list — the tool surface is asserted against the live
+//! `combined_router().list_all()` surface at test time, so drift is caught.
 //!
 //! All swarm tools use the fn name as the tool name (no `#[tool(name = "...")]`
 //! overrides). If a `name =` override is added in the future, the test will

@@ -1948,4 +1948,1042 @@ impl SwarmServer {
         )
         .await
     }
+
+    // ── App primitive — direct CRUD (fermi v0.10.15+) ──────────────────────
+    //
+    // These tools cover the App CRUD surface that `swarm_create_app` (Xaman
+    // session materialization) does not: direct create, update, publish,
+    // archive, get, spawn workspace, list workspaces, get schema, and
+    // fork-workspace-to-app. They mirror fermi's `handlers::apps` routes.
+
+    /// Get a single App by slug — `GET /api/apps/:slug`.
+    #[tool(
+        description = "Get a single Agent Bestiary World App by slug (GET /api/apps/{slug}). Returns the full App manifest including workspace_template, visibility, and schema. Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_get_app(&self, parameters: Parameters<GetAppRequest>) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_get_app",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!("/apps/{}", url_encode_segment(&req.slug)))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Register a new App directly — `POST /api/apps`. Unlike
+    /// `swarm_create_app` (which materializes from a Xaman session), this
+    /// takes the full manifest and creates the App in one call.
+    #[tool(
+        description = "Register a new Agent Bestiary World App directly from a full manifest (POST /api/apps). Unlike swarm_create_app (Xaman-session materialization), this takes slug, name, workspace_template, etc. and creates the App in one call. Requires API key."
+    )]
+    pub(crate) async fn swarm_create_app_direct(
+        &self,
+        parameters: Parameters<CreateAppDirectRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_create_app_direct",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({
+                    "slug": req.slug,
+                });
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.name {
+                    obj.insert("name".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.tagline {
+                    obj.insert("tagline".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.description {
+                    obj.insert("description".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.homepage_url {
+                    obj.insert("homepage_url".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.icon_url {
+                    obj.insert("icon_url".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.composition_slug {
+                    obj.insert("composition_slug".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.schema_slug {
+                    obj.insert("schema_slug".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.schema_json {
+                    obj.insert("schema_json".into(), v);
+                }
+                if let Some(v) = req.workspace_template {
+                    obj.insert("workspace_template".into(), v);
+                }
+                if let Some(v) = req.metadata {
+                    obj.insert("metadata".into(), v);
+                }
+                if let Some(v) = req.visibility {
+                    obj.insert("visibility".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post("/apps", &payload)
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Update an existing App — `PUT /api/apps/:slug`. Owner only.
+    #[tool(
+        description = "Update an existing Agent Bestiary World App (PUT /api/apps/{slug}). Only supplied fields are updated. Owner only. Requires API key."
+    )]
+    pub(crate) async fn swarm_update_app(
+        &self,
+        parameters: Parameters<UpdateAppRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_update_app",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({});
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.name {
+                    obj.insert("name".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.tagline {
+                    obj.insert("tagline".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.homepage_url {
+                    obj.insert("homepage_url".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.icon_url {
+                    obj.insert("icon_url".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.composition_slug {
+                    obj.insert("composition_slug".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.schema_slug {
+                    obj.insert("schema_slug".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.schema_json {
+                    obj.insert("schema_json".into(), v);
+                }
+                if let Some(v) = req.workspace_template {
+                    obj.insert("workspace_template".into(), v);
+                }
+                if let Some(v) = req.description {
+                    obj.insert("description".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.metadata {
+                    obj.insert("metadata".into(), v);
+                }
+                if let Some(v) = req.visibility {
+                    obj.insert("visibility".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .request(
+                        reqwest::Method::PUT,
+                        &format!("/apps/{}", url_encode_segment(&req.slug)),
+                        &[],
+                        Some(&payload),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Publish an App — `POST /api/apps/:slug/publish`. Promotes visibility
+    /// to "public". Admin/owner only.
+    #[tool(
+        description = "Promote an Agent Bestiary World App's visibility to public (POST /api/apps/{slug}/publish). Makes it browsable in the catalogue. Admin/owner only. Requires API key."
+    )]
+    pub(crate) async fn swarm_publish_app(
+        &self,
+        parameters: Parameters<PublishAppRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_publish_app",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!("/apps/{}/publish", url_encode_segment(&req.slug)),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(serde_json::json!({
+                        "published": req.slug,
+                        "result": sanitize_workspace_payload(data),
+                    }))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Archive an App — `POST /api/apps/:slug/archive`. Archived apps cannot
+    /// spawn new workspaces. Admin/owner only.
+    #[tool(
+        description = "Archive an Agent Bestiary World App (POST /api/apps/{slug}/archive). Archived apps cannot spawn new workspaces. Admin/owner only. Requires API key."
+    )]
+    pub(crate) async fn swarm_archive_app(
+        &self,
+        parameters: Parameters<ArchiveAppRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_archive_app",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!("/apps/{}/archive", url_encode_segment(&req.slug)),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(serde_json::json!({
+                        "archived": req.slug,
+                        "result": sanitize_workspace_payload(data),
+                    }))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Spawn a workspace from an App — `POST /api/apps/:slug/workspaces`.
+    /// Creates a new workspace seeded with the App's workspace_template.
+    #[tool(
+        description = "Spawn a new workspace from an Agent Bestiary World App (POST /api/apps/{slug}/workspaces). Seeds the workspace with the App's initial_budget, auto_hire, and initial_files. Requires API key."
+    )]
+    pub(crate) async fn swarm_spawn_app_workspace(
+        &self,
+        parameters: Parameters<SpawnAppWorkspaceRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_spawn_app_workspace",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({});
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.name {
+                    obj.insert("name".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.description {
+                    obj.insert("description".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.extra_budget {
+                    obj.insert("extra_budget".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.auto_hire_override {
+                    obj.insert("auto_hire_override".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.params {
+                    obj.insert("params".into(), v);
+                }
+                if let Some(v) = req.depends_on {
+                    obj.insert("depends_on".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!("/apps/{}/workspaces", url_encode_segment(&req.slug)),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// List workspaces spawned from an App — `GET /api/apps/:slug/workspaces`.
+    #[tool(
+        description = "List workspaces spawned from an Agent Bestiary World App (GET /api/apps/{slug}/workspaces). Returns the caller's workspaces spawned from this App. Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_list_app_workspaces(
+        &self,
+        parameters: Parameters<ListAppWorkspacesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_list_app_workspaces",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/apps/{}/workspaces",
+                        url_encode_segment(&req.slug)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Get an App's canonical document schema — `GET /api/apps/:slug/schema`.
+    #[tool(
+        description = "Get an Agent Bestiary World App's canonical document schema (GET /api/apps/{slug}/schema). Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_get_app_schema(
+        &self,
+        parameters: Parameters<GetAppSchemaRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_get_app_schema",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.slug.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "slug must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!("/apps/{}/schema", url_encode_segment(&req.slug)))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Fork a workspace into an App draft — `POST /api/workspaces/:id/fork-to-app`.
+    /// Server-side introspection produces a draft manifest for review before
+    /// registering via `swarm_create_app_direct`.
+    #[tool(
+        description = "Fork a workspace into an App draft (POST /api/workspaces/{id}/fork-to-app). Server-side introspection produces a draft App manifest for review before registering via swarm_create_app_direct. Requires API key."
+    )]
+    pub(crate) async fn swarm_fork_workspace_to_app(
+        &self,
+        parameters: Parameters<ForkWorkspaceToAppRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_fork_workspace_to_app",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/fork-to-app",
+                            url_encode_segment(&req.workspace_id)
+                        ),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    // ── Workspace action protocol (fermi v0.10.15+) ────────────────────────
+    //
+    // The generalised workspace action protocol: agents propose mutations,
+    // humans confirm. These tools expose list/pending/mutate/fork/
+    // accept/reject/annotate to the kask client so the swarm panel can
+    // surface a pending-actions review queue.
+
+    /// List recent actions on a workspace — `GET /api/workspaces/:id/actions`.
+    #[tool(
+        description = "List recent workspace actions (GET /api/workspaces/{id}/actions). Returns the action log entries (mutate_document, fork_state, etc.). Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_list_actions(
+        &self,
+        parameters: Parameters<ListWorkspaceActionsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_list_actions",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/actions",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// List pending actions awaiting human confirmation —
+    /// `GET /api/workspaces/:id/actions/pending`.
+    #[tool(
+        description = "List pending workspace actions awaiting human confirmation (GET /api/workspaces/{id}/actions/pending). These are actions with confirmation='ask' or force_ask=true. The swarm panel surfaces these for accept/reject. Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_pending_actions(
+        &self,
+        parameters: Parameters<ListPendingActionsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_pending_actions",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/actions/pending",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Propose a document mutation — `POST /api/workspaces/:id/actions/mutate_document`.
+    /// With `confirmation: "auto"`, applied immediately. With `confirmation:
+    /// "ask"` (or `force_ask: true`), pends for human review.
+    #[tool(
+        description = "Propose a workspace document mutation (POST /api/workspaces/{id}/actions/mutate_document). With confirmation='auto', applied immediately. With confirmation='ask' or force_ask=true, pends for human review via swarm_workspace_accept_action / swarm_workspace_reject_action. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_mutate_document(
+        &self,
+        parameters: Parameters<MutateDocumentRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_mutate_document",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.path.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "path must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({
+                    "path": req.path,
+                    "patch": req.patch,
+                });
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.app_schema {
+                    obj.insert("app_schema".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.rationale {
+                    obj.insert("rationale".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.confirmation {
+                    obj.insert("confirmation".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.force_ask {
+                    obj.insert("force_ask".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.content {
+                    obj.insert("content".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.source_message_id {
+                    obj.insert("source_message_id".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/actions/mutate_document",
+                            url_encode_segment(&req.workspace_id)
+                        ),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Create a named variant of the canonical document —
+    /// `POST /api/workspaces/:id/actions/fork_state`.
+    #[tool(
+        description = "Create a named variant of a workspace's canonical document (POST /api/workspaces/{id}/actions/fork_state). Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_fork_state(
+        &self,
+        parameters: Parameters<ForkStateRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_fork_state",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "name must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({
+                    "name": req.name,
+                    "patch": req.patch,
+                });
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.app_schema {
+                    obj.insert("app_schema".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.from {
+                    obj.insert("from".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.hypothesis {
+                    obj.insert("hypothesis".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.source_message_id {
+                    obj.insert("source_message_id".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/actions/fork_state",
+                            url_encode_segment(&req.workspace_id)
+                        ),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Accept a pending action — `POST /api/workspaces/:id/actions/:action_id/accept`.
+    #[tool(
+        description = "Accept a pending workspace action (POST /api/workspaces/{id}/actions/{action_id}/accept). For mutate_document actions where content was not supplied at creation, supply the final content here. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_accept_action(
+        &self,
+        parameters: Parameters<AcceptActionRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_accept_action",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.action_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "action_id must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({});
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.content {
+                    obj.insert("content".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.apply_result {
+                    obj.insert("apply_result".into(), v);
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/actions/{}/accept",
+                            url_encode_segment(&req.workspace_id),
+                            url_encode_segment(&req.action_id)
+                        ),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Reject a pending action — `POST /api/workspaces/:id/actions/:action_id/reject`.
+    #[tool(
+        description = "Reject a pending workspace action (POST /api/workspaces/{id}/actions/{action_id}/reject). Optional rejection note. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_reject_action(
+        &self,
+        parameters: Parameters<RejectActionRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_reject_action",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.action_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "action_id must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({});
+                if let Some(v) = req.note {
+                    let obj = payload.as_object_mut().expect("just constructed object");
+                    obj.insert("note".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/actions/{}/reject",
+                            url_encode_segment(&req.workspace_id),
+                            url_encode_segment(&req.action_id)
+                        ),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Add an annotation to a workspace —
+    /// `POST /api/workspaces/:id/actions/annotate`.
+    #[tool(
+        description = "Add a structured annotation to a workspace (POST /api/workspaces/{id}/actions/annotate). Kinds: critique, insight, risk, decision. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_annotate(
+        &self,
+        parameters: Parameters<AnnotateWorkspaceRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_annotate",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.kind.trim().is_empty()
+                    || req.target.trim().is_empty()
+                    || req.body.trim().is_empty()
+                {
+                    return Err(McpToolError::invalid_argument(
+                        "kind, target, and body must be non-empty".to_string(),
+                    ));
+                }
+                let mut payload = serde_json::json!({
+                    "kind": req.kind,
+                    "target": req.target,
+                    "body": req.body,
+                });
+                let obj = payload.as_object_mut().expect("just constructed object");
+                if let Some(v) = req.app_schema {
+                    obj.insert("app_schema".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.severity {
+                    obj.insert("severity".into(), serde_json::json!(v));
+                }
+                if let Some(v) = req.source_message_id {
+                    obj.insert("source_message_id".into(), serde_json::json!(v));
+                }
+                let data = self
+                    .client
+                    .post(
+                        &format!(
+                            "/workspaces/{}/actions/annotate",
+                            url_encode_segment(&req.workspace_id)
+                        ),
+                        &payload,
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// List annotations on a workspace — `GET /api/workspaces/:id/annotations`.
+    #[tool(
+        description = "List annotations on a workspace (GET /api/workspaces/{id}/annotations). Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_list_annotations(
+        &self,
+        parameters: Parameters<ListAnnotationsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_list_annotations",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/annotations",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    // ── Workspace files (fermi v0.10.15+) ──────────────────────────────────
+    //
+    // Direct file read/write on the workspace git repo. The action protocol's
+    // mutate_document writes through git with audit logging; these endpoints
+    // are the direct file-access surface (no action log, no confirmation).
+
+    /// List files in a workspace — `GET /api/workspaces/:id/files`.
+    #[tool(
+        description = "List files in a workspace (GET /api/workspaces/{id}/files). Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_list_files(
+        &self,
+        parameters: Parameters<ListWorkspaceFilesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_list_files",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/files",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Read a file from a workspace — `GET /api/workspaces/:id/files/*path`.
+    #[tool(
+        description = "Read a file from a workspace (GET /api/workspaces/{id}/files/{path}). Read-only. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_read_file(
+        &self,
+        parameters: Parameters<ReadWorkspaceFileRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_read_file",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.path.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "path must be non-empty".to_string(),
+                    ));
+                }
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/files/{}",
+                        url_encode_segment(&req.workspace_id),
+                        req.path
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
+
+    /// Write a file to a workspace — `PUT /api/workspaces/:id/files/*path`.
+    /// Direct git write (no action log, no confirmation). For audited
+    /// mutations, use `swarm_workspace_mutate_document` instead.
+    #[tool(
+        description = "Write a file to a workspace (PUT /api/workspaces/{id}/files/{path}). Direct git write — no action log, no confirmation. For audited mutations, use swarm_workspace_mutate_document instead. Requires API key."
+    )]
+    pub(crate) async fn swarm_workspace_write_file(
+        &self,
+        parameters: Parameters<WriteWorkspaceFileRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_workspace_write_file",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.workspace_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "workspace_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.path.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "path must be non-empty".to_string(),
+                    ));
+                }
+                let payload = serde_json::json!({
+                    "content": req.content,
+                });
+                let data = self
+                    .client
+                    .request(
+                        reqwest::Method::PUT,
+                        &format!(
+                            "/workspaces/{}/files/{}",
+                            url_encode_segment(&req.workspace_id),
+                            req.path
+                        ),
+                        &[],
+                        Some(&payload),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                Ok(self
+                    .client
+                    .with_wallet(sanitize_workspace_payload(data))
+                    .await)
+            },
+        )
+        .await
+    }
 }

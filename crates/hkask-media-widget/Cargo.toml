@@ -27,6 +27,7 @@ hkask-bridge-ontology.workspace = true
 gpui_util.workspace = true
 tracing.workspace = true
 ui.workspace = true
+smol.workspace = true
 
 # Video decode — gated behind cargo features to keep dev builds fast.
 # - `video`: uses system FFmpeg via pkg-config
@@ -35,7 +36,7 @@ ffmpeg-next = { workspace = true, optional = true }
 
 [features]
 default = ["vendored"]
-vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build"]
+vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build", "ffmpeg-next/build-lib-openssl"]
 video = ["dep:ffmpeg-next"]
 
 [lints]

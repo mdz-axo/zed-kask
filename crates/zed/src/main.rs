@@ -951,9 +951,9 @@ fn main() {
         );
         let metacognition_loop_for_tick = metacognition_loop.clone();
 
-        // Hoisted for the deferred task: once the RealMemoryPort exists
-        // (post-login), the provider is re-set with the memory-health probe
-        // attached so the curator can see its own memory outage.
+        // Hoisted for the deferred task: once the RealMemoryPort exists,
+        // the provider is re-set with the memory-health probe attached so
+        // the curator can see its own memory outage.
         let metacognition_loop_for_deferred = metacognition_loop.clone();
 
         // zed-kask: D8 — F7: metacognition provider hook (set_metacognition_provider).
@@ -1465,7 +1465,12 @@ fn main() {
 
                 match provision_result {
                     Ok(provisioned) => {
-                        let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: _user_webid } = provisioned;
+                        // `db_path` and `webid` from `provision_agent` are not used —
+                        // the curator's DB path is resolved independently by
+                        // `curator_db_path()`, and the curator has its own WebID
+                        // (`WebID::from_persona(b"curator")`). Only `passphrase`
+                        // is needed (for opening the curator DB).
+                        let kask_bridge::ProvisionedAgent { db_path: _agent_db_path, passphrase, webid: _user_webid } = provisioned;
 
                         // Upgrade the regulation event sinks to the durable
                         // `RegulationArchive` on the curator's curator.db — the same
@@ -1656,7 +1661,7 @@ fn main() {
                                 agent::set_memory_port(Some(bridge));
                                 log::info!(
                                     "hKask memory port upgraded to RealMemoryPort \
-                                     (agent: {agent_name}, db: {db_path})"
+                                     (agent: {agent_name})"
                                 );
 
                                 // Re-set the metacognition provider with the
@@ -1664,7 +1669,7 @@ fn main() {
                                 // CuratorStatusTool now reports its own memory
                                 // outage (`memory.degraded`) alongside the
                                 // regulation health it already had. The early
-                                // provider (set pre-login, without the probe)
+                                // provider (set at startup, without the probe)
                                 // is replaced; `set_metacognition_provider` is
                                 // Mutex-based and re-settable.
                                 let provider_with_memory = std::sync::Arc::new(
@@ -1699,8 +1704,8 @@ fn main() {
                                     &hkask_types::agent_paths::agent_db("curator"),
                                 );
                                 let curator_webid = hkask_types::WebID::from_persona(b"curator");
-                                // SAFETY: Set during the deferred task (post-login,
-                                // before MCP servers read these). The curator MCP
+                                // SAFETY: Set during the deferred task (before
+                                // MCP servers read these). The curator MCP
                                 // server reads `HKASK_CURATOR_DB` at process start;
                                 // `HKASK_CURATOR_WEBID` is consumed by `mcp_env()`.
                                 // Neither var is read by other MCP servers.
@@ -1835,7 +1840,7 @@ fn main() {
                             }
                             Err(e) => {
                                 log::warn!(
-                                    "Failed to open memory DB at {db_path} for {agent_name}: {e}"
+                                    "Failed to open memory DB for {agent_name}: {e}"
                                 );
                             }
                         }

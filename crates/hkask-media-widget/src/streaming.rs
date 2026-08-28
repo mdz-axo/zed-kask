@@ -6,15 +6,16 @@
 //! (YouTube, Vimeo, etc.) serve HTML pages, not media streams, so they need
 //! to be resolved to a direct stream URL first.
 //!
-//! `VideoStreamResolver` handles this: if the URL looks like a direct media
+//! `resolve_stream_url` handles this: if the URL looks like a direct media
 //! file, it passes through unchanged. Otherwise it shells out to `yt-dlp -g`
 //! to resolve the stream URL. yt-dlp supports 1000+ sites, so this is not
 //! YouTube-specific — any URL yt-dlp can handle will work.
 //!
-//! All methods are synchronous and blocking (subprocess I/O). They are meant
-//! to be called from a background task, not the GPUI foreground thread.
+//! The function is async because it uses `smol::process::Command` (per the
+//! project's `clippy::disallowed_methods` lint). It is meant to be called
+//! from a background task, not the GPUI foreground thread.
 
-use std::process::Command;
+use smol::process::Command;
 
 /// File extensions that FFmpeg can stream directly over http/https.
 /// If a URL ends with one of these, no yt-dlp resolution is needed.
@@ -33,12 +34,12 @@ const DIRECT_VIDEO_EXTENSIONS: &[&str] = &[
 /// - If yt-dlp is not installed or fails → the original URL is returned as
 ///   a fallback (FFmpeg will try to open it directly, which works for
 ///   direct media URLs but not for platform pages).
-pub fn resolve_stream_url(url: &str) -> Result<String, String> {
+pub async fn resolve_stream_url(url: &str) -> Result<String, String> {
     if is_direct_video_url(url) {
         return Ok(url.to_string());
     }
 
-    match resolve_with_yt_dlp(url) {
+    match resolve_with_yt_dlp(url).await {
         Ok(resolved) => Ok(resolved),
         Err(error) => {
             log::warn!(
@@ -77,7 +78,7 @@ fn is_direct_video_url(url: &str) -> bool {
 /// downloading. `--no-playlist` prevents downloading an entire playlist
 /// when the URL is a playlist entry. `-f best` selects the best single-file
 /// format (no separate audio/video streams that would need merging).
-fn resolve_with_yt_dlp(url: &str) -> Result<String, String> {
+async fn resolve_with_yt_dlp(url: &str) -> Result<String, String> {
     let output = Command::new("yt-dlp")
         .args([
             "-g",
@@ -89,6 +90,7 @@ fn resolve_with_yt_dlp(url: &str) -> Result<String, String> {
             url,
         ])
         .output()
+        .await
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 "yt-dlp not found on system PATH — install it to stream from \
@@ -150,7 +152,8 @@ mod tests {
     #[test]
     fn passes_through_direct_video_urls() {
         let url = "https://example.com/video.mp4";
-        let resolved = resolve_stream_url(url).expect("direct URL resolves");
+        let resolved =
+            smol::block_on(async { resolve_stream_url(url).await }).expect("direct URL resolves");
         assert_eq!(resolved, url);
     }
 
@@ -159,7 +162,8 @@ mod tests {
         // A URL that is NOT a direct video file, so yt-dlp will be attempted.
         // If yt-dlp is not installed, the fallback returns the original URL.
         let url = "https://www.youtube.com/watch?v=nonexistent_video_id_xyz";
-        let resolved = resolve_stream_url(url).expect("fallback returns original URL");
+        let resolved =
+            smol::block_on(async { resolve_stream_url(url).await }).expect("fallback returns URL");
         // Either yt-dlp resolved it (unlikely for a fake ID) or we got the
         // original URL back as fallback.
         assert!(resolved == url || resolved.starts_with("https://"));
