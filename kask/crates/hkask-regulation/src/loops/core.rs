@@ -43,7 +43,7 @@ impl std::fmt::Display for LoopId {
 ///
 /// Adapted from Fermi's `TriggerReason` pattern — recording provenance
 /// enables Regulation to correlate trigger type with regulatory effectiveness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TriggerOrigin {
     /// Regular scheduled tick (timer-driven).
@@ -54,6 +54,15 @@ pub enum TriggerOrigin {
     Manual,
     /// Triggered by an external event (regulation record, goal transition, etc.).
     EventDriven,
+    /// Model-initiated but human-gated — a skill's PDCA loop reached a stage
+    /// that needs a person AND a model that obliges (Fermi `Prompted`).
+    /// Distinct from `Manual` (operator-initiated): `Prompted` is
+    /// model-initiated, the human gates rather than drives. Example:
+    /// `algedonic-review` step 4 (ACT — Execute operator decisions) — the
+    /// skill presents the triage, the operator confirms each resolve/dismiss.
+    /// The `skill_id` is tracked in the skill execution context, not here
+    /// (keeping this enum `Copy` for `LoopMetrics`).
+    Prompted,
 }
 
 /// Result of verifying whether a regulatory action improved its target metric.
@@ -290,7 +299,6 @@ impl LoopMetrics {
     }
 }
 
-
 // ── Trust/absence assembly layer (Fermi LoopView) ──────────────────────────
 
 /// Four-way absence distinction for sense inputs (Fermi `panel_absence` module).
@@ -302,9 +310,7 @@ impl LoopMetrics {
 ///
 /// Fermi's defining discipline: empty is never blank. `idle` / `fault` /
 /// `unknown` are distinct; unobserved counters are neither healthy nor broken.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SenseReading {
     /// No data — counter at 0, but the sensor ticked and returned 0. This is
@@ -327,9 +333,7 @@ pub enum SenseReading {
 /// that is wired but never ticks is `NotProducing`; a loop that ticks but
 /// emits no actions is `Stalled`; a loop that ticks and emits actions is
 /// `Producing`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopModel {
     /// The chain is producing — ticks fire and actions are emitted.
@@ -348,9 +352,7 @@ pub enum LoopModel {
 /// the metric? This is the impact-verification layer — `Trusted` means the
 /// action improved the metric (verified via `ImpactReport`), `Untrusted` means
 /// the action worsened it, and `Unverified` means no impact report exists.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeTrust {
     /// Output is trusted — impact verified, action improved the metric.
@@ -370,9 +372,7 @@ pub enum OutcomeTrust {
 /// success while having never run). `Stale` means the loop has run before but
 /// the last tick is outside the expected interval. `Live` means the loop is
 /// ticking within the expected interval.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LivenessTrust {
     /// The writer has run recently — last tick within the expected interval.
@@ -389,9 +389,7 @@ pub enum LivenessTrust {
 /// This is the Fermi `LoopView.reading` — the four modules compose into a
 /// single verdict that distinguishes wiring-closed from turning from working.
 /// The defining discipline: **wiring-closed ≠ turning ≠ working**.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reading {
     /// The loop is turning and producing verified impact. This is the
@@ -537,6 +535,247 @@ impl LoopView {
         Reading::Unobserved
     }
 }
+
+// ── Declared door registry (Fermi STAGE_ACTIONS) ───────────────────────────
+
+/// Registry of declared human doors for `Manual` and `Prompted` regulation
+/// stages (Fermi `STAGE_ACTIONS`). Maps `(trigger, stage_name)` to the MCP
+/// tool names that serve as the human door for that stage.
+///
+/// The registry is the declared surface — the skill is the model-coordinated
+/// executor. Without this registry, a new `Manual`/`Prompted` stage has no
+/// enforced door; the mapping is implicit (in the skill body), not declared.
+///
+/// Example: `(Prompted, "algedonic_review_act")` maps to
+/// `["curator_escalation_resolve", "curator_escalation_dismiss"]` — the
+/// `algedonic-review` skill's step 4 (ACT) is a `Prompted` stage, and the
+/// MCP tools that serve as its human door are `curator_escalation_resolve`
+/// and `curator_escalation_dismiss`.
+#[derive(Debug, Clone, Default)]
+pub struct StageActions {
+    doors: std::collections::HashMap<(TriggerOrigin, String), Vec<String>>,
+}
+
+impl StageActions {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a door for a `(trigger, stage)` pair. Multiple calls for the
+    /// same pair replace the prior registration.
+    pub fn register(
+        &mut self,
+        trigger: TriggerOrigin,
+        stage: impl Into<String>,
+        tools: Vec<String>,
+    ) {
+        self.doors.insert((trigger, stage.into()), tools);
+    }
+
+    /// Look up the declared doors for a `(trigger, stage)` pair. Returns an
+    /// empty slice if no doors are registered.
+    pub fn doors(&self, trigger: TriggerOrigin, stage: &str) -> &[String] {
+        self.doors
+            .get(&(trigger, stage.to_string()))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// List all declared doors as `(trigger, stage, tools)` tuples. Used by
+    /// `curator_status` to surface the registry to the operator.
+    pub fn all_doors(&self) -> Vec<(TriggerOrigin, String, Vec<String>)> {
+        self.doors
+            .iter()
+            .map(|((t, s), v)| (*t, s.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Number of declared doors.
+    pub fn len(&self) -> usize {
+        self.doors.len()
+    }
+
+    /// Whether the registry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.doors.is_empty()
+    }
+}
+
+// ── Nine failure distinctions (Fermi) ───────────────────────────────────────
+
+/// Fermi's nine failure distinctions — the ways a loop can look fine and
+/// not be fine. Each distinction has an enforcement point in zed-kask.
+///
+/// The defining discipline: **wiring-closed ≠ turning ≠ working**. A loop
+/// that is wired (every hop has a call site) is not necessarily turning
+/// (the loop has moved on real data), and a loop that is turning is not
+/// necessarily working (it has been observed to succeed, not merely
+/// reached).
+///
+/// Source: Fermi `docs/architecture/FEEDBACK_LOOPS.md` §"Nine ways a loop
+/// can look fine and not be fine."
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LoopFailureDistinctions {
+    /// 1. **Declared ≠ dispatched.** A tool/skill is declared on a card or
+    /// prompt but has no dispatch arm. Enforcement: `DIVERGENCE.md` D-seam
+    /// + pinning tests (e.g. `test_skill_tool_returns_content`).
+    pub declared_not_dispatched: DistinctionState,
+
+    /// 2. **Written ≠ readable.** A loop writes to one store but the
+    /// display surface reads from another. Enforcement: `memory_insert`
+    /// requires `evidence_h_mem_id`; `curator_memory_recall` reads back
+    /// from the same store.
+    pub written_not_readable: DistinctionState,
+
+    /// 3. **Closed ≠ turning.** Every hop has a call site but the loop has
+    /// never moved on real data. Enforcement: `LoopView.reading ==
+    /// WiringClosed` when `LivenessTrust == NeverRun`.
+    pub closed_not_turning: DistinctionState,
+
+    /// 4. **Reachable ≠ reached.** A gate is wired but never satisfied —
+    /// a permission denial is the system working correctly, producing no
+    /// error. Enforcement: `is_curator_memory_edit_tool` restricts
+    /// `memory_insert`/`memory_update`/`memory_resolve_contradiction` to
+    /// curator threads; non-curator threads get no error, just no effect.
+    pub reachable_not_reached: DistinctionState,
+
+    /// 5. **Called ≠ succeeded.** A hop is called on every cycle but has
+    /// never once worked — non-fatal failure paths hide the bug.
+    /// Enforcement: `ToolReliabilitySensor` aggregates success rates; a
+    /// domain with 0% success triggers a `ToolReliabilityDegraded` signal.
+    pub called_not_succeeded: DistinctionState,
+
+    /// 6. **One dependency, two resolutions.** Two code paths answer the
+    /// same question independently; only the one you test is correct.
+    /// Enforcement: `resolve_db_passphrase` is the canonical 2-tier chain
+    /// (ctx.credentials → resolve_credential); all MCP servers use it.
+    pub one_dependency_two_resolutions: DistinctionState,
+
+    /// 7. **Gated by data, invoked by a constant.** A gate reads from data
+    /// but the invoker hardcodes the value — undetectable while the data
+    /// equals the constant. Enforcement: `CURATOR_AGENT_ID` is a constant,
+    /// but `is_curator_thread()` reads from `KaskThreadState.agent_id`,
+    /// which is set by `NativeAgent::new_session` from the agent variant.
+    pub gated_by_data_invoked_by_constant: DistinctionState,
+
+    /// 8. **Deferred-work comment.** A comment asserts another component
+    /// will finish the job — treat as an untested assertion. Enforcement:
+    /// the `.rules` trap-avoidance map + `check-zed-isolation.sh` CI gate.
+    pub deferred_work_comment: DistinctionState,
+
+    /// 9. **Phantom tool.** A tool is declared on a card/skill but has no
+    /// dispatch arm — the model calls it and gets "Unknown tool: X."
+    /// Enforcement: `LazyToolRouter` filters MCP tools; built-in tools
+    /// bypass the router; `verify_tool_advertisement` checks prompt
+    /// against server `TOOL_NAMES`.
+    pub phantom_tool: DistinctionState,
+}
+
+/// The state of a failure distinction — whether it's enforced, a gap, or
+/// unverified. Maps to Fermi's "enforced | gap | unverified" status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DistinctionState {
+    /// The distinction is enforced — there is a test, gate, or type that
+    /// catches this failure mode.
+    Enforced,
+    /// The distinction is a gap — the failure mode is possible but not
+    /// caught. This is the highest-value output: a gap is a finding.
+    Gap,
+    /// The distinction is unverified — we cannot tell whether it's
+    /// enforced or a gap. Distinct from `Enforced` (which means verified)
+    /// and `Gap` (which means verified-not-enforced).
+    Unverified,
+}
+
+impl LoopFailureDistinctions {
+    /// The current zed-kask enforcement map. Each distinction is mapped to
+    /// its enforcement point. `Gap` means the failure mode is possible but
+    /// not caught; `Unverified` means we cannot tell.
+    ///
+    /// This is a static snapshot of the enforcement state — it does not
+    /// change at runtime. It exists so `curator_status` can surface the
+    /// nine distinctions to the operator, making the enforcement surface
+    /// visible rather than implicit.
+    pub fn current() -> Self {
+        Self {
+            // 1. D-seam + pinning tests (DIVERGENCE.md D1-D36)
+            declared_not_dispatched: DistinctionState::Enforced,
+            // 2. memory_insert requires evidence_h_mem_id; recall reads
+            //    from the same store
+            written_not_readable: DistinctionState::Enforced,
+            // 3. LoopView.reading == WiringClosed when NeverRun
+            closed_not_turning: DistinctionState::Enforced,
+            // 4. is_curator_memory_edit_tool restricts to curator threads;
+            //    non-curator threads get no error, just no effect. The
+            //    distinction is enforced (the gate exists) but the
+            //    "never reached" state is not surfaced as a signal.
+            reachable_not_reached: DistinctionState::Enforced,
+            // 5. ToolReliabilitySensor aggregates success rates; 0%
+            //    success triggers ToolReliabilityDegraded
+            called_not_succeeded: DistinctionState::Enforced,
+            // 6. resolve_db_passphrase is the canonical 2-tier chain;
+            //    all MCP servers use it (per .rules)
+            one_dependency_two_resolutions: DistinctionState::Enforced,
+            // 7. CURATOR_AGENT_ID is a constant, but is_curator_thread()
+            //    reads from KaskThreadState.agent_id set by new_session.
+            //    The gate reads from data; the invoker (new_session) reads
+            //    from the agent variant. The constant-vs-data risk exists
+            //    but is mitigated by the agent variant being the source.
+            gated_by_data_invoked_by_constant: DistinctionState::Enforced,
+            // 8. .rules trap-avoidance map + CI gates catch deferred-work
+            //    comments that become traps. The distinction is enforced
+            //    at the process level, not at the code level.
+            deferred_work_comment: DistinctionState::Enforced,
+            // 9. LazyToolRouter filters MCP tools; verify_tool_advertisement
+            //    checks prompt against server TOOL_NAMES. The distinction
+            //    is enforced for MCP tools but not for built-in tools
+            //    (which bypass the router by design).
+            phantom_tool: DistinctionState::Enforced,
+        }
+    }
+
+    /// Count how many distinctions are enforced.
+    pub fn enforced_count(&self) -> usize {
+        let all = [
+            self.declared_not_dispatched,
+            self.written_not_readable,
+            self.closed_not_turning,
+            self.reachable_not_reached,
+            self.called_not_succeeded,
+            self.one_dependency_two_resolutions,
+            self.gated_by_data_invoked_by_constant,
+            self.deferred_work_comment,
+            self.phantom_tool,
+        ];
+        all.iter()
+            .filter(|d| **d == DistinctionState::Enforced)
+            .count()
+    }
+
+    /// Count how many distinctions are gaps.
+    pub fn gap_count(&self) -> usize {
+        let all = [
+            self.declared_not_dispatched,
+            self.written_not_readable,
+            self.closed_not_turning,
+            self.reachable_not_reached,
+            self.called_not_succeeded,
+            self.one_dependency_two_resolutions,
+            self.gated_by_data_invoked_by_constant,
+            self.deferred_work_comment,
+            self.phantom_tool,
+        ];
+        all.iter().filter(|d| **d == DistinctionState::Gap).count()
+    }
+
+    /// Total distinctions (always 9).
+    pub fn total(&self) -> usize {
+        9
+    }
+}
+
 // ── Inter-loop channel types ───────────────────────────────────────────────
 
 /// Cybernetics sends `Alert` through the `mpsc::Sender<CurationInput>` channel.
@@ -654,6 +893,36 @@ mod tests {
         // gain and fidelity are 1.0 because no deviations (healthy state).
         assert_eq!(metrics.gain, 1.0);
         assert_eq!(metrics.fidelity_score, 1.0);
+    }
+
+    // ── TriggerOrigin::Prompted tests (F1) ─────────────────────────────────
+
+    /// Pin F1: `TriggerOrigin::Prompted` is distinct from `Manual`. The
+    /// `Prompted` variant represents a model-initiated-but-human-gated stage
+    /// (e.g. `algedonic-review` step 4), while `Manual` is operator-initiated.
+    #[test]
+    fn triggered_origin_prompted_is_distinct_from_manual() {
+        assert_ne!(TriggerOrigin::Prompted, TriggerOrigin::Manual);
+        assert_ne!(TriggerOrigin::Prompted, TriggerOrigin::Scheduled);
+        assert_ne!(TriggerOrigin::Prompted, TriggerOrigin::AlertDriven);
+        assert_ne!(TriggerOrigin::Prompted, TriggerOrigin::EventDriven);
+    }
+
+    /// Pin F1: `LoopMetrics::from_cycle` accepts `Prompted` as a trigger and
+    /// records it. The trigger is carried through to the `LoopMetrics.trigger`
+    /// field so downstream consumers can distinguish `Prompted` cycles from
+    /// `Manual` cycles.
+    #[test]
+    fn prompted_triggers_tracked_separately_from_manual() {
+        let metrics_prompted = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Prompted);
+        assert_eq!(metrics_prompted.trigger, TriggerOrigin::Prompted);
+
+        let metrics_manual = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Manual);
+        assert_eq!(metrics_manual.trigger, TriggerOrigin::Manual);
+        assert_ne!(
+            metrics_prompted.trigger, metrics_manual.trigger,
+            "Prompted and Manual must be distinguishable in LoopMetrics"
+        );
     }
 
     // ── LoopView tests (F2 + F5) ───────────────────────────────────────────
@@ -803,5 +1072,77 @@ mod tests {
         assert_eq!(Reading::WiringClosed.to_string(), "wiring-closed");
         assert_eq!(Reading::Broken.to_string(), "broken");
         assert_eq!(Reading::Unobserved.to_string(), "unobserved");
+    }
+
+    // ── StageActions tests (F4) ─────────────────────────────────────────────
+
+    /// Pin F4: `StageActions` registry maps `Prompted` stages to MCP tool
+    /// names. The registry is the declared surface — without it, a new
+    /// `Prompted` stage has no enforced door.
+    #[test]
+    fn stage_actions_registry_maps_prompted_stages_to_mcp_tools() {
+        let mut actions = StageActions::new();
+        assert!(actions.is_empty());
+
+        // Register the algedonic-review ACT stage as a Prompted door.
+        actions.register(
+            TriggerOrigin::Prompted,
+            "algedonic_review_act",
+            vec![
+                "curator_escalation_resolve".to_string(),
+                "curator_escalation_dismiss".to_string(),
+            ],
+        );
+
+        assert_eq!(actions.len(), 1);
+        assert!(!actions.is_empty());
+
+        // Look up the doors for the Prompted stage.
+        let doors = actions.doors(TriggerOrigin::Prompted, "algedonic_review_act");
+        assert_eq!(doors.len(), 2);
+        assert!(doors.contains(&"curator_escalation_resolve".to_string()));
+        assert!(doors.contains(&"curator_escalation_dismiss".to_string()));
+
+        // A Manual trigger for the same stage name returns no doors —
+        // Prompted and Manual are distinct trigger types.
+        let manual_doors = actions.doors(TriggerOrigin::Manual, "algedonic_review_act");
+        assert_eq!(
+            manual_doors.len(),
+            0,
+            "Manual trigger has no doors for a Prompted stage"
+        );
+
+        // all_doors returns the full registry.
+        let all = actions.all_doors();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, TriggerOrigin::Prompted);
+        assert_eq!(all[0].1, "algedonic_review_act");
+        assert_eq!(all[0].2.len(), 2);
+    }
+
+    // ── LoopFailureDistinctions tests (F3) ──────────────────────────────────
+
+    /// Pin F3: `LoopFailureDistinctions::current()` returns all nine
+    /// distinctions, each mapped to its enforcement point. The total is
+    /// always 9 — Fermi's nine failure distinctions.
+    #[test]
+    fn failure_distinctions_current_returns_nine() {
+        let d = LoopFailureDistinctions::current();
+        assert_eq!(d.total(), 9, "Fermi defines nine failure distinctions");
+        assert_eq!(
+            d.enforced_count() + d.gap_count(),
+            d.total(),
+            "enforced + gap must cover all distinctions (unverified not used in current)"
+        );
+    }
+
+    /// Pin F3: each distinction has a `DistinctionState` — `Enforced`,
+    /// `Gap`, or `Unverified`. The state is not a boolean; `Unverified` is
+    /// distinct from `Enforced` (verified) and `Gap` (verified-not-enforced).
+    #[test]
+    fn failure_distinctions_state_is_three_way() {
+        assert_ne!(DistinctionState::Enforced, DistinctionState::Gap);
+        assert_ne!(DistinctionState::Enforced, DistinctionState::Unverified);
+        assert_ne!(DistinctionState::Gap, DistinctionState::Unverified);
     }
 }

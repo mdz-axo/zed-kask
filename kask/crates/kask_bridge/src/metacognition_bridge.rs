@@ -78,6 +78,23 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
             if let Some(ref port) = self.memory_port {
                 snapshot["memory"] = port.memory_health_json();
             }
+            // Declared human doors for Manual/Prompted stages (Fermi
+            // STAGE_ACTIONS). Each entry is (trigger, stage, [tool_names]).
+            let doors = self.loop_.stage_actions().all_doors();
+            if !doors.is_empty() {
+                snapshot["declared_doors"] = json!(
+                    doors
+                        .iter()
+                        .map(|(trigger, stage, tools)| {
+                            json!({
+                                "trigger": format!("{:?}", trigger).to_lowercase(),
+                                "stage": stage,
+                                "tools": tools,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                );
+            }
             snapshot
         });
         Task::ready(result)

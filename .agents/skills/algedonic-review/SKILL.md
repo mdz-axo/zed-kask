@@ -39,8 +39,8 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 ### SENSE — Query alert backlog (step 1)
 
 1. Step 1 calls two curator MCP tools directly (no template): `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
-2. `curator_status` is an agent tool, not an MCP tool — the skill cannot batch-call it. The alert-log cap status is carried by the `AlgedonicLogApproachingCap` signal that triggers this skill's invocation, so the skill doesn't re-query it.
-3. Results are keyed by `escalations` and `algedonic` in the result of step 1.
+2. `curator_status` is an agent tool, not an MCP tool — the skill cannot batch-call it from `mcp_batch`. However, the skill body instructs the agent to call `curator_status` separately (outside the batch) to retrieve the `loop_reading` field, which reports the trust/absence assembly verdict (wiring-closed / turning / broken / unobserved). This reading is critical context for triage: a `wiring-closed` reading means the regulation loop has never ticked — alerts may be stale or missing, and the operator should investigate the loop wiring before acting on individual alerts.
+3. Results are keyed by `escalations` and `algedonic` in the result of step 1. The `curator_status` result (called separately) provides `loop_reading`.
 
 ### TRIAGE — Synthesize triage briefing (step 2)
 
@@ -48,6 +48,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 2. Each alert is classified by severity (Critical → act now, Warning → act soon, Info → acknowledge).
 3. Each alert gets a recommended action: `resolve` (issue addressed), `dismiss` (not actionable), `investigate` (needs root-cause analysis), or `escalate_to_human` (beyond curator authority).
 4. The briefing includes the alert log cap status (count/cap, approaching flag) so the operator knows whether eviction is imminent.
+5. The briefing opens with the `loop_reading` from `curator_status`. If the reading is `wiring-closed` or `broken`, the briefing flags this as a structural concern that takes priority over individual alert triage — a loop that has never run cannot produce trustworthy alerts, and a broken loop may be generating false positives.
 
 ### PRESENT — Render triage report (step 3)
 

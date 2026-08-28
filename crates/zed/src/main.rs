@@ -929,7 +929,25 @@ fn main() {
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
                 .with_alert_receiver(alert_rx)
-                .with_alert_sink(alert_sink),
+                .with_alert_sink(alert_sink)
+                .with_stage_actions({
+                    let mut actions = hkask_regulation::StageActions::new();
+                    // The algedonic-review skill's step 4 (ACT — Execute
+                    // operator decisions) is a Prompted stage: the skill
+                    // presents the triage, the operator confirms each
+                    // resolve/dismiss. The MCP tools that serve as its human
+                    // door are curator_escalation_resolve and
+                    // curator_escalation_dismiss.
+                    actions.register(
+                        hkask_regulation::TriggerOrigin::Prompted,
+                        "algedonic_review_act",
+                        vec![
+                            "curator_escalation_resolve".to_string(),
+                            "curator_escalation_dismiss".to_string(),
+                        ],
+                    );
+                    actions
+                }),
         );
         let metacognition_loop_for_tick = metacognition_loop.clone();
 
@@ -1817,16 +1835,14 @@ fn main() {
                             }
                             Err(e) => {
                                 log::warn!(
-                                    "Failed to open memory DB at {db_path} for {agent_name}: {e} \
-                                     — staying in logging mode"
+                                    "Failed to open memory DB at {db_path} for {agent_name}: {e}"
                                 );
                             }
                         }
                     }
                     Err(e) => {
                         log::warn!(
-                            "Failed to provision agent storage for {agent_name}: {e} \
-                             — staying in logging mode"
+                            "Failed to provision agent storage for {agent_name}: {e}"
                         );
                     }
                 }
@@ -2156,11 +2172,11 @@ fn main() {
                         // The skill execution is wired by the separate
                         // model-dependent task (below the deferred task
                         // block), which fires as soon as the model registry
-                        // reports a default model — independent of Zed user
-                        // login. Previously it was wired here, inside the
-                        // user-login-gated deferred task, which meant users
-                        // with a configured default model but no cloud login
-                        // had skills silently disabled. The model registry is
+                        // reports a default model — independent of the
+                        // deferred task. Previously it was wired here, inside
+                        // the deferred task, which meant users with a
+                        // configured default model but no cloud login had
+                        // skills silently disabled. The model registry is
                         // populated from settings.json, not from cloud auth.
                         //
                         // The inference port is still constructed here
@@ -2360,9 +2376,9 @@ fn main() {
         // but they wrap the same underlying model, so the duplication is
         // harmless.
         //
-        // What stays in the user-login-gated deferred task:
-        // - Memory port, context injector, curator injector (need username
-        //   for the agent DB)
+        // What stays in the deferred task:
+        // - Memory port, context injector, curator injector (use fallback
+        //   identity if Zed user hasn't resolved)
         // - Regulation archive, escalation queue (need passphrase from
         //   provisioning)
         // - IPC server (needs embedding port from provisioning)
@@ -2551,11 +2567,12 @@ fn main() {
         //    The model registry is populated from settings.json, not cloud auth.
         //
         // 2. The remaining model-dependent hooks (IPC server, condenser, panel
-        //    tool invoker) and all user-dependent hooks (memory port, context
-        //    injector, regulation archive) are wired by the deferred task
-        //    (above) after the Zed user resolves.
+        //    tool invoker) and all kask hooks (memory port, context injector,
+        //    regulation archive) are wired by the deferred task (above).
+        //    The deferred task no longer blocks on the Zed user — it proceeds
+        //    immediately with a fallback identity if needed.
         //
-        // zed-kask: D1/D3/D6/D8 — F20: deferred task (user-dependent hooks:
+        // zed-kask: D1/D3/D6/D8 — F20: deferred task (kask hooks:
         // memory_port, thread_condenser, tool_invoker, context_injector,
         // curator_context_injector) + model-dependent task (edit_prediction_port).
 

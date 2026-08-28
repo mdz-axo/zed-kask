@@ -184,6 +184,10 @@ pub struct MetacognitionLoop {
     /// notification (e.g. a toast). Best-effort: errors are logged and
     /// swallowed.
     alert_sink: Option<Arc<dyn AlertSink>>,
+    /// Declared human doors for `Manual`/`Prompted` regulation stages
+    /// (Fermi `STAGE_ACTIONS`). Populated by the composition root at startup.
+    /// Surfaced via `curator_status` so the operator can see declared doors.
+    stage_actions: crate::loops::StageActions,
 }
 
 impl MetacognitionLoop {
@@ -203,6 +207,7 @@ impl MetacognitionLoop {
             last_snapshot: RwLock::new(None),
             alert_rx: None,
             alert_sink: None,
+            stage_actions: crate::loops::StageActions::new(),
         }
     }
 
@@ -227,6 +232,23 @@ impl MetacognitionLoop {
     pub fn with_alert_sink(mut self, sink: Arc<dyn AlertSink>) -> Self {
         self.alert_sink = Some(sink);
         self
+    }
+
+    /// Wire the declared human doors for `Manual`/`Prompted` regulation
+    /// stages (Fermi `STAGE_ACTIONS`). The composition root populates this
+    /// at startup — each `(trigger, stage)` pair maps to the MCP tool names
+    /// that serve as its human door. Surfaced via `curator_status` so the
+    /// operator can see which doors are declared.
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_stage_actions(mut self, actions: crate::loops::StageActions) -> Self {
+        self.stage_actions = actions;
+        self
+    }
+
+    /// Get a reference to the declared stage actions (for JSON serialization
+    /// by the bridge provider).
+    pub fn stage_actions(&self) -> &crate::loops::StageActions {
+        &self.stage_actions
     }
 
     /// Run the loop as a background task. This method blocks (runs forever)

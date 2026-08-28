@@ -31,6 +31,15 @@
       "formatter": "prettier",
     },
     "Rust": {
+      "prettier": {
+        "allowed": false,
+      },
+      "formatter": {
+        "external": {
+          "command": "rustfmt",
+          "arguments": ["--edition", "2021", "--emit", "stdout", "--quiet"],
+        },
+      },
       "tasks": {
         "variables": {
           "RUST_DEFAULT_PACKAGE_RUN": "zed",

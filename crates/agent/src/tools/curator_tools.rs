@@ -100,6 +100,19 @@ pub struct CuratorStatusOutput {
     /// verified) from broken (running but failing) from unobserved (can't
     /// tell). `None` when the metacognition provider isn't wired.
     pub loop_reading: Option<String>,
+    /// Declared human doors for `Manual`/`Prompted` regulation stages
+    /// (Fermi `STAGE_ACTIONS`). Each entry is a `(trigger, stage, tools)` tuple.
+    /// Empty when the metacognition provider isn't wired or no doors are
+    /// registered.
+    pub declared_doors: Vec<DeclaredDoor>,
+}
+
+/// A declared human door for a `Manual`/`Prompted` regulation stage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclaredDoor {
+    pub trigger: String,
+    pub stage: String,
+    pub tools: Vec<String>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -139,6 +152,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_cap: None,
                 alert_log_approaching_cap: None,
                 loop_reading: None,
+                declared_doors: Vec::new(),
             })?;
 
             // Distinguish "provider not wired" from "provider wired but
@@ -158,6 +172,7 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
                 loop_reading: None,
+                declared_doors: Vec::new(),
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
@@ -172,6 +187,7 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
                 loop_reading: None,
+                declared_doors: Vec::new(),
                 });
             };
             let effectiveness = snapshot
@@ -215,6 +231,28 @@ impl AgentTool for CuratorStatusTool {
                 .get("loop_reading")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            // Declared human doors for Manual/Prompted stages (Fermi
+            // STAGE_ACTIONS). Each entry is (trigger, stage, [tool_names]).
+            let declared_doors = snapshot
+                .get("declared_doors")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|entry| {
+                            Some(DeclaredDoor {
+                                trigger: entry.get("trigger")?.as_str()?.to_string(),
+                                stage: entry.get("stage")?.as_str()?.to_string(),
+                                tools: entry
+                                    .get("tools")?
+                                    .as_array()?
+                                    .iter()
+                                    .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                                    .collect(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             // A degraded curator memory store is a health signal in its own
             // right — surface it in `status` so a caller reading only the
             // status line (not the structured fields) still sees it.
@@ -243,6 +281,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_cap,
                 alert_log_approaching_cap,
                 loop_reading,
+                declared_doors,
             })
         })
     }
@@ -258,7 +297,8 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Variety Deficit: {}\n\
              Memory: {}\n\
              Algedonic Log: {}\n\
-             Loop Reading: {}",
+             Loop Reading: {}\n\
+             Declared Doors: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -297,10 +337,17 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 }
                 _ => "not available".to_string(),
             },
-            output
-                .loop_reading
-                .as_deref()
-                .unwrap_or("not available"),
+            output.loop_reading.as_deref().unwrap_or("not available"),
+            if output.declared_doors.is_empty() {
+                "none".to_string()
+            } else {
+                output
+                    .declared_doors
+                    .iter()
+                    .map(|d| format!("{}:{} -> [{}]", d.trigger, d.stage, d.tools.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            },
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
     }
