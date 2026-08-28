@@ -525,6 +525,10 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             ..
         } => Some((*coverage_pct as u64, *previous_coverage as u64)),
         RegulationData::WalletKeyUnhealthy { threshold, .. } => Some((0, *threshold as u64)),
+        RegulationData::ContextServerFleetHealth {
+            healthy_count,
+            total_count,
+        } => Some((*total_count - *healthy_count, *total_count)),
         RegulationData::CuratorBudgetOverride { .. }
         | RegulationData::RolloutImpactCheck { .. }
         | RegulationData::NoData => None,

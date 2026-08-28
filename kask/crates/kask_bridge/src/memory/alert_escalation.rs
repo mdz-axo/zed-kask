@@ -145,4 +145,34 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
             }
         }
     }
+
+    fn auto_resolve_cleared(&self, output: &str, resolution_note: &str) {
+        match self.queue.resolve_pending_by_output(output, "cybernetics_loop:auto_resolve") {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::info!(
+                        target: "reg.alert",
+                        count = count,
+                        note = %resolution_note,
+                        "Auto-resolved pending escalation — triggering condition cleared"
+                    );
+                } else {
+                    // No pending escalation with this output — either it was
+                    // already resolved/dismissed by the operator, or the output
+                    // string doesn't match. Not an error; the condition is clear.
+                    tracing::debug!(
+                        target: "reg.alert",
+                        "Auto-resolve found no pending escalation with this output — already cleared or not found"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.alert",
+                    error = %e,
+                    "Auto-resolve query failed — escalation remains pending"
+                );
+            }
+        }
+    }
 }

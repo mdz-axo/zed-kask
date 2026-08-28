@@ -67,6 +67,16 @@ pub enum RegulationData {
     },
     /// Tool reliability degraded below threshold.
     ToolReliabilityDegraded { reliability: f64, threshold: f64 },
+    /// Context-server fleet health degraded — some registered servers are
+    /// stuck in `Starting` or `Error` instead of `Running`.
+    ///
+    /// Carries the snapshot at escalation time so `verify_impact` can re-sense
+    /// and compare. `healthy_count` / `total_count` are the fleet counts from
+    /// `ContextServerHealthSource` at the moment the action was built.
+    ContextServerFleetHealth {
+        healthy_count: u64,
+        total_count: u64,
+    },
     /// Curator (metacognition) budget override directed at a named agent.
     ///
     /// Carries the LLM-produced target agent name and new budget so `act()`
@@ -137,6 +147,7 @@ impl RegulationData {
             RegulationData::SeamCoverageDegraded { .. }
             | RegulationData::SeamCoverageImproved { .. } => "seam_coverage",
             RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
+            RegulationData::ContextServerFleetHealth { .. } => "context_server_health",
             RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",
             RegulationData::RolloutImpactCheck { metric, .. } => metric,
             RegulationData::NoData => "no_metric",

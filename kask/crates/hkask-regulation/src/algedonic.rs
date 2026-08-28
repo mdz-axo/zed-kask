@@ -110,6 +110,27 @@ pub trait AlertEscalationSink: Send + Sync {
     fn has_pending_alert(&self, _output: &str) -> bool {
         false
     }
+
+    /// Auto-resolve a pending escalation when the triggering condition has
+    /// cleared.
+    ///
+    /// Called by `verify_impact` when an `Accept` ImpactReport is produced for
+    /// a previously-escalated condition — the metric improved, so the
+    /// escalation is stale. The implementation should resolve the pending
+    /// escalation matching `output` with the provided resolution note.
+    ///
+    /// This closes the stuck-loop pattern: without auto-resolve, the loop
+    /// senses a deviation, escalates it, the condition self-resolves, but the
+    /// escalation sits in the queue until manual review — the loop spins
+    /// indefinitely with zero effectiveness because `verify_impact` produces
+    /// no ImpactReport for NoData actions.
+    ///
+    /// Default is a no-op (no auto-resolve). Implementations backed by a
+    /// durable queue should resolve the matching pending escalation.
+    /// Errors are logged by the caller and never propagated.
+    fn auto_resolve_cleared(&self, _output: &str, _resolution_note: &str) {
+        // No-op — auto-resolve is opt-in.
+    }
 }
 
 impl RuntimeAlert {

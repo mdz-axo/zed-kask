@@ -530,11 +530,14 @@ impl super::CyberneticsLoop {
                 }
                 None => {
                     // No quantitative data (NoData or non-threshold variant) —
-                    // use the reason string as the message. This avoids the
-                    // misleading "Variety deficit 0 exceeds threshold 0"
-                    // message that the previous (0, 0) fallback produced.
+                    // use the reason string as the message. The (1, 1) sentinel
+                    // matches the advisory pattern used by efferent and plateau
+                    // alerts: "one issue, threshold one issue." The previous
+                    // (0, 0) fallback produced misleading error_context JSON
+                    // that triage read as "no deficit, no threshold" — indistinguishable
+                    // from a broken sense input returning zero.
                     let msg = format!("{} — regulatory escalation", action.parameters.reason);
-                    (0, 0, msg)
+                    (1, 1, msg)
                 }
             }
         } else {
@@ -769,6 +772,17 @@ impl super::CyberneticsLoop {
                     RegulationData::VarietyDeficitExceeded { deficit, .. } => {
                         (*deficit, SignalMetric::VarietyDeficit)
                     }
+                    RegulationData::ContextServerFleetHealth {
+                        healthy_count,
+                        total_count,
+                    } => {
+                        // Before-value is the healthy/total ratio at
+                        // escalation time. After-value is re-sensed from
+                        // the source. Higher ratio = improved.
+                        let before_ratio =
+                            *healthy_count as f64 / (*total_count).max(1) as f64;
+                        (before_ratio, SignalMetric::ContextServerHealth)
+                    }
                     _ => {
                         // Actions with NoData (the 18 meta-regulatory and
                         // observational arms) can't be verified via the
@@ -796,6 +810,30 @@ impl super::CyberneticsLoop {
                         .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
                         .fold(1.0, f64::min),
                     SignalMetric::VarietyDeficit => current_deficit,
+                    SignalMetric::ContextServerHealth => {
+                        // Re-sense fleet health from the source stored on the loop.
+                        // If the source is not wired, warn and skip — a silent
+                        // 0.0 would read as "fleet fully degraded" (the .rules
+                        // unwrap_or(0) trap).
+                        if let Some(ref source) = self.context_server_health_source {
+                            let healthy = source.healthy_count().await;
+                            let total = source.total_count().await;
+                            if total == 0 {
+                                tracing::warn!(
+                                    target: "reg.cybernetics",
+                                    "verify_impact: context-server health source reports 0 total servers — cannot re-sense, skipping"
+                                );
+                                continue;
+                            }
+                            healthy as f64 / total as f64
+                        } else {
+                            tracing::warn!(
+                                target: "reg.cybernetics",
+                                "verify_impact: context-server health source not wired — cannot re-sense fleet health, skipping"
+                            );
+                            continue;
+                        }
+                    }
                     _ => continue,
                 };
             }
@@ -803,9 +841,11 @@ impl super::CyberneticsLoop {
             let delta = after_val - before_val;
             // For EnergyRemaining: higher is better (positive delta = improved).
             // For VarietyDeficit: lower is better (negative delta = improved).
+            // For ContextServerHealth: higher is better (positive delta = improved).
             let improved = match metric {
                 SignalMetric::EnergyRemaining => delta > 0.0,
                 SignalMetric::VarietyDeficit => delta < 0.0,
+                SignalMetric::ContextServerHealth => delta > 0.0,
                 _ => delta.abs() > f64::EPSILON,
             };
 
@@ -959,6 +999,42 @@ impl super::CyberneticsLoop {
                         rollout = %rollout_id,
                         error = %error,
                         "impact verdict write-back failed — the loop's judgment is not persisted to the store"
+                    );
+                }
+            }
+
+            // Auto-resolve: when the triggering condition has cleared
+            // (Accept decision), resolve the pending escalation so the loop
+            // stops spinning on a stale deviation. This closes the stuck-loop
+            // pattern where a transient degradation self-resolves but the
+            // escalation sits in the queue until manual review.
+            if decision == ActionDecision::Accept && improved {
+                if let Some(ref sink) = self.alert_escalation_sink {
+                    // Build the alert message to match what was persisted by
+                    // route_action_as_alert. For native Escalate with typed
+                    // data, the message format is "reason — value D exceeds
+                    // threshold T". For the NoData fallback, it's "reason —
+                    // regulatory escalation". We check both patterns.
+                    let exact_msg = match extract_deficit_threshold(&action.parameters.data) {
+                        Some((d, t)) => format!(
+                            "{} — value {} exceeds threshold {}",
+                            action.parameters.reason, d, t
+                        ),
+                        None => format!("{} — regulatory escalation", action.parameters.reason),
+                    };
+                    sink.auto_resolve_cleared(
+                        &exact_msg,
+                        &format!(
+                            "Auto-resolved by verify_impact: metric {} improved ({:.4} → {:.4}, delta {:+.4}). Triggering condition cleared.",
+                            metric.as_str(), before_val, after_val, delta
+                        ),
+                    );
+                    tracing::info!(
+                        target: "reg.cybernetics",
+                        metric = metric.as_str(),
+                        before = before_val,
+                        after = after_val,
+                        "Auto-resolved escalation — triggering condition cleared"
                     );
                 }
             }
@@ -1306,8 +1382,7 @@ impl super::CyberneticsLoop {
             | RegulationReason::MemoryLifeLow
             | RegulationReason::CircuitBreakerOpen
             | RegulationReason::InferenceUnavailable
-            | RegulationReason::ModelUnavailable
-            | RegulationReason::ContextServerFleetDegraded => {
+            | RegulationReason::ModelUnavailable => {
                 let at = self
                     .try_substitute(dev.signal.metric, proposed.action_type)
                     .await;
@@ -1315,6 +1390,32 @@ impl super::CyberneticsLoop {
                     proposed.target,
                     at,
                     RegulatoryActionParams::reason(proposed.reason.as_str()),
+                    dev.signal.metric.as_str().into(),
+                ))
+            }
+            // ContextServerFleetDegraded carries typed fleet-health data so
+            // verify_impact can re-sense and compare, and extract_deficit_threshold
+            // can populate the error_context with real counts instead of (0, 0).
+            RegulationReason::ContextServerFleetDegraded => {
+                let at = self
+                    .try_substitute(dev.signal.metric, proposed.action_type)
+                    .await;
+                let data = if let Some(ref source) = self.context_server_health_source {
+                    let healthy = source.healthy_count().await as u64;
+                    let total = source.total_count().await as u64;
+                    RegulationData::ContextServerFleetHealth {
+                        healthy_count: healthy,
+                        total_count: total,
+                    }
+                } else {
+                    // Source not wired — fall back to NoData. verify_impact
+                    // will skip (warned), matching the pre-fix behavior.
+                    RegulationData::NoData
+                };
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    at,
+                    RegulatoryActionParams::with_data(proposed.reason.as_str(), data),
                     dev.signal.metric.as_str().into(),
                 ))
             }

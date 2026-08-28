@@ -349,6 +349,44 @@ impl EscalationQueue {
         Ok(affected)
     }
 
+    /// Resolve all pending escalations matching a given `output` string.
+    ///
+    /// Returns the number of escalations resolved. Used by the regulation
+    /// loop's auto-resolve path: when `verify_impact` produces an `Accept`
+    /// ImpactReport for a previously-escalated condition, the triggering
+    /// deviation has cleared and the escalation is stale. This method resolves
+    /// it without operator intervention, closing the stuck-loop pattern where
+    /// a transient degradation self-resolves but the escalation sits in the
+    /// queue until manual review.
+    ///
+    /// Mirrors `dismiss_pending_by_output` but sets status to `resolved`
+    /// (condition cleared) rather than `dismissed` (not actionable).
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// pre:  output is non-empty, resolved_by is non-empty
+    /// post: all pending escalations with this output are set to Resolved
+    #[must_use = "result must be used"]
+    pub fn resolve_pending_by_output(
+        &self,
+        output: &str,
+        resolved_by: &str,
+    ) -> Result<usize, EscalationError> {
+        let now = now_rfc3339();
+        let affected = self
+            .driver
+            .execute(
+                r#"UPDATE escalations SET status = 'resolved', resolved_at = ?1, resolved_by = ?2
+             WHERE status = 'pending' AND output = ?3"#,
+                &[
+                    DbValue::Text(now),
+                    DbValue::Text(resolved_by.to_string()),
+                    DbValue::Text(output.to_string()),
+                ],
+            )
+            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
+        Ok(affected)
+    }
+
     /// Dismiss an escalation.
     ///
     /// expect: "The system provides durable storage for escalation data"

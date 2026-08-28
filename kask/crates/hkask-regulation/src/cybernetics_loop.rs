@@ -189,6 +189,12 @@ pub struct CyberneticsLoop {
     /// the action targeted — the store becomes the impact data plane and the
     /// struct-walk below becomes the fallback instead of the only path.
     rollout_events: Option<Arc<dyn RolloutEventSource>>,
+    /// Optional context-server health source, stored directly so `verify_impact`
+    /// can re-sense fleet health without going through the sensor registry.
+    /// The sensor registry still holds a `ContextServerHealthSensor` wrapping
+    /// the same source for the sense phase; this field is the verify-phase
+    /// re-sense path.
+    context_server_health_source: Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
 }
 
 impl CyberneticsLoop {
@@ -350,6 +356,7 @@ impl CyberneticsLoop {
             simulator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
             rollout_events: None,
+            context_server_health_source: None,
         }
     }
 
@@ -495,12 +502,13 @@ impl CyberneticsLoop {
     /// post: returns Self for chaining
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_context_server_health_source(
-        self,
+        mut self,
         source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
     ) -> Self {
         self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::ContextServerHealthSensor::new(source),
+            crate::sensor_provider::ContextServerHealthSensor::new(Arc::clone(&source)),
         ));
+        self.context_server_health_source = Some(source);
         self
     }
 
@@ -515,8 +523,9 @@ impl CyberneticsLoop {
         source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
     ) {
         self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::ContextServerHealthSensor::new(source),
+            crate::sensor_provider::ContextServerHealthSensor::new(Arc::clone(&source)),
         ));
+        self.context_server_health_source = Some(source);
     }
 
     /// Wire a memory health source at construction time.

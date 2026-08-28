@@ -19,3 +19,4 @@ hkask-mcp-portfolio
 hkask-mcp-scenarios
 hkask-mcp-prediction-markets
 hkask-mcp-swarm
+hkask-mcp-media
