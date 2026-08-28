@@ -17,3 +17,4 @@ credentials_provider.workspace = true
 futures.workspace = true
 gpui.workspace = true
 hkask-keystore.workspace = true
+log.workspace = true

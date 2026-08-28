@@ -1447,49 +1447,17 @@ fn main() {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: _user_webid } = provisioned;
 
-                        // zed-kask: D8 — F14: embedding credentials (deferred task).
-                        // Resolve embedding credentials by reading the API key
-                        // from the Zed keychain at the provider's `api_url`.
-                        // Per the .rules trap on startup-failure signals:
-                        // failure warns loudly and skips the real memory port
-                        // (logging mode stays active).
-                        let embedding_port_result = cx.update(|cx| {
-                            let http_client = app_state_for_deferred.client.http_client();
-                            let tokio_handle = gpui_tokio::Tokio::handle(cx);
-                            let embedding_model = embedding_model.clone();
-                            let credentials_provider =
-                                zed_credentials_provider::global(cx);
-                            cx.spawn(async move |cx| {
-                                kask_bridge::resolve_embedding_credentials(
-                                    &embedding_model,
-                                    credentials_provider.as_ref(),
-                                    &cx,
-                                )
-                                .await
-                                .map(|(api_url, api_key)| {
-                                    kask_bridge::LanguageModelEmbeddingPort::new(
-                                        api_url,
-                                        api_key,
-                                        http_client,
-                                        tokio_handle,
-                                    )
-                                })
-                            })
-                        });
-
-                        let Some(embedding_port) = embedding_port_result.await else {
-                            return;
-                        };
-
-                        // Clone for the IPC server (the other copy goes to
-                        // RealMemoryPort below).
-                        embedding_port_for_ipc = Some(embedding_port.clone());
-
                         // Upgrade the regulation event sinks to the durable
                         // `RegulationArchive` on the curator's curator.db — the same
                         // DB the curator MCP server's `reg_query` and
                         // `curator_algedonic_log` tools read. Before this,
                         // both sinks are `NoopEventSink` (spans dropped).
+                        //
+                        // zed-kask: This wiring is BEFORE the embedding credentials
+                        // check because regulation span persistence must not depend
+                        // on embedding availability. The regulation loop is a
+                        // safety-critical feedback path — dropping spans because the
+                        // embedding endpoint is down is a broken feedback loop.
                         match kask_bridge::open_curator_regulation_archive(&passphrase) {
                             Some(archive) => {
                                 let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive.clone();
@@ -1576,6 +1544,56 @@ fn main() {
                                 );
                             }
                         }
+
+                        // zed-kask: D8 — F14: embedding credentials (deferred task).
+                        // Resolve embedding credentials by reading the API key
+                        // from the Zed keychain at the provider's `api_url`.
+                        //
+                        // When embedding credentials are unavailable, the memory
+                        // port is still wired — h_mem writes are pure SQL and
+                        // don't need embeddings. Semantic recall (KNN) degrades to
+                        // keyword-only, but the curator still has episodic memory
+                        // of every conversation. This is the correct degradation:
+                        // memory ingestion is safety-critical (the curator must
+                        // remember what happened), embeddings are an enhancement.
+                        let embedding_port_result = cx.update(|cx| {
+                            let http_client = app_state_for_deferred.client.http_client();
+                            let tokio_handle = gpui_tokio::Tokio::handle(cx);
+                            let embedding_model = embedding_model.clone();
+                            let credentials_provider =
+                                zed_credentials_provider::global(cx);
+                            cx.spawn(async move |cx| {
+                                kask_bridge::resolve_embedding_credentials(
+                                    &embedding_model,
+                                    credentials_provider.as_ref(),
+                                    &cx,
+                                )
+                                .await
+                                .map(|(api_url, api_key)| {
+                                    kask_bridge::LanguageModelEmbeddingPort::new(
+                                        api_url,
+                                        api_key,
+                                        http_client,
+                                        tokio_handle,
+                                    )
+                                })
+                            })
+                        });
+
+                        let embedding_port = embedding_port_result.await;
+                        if embedding_port.is_some() {
+                            log::info!("hKask embedding port resolved — semantic recall enabled");
+                        } else {
+                            log::warn!(
+                                "hKask embedding port unavailable — memory will be wired WITHOUT embeddings. \
+                                 h_mem writes work (pure SQL); semantic recall degrades to keyword-only. \
+                                 Remediation: set the embedding provider's API key via Settings → Kask → Data Services."
+                            );
+                        }
+
+                        // Clone for the IPC server (the other copy goes to
+                        // RealMemoryPort below).
+                        embedding_port_for_ipc = embedding_port.clone();
 
                         match kask_bridge::RealMemoryPort::new(
                             &passphrase,
@@ -2519,6 +2537,7 @@ fn main() {
         .detach();
         swarm_panel::init(cx);
         kanban_panel::init(cx);
+        portfolio_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         // D1/D3/D4/D12: Model-dependent kask wiring is split across two tasks:

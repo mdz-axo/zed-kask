@@ -120,6 +120,11 @@ pub(crate) fn map_database_error(
             "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
         )),
         DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
+        DatabaseError::SaltMissing { .. } => McpToolError::invalid_argument(format!(
+            "{message}. The DB file exists but its salt file is missing — \
+             the DB cannot be opened without its original salt. Use \
+             `open_or_repair` to self-heal, or delete the DB file manually."
+        )),
         DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => {
             McpToolError::internal(message) // rr0044-ok: infra-db-failure
         }

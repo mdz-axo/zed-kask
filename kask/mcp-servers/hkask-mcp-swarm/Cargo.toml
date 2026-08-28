@@ -14,6 +14,7 @@ name = "hkask-mcp-swarm"
 path = "src/main.rs"
 
 [dependencies]
+hkask-keystore.workspace = true
 hkask-mcp-server.workspace = true
 hkask-bridge-ontology.workspace = true
 hkask-types.workspace = true

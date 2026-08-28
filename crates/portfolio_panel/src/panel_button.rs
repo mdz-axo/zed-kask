@@ -15,7 +15,7 @@ pub type PortfolioPanelButton = PanelToggleButton<Toggle>;
 pub fn new() -> PortfolioPanelButton {
     PanelToggleButton::new(
         "portfolio-panel-button",
-        IconName::ChartBar,
+        IconName::Blocks,
         "Portfolio",
         "Toggle Portfolio",
         Toggle,

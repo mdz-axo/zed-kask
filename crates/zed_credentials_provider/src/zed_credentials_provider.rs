@@ -63,10 +63,20 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         async move {
             let secret = cx
                 .background_spawn(async move {
-                    hkask_keystore::Keychain
-                        .retrieve_by_url(&url)
-                        .ok()
-                        .filter(|s| !s.is_empty())
+                    match hkask_keystore::Keychain.retrieve_by_url(&url) {
+                        Ok(secret) => Some(secret),
+                        Err(hkask_keystore::KeychainError::NotFound(_)) => None,
+                        Err(hkask_keystore::KeychainError::Platform(error)) => {
+                            log::warn!(
+                                "Keychain platform error reading credential at {}: {} — \
+                                 the key may exist but the keychain is inaccessible \
+                                 (D-Bus, keyring locked, etc.)",
+                                url, error
+                            );
+                            None
+                        }
+                    }
+                    .filter(|s| !s.is_empty())
                 })
                 .await;
             if let Some(secret) = secret {

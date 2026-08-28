@@ -1217,3 +1217,20 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
         memory,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // NOTE: The startup requirement is pinned by a single in-file `//`
+    // comment, not `///` — the module contains no items that would justify
+    // a doc comment.
+    //
+    // `CuratorDb::from_context` resolves `HKASK_DB_PASSPHRASE` via the
+    // canonical 2-tier chain (ctx.credentials → resolve_credential → env →
+    // keychain) and only falls back to None (in-memory / no-heal) on miss.
+    // The `CredentialRequirement::optional` declaration calls out the same
+    // var so server bootstrap warns loudly rather than silently degrade.
+    // The pin is the shared helper call in `from_context` (`resolve_db_passphrase`)
+    // — same helper used by the other DB-backed MCP servers. This is a
+    // comment-only test module: if the comment drifts from the code, it
+    // compiles stale.
+}

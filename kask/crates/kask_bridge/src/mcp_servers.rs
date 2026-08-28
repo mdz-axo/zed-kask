@@ -716,7 +716,18 @@ mod tests {
             .unwrap_or_else(|| panic!("server '{id}' not in BUILT_IN_MCP_SERVERS"))
     }
 
-    // The derived fns must match the main registry — this pins the single-source
+    /// The startup-default gate: both passphrase env vars are in
+    /// `DEFAULT_PASSPHRASE_ENV_VARS`, so `provide_default_passphrase`
+    /// resolves them (env → keychain → first-run "allostery") at MCP
+    /// launch time. This is what makes "stores never start down" true at
+    /// startup — remove one from the list and the gate regresses.
+    #[test]
+    fn startup_default_passphrase_gate_includes_both_vars() {
+        assert!(DEFAULT_PASSPHRASE_ENV_VARS.contains(&"HKASK_DB_PASSPHRASE"));
+        assert!(DEFAULT_PASSPHRASE_ENV_VARS.contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"));
+    }
+
+    /// The derived fns must match the main registry — this pins the single-source
     // invariant so a future edit to the fns can't silently drift.
     #[test]
     fn builtin_mcp_server_ids_match_main_registry() {

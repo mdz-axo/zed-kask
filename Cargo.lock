@@ -9101,6 +9101,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-event-store",
  "hkask-inference",
+ "hkask-keystore",
  "hkask-ledger",
  "hkask-mcp-server",
  "hkask-memory",
@@ -15232,6 +15233,28 @@ dependencies = [
  "shell-words",
  "winapi",
  "winreg 0.10.1",
+]
+
+[[package]]
+name = "portfolio_panel"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "agent_ui",
+ "anyhow",
+ "editor",
+ "fs",
+ "gpui",
+ "hkask-mcp-portfolio",
+ "hkask-steer",
+ "hkask-tool-invoker",
+ "marketplace_ui_common",
+ "project",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -25123,6 +25146,7 @@ dependencies = [
  "paths",
  "picker",
  "pkg-config",
+ "portfolio_panel",
  "pretty_assertions",
  "profiling",
  "project",
@@ -25325,6 +25349,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "hkask-keystore",
+ "log",
 ]
 
 [[package]]

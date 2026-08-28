@@ -90,6 +90,14 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
+    /// DB file exists but its salt file is missing. The DB is permanently
+    /// unopenable without its original salt — no passphrase can recover it.
+    /// Remediable: `open_or_repair` deletes the orphaned DB and recreates.
+    #[error("DB file exists at {db_path} but salt file is missing at {salt_path}")]
+    SaltMissing {
+        db_path: String,
+        salt_path: String,
+    },
 }
 
 /// Database handle — path, passphrase, and whether it's a new file.
@@ -151,6 +159,18 @@ impl Database {
                 ));
             }
             true
+        } else if std::path::Path::new(path).exists() {
+            // The DB file exists but its salt file is missing. The DB was
+            // encrypted with the original salt — generating a new salt would
+            // create a permanent key mismatch that makes the DB unopenable
+            // and that self-healing cannot fix (each heal regenerates another
+            // mismatched salt). Return a typed `SaltMissing` error so
+            // `open_or_repair` can match on the variant (not a string) and
+            // delete the orphaned DB to start fresh.
+            return Err(DatabaseError::SaltMissing {
+                db_path: path.to_string(),
+                salt_path: salt_path.clone(),
+            });
         } else {
             let salt = generate_salt();
             std::fs::write(&salt_path, salt)
@@ -438,21 +458,248 @@ impl Drop for Database {
 /// post: returns an opened database only when the passphrase verifies.
 /// inv: never deletes or modifies the database or its salt file.
 /// \[P4\] Constraining: Clear Boundaries — recovery is an explicit operation, not an implicit side effect.
+///
+/// The one exception to the "never deletes" invariant: when the DB file
+/// exists but its salt file is missing (`SaltMissing`), the DB is permanently
+/// unopenable — no passphrase can decrypt it without its original salt. In
+/// this case the function deletes the orphaned DB and its WAL/SHM files,
+/// then creates a fresh database. This is the "repair" the function name
+/// promises. A wrong passphrase does NOT trigger this path — it returns
+/// `PassphraseMismatch`, preserving the DB for manual recovery.
 pub fn open_or_repair(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
-    let db = Database::open(path, passphrase)?;
-    db.sqlite_pool()?;
-    Ok(db)
+    match Database::open(path, passphrase) {
+        Ok(db) => {
+            db.sqlite_pool()?;
+            Ok(db)
+        }
+        Err(DatabaseError::SaltMissing { db_path, salt_path }) => {
+            tracing::warn!(
+                target: "reg.storage",
+                db_path = %db_path,
+                salt_path = %salt_path,
+                "DB file exists but salt is missing — deleting orphaned DB and creating fresh"
+            );
+            // Log cleanup errors — a failed delete shouldn't abort the repair
+            // (the subsequent open will produce the real error), but the
+            // operator must see it to distinguish "couldn't delete" from
+            // "couldn't open." `let _ =` would silently swallow per .rules.
+            if let Err(e) = std::fs::remove_file(&db_path) {
+                tracing::warn!(
+                    target: "reg.storage",
+                    error = %e,
+                    path = %db_path,
+                    "Failed to delete orphaned DB file during repair"
+                );
+            }
+            if let Err(e) = std::fs::remove_file(format!("{db_path}-wal")) {
+                tracing::warn!(
+                    target: "reg.storage",
+                    error = %e,
+                    path = format!("{db_path}-wal"),
+                    "Failed to delete orphaned WAL file during repair"
+                );
+            }
+            if let Err(e) = std::fs::remove_file(format!("{db_path}-shm")) {
+                tracing::warn!(
+                    target: "reg.storage",
+                    error = %e,
+                    path = format!("{db_path}-shm"),
+                    "Failed to delete orphaned SHM file during repair"
+                );
+            }
+            let db = Database::open(path, passphrase)?;
+            db.sqlite_pool()?;
+            Ok(db)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
     if path == ":memory:" {
         Database::in_memory()
     } else {
-        Database::open(path, passphrase)
+        // Route file paths through `open_or_repair` so all production callers
+        // get the self-healing repair contract — a missing salt file deletes
+        // the orphaned DB and recreates instead of permanently breaking.
+        // `Database::open` remains the explicit no-repair path for callers
+        // that want manual control (rotation, tests).
+        open_or_repair(path, passphrase)
     }
 }
 
 fn generate_salt() -> [u8; SQLCIPHER_SALT_SIZE] {
     use rand::Rng;
     rand::rng().random()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the self-healing repair: if the DB file exists but its salt file
+    /// is missing, `open_or_repair` must delete the orphaned DB and create a
+    /// fresh one instead of generating a mismatched salt that makes the DB
+    /// permanently unopenable.
+    ///
+    /// Before the fix, `open_impl` unconditionally generated a new salt when
+    /// the salt file was missing — even if the DB file existed and was
+    /// encrypted with the original salt. The new salt never matched, so
+    /// `file_pool` failed with `PassphraseMismatch` on every heal attempt,
+    /// and the self-healing loop could never recover.
+    #[test]
+    fn open_or_repair_self_heals_when_salt_missing_but_db_exists() {
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-storage-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("heal_test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let salt_path = format!("{db_path_str}.salt");
+
+        // Clean up any prior run.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+
+        // 1. Create a valid DB.
+        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
+        drop(db);
+        assert!(db_path.exists(), "DB file should exist after initial open");
+        assert!(
+            std::path::Path::new(&salt_path).exists(),
+            "Salt file should exist after initial open"
+        );
+
+        // 2. Simulate the failure: delete only the salt file.
+        std::fs::remove_file(&salt_path).unwrap();
+        assert!(db_path.exists(), "DB file should still exist");
+        assert!(
+            !std::path::Path::new(&salt_path).exists(),
+            "Salt file should be deleted"
+        );
+
+        // 3. open_or_repair must self-heal: delete the orphaned DB and create fresh.
+        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
+        drop(db);
+        assert!(db_path.exists(), "DB file should exist after heal");
+        assert!(
+            std::path::Path::new(&salt_path).exists(),
+            "Salt file should exist after heal"
+        );
+
+        // 4. The healed DB must be openable (not permanently broken).
+        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
+        drop(db);
+
+        // Clean up.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pin that a wrong passphrase does NOT trigger the self-healing delete
+    /// path — a `PassphraseMismatch` must preserve the DB for manual recovery.
+    #[test]
+    fn open_or_repair_wrong_passphrase_does_not_delete_db() {
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-storage-test-wp-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("wrong_pass_test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let salt_path = format!("{db_path_str}.salt");
+
+        // Clean up any prior run.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+
+        // 1. Create a valid DB with the correct passphrase.
+        let db = open_or_repair(&db_path_str, "correct_passphrase").unwrap();
+        drop(db);
+
+        // 2. Try to open with a wrong passphrase — must fail, not delete.
+        let result = open_or_repair(&db_path_str, "wrong_passphrase");
+        assert!(result.is_err(), "Wrong passphrase must fail");
+        assert!(
+            db_path.exists(),
+            "DB file must NOT be deleted on wrong passphrase"
+        );
+        assert!(
+            std::path::Path::new(&salt_path).exists(),
+            "Salt file must NOT be deleted on wrong passphrase"
+        );
+
+        // 3. The DB must still be openable with the correct passphrase.
+        let db = open_or_repair(&db_path_str, "correct_passphrase").unwrap();
+        drop(db);
+
+        // Clean up.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pin that `open_database` (the dispatcher used by `ServerContext`)
+    /// routes file paths through `open_or_repair` — so all production callers
+    /// get the self-healing repair, not just the 2 that call `open_or_repair`
+    /// directly. Before the fix, `open_database` called `Database::open`
+    /// directly, bypassing repair.
+    #[test]
+    fn open_database_self_heals_when_salt_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-storage-test-odb-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("dispatcher_test.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let salt_path = format!("{db_path_str}.salt");
+
+        // Clean up any prior run.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+
+        // 1. Create a valid DB via the dispatcher.
+        let db = open_database(&db_path_str, "test_passphrase").unwrap();
+        drop(db);
+        assert!(db_path.exists());
+        assert!(std::path::Path::new(&salt_path).exists());
+
+        // 2. Delete only the salt file.
+        std::fs::remove_file(&salt_path).unwrap();
+
+        // 3. open_database must self-heal (via open_or_repair routing).
+        let db = open_database(&db_path_str, "test_passphrase").unwrap();
+        drop(db);
+        assert!(db_path.exists(), "DB file should exist after heal via dispatcher");
+        assert!(
+            std::path::Path::new(&salt_path).exists(),
+            "Salt file should exist after heal via dispatcher"
+        );
+
+        // Clean up.
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pin that `:memory:` paths still bypass repair (in-memory DBs have no
+    /// salt file and no file to repair).
+    #[test]
+    fn open_database_memory_path_bypasses_repair() {
+        let db = open_database(":memory:", "test_passphrase").unwrap();
+        drop(db);
+    }
 }

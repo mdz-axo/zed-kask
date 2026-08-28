@@ -8,13 +8,17 @@
 //! scoped curator `ConversationView` (via `hkask_steer::SteerSurface`) whose
 //! prompt advertises the portfolio server's generated `TOOL_NAMES`.
 
-mod panel_button;
+pub mod panel_button;
 
-use gpui::{App, Entity, FocusHandle, SharedString, WeakEntity, Window};
-use ui::prelude::*;
+use gpui::{
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Task, WeakEntity,
+    Window, actions,
+};
+use ui::{Icon, IconName, prelude::*};
 use workspace::{
-    Item, ItemEvent, Workspace,
-    item::register_serializable_item,
+    Workspace,
+    item::{Item, ItemEvent, SerializableItem},
+    register_serializable_item,
 };
 
 pub use panel_button::PortfolioPanelButton;
@@ -92,17 +96,21 @@ pub struct PortfolioPanel {
 }
 
 impl PortfolioPanel {
-    fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: &Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        let workspace_handle = workspace.weak_handle();
         let project = workspace.project().clone();
-        let fs = workspace.fs().clone();
-        let workspace_handle = workspace.downgrade();
-        Self {
+        let fs = workspace.app_state().fs.clone();
+        cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
             steer: hkask_steer::SteerSurface::new(),
             project,
             fs,
-            workspace_handle,
-        }
+            workspace_handle: workspace_handle.clone(),
+        })
     }
 
     /// Lazily construct the Steer `ConversationView`. Scoped to the portfolio
@@ -161,6 +169,8 @@ impl gpui::Render for PortfolioPanel {
     }
 }
 
+impl EventEmitter<ItemEvent> for PortfolioPanel {}
+
 impl Focusable for PortfolioPanel {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -174,8 +184,60 @@ impl Item for PortfolioPanel {
         "Portfolio".into()
     }
 
-    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::ChartBar)
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::Blocks).color(Color::Muted))
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    fn to_item_events(event: &Self::Event, function: &mut dyn FnMut(ItemEvent)) {
+        function(*event)
+    }
+}
+
+impl SerializableItem for PortfolioPanel {
+    fn serialized_item_kind() -> &'static str {
+        "PortfolioPanel"
+    }
+
+    fn cleanup(
+        _workspace_id: workspace::WorkspaceId,
+        _alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        None
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        cx.spawn(async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                PortfolioPanel::new(workspace, window, cx)
+            })
+        })
     }
 }
 

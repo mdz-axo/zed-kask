@@ -25,7 +25,7 @@ use super::curator_stores::{CuratorStore, build_curator_consolidation};
 /// (no DB open, no passphrase, no consolidation timer).
 pub(crate) struct WriteContext<'a> {
     pub curator_store: &'a CuratorStore,
-    pub embedding_port: &'a LanguageModelEmbeddingPort,
+    pub embedding_port: Option<&'a LanguageModelEmbeddingPort>,
     pub embedding_model: &'a str,
     pub curator_webid: WebID,
     pub tokio_handle: &'a tokio::runtime::Handle,
@@ -154,55 +154,66 @@ pub(crate) async fn write_turn(
     }
 
     // ── 3. Embed the user prompt for future retrieval ─────────────────
+    // Skipped when no embedding port is available — h_mem writes (steps 1-2)
+    // are pure SQL and don't need embeddings. Semantic recall will degrade to
+    // keyword-only, but the curator still has episodic memory of the turn.
     let embedding_entity = entity.clone();
     let embedding_model = ctx.embedding_model.to_string();
-    let embedding_port = ctx.embedding_port.clone();
+    let embedding_port = ctx.embedding_port.cloned();
     let user_input_owned = user_input.clone();
-    let vectors = ctx
-        .tokio_handle
-        .spawn(async move {
-            embedding_port
-                .embed(&embedding_model, &[user_input_owned])
-                .await
-        })
-        .await;
+    if let Some(embedding_port) = embedding_port {
+        let vectors = ctx
+            .tokio_handle
+            .spawn(async move {
+                embedding_port
+                    .embed(&embedding_model, &[user_input_owned])
+                    .await
+            })
+            .await;
 
-    match vectors {
-        Ok(Ok(vectors)) => {
-            if let Some(vector) = vectors.into_iter().next() {
-                if let Some(ref curator_store) = curator_store
-                    && let Err(e) = curator_store.store_embedding(
-                        &embedding_entity,
-                        &vector,
-                        ctx.embedding_model,
-                        None,
-                    )
-                {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Failed to store curator prompt embedding"
-                    );
+        match vectors {
+            Ok(Ok(vectors)) => {
+                if let Some(vector) = vectors.into_iter().next() {
+                    if let Some(ref curator_store) = curator_store
+                        && let Err(e) = curator_store.store_embedding(
+                            &embedding_entity,
+                            &vector,
+                            ctx.embedding_model,
+                            None,
+                        )
+                    {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            thread_id = %thread_id,
+                            error = %e,
+                            "Failed to store curator prompt embedding"
+                        );
+                    }
                 }
             }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    error = %e,
+                    "Failed to embed user prompt"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    error = %e,
+                    "Embedding task panicked"
+                );
+            }
         }
-        Ok(Err(e)) => {
-            tracing::warn!(
-                target: "reg.memory",
-                thread_id = %thread_id,
-                error = %e,
-                "Failed to embed user prompt"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.memory",
-                thread_id = %thread_id,
-                error = %e,
-                "Embedding task panicked"
-            );
-        }
+    } else {
+        tracing::debug!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            "No embedding port — skipping prompt embedding (semantic recall degraded to keyword-only)"
+        );
     }
 
     tracing::info!(
