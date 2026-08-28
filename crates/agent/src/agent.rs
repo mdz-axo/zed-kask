@@ -4375,6 +4375,62 @@ pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
     TEMPLATE_BASE_PATH.get().map(|p| p.as_path())
 }
 
+/// Callback type for agent-path MCP tool outcome recording (T-V1).
+/// Receives (server_name, tool_name, success, error_kind) — the same tuple
+/// `McpRuntime::invoke` records for the governed dispatch path. The domain
+/// for the reliability sensor is the server name; the tool name is carried
+/// for future per-tool sensing and log attribution.
+pub type McpToolOutcomeRecorder =
+    Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+
+/// Global hook for agent-path MCP tool outcome recording. Wired in
+/// `main.rs` to a closure that forwards to the app's `RegulationLedger`.
+///
+/// Uses a `Mutex` (not `OnceLock`) so the recorder can be replaced — the
+/// same re-settable pattern as `set_memory_port`. This closes the feedback
+/// loop where agent-initiated MCP tool calls (zed's context-server client)
+/// were invisible to the regulation system: the McpRuntime dispatch path
+/// (skills/panel/IPC) records its own outcomes via `with_governance`, but
+/// the agent path had no `record_outcome` call, so the `ToolReliabilitySensor`
+/// and the curator never saw agent-initiated MCP failures.
+static MCP_TOOL_OUTCOME_RECORDER: std::sync::Mutex<Option<McpToolOutcomeRecorder>> =
+    std::sync::Mutex::new(None);
+
+/// Set the global MCP tool outcome recorder. Re-settable (replaces any
+/// previous recorder) — production wires once at startup; tests replace
+/// freely.
+pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
+    let mut slot = MCP_TOOL_OUTCOME_RECORDER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *slot = Some(recorder);
+}
+
+/// Record an agent-path MCP tool outcome. Best-effort by design: when no
+/// recorder is wired (tests, non-kask embedders) the outcome is dropped
+/// with a debug log — regulation telemetry must never fail a tool call.
+pub fn record_mcp_tool_outcome(
+    server_name: &str,
+    tool_name: &str,
+    success: bool,
+    error_kind: Option<&str>,
+) {
+    // Clone the recorder out of the lock so the callback runs unlocked —
+    // the wired closure spawns a tokio task and must not run under the
+    // hook's own mutex.
+    let recorder = MCP_TOOL_OUTCOME_RECORDER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    match recorder {
+        Some(record) => record(server_name, tool_name, success, error_kind),
+        None => log::debug!(
+            "record_mcp_tool_outcome: recorder not wired — outcome for \
+             {server_name}/{tool_name} not recorded"
+        ),
+    }
+}
+
 /// Collect successfully-loaded global and project-local skills into a
 /// single list, preserving every entry — even when two skills share a
 /// name. The autocomplete popup shows the full list with origin labels
@@ -4529,6 +4585,68 @@ mod internal_tests {
             dependencies: Vec::new(),
             core: false,
         }
+    }
+
+    #[test]
+    fn mcp_outcome_recorder_records_and_is_replaceable() {
+        // The hook is a process-global Mutex slot — all recorder assertions
+        // must stay in ONE test so parallel tests cannot race the shared
+        // slot.
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        set_mcp_tool_outcome_recorder(std::sync::Arc::new(
+            move |server, tool, success, error_kind| {
+                captured
+                    .lock()
+                    .expect("captured lock")
+                    .push((
+                        server.to_string(),
+                        tool.to_string(),
+                        success,
+                        error_kind.map(str::to_string),
+                    ));
+            },
+        ));
+        record_mcp_tool_outcome("media", "generate_image", true, None);
+        record_mcp_tool_outcome("media", "video_fetch", false, Some("unavailable"));
+        {
+            let recorded = recorded.lock().expect("recorded lock");
+            assert_eq!(recorded.len(), 2);
+            assert_eq!(
+                recorded[0],
+                (
+                    "media".to_string(),
+                    "generate_image".to_string(),
+                    true,
+                    None
+                )
+            );
+            assert_eq!(
+                recorded[1],
+                (
+                    "media".to_string(),
+                    "video_fetch".to_string(),
+                    false,
+                    Some("unavailable".to_string())
+                )
+            );
+        }
+
+        // Replaceable (Mutex, not OnceLock): a second wiring replaces the
+        // first — the re-settable pattern tests and deferred re-wiring
+        // depend on.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        set_mcp_tool_outcome_recorder(std::sync::Arc::new(move |_, _, _, _| {
+            *flag.lock().expect("flag lock") = true;
+        }));
+        record_mcp_tool_outcome("media", "model_list", true, None);
+        assert!(*replaced_called.lock().expect("replaced lock"));
+        assert_eq!(
+            recorded.lock().expect("recorded lock").len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
     }
 
     #[test]

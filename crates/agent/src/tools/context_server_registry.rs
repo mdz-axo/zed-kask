@@ -287,6 +287,37 @@ struct ContextServerTool {
     tool: context_server::types::Tool,
 }
 
+/// Map a completed `ContextServerTool` run to the regulation outcome tuple
+/// `(success, error_kind)`. `error_kind` mirrors the McpRuntime path — the
+/// error's text, not a typed variant (the ledger's `error_kind` is a
+/// free-form classification hint).
+fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, Option<String>) {
+    match result {
+        Ok(_) => (true, None),
+        Err(output) => (false, Some(mcp_error_text(output))),
+    }
+}
+
+/// Extract the error text from a failed MCP tool run. The error message
+/// lives in the LLM-facing text parts of the output; an output with no text
+/// at all reports "unknown error" rather than an empty classification.
+fn mcp_error_text(output: &AgentToolOutput) -> String {
+    let text = output
+        .llm_output
+        .iter()
+        .filter_map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.trim().is_empty() {
+        "unknown error".to_string()
+    } else {
+        text
+    }
+}
+
 impl ContextServerTool {
     fn new(
         store: Entity<ContextServerStore>,
@@ -336,6 +367,51 @@ impl AnyAgentTool for ContextServerTool {
     }
 
     fn run(
+        self: Arc<Self>,
+        input: ToolInput<serde_json::Value>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
+        // zed-kask: D-seam — T-V1 regulation wiring. Agent-path MCP tool
+        // calls (zed's context-server client) were invisible to the
+        // regulation system: the McpRuntime dispatch path (skills/panel/IPC)
+        // records outcomes via `with_governance`, but this path had no
+        // `record_outcome` call, so the ToolReliabilitySensor and the
+        // curator never saw agent-initiated MCP failures. The wrapper
+        // records every outcome — including the early not-running error
+        // path inside `run_inner` — through the process-global hook wired
+        // in `main.rs`.
+        let server_name = self.server_id.0.clone();
+        let tool_name = self.tool.name.clone();
+        let inner = Self::run_inner(self, input, event_stream, cx);
+        cx.spawn(async move |_| {
+            let result = inner.await;
+            let (success, error_kind) = mcp_run_outcome(&result);
+            crate::record_mcp_tool_outcome(
+                &server_name,
+                &tool_name,
+                success,
+                error_kind.as_deref(),
+            );
+            result
+        })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl ContextServerTool {
+    /// Execute the MCP tool call — the original `run` body, extracted so the
+    /// `run` wrapper can record the outcome for regulation (T-V1).
+    fn run_inner(
         self: Arc<Self>,
         input: ToolInput<serde_json::Value>,
         event_stream: ToolCallEventStream,
@@ -587,16 +663,6 @@ impl AnyAgentTool for ContextServerTool {
             })
         })
     }
-
-    fn replay(
-        &self,
-        _input: serde_json::Value,
-        _output: serde_json::Value,
-        _event_stream: ToolCallEventStream,
-        _cx: &mut App,
-    ) -> Result<()> {
-        Ok(())
-    }
 }
 
 /// Builds the header label shown for an MCP tool call. When the input is an
@@ -775,5 +841,43 @@ mod tests {
         // "no args at all".
         let input = serde_json::json!({ "q": "" });
         assert_eq!(single_string_arg(&input), Some(""));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_maps_success() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::String("ok".into()),
+            llm_output: vec![],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Ok(output));
+        assert!(success);
+        assert_eq!(error_kind, None);
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_maps_error_text() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::String(String::new()),
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "Context server not found".into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("Context server not found"));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_empty_error_text_falls_back() {
+        // An error output with no text parts must still carry a non-empty
+        // classification — an empty error_kind would be indistinguishable
+        // from "no error" on the wire.
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::Null,
+            llm_output: vec![],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("unknown error"));
     }
 }

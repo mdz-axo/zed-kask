@@ -14,16 +14,23 @@
 //! invariant (P4 deserialization totality) that is out of scope here.
 
 use hkask_mcp_media::types::{
-    ApplyStyleRequest, AudioCaptureRequest, CreateCollageRequest, DescribeImageRequest,
-    ExpandPromptRequest, FaceListRequest, FaceRegisterRequest, FaceRemoveRequest,
-    FaceScanFolderRequest, FaceValidateRequest, GalleryAnalyzeRequest, GalleryFindSimilarRequest,
-    GalleryLineageRequest, GalleryNameFaceRequest, GalleryOrganizeRequest,
-    GalleryRecordGenerationRequest, GalleryRefreshRequest, GalleryReproduceRequest,
-    GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest,
-    GenerateVideoRequest, ImageToVideoRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest,
-    TranscribeRequest, TransformImageRequest, UpscaleImageRequest, VideoAddCaptionRequest,
-    VideoCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoFromImagesRequest,
-    VideoMemeRequest, VideoRemixRequest, VideoToGifRequest, VoiceDesignRequest,
+    ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,
+    CreateCollageRequest, DescribeImageRequest, ExpandPromptRequest, FaceListRequest,
+    FaceRegisterRequest, FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest,
+    GalleryAddAudioRequest, GalleryAddVideoRequest, GalleryAnalyzeRequest,
+    GalleryAssetDetailRequest, GalleryCreateAlbumRequest, GalleryDeleteAlbumRequest,
+    GalleryDeleteImageRequest, GalleryFindSimilarRequest, GalleryLineageRequest,
+    GalleryListAlbumMembersRequest, GalleryMoveToAlbumRequest, GalleryNameFaceRequest,
+    GalleryOrganizeRequest, GalleryRecordGenerationRequest, GalleryRefreshRequest,
+    GalleryRemoveFromAlbumRequest, GalleryReproduceRequest, GallerySearchRequest,
+    GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest, GenerateVariantsRequest,
+    GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest, JobCancelRequest,
+    JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
+    RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest, TransformImageRequest,
+    UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest,
+    VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest, VideoFromImagesRequest,
+    VideoInfoRequest, VideoMemeRequest, VideoRemixRequest, VideoToGifRequest, VoiceDesignRequest,
+    WorkflowDeleteRequest, WorkflowLoadRequest, WorkflowSaveRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -90,3 +97,52 @@ schema_clean_test!(video_from_images_request_schema, VideoFromImagesRequest);
 schema_clean_test!(video_concat_request_schema, VideoConcatRequest);
 schema_clean_test!(video_caption_request_schema, VideoCaptionRequest);
 schema_clean_test!(video_meme_request_schema, VideoMemeRequest);
+schema_clean_test!(model_list_request_schema, ModelListRequest);
+schema_clean_test!(model_info_request_schema, ModelInfoRequest);
+schema_clean_test!(job_submit_request_schema, JobSubmitRequest);
+schema_clean_test!(job_list_request_schema, JobListRequest);
+schema_clean_test!(job_status_request_schema, JobStatusRequest);
+schema_clean_test!(job_cancel_request_schema, JobCancelRequest);
+schema_clean_test!(gallery_add_video_request_schema, GalleryAddVideoRequest);
+schema_clean_test!(gallery_add_audio_request_schema, GalleryAddAudioRequest);
+schema_clean_test!(
+    gallery_asset_detail_request_schema,
+    GalleryAssetDetailRequest
+);
+schema_clean_test!(
+    gallery_create_album_request_schema,
+    GalleryCreateAlbumRequest
+);
+schema_clean_test!(
+    gallery_move_to_album_request_schema,
+    GalleryMoveToAlbumRequest
+);
+schema_clean_test!(
+    gallery_remove_from_album_request_schema,
+    GalleryRemoveFromAlbumRequest
+);
+schema_clean_test!(
+    gallery_delete_album_request_schema,
+    GalleryDeleteAlbumRequest
+);
+schema_clean_test!(
+    gallery_list_album_members_request_schema,
+    GalleryListAlbumMembersRequest
+);
+schema_clean_test!(
+    gallery_delete_image_request_schema,
+    GalleryDeleteImageRequest
+);
+schema_clean_test!(generate_variants_request_schema, GenerateVariantsRequest);
+schema_clean_test!(image_edit_region_request_schema, ImageEditRegionRequest);
+schema_clean_test!(workflow_save_request_schema, WorkflowSaveRequest);
+schema_clean_test!(workflow_load_request_schema, WorkflowLoadRequest);
+schema_clean_test!(workflow_delete_request_schema, WorkflowDeleteRequest);
+schema_clean_test!(video_info_request_schema, VideoInfoRequest);
+schema_clean_test!(video_fetch_request_schema, VideoFetchRequest);
+schema_clean_test!(audio_trim_request_schema, AudioTrimRequest);
+schema_clean_test!(audio_concat_request_schema, AudioConcatRequest);
+schema_clean_test!(
+    video_extract_frames_request_schema,
+    VideoExtractFramesRequest
+);

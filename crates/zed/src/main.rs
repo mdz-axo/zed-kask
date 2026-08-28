@@ -881,6 +881,48 @@ fn main() {
         );
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
+        // zed-kask: T-V1 — agent-path MCP tool outcome recording. The
+        // `with_governance` wiring above covers the McpRuntime dispatch path
+        // (skills/panel/IPC); the agent path (zed's context-server client)
+        // had no regulation wiring, so agent-initiated MCP tool calls were
+        // invisible to the ToolReliabilitySensor and the curator. The hook
+        // is process-global in the agent crate
+        // (`agent::record_mcp_tool_outcome`, called from
+        // `ContextServerTool::run`); this closure forwards each outcome to
+        // the shared RegulationLedger. The spawn goes through the
+        // GPUI-global tokio runtime because `record_outcome` is a
+        // tokio-RwLock future — GPUI's background_spawn would panic ("no
+        // reactor running"), per the .rules GPUI traps. The domain is the
+        // MCP server name, matching `McpRuntime::invoke` so both paths
+        // aggregate into the same reliability domain.
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_agent_outcomes = regulation_ledger.clone();
+            agent::set_mcp_tool_outcome_recorder(std::sync::Arc::new(
+                move |server_name, tool_name, success, error_kind| {
+                    tracing::trace!(
+                        target: "reg.tool.agent",
+                        server = %server_name,
+                        tool = %tool_name,
+                        success,
+                        "agent-path MCP tool outcome"
+                    );
+                    let server_name = server_name.to_string();
+                    let error_kind = error_kind.map(str::to_string);
+                    // Clone per call — the closure is `Fn` (invoked for every
+                    // tool call), so it cannot move the captured ledger into
+                    // the spawned future.
+                    let ledger = ledger_for_agent_outcomes.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        ledger
+                            .record_outcome(&server_name, success, error_kind.as_deref())
+                            .await;
+                    });
+                },
+            ));
+        }
+
         // zed-kask: D3/D8 — F6: CyberneticsLoop + MetacognitionLoop tick cycles.
         // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
         // the GPUI-global tokio runtime (registered above via

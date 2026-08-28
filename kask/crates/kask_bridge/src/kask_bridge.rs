@@ -73,9 +73,10 @@ pub use memory::{
 pub use model_resolution::resolve_model_names;
 pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
-    KaskSettings, KaskSwarmSettings, KaskToolRouterSettings, KaskTrainingSettings, SwarmModeConfig,
+    KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
+    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
+    KaskTrainingSettings, SwarmModeConfig,
 };
 
 mod metacognition_bridge;

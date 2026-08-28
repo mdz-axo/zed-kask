@@ -10,11 +10,17 @@ scaffold. The panel composes existing MCP tools; it does not replace them.
 
 ## Current State
 
-- **Slice 1 (Model Browser)**: ✅ Complete — `model_list` + `model_info` tools
-  fill the `Participant` OMC concept. 44 registered tools.
-- **Slice 2 (Generation Queue)**: 🔄 In progress — `job_submit`, `job_list`,
-  `job_status`, `job_cancel` tools fill the `Task` OMC concept. 48 registered tools.
+- **Slices 1–11**: ✅ Complete — 67 registered tools (pinned by
+  `tool_surface_is_exactly_67_registered_tools`). Widget track W1 (YouTube
+  streaming) complete. See §Full-System Verification for the wiring status of
+  each slice.
 - **Canonical Pattern Audit**: ✅ Complete (see §Evaluation below)
+- **Policy: no backward compatibility.** There is no migration path for
+  pre-existing DB schemas — schema changes are clean breaks. `init_schema`
+  declares the current schema via `CREATE TABLE IF NOT EXISTS` only; no
+  `ALTER TABLE` migrations, no column-exists guards, no defensive defaults
+  masking missing columns (`image_from_row` propagates a missing
+  `media_type` column as an error).
 
 ## Evaluation: Canonical Pattern Audit
 
@@ -377,7 +383,9 @@ A runtime test requires a running Zed instance with a YouTube URL.
 - Timeline strip UI for existing `video_*` tools
 
 ### Slice 10: Audio Editing (`MediaSource` OMC concept)
-- `audio_trim`, `audio_concat`, `audio_overdub`
+- `audio_trim`, `audio_concat` — ✅ implemented
+- `audio_overdub` — ❌ **not implemented (known gap)**; no code, no tool,
+  no test. Do not assume audio editing is complete.
 
 ### Slice 11: Video Fetch (`Asset` OMC concept, bridges Widget + Server)
 - `video_fetch` tool — downloads a video from a URL (YouTube, Vimeo, direct
@@ -391,15 +399,145 @@ A runtime test requires a running Zed instance with a YouTube URL.
   No — it's a local binary, not an API key. But the tool should surface a
   clear `unavailable` error if `yt-dlp` is not installed (mirroring
   `require_ffmpeg`).
-- **Widget integration**: the returned `media_block` uses a local `file://`
-  path, so the widget renders it via the existing local-file path (no
-  streaming needed). This is the "save for persistence" complement to W1's
-  "stream for immediate viewing."
+- **Widget integration**: the returned `media_block` uses a local filesystem
+  path (bare absolute path; `file://` URLs are also handled by the widget
+  since the 2026-08-28 verification pass), so the widget renders it via the
+  existing local-file path (no streaming needed). This is the "save for
+  persistence" complement to W1's "stream for immediate viewing."
 
 ### T-FUTURE-1: Route model resolution through `HkaskSettings`
 - Cross-crate change to `hkask-services-core`
 - Add media model fields to `HkaskSettings`
 - Update `models::resolve()` to use 3-tier priority
+
+---
+
+## Full-System Verification (2026-08-28)
+
+Six verification lenses ran against the completed 11-slice + W1 implementation
+(metacognition/inference, UI layout, cybernetic feedback loops, refactor
+architecture, agent/swarm discovery, skills). Findings below are grounded in
+file:line citations from the lens reports.
+
+### Verification matrix (11 slices × wiring dimensions)
+
+Legend: ✅ wired · ⚠️ partial · ❌ missing. "UI" = dedicated GPUI surface
+beyond the inline markdown `MediaWidget`.
+
+| Slice | Server tools | UI | Agent discovery | Skill integration | Feedback loops | Inference | Cross-crate |
+|---|---|---|---|---|---|---|---|
+| S1 Model browser | ✅ | ❌ | ⚠️ router can prune generic names | ❌ | ✅ | ⚠️ browser was informational-only → now actionable via `model` param | ✅ |
+| S2 Job queue | ✅ | ❌ | ⚠️ same | ❌ | ⚠️ panic-orphan fixed; restart loss documented | ✅ | ✅ |
+| S3 Video/audio indexing | ✅ | ❌ | ✅ | ❌ | ✅ | n/a | ✅ |
+| S4 Asset detail | ✅ | ❌ | ✅ | ❌ | ✅ | n/a | ✅ (FaceRegistryRecord serde verified) |
+| S5 Albums | ✅ | ❌ | ✅ | ❌ | ✅ | n/a | ✅ |
+| S6 Variants | ✅ | ❌ (no grid renderer) | ✅ | ❌ | ⚠️ display-hint contract fixed | ⚠️ single-image fallback under-delivered → fixed | ✅ |
+| S7 Region edit | ✅ | ❌ (no mask canvas) | ✅ | ❌ | ✅ | ✅ mask chain verified end-to-end; OpenRouter excludes ImageToImage and fails loudly | ✅ |
+| S8 Workflows | ✅ | ❌ | ⚠️ | ❌ | ✅ | n/a | ✅ |
+| S9 Timeline | ✅ | ❌ | ✅ | ❌ | ✅ | n/a | ✅ |
+| S10 Audio editing | ⚠️ overdub missing | ❌ | ✅ | ❌ | ✅ | n/a | ✅ |
+| S11 Video fetch | ✅ | ⚠️ renders via inline widget | ✅ | ❌ | ⚠️ unavailable classified as generic failure (pre-existing, systemic) | n/a | ✅ (`file://` routing fixed) |
+
+### Systemic findings (cross-slice)
+
+1. **All 9 planned UI surfaces are server-only.** `crates/media_panel` is an
+   empty, unregistered scaffold; the only rendering surface is the inline
+   markdown `MediaWidget` (single asset + transport + Explain/Disagree).
+   N fenced media blocks render as N stacked widgets — no grid, timeline,
+   inspector, queue bar, album tree, or mask canvas exists.
+2. **Agent-path MCP calls have no regulation instrumentation.** `reg.tool.*`
+   spans are emitted to child stderr and discarded at debug level by zed's
+   context-server client (`crates/context_server/src/client.rs:319-327`);
+   outcome recording (`RegulationLedger`) only covers the McpRuntime path
+   (skills/panel/IPC). The doc comment at `tool_span.rs:160-165` overstates
+   coverage. This is the root defect behind loops 1, 4, 5 in the cybernetics
+   report.
+3. **`LazyToolRouter` can prune generically-named media tools**
+   (`model_list`, `job_status`, `workflow_list`) on non-media-phrased complex
+   requests — description-scored, budget 40 across all servers. Exact-name
+   mention and skill-active bypass are the recoveries.
+4. **No local swarm agent can reach media tools**: every curated card
+   declares `"mcp_tools": []`, and local-agent tool defs carry empty
+   parameter schemas (`agent_executor.rs:242-246`).
+5. **Zero skill-side consumers for the 25 new tools.** `media-workflow`
+   references only pre-expansion tools; `logo-builder`'s registry templates
+   cite a "SKILL.md §6" that doesn't exist.
+6. **`ToolRetryTracker` is result-shaped only** — `job_status` "running"
+   polls count as successes (no false death-spiral, but no infinite-poll
+   backstop either).
+
+### Remediations executed in this verification pass (P0)
+
+All verified: `cargo test -p hkask-mcp-media` (89 lib + 63 schema + 1 doc),
+`-p hkask-storage --lib gallery` (20), `-p hkask-inference --lib media` (10),
+`-p hkask-types --lib` (18), `-p hkask-media-widget` (20) — all pass.
+Clippy clean for all touched crates (one pre-existing `redundant_clone` in
+`hkask-storage/src/core/connection.rs:172` from parallel in-flight keystore
+work remains, unrelated to this pass).
+
+1. **`image_to_video` silently discarded its `model` param**
+   (`tools/processing.rs` destructured `model: _model`). Added
+   `MediaGenerateParams.model` (`hkask-types`) and a provider-override path
+   in every DeepInfra + OpenRouter `execute` arm; the tool now passes `model`
+   through. The model browser is actionable for this op.
+2. **`generate_variants` violated the display-hint contract** — hints were
+   nested at `variants[].display_hint`, outside the documented top-level
+   `display_hints` array. Now emits both; the single-image fallback also
+   issues additional calls (capped at `count`) instead of returning 1 variant
+   regardless of `count`.
+3. **`YtDlpRunner` returned `MediaError::FfmpegUnavailable`** for missing
+   yt-dlp (operator saw "ffmpeg not available"). Added
+   `MediaError::YtDlpUnavailable` → `unavailable`.
+4. **Job panic-orphan**: a panic/abort in the spawned generation task left
+   the record "running" forever. Added `JobPanicGuard` (drop-guard marks the
+   job failed unless defused on normal completion). `job_status` `not_found`
+   now explains restart loss vs. bad ID.
+5. **`file://` media blocks were dead code** — `PathMediaStorage::resolve`
+   misrouted them to the failing plain-path branch.
+   `crates/hkask-media-widget/src/media_ref.rs` now strips `file://` and
+   resolves the underlying path.
+6. **Schema migration affordances removed** (per the no-backward-compat
+   policy): dropped the `media_type` `ALTER TABLE` + column guard;
+   `image_from_row` now hard-reads the column.
+7. **Schema-compliance tests now cover all 25 new request structs**
+   (63 total, up from 38).
+
+### New tasks discovered (not yet done)
+
+- **T-V1 (P1, systemic)**: Wire agent-path MCP tool outcomes into the
+  regulation loop (consume `reg.tool.*` spans or record outcomes in zed's
+  context-server client). Fixes the root defect behind curator blindness to
+  agent-initiated media calls.
+- **T-V2 (P1)**: Classify `unavailable` (not-configured: yt-dlp/ffmpeg
+  missing) distinctly from real failures in `ToolRetryTracker` and
+  `ToolReliabilitySensor`, so environment gaps don't pollute reliability
+  domains or trigger retry death-spirals.
+- **T-V3 (P1)**: Video Explain dispatch mismatch — `omc:Asset → gallery_analyze`
+  hands a `.mp4` path as `image_url` (`media_widget.rs:640-655`). Route video
+  blocks to a video-appropriate explain path.
+- **T-V4 (P2)**: UI surfaces — all 9 are server-only. Priority order:
+  variant grid (extends existing stacked-widget rendering), asset inspector
+  (extends the affordance bar), queue bar, model browser, album tree,
+  timeline, workflow composer, mask canvas (largest new build).
+- **T-V5 (P2)**: Skill updates — `media-workflow` should add `generate_variants`,
+  `image_edit_region`, `video_fetch`→`video_info`→`video_to_gif`, audio
+  pipeline, workflow-composer flow, album outputs, `job_*` async pattern;
+  `logo-builder` needs its missing §6 (model selection via
+  `model_list`/`model_info`) that two registry templates already cite.
+- **T-V6 (P2)**: Local agent cards — declare media `mcp_tools` on at least one
+  curated card; fix empty parameter schemas in `agent_executor.rs`.
+- **T-V7 (P2)**: Register `hkask-media-widget` on the divergence surface
+  (D18 lists 4 widgets, code ships 5 — audit finding F3,
+  `kask/docs/plans/architecture-audit-2026-08-26.md:176-178`).
+- **T-V8 (P3)**: `tools/workflows.rs` fails the strict deletion test (4
+  1:1 passthrough tools, no module-local helpers) — fold into
+  `tools/gallery.rs` or leave as domain grouping; judgment call.
+- **T-V9 (P3)**: SVG renders via `img()` not `svg()` (`media_widget.rs:747`),
+  contradicting `media_ref.rs:13` doc; duplicate `lang == "media"` in the
+  D18 gate (`markdown.rs:2723`).
+- **T-FUTURE-1 remains open** (model resolution still 2-tier env > default;
+  the new `MediaGenerateParams.model` field provides per-call override but
+  not a settings.json default tier).
 
 ---
 
@@ -433,8 +571,8 @@ Before starting each future slice, run this checklist:
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| In-memory job store loses jobs on restart | Low | By design — persistent lineage is in `gallery_record_generation`. `EventStore` is the upgrade path. |
-| `tokio::spawn` background task panics | Medium | The task updates the job record on both success and failure; a panic leaves the job in "running" state. Future: add `tokio::spawn` with `catch_unwind` or a timeout. |
+| In-memory job store loses jobs on restart | Low | By design — persistent lineage is in `gallery_record_generation`. `job_status` `not_found` now explains restart loss explicitly. `EventStore` is the upgrade path. |
+| `tokio::spawn` background task panics | Medium | **Mitigated (2026-08-28)** — `JobPanicGuard` drop-guard marks the job failed on panic/abort. |
 | Job store lock contention under high load | Low | `Mutex` is held briefly (insert, update, read). No long-held locks. |
 | `HkaskSettings` migration is a cross-crate change | Medium | Schedule as T-FUTURE-1 after Slice 4. Not blocking. |
 | yt-dlp not installed / wrong JS runtime | Low | Streaming degrades gracefully (direct URLs work, platform URLs fail with clear error). `video_fetch` (Slice 11) will document yt-dlp as a dependency. |
@@ -450,10 +588,20 @@ Before starting each future slice, run this checklist:
    correct. Added T-FUTURE-1 and the Evaluation Protocol checklist.
 
 2. **Widget Track Integration** (after Slice 4): Integrated the completed
-   YouTube streaming work (commit `8097579683`) as Widget Slice W1. Added
-   a parallel "Widget Track" section to the plan. Assessed 5 follow-ups
+   YouTube streaming work (commit `8097579683`) as Widget Slice W1. Added a
+   parallel "Widget Track" section to the plan. Assessed 5 follow-ups
    (A–E): scheduled `video_fetch` as Server Slice 11, deferred yt-dlp
-   dependency documentation to Slice 11, deferred JS-runtime detection as
-   a system-config issue, confirmed no DIVERGENCE.md entry needed, deferred
+   dependency documentation to Slice 11, deferred JS-runtime detection as a
+   system-config issue, confirmed no DIVERGENCE.md entry needed, deferred
    runtime test to manual verification. Added 3 new risks (yt-dlp, FFmpeg
    HTTPS, runtime test gap).
+
+3. **Full-System Verification** (2026-08-28, after Slices 1–11 + W1): Ran 6
+   verification lenses (metacognition/inference, UI layout, cybernetics,
+   refactor architecture, agent/swarm discovery, skills) over the completed
+   67-tool surface. Executed 7 P0 remediations (model-param wiring,
+   variants display-hint contract + count fallback, YtDlpUnavailable error
+   variant, job panic guard, `file://` widget routing, migration-affordance
+   removal per the no-backward-compat policy, schema-compliance coverage for
+   all new request structs). Recorded the verification matrix, systemic
+   findings, and 9 new tasks (T-V1–T-V9) in §Full-System Verification.

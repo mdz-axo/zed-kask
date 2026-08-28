@@ -12,8 +12,8 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskGeneralSettingsContent,
-    KaskMcpSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskMcpSettingsContent, KaskMediaSettingsContent, KaskMemorySettingsContent,
+    KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
     KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
@@ -78,6 +78,10 @@ pub struct KaskSettings {
 
     /// Training MCP server configuration.
     pub training: KaskTrainingSettings,
+
+    /// Media MCP server configuration: model overrides for TTS, STT, vision,
+    /// image generation, and video generation.
+    pub media: KaskMediaSettings,
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
@@ -495,6 +499,27 @@ pub struct KaskTrainingSettings {
     pub cache_dir: String,
 }
 
+/// Media MCP server configuration.
+///
+/// Model overrides for the media server's TTS, STT, vision, image
+/// generation, and video generation pipelines. When empty, the media
+/// server falls back to `hkask_inference::model_constants` defaults
+/// (resolved at startup via `std::env::var` → `DEFAULT_*_MODEL`). All
+/// are provider-prefixed strings.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskMediaSettings {
+    /// TTS model override (env `HKASK_MEDIA_TTS_MODEL`).
+    pub tts_model: String,
+    /// STT model override (env `HKASK_MEDIA_STT_MODEL`).
+    pub stt_model: String,
+    /// Vision model override (env `HKASK_MEDIA_VISION_MODEL`).
+    pub vision_model: String,
+    /// Image generation model override (env `HKASK_MEDIA_IMAGE_GEN_MODEL`).
+    pub image_gen_model: String,
+    /// Video generation model override (env `HKASK_MEDIA_VIDEO_MODEL`).
+    pub video_model: String,
+}
+
 /// Kask-wide model configuration.
 ///
 /// Provider-prefixed model names that override the kask built-in defaults.
@@ -870,6 +895,19 @@ impl From<KaskTrainingSettingsContent> for KaskTrainingSettings {
     }
 }
 
+impl From<KaskMediaSettingsContent> for KaskMediaSettings {
+    fn from(c: KaskMediaSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            tts_model: c.tts_model.unwrap_or(default.tts_model),
+            stt_model: c.stt_model.unwrap_or(default.stt_model),
+            vision_model: c.vision_model.unwrap_or(default.vision_model),
+            image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
+            video_model: c.video_model.unwrap_or(default.video_model),
+        }
+    }
+}
+
 impl From<KaskModelsSettingsContent> for KaskModelsSettings {
     fn from(c: KaskModelsSettingsContent) -> Self {
         let default = Self::default();
@@ -888,6 +926,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             data_dir: c.data_dir.unwrap_or_default(),
             general: c.general.map(Into::into).unwrap_or_default(),
             mcp: c.mcp.map(Into::into).unwrap_or_default(),
+            media: c.media.map(Into::into).unwrap_or_default(),
             curator: c.curator.map(Into::into).unwrap_or_default(),
             memory: c.memory.map(Into::into).unwrap_or_default(),
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
@@ -898,6 +937,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
+            media: c.media.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
             tool_router: c.tool_router.map(Into::into).unwrap_or_default(),
         }

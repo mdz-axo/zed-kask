@@ -27,13 +27,14 @@ pub(crate) use {
     companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
-    mcp_servers::render_mcp_servers_page, memory::render_memory_page, models::render_models_page,
-    prediction_markets::render_prediction_markets_page, research::render_research_page,
-    scenarios::render_scenarios_page, security::render_security_page, swarm::render_swarm_page,
-    training::render_training_page,
+    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
+    models::render_models_page, prediction_markets::render_prediction_markets_page,
+    research::render_research_page, scenarios::render_scenarios_page,
+    security::render_security_page, swarm::render_swarm_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
+mod media;
 mod memory;
 mod models;
 mod prediction_markets;
@@ -126,9 +127,7 @@ pub(crate) fn unmark_recently_written(url: &str) {
 /// first settings page render. The background task uses the keystore's
 /// `Keychain` (dedicated async-std thread) so it doesn't block the UI.
 pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
-    if KEYCHAIN_PREFETCH_STARTED
-        .swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
+    if KEYCHAIN_PREFETCH_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     let urls: Vec<String> = kask_bridge::credential_urls_for_mcp()
@@ -723,6 +722,20 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_swarm_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Media".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.media"),
+            description: Some(
+                "Configure the media MCP server: model overrides for TTS, \
+                 speech-to-text, vision, and image generation, plus the gallery \
+                 storage path.".into(),
+            ),
+            search_aliases: &["media", "image", "video", "voice", "tts", "gallery", "transcribe"],
+            in_json: true,
+            files: USER,
+            render: render_media_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Training".into(),

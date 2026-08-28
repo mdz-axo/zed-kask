@@ -1638,6 +1638,11 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub training: Option<KaskTrainingSettingsContent>,
 
+    /// Media MCP server configuration: model overrides for TTS, STT, vision,
+    /// image generation, and video generation.
+    #[serde(default)]
+    pub media: Option<KaskMediaSettingsContent>,
+
     /// Kask-wide model configuration: default inference model, embedding model,
     /// and classifier model. These are provider-prefixed strings (e.g.
     /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
@@ -1816,6 +1821,21 @@ pub enum SwarmModeContent {
 pub struct KaskTrainingSettingsContent {
     pub host: Option<String>,
     pub cache_dir: Option<String>,
+}
+
+/// Media MCP server configuration (the `"kask.media"` section in settings.json).
+///
+/// Model overrides for the media server's TTS, STT, vision, image generation,
+/// and video generation pipelines. When empty, the media server falls back
+/// to `hkask_inference::model_constants` defaults (resolved at startup via
+/// `std::env::var` → `DEFAULT_*_MODEL`). All are provider-prefixed strings.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMediaSettingsContent {
+    pub tts_model: Option<String>,
+    pub stt_model: Option<String>,
+    pub vision_model: Option<String>,
+    pub image_gen_model: Option<String>,
+    pub video_model: Option<String>,
 }
 
 /// Tool-router thresholds (the `"kask.tool_router"` section in settings.json).
