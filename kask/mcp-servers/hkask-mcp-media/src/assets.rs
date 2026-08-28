@@ -138,15 +138,22 @@ pub(crate) async fn persist_generated_asset(
         )));
     }
 
-    // Add to gallery (images only — video/audio are not gallery-indexed).
-    if kind == "image" {
+    // Add to gallery (all media types — images, video, and audio are indexed).
+    let media_type = match kind {
+        "image" => "image",
+        "video" => "video",
+        "audio" => "audio",
+        _ => "image",
+    };
+    {
         let ga = match server.access_gallery() {
             Ok(ga) => ga,
             Err(e) => {
                 tracing::warn!(
                     target: "hkask.mcp.media",
                     error = %e,
-                    "Gallery not initialized — generated image not indexed"
+                    "Gallery not initialized — generated {} not indexed",
+                    media_type
                 );
                 return Ok(path);
             }
@@ -157,8 +164,12 @@ pub(crate) async fn persist_generated_asset(
             hasher.update(&bytes);
             format!("{:x}", hasher.finalize())
         };
-        let (width, height) = infer_image_dimensions(&bytes);
-        if let Err(e) = server.gallery_store.add_image(
+        let (width, height) = if media_type == "image" {
+            infer_image_dimensions(&bytes)
+        } else {
+            (0, 0)
+        };
+        if let Err(e) = server.gallery_store.add_media(
             &ga.gallery_id,
             &filename,
             path.to_str().unwrap_or(""),
@@ -167,11 +178,13 @@ pub(crate) async fn persist_generated_asset(
             height,
             ext,
             bytes.len() as u64,
+            media_type,
         ) {
             tracing::warn!(
                 target: "hkask.mcp.media",
                 error = %e,
-                "Failed to add generated image to gallery"
+                "Failed to add generated {} to gallery",
+                media_type
             );
         }
     }

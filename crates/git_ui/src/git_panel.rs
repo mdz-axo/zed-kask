@@ -56,8 +56,9 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
 use language_model::{
-    CompletionIntent, ConfiguredModel, Event as LanguageModelEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionIntent, ConfiguredModel, Event as LanguageModelEvent, LanguageModelCompletionError,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    ProviderErrorCategory, Role,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -3772,7 +3773,21 @@ impl GitPanel {
                     &diff_text,
                 );
 
-                let request = LanguageModelRequest {
+                // zed-kask: D37 — commit-message generation must respect the
+                // selected model's reasoning requirements. Upstream hardcodes
+                // `thinking_allowed: false`, which makes reasoning-only models
+                // (gpt-5, o3, claude-opus-5, etc.) reject the request with a
+                // 400, leaving the generate button stuck while the rest of the
+                // session reasons along. The guard enables thinking at low
+                // effort when the model advertises `supports_thinking()`; the
+                // self-healing retry catches models that require reasoning but
+                // don't advertise it (common for OpenAI-compatible providers
+                // where `/v1/models` discovery leaves `reasoning_effort:
+                // None`). See DIVERGENCE.md D37.
+                let (thinking_allowed, reasoning_effort) =
+                    Self::commit_message_thinking_settings(model.supports_thinking());
+
+                let mut request = LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
                     intent: Some(CompletionIntent::GenerateGitCommitMessage),
@@ -3786,53 +3801,72 @@ impl GitPanel {
                     tool_choice: None,
                     stop: Vec::new(),
                     temperature,
-                    thinking_allowed: false,
-                    reasoning_effort: None,
+                    thinking_allowed,
+                    reasoning_effort,
                     speed: None,
                     compact_at_tokens: None,
                     max_tokens: None,
                 };
 
-                let stream = model.stream_completion_text(request, cx);
-                match stream.await {
-                    Ok(mut messages) => {
-                        if !text_empty {
-                            this.update(cx, |this, cx| {
-                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                    let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit(
-                                        [(insert_position..insert_position, "\n")],
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            })?;
-                        }
+                let mut retried_with_thinking = false;
+                loop {
+                    let stream = model.stream_completion_text(request.clone(), cx);
+                    match stream.await {
+                        Ok(mut messages) => {
+                            if !text_empty {
+                                this.update(cx, |this, cx| {
+                                    this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                        let insert_position = buffer.anchor_before(buffer.len());
+                                        buffer.edit(
+                                            [(insert_position..insert_position, "\n")],
+                                            None,
+                                            cx,
+                                        )
+                                    });
+                                })?;
+                            }
 
-                        while let Some(message) = messages.stream.next().await {
-                            match message {
-                                Ok(text) => {
-                                    this.update(cx, |this, cx| {
-                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position =
-                                                buffer.anchor_before(buffer.len());
-                                            buffer.edit(
-                                                [(insert_position..insert_position, text)],
-                                                None,
-                                                cx,
-                                            );
-                                        });
-                                    })?;
-                                }
-                                Err(e) => {
-                                    Self::show_commit_message_error(&this, &e, cx);
-                                    break;
+                            while let Some(message) = messages.stream.next().await {
+                                match message {
+                                    Ok(text) => {
+                                        this.update(cx, |this, cx| {
+                                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                                let insert_position =
+                                                    buffer.anchor_before(buffer.len());
+                                                buffer.edit(
+                                                    [(insert_position..insert_position, text)],
+                                                    None,
+                                                    cx,
+                                                );
+                                            });
+                                        })?;
+                                    }
+                                    Err(e) => {
+                                        Self::show_commit_message_error(&this, &e, cx);
+                                        break;
+                                    }
                                 }
                             }
+                            break;
                         }
-                    }
-                    Err(e) => {
-                        Self::show_commit_message_error(&this, &e, cx);
+                        Err(e) => {
+                            // Self-healing: if the provider rejected a
+                            // non-thinking request with a 400, retry once with
+                            // thinking enabled. Catches reasoning-only models
+                            // whose `supports_thinking()` returns false because
+                            // the provider doesn't advertise reasoning effort.
+                            if !retried_with_thinking
+                                && !thinking_allowed
+                                && Self::is_reasoning_required_error(&e)
+                            {
+                                retried_with_thinking = true;
+                                request.thinking_allowed = true;
+                                request.reasoning_effort = Some("low".to_string());
+                                continue;
+                            }
+                            Self::show_commit_message_error(&this, &e, cx);
+                            break;
+                        }
                     }
                 }
 
@@ -5495,6 +5529,29 @@ impl GitPanel {
                 workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }
+    }
+
+    // zed-kask: D37 — classifies whether a completion error looks like a
+    // reasoning-required rejection, so the self-healing retry knows when to
+    // re-attempt with thinking enabled.
+    fn is_reasoning_required_error(err: &LanguageModelCompletionError) -> bool {
+        matches!(
+            err,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            }
+        )
+    }
+
+    // zed-kask: D37 — returns `(thinking_allowed, reasoning_effort)` for a
+    // commit-message request based on whether the selected model supports
+    // thinking. Commit messages are simple, so low effort minimizes tokens
+    // while satisfying the model's reasoning requirement.
+    fn commit_message_thinking_settings(supports_thinking: bool) -> (bool, Option<String>) {
+        let thinking_allowed = supports_thinking;
+        let reasoning_effort = thinking_allowed.then(|| "low".to_string());
+        (thinking_allowed, reasoning_effort)
     }
 
     fn show_remote_output(
@@ -13646,6 +13703,78 @@ mod tests {
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
             ],
+        );
+    }
+
+    // zed-kask: D37 — pins the commit-message thinking guard.
+    #[test]
+    fn test_commit_message_guard_enables_thinking_for_reasoning_model() {
+        let (thinking_allowed, reasoning_effort) =
+            GitPanel::commit_message_thinking_settings(true);
+        assert!(
+            thinking_allowed,
+            "guard should enable thinking when the model supports it"
+        );
+        assert_eq!(
+            reasoning_effort.as_deref(),
+            Some("low"),
+            "guard should use low effort for commit messages"
+        );
+    }
+
+    // zed-kask: D37 — pins the guard for non-reasoning models.
+    #[test]
+    fn test_commit_message_guard_disables_thinking_for_non_reasoning_model() {
+        let (thinking_allowed, reasoning_effort) =
+            GitPanel::commit_message_thinking_settings(false);
+        assert!(
+            !thinking_allowed,
+            "guard should disable thinking when the model does not support it"
+        );
+        assert!(
+            reasoning_effort.is_none(),
+            "guard should not set reasoning effort for non-thinking models"
+        );
+    }
+
+    // zed-kask: D37 — pins the self-healing error classifier. Only
+    // `InvalidRequest` (400) rejections trigger the thinking retry; rate
+    // limits, auth failures, and transport errors do not.
+    #[test]
+    fn test_is_reasoning_required_error_classifies_invalid_request() {
+        use language_model::LanguageModelProviderName;
+        use std::time::Duration;
+
+        let invalid_request = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "reasoning effort cannot be disabled".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InvalidRequest,
+        };
+        assert!(
+            GitPanel::is_reasoning_required_error(&invalid_request),
+            "InvalidRequest rejection should trigger self-healing retry"
+        );
+
+        let rate_limit = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "rate limited".to_string(),
+            retry_after: Some(Duration::from_secs(60)),
+            category: ProviderErrorCategory::RateLimit,
+        };
+        assert!(
+            !GitPanel::is_reasoning_required_error(&rate_limit),
+            "RateLimit rejection should not trigger self-healing retry"
+        );
+
+        let other = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
+        assert!(
+            !GitPanel::is_reasoning_required_error(&other),
+            "non-rejection errors should not trigger self-healing retry"
         );
     }
 }

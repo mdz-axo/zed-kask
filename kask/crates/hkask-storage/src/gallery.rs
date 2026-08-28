@@ -90,6 +90,9 @@ pub struct ImageRecord {
     pub format: String,
     pub size_bytes: u64,
     pub added_at: String,
+    /// Media type: "image", "video", or "audio". Defaults to "image" for
+    /// records created before the migration added this column.
+    pub media_type: String,
 }
 /// A tag on an image.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,7 +193,8 @@ impl GalleryStore {
                 height INTEGER NOT NULL,
                 format TEXT NOT NULL,
                 size_bytes INTEGER NOT NULL,
-                added_at TEXT NOT NULL
+                added_at TEXT NOT NULL,
+                media_type TEXT NOT NULL DEFAULT 'image'
             );
             CREATE INDEX IF NOT EXISTS idx_gallery_images_gallery
                 ON gallery_images(gallery_id);
@@ -229,6 +233,15 @@ impl GalleryStore {
                 CREATE TABLE IF NOT EXISTS gallery_generation (id TEXT PRIMARY KEY, image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE, op TEXT NOT NULL, prompt TEXT, model TEXT, provider TEXT, seed INTEGER, params TEXT, workflow_id TEXT REFERENCES gallery_workflow(id) ON DELETE SET NULL, parent_image_id TEXT, created_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(image_id);",
         )?;
+        // Migration: add media_type column to gallery_images for DBs created
+        // before this column existed. CREATE TABLE IF NOT EXISTS won't add
+        // the column to an already-existing table, so ALTER TABLE is needed.
+        // SQLite's ALTER TABLE ADD COLUMN is idempotent-safe via the try/catch
+        // pattern — if the column already exists, the error is ignored.
+        let _ = driver.execute(
+            "ALTER TABLE gallery_images ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
+            &[],
+        );
         Ok(())
     }
     /// Create a new gallery. Returns the gallery record.
@@ -297,11 +310,40 @@ impl GalleryStore {
         format: &str,
         size_bytes: u64,
     ) -> std::result::Result<ImageRecord, GalleryStoreError> {
+        self.add_media(
+            gallery_id,
+            relative_path,
+            absolute_path,
+            hash,
+            width,
+            height,
+            format,
+            size_bytes,
+            "image",
+        )
+    }
+
+    /// Add a media asset (image, video, or audio) to the gallery index.
+    ///
+    /// For video/audio, width and height may be 0 if unknown.
+    /// `media_type` is "image", "video", or "audio".
+    pub fn add_media(
+        &self,
+        gallery_id: &str,
+        relative_path: &str,
+        absolute_path: &str,
+        hash: &str,
+        width: u32,
+        height: u32,
+        format: &str,
+        size_bytes: u64,
+        media_type: &str,
+    ) -> std::result::Result<ImageRecord, GalleryStoreError> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = now_rfc3339();
         self.driver.execute(
-            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             &[
                 DbValue::Text(id.clone()),
                 DbValue::Text(gallery_id.to_string()),
@@ -313,6 +355,7 @@ impl GalleryStore {
                 DbValue::Text(format.to_string()),
                 DbValue::Integer(size_bytes as i64),
                 DbValue::Text(now.clone()),
+                DbValue::Text(media_type.to_string()),
             ],
         )?;
         // Update gallery counts
@@ -336,6 +379,7 @@ impl GalleryStore {
             format: format.to_string(),
             size_bytes,
             added_at: now,
+            media_type: media_type.to_string(),
         })
     }
     /// Get an image by index (0-based position in gallery) or by hash.
@@ -356,7 +400,7 @@ impl GalleryStore {
         let row = if let Some(h) = hash {
             query_row(
                 &*self.driver,
-                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at
+                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
                  FROM gallery_images WHERE gallery_id = ?1 AND hash = ?2",
                 &[
                     DbValue::Text(gallery_id.to_string()),
@@ -371,7 +415,7 @@ impl GalleryStore {
         } else if let Some(idx) = index {
             query_row(
                 &*self.driver,
-                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at
+                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
                  FROM gallery_images WHERE gallery_id = ?1
                  ORDER BY added_at ASC LIMIT 1 OFFSET ?2",
                 &[
@@ -737,6 +781,7 @@ impl GalleryStore {
             format: row.get_str(7)?.to_string(),
             size_bytes: row.get_int(8)? as u64,
             added_at: row.get_str(9)?.to_string(),
+            media_type: row.get_str(10).unwrap_or("image").to_string(),
         })
     }
     fn tag_from_row(

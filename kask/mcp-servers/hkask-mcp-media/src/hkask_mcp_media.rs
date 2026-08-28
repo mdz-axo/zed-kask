@@ -15,6 +15,7 @@ mod error;
 mod faces;
 mod gallery;
 mod images;
+pub mod jobs;
 pub mod media_block;
 pub mod omc;
 mod templates;
@@ -119,6 +120,8 @@ hkask_mcp_server::mcp_server!(
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
         pub ffmpeg: FfmpegRunner,
+        /// In-memory generation job store for async job tracking (OMC `Task`).
+        pub job_store: jobs::JobStore,
     }
 );
 
@@ -333,6 +336,7 @@ impl MediaServer {
             + Self::audio_router()
             + Self::generation_router()
             + Self::models_router()
+            + Self::jobs_router()
     }
 
     /// Map a tool name to its OMC concept URI. The concept tags the
@@ -358,9 +362,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_44_registered_tools() {
+    fn tool_surface_is_exactly_50_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 44, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 50, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.
@@ -515,6 +519,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 gallery_store.clone(),
                 templates::create_env(),
                 FfmpegRunner::detect(),
+                jobs::new_job_store(),
             ))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
@@ -1012,6 +1017,7 @@ mod tool_behavior_tests {
             gallery_store,
             templates::create_env(),
             video::ffmpeg::FfmpegRunner::detect(),
+            jobs::new_job_store(),
         )
     }
 

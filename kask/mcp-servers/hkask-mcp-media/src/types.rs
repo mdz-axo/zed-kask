@@ -545,3 +545,80 @@ pub struct ModelInfoRequest {
     /// The model id to look up (the full prefixed name returned by `model_list`).
     pub model_id: String,
 }
+
+// ── Generation job queue request types ──────────────────────────────────
+
+/// A generation job record — tracks the lifecycle of an async media generation.
+/// Maps to the OMC `Task` concept.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct JobRecord {
+    /// Unique job identifier (UUID).
+    pub id: String,
+    /// The media operation (e.g. "generate_image", "generate_video").
+    pub op: String,
+    /// Job status: "queued", "running", "completed", "failed", "cancelled".
+    pub status: String,
+    /// ISO 8601 timestamp when the job was created.
+    pub created_at: String,
+    /// ISO 8601 timestamp when the job completed (set when status is completed/failed/cancelled).
+    pub completed_at: Option<String>,
+    /// The generation result (provider response JSON) on success.
+    pub result: Option<serde_json::Value>,
+    /// Error message on failure.
+    pub error: Option<String>,
+}
+
+/// Request to submit a new async generation job.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct JobSubmitRequest {
+    /// The media operation to execute (e.g. "generate_image", "generate_video",
+    /// "image_to_image", "upscale", "generate_speech", "transcribe").
+    pub op: String,
+    /// JSON-serialized `MediaGenerateParams` (prompt, image_url, size, etc.).
+    pub params: String,
+}
+
+/// Request to list generation jobs.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct JobListRequest {
+    /// Optional status filter: "queued", "running", "completed", "failed", "cancelled".
+    pub status: Option<String>,
+    /// Maximum number of jobs to return (default: 20).
+    pub limit: Option<usize>,
+}
+
+/// Request to get the status of a specific job.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct JobStatusRequest {
+    /// The job id (returned by `job_submit`).
+    pub job_id: String,
+}
+
+/// Request to cancel a running job.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct JobCancelRequest {
+    /// The job id to cancel.
+    pub job_id: String,
+}
+
+// ── Media import request types ──────────────────────────────────────────
+
+/// Request to import a video file into the gallery index.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryAddVideoRequest {
+    /// Absolute path to the video file.
+    pub path: String,
+    /// Optional: video width in pixels (0 if unknown).
+    #[serde(default)]
+    pub width: u32,
+    /// Optional: video height in pixels (0 if unknown).
+    #[serde(default)]
+    pub height: u32,
+}
+
+/// Request to import an audio file into the gallery index.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryAddAudioRequest {
+    /// Absolute path to the audio file.
+    pub path: String,
+}

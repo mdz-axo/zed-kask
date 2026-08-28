@@ -231,23 +231,18 @@ pub(crate) struct PendingActionInfo {
     #[serde(default)]
     pub(crate) rationale: String,
     /// The proposed new content (for mutate_document). Empty when content
-    /// is supplied at accept time.
+    /// is supplied at accept time. Retained for future diff-view rendering.
     #[serde(default)]
+    #[allow(dead_code)]
     pub(crate) content: String,
     /// Who proposed the action ("user" or an agent id).
     #[serde(default)]
     pub(crate) proposed_by: String,
-    /// ISO-8601 timestamp of when the action was proposed.
+    /// ISO-8601 timestamp of when the action was proposed. Retained for
+    /// future chronological sorting / display.
     #[serde(default)]
+    #[allow(dead_code)]
     pub(crate) created_at: String,
-}
-
-/// Response from `swarm_workspace_pending_actions`. The pending actions may
-/// be a top-level array or under an `actions` key — parsed defensively.
-#[derive(Debug, Deserialize)]
-pub(crate) struct PendingActionsResponse {
-    #[serde(default)]
-    pub(crate) actions: Vec<PendingActionInfo>,
 }
 
 /// Parse the pending-actions response defensively across plausible envelope

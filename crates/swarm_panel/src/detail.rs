@@ -600,6 +600,10 @@ impl SwarmPanel {
                             let action_rationale = action.rationale.clone();
                             let action_proposed_by = action.proposed_by.clone();
                             let action_loading = pa.loading;
+                            let accept_workspace = action_workspace.clone();
+                            let accept_action_id = action_id.clone();
+                            let reject_workspace = action_workspace.clone();
+                            let reject_action_id = action_id.clone();
                             v_flex()
                                 .gap_1()
                                 .pt_1()
@@ -652,8 +656,8 @@ impl SwarmPanel {
                                             .on_click(
                                                 cx.listener(move |this, _, _, cx| {
                                                     this.accept_pending_action(
-                                                        action_workspace.clone(),
-                                                        action_id.clone(),
+                                                        accept_workspace.clone(),
+                                                        accept_action_id.clone(),
                                                         cx,
                                                     );
                                                 }),
@@ -672,8 +676,8 @@ impl SwarmPanel {
                                             .on_click(
                                                 cx.listener(move |this, _, _, cx| {
                                                     this.reject_pending_action(
-                                                        action_workspace.clone(),
-                                                        action_id.clone(),
+                                                        reject_workspace.clone(),
+                                                        reject_action_id.clone(),
                                                         cx,
                                                     );
                                                 }),

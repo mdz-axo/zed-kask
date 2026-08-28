@@ -39,7 +39,9 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "gallery_organize"
         | "gallery_status"
         | "gallery_refresh"
-        | "gallery_delete_image" => Some(ASSET),
+        | "gallery_delete_image"
+        | "gallery_add_video"
+        | "gallery_add_audio" => Some(ASSET),
         // Face management — faces are gallery assets (people identified within
         // images, NOT production participants).
         "face_register" | "face_validate" | "face_scan_folder" | "face_list" | "face_remove"
@@ -62,6 +64,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "gallery_record_generation" | "gallery_lineage" | "gallery_reproduce" => Some(TASK),
         // Model browser — the model/provider is a participant in the creation task.
         "model_list" | "model_info" => Some(PARTICIPANT),
+        // Generation job queue — async job tracking (OMC Task).
+        "job_submit" | "job_list" | "job_status" | "job_cancel" => Some(TASK),
         // Unknown tool — no OMC concept.
         _ => None,
     }
@@ -178,6 +182,14 @@ mod tests {
     fn model_browser_maps_to_participant() {
         assert_eq!(tool_to_omc("model_list"), Some(PARTICIPANT));
         assert_eq!(tool_to_omc("model_info"), Some(PARTICIPANT));
+    }
+
+    #[test]
+    fn job_queue_maps_to_task() {
+        assert_eq!(tool_to_omc("job_submit"), Some(TASK));
+        assert_eq!(tool_to_omc("job_list"), Some(TASK));
+        assert_eq!(tool_to_omc("job_status"), Some(TASK));
+        assert_eq!(tool_to_omc("job_cancel"), Some(TASK));
     }
 
     #[test]

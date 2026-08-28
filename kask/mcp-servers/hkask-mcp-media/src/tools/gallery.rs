@@ -1203,4 +1203,122 @@ impl MediaServer {
         )
         .await
     }
+
+    /// Import a video file into the gallery index. Computes SHA-256 hash for
+    /// deduplication and indexes the file for gallery search.
+    #[tool(
+        description = "Import a video file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search."
+    )]
+    pub async fn gallery_add_video(
+        &self,
+        Parameters(GalleryAddVideoRequest { path, width, height }): Parameters<GalleryAddVideoRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_add_video",
+            Self::ontology_anchor("gallery_add_video"),
+            async {
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let file_path = std::path::Path::new(&path);
+                if !file_path.exists() {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Video file not found: {path}"
+                    )));
+                }
+                let bytes = std::fs::read(file_path).map_err(|e| {
+                    McpToolError::invalid_argument(format!("Failed to read video file: {e}"))
+                })?;
+                let hash = {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&bytes);
+                    format!("{:x}", hasher.finalize())
+                };
+                let filename = file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("video.mp4");
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("mp4");
+                let record = self
+                    .gallery_store
+                    .add_media(
+                        &ga.gallery_id,
+                        filename,
+                        &path,
+                        &hash,
+                        width,
+                        height,
+                        ext,
+                        bytes.len() as u64,
+                        "video",
+                    )
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?)
+            },
+        )
+        .await
+    }
+
+    /// Import an audio file into the gallery index. Computes SHA-256 hash for
+    /// deduplication and indexes the file for gallery search.
+    #[tool(
+        description = "Import an audio file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search."
+    )]
+    pub async fn gallery_add_audio(
+        &self,
+        Parameters(GalleryAddAudioRequest { path }): Parameters<GalleryAddAudioRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_add_audio",
+            Self::ontology_anchor("gallery_add_audio"),
+            async {
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let file_path = std::path::Path::new(&path);
+                if !file_path.exists() {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Audio file not found: {path}"
+                    )));
+                }
+                let bytes = std::fs::read(file_path).map_err(|e| {
+                    McpToolError::invalid_argument(format!("Failed to read audio file: {e}"))
+                })?;
+                let hash = {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&bytes);
+                    format!("{:x}", hasher.finalize())
+                };
+                let filename = file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("audio.mp3");
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("mp3");
+                let record = self
+                    .gallery_store
+                    .add_media(
+                        &ga.gallery_id,
+                        filename,
+                        &path,
+                        &hash,
+                        0,
+                        0,
+                        ext,
+                        bytes.len() as u64,
+                        "audio",
+                    )
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?)
+            },
+        )
+        .await
+    }
 }
