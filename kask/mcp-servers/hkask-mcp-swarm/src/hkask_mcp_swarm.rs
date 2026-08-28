@@ -91,6 +91,7 @@ pub mod request_types;
 mod sanitize;
 pub mod schema_validate;
 mod spend_gate;
+mod task_board;
 
 // ── Canonical tool-name list ─────────────────────────────────────────────
 //

@@ -591,7 +591,138 @@ impl LocalSwarmRuntime {
             task_success: None,
             bind_matched: None,
             rollout_id: Some(raw.rollout_id),
+            reasoning_steps: raw.reasoning_steps,
         })
+    }
+
+    /// Run N delegations concurrently (inference calls in parallel), then
+    /// debit the ledger sequentially after all complete. This resolves the
+    /// TOCTOU concern that motivated the sequential fan-out: the inference
+    /// calls (the expensive part) run in parallel, but the ledger debits
+    /// are batched one-at-a-time after all delegations return, so the
+    /// balance read in each debit sees the prior debit's write.
+    ///
+    /// Each delegation's cost is computed from its token usage (same formula
+    /// as `delegate`), capped at `credits_authorized`. The per-dispatch
+    /// ceiling is enforced per delegation.
+    pub async fn delegate_batch(
+        &self,
+        delegations: Vec<(LocalAgentCard, String, u32)>,
+        max_credits_per_dispatch: u32,
+    ) -> Vec<Result<LocalDelegateResult, LocalSwarmError>> {
+        let ceiling = max_credits_per_dispatch;
+        // Extract the agent ids and credits for phase 2 (debit), since the
+        // spawned tasks consume the owned cards.
+        let agent_ids: Vec<String> = delegations
+            .iter()
+            .map(|(a, _, _)| a.agent_id.clone())
+            .collect();
+        let credits: Vec<u32> = delegations.iter().map(|(_, _, c)| *c).collect();
+        let total = delegations.len();
+
+        // Phase 1: run all inference calls concurrently via tokio JoinSet.
+        // Each task returns (index, result) so we can match results back to
+        // delegations after join (JoinSet does not preserve submission order).
+        let mut join_set = tokio::task::JoinSet::new();
+        for (index, (agent, task, credits_authorized)) in delegations.into_iter().enumerate() {
+            // Enforce the per-dispatch ceiling before running.
+            if credits_authorized > ceiling {
+                join_set.spawn(async move {
+                    (
+                        index,
+                        Err(LocalSwarmError::InvalidInput(format!(
+                            "credits_authorized {credits_authorized} exceeds per-dispatch \
+                             ceiling {ceiling} (raise HKASK_ABW_MAX_CREDITS to authorize)"
+                        ))),
+                    )
+                });
+                continue;
+            }
+            let task_clean = strip_leading_mentions(&task);
+            let executor = self.executor.clone();
+            join_set.spawn(async move {
+                let result = executor.run(&agent, &task_clean).await;
+                (index, result)
+            });
+        }
+        let mut raw_results: Vec<(usize, Result<RawDelegateResult, LocalSwarmError>)> =
+            Vec::with_capacity(total);
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok((index, result)) => raw_results.push((index, result)),
+                Err(e) => {
+                    // A panicked task — record as an error at an unknown index.
+                    // This is rare but must not crash the batch.
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        error = %e,
+                        "parallel delegation task panicked"
+                    );
+                }
+            }
+        }
+        // Sort by index to restore submission order.
+        raw_results.sort_by_key(|(i, _)| *i);
+        // Strip the index — we only needed it for sorting.
+        let raw_results: Vec<Result<RawDelegateResult, LocalSwarmError>> =
+            raw_results.into_iter().map(|(_, r)| r).collect();
+
+        // Phase 2: debit the ledger sequentially (TOCTOU-safe).
+        let mut results = Vec::with_capacity(total);
+        for (raw_result, agent_id) in raw_results.into_iter().zip(agent_ids.iter()) {
+            let credits_authorized = credits[results.len()];
+            let raw = match raw_result {
+                Ok(r) => r,
+                Err(e) => {
+                    results.push(Err(e));
+                    continue;
+                }
+            };
+            let tokens = raw.tokens_used;
+            let cost_uncapped = std::cmp::max(1, tokens / 1000);
+            let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
+            if cost_uncapped > cost {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %agent_id,
+                    tokens,
+                    recorded_cost = cost,
+                    actual_cost = cost_uncapped,
+                    credits_authorized,
+                    "parallel delegation exceeded its authorized budget"
+                );
+            }
+            let reference = format!("delegate-{agent_id}-{}", uuid::Uuid::new_v4());
+            let new_balance: Option<i64> = match self.record_spend(cost, &reference) {
+                Ok(balance) => Some(balance),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        agent = %agent_id,
+                        cost,
+                        %error,
+                        "parallel spend could not be recorded - reconciliation gap"
+                    );
+                    self.balance()
+                }
+            };
+            results.push(Ok(LocalDelegateResult {
+                agent_id: agent_id.clone(),
+                response: raw.text,
+                model: raw.model,
+                tokens_used: tokens,
+                cost,
+                cost_uncapped,
+                balance: new_balance,
+                latency_ms: 0,
+                tool_calls: raw.tool_calls,
+                task_success: None,
+                bind_matched: None,
+                rollout_id: Some(raw.rollout_id),
+                reasoning_steps: raw.reasoning_steps,
+            }));
+        }
+        results
     }
 }
 /// Rung 4 (Binding): does the request match any declared `accepts` label?
@@ -694,6 +825,13 @@ pub struct LocalDelegateResult {
     /// when absent (capture unwired) so the response shape is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_id: Option<String>,
+    /// Structured reasoning steps recorded by the model via the
+    /// `reasoning/think` tool (when the agent card opts into reasoning via
+    /// `capabilities.reasoning: true`). Empty when reasoning is not enabled
+    /// or the model never called the tool. Consumed by the Curator's ORIENT
+    /// phase as a reasoning trace alongside `tool_calls`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_steps: Vec<crate::agent_executor::ReasoningStep>,
 }
 
 impl LocalDelegateResult {
@@ -720,6 +858,10 @@ impl LocalDelegateResult {
         });
         if include_details {
             entry["tool_calls"] = serde_json::Value::Array(self.tool_calls.clone());
+            if !self.reasoning_steps.is_empty() {
+                entry["reasoning_steps"] =
+                    serde_json::to_value(&self.reasoning_steps).unwrap_or(serde_json::Value::Null);
+            }
         }
         entry
     }

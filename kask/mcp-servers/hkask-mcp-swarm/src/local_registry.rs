@@ -164,6 +164,16 @@ pub struct LocalAgentCapabilities {
     /// (open task; `task_success` stays null, same as before).
     #[serde(default)]
     pub evaluators: Vec<DeclaredEvaluator>,
+    /// Opt-in structured reasoning trace. When true, the executor registers a
+    /// `reasoning/think` tool the model may call to record reasoning steps
+    /// (title, reasoning, action, next_action, confidence). Steps accumulate
+    /// across rounds and are returned in `RawDelegateResult.reasoning_steps`,
+    /// giving the Curator's ORIENT phase a reasoning trace to inspect — not
+    /// just tool-call summaries. The tool is handled locally by the executor
+    /// (not dispatched via IPC), so it costs no external tool round but does
+    /// consume one model tool-call slot against `MAX_TOOL_ROUNDS`.
+    #[serde(default)]
+    pub reasoning: bool,
 }
 
 /// A deterministic evaluator declared on an agent card. Same three kinds

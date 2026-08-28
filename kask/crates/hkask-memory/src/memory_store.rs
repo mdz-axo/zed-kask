@@ -50,6 +50,59 @@ pub struct CentroidResult {
     pub stored: bool,
 }
 
+/// Outcome of an age-based prune operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PruneOutcome {
+    /// Total h_mems that matched the age cutoff.
+    pub candidates: usize,
+    /// Successfully deleted.
+    pub deleted_count: usize,
+    /// Spared because they were recalled within the grace window.
+    pub spared_count: usize,
+    /// Individual delete failures (counted, not aborting the batch).
+    pub failed_count: usize,
+}
+
+/// Outcome of a normalized-value dedup operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DedupOutcome {
+    /// Total h_mems scanned.
+    pub scanned: usize,
+    /// Groups that contained 2+ near-duplicate values.
+    pub groups_with_dupes: usize,
+    /// Successfully expired (soft-delete).
+    pub expired_count: usize,
+    /// Individual expire failures (counted, not aborting the batch).
+    pub failed_count: usize,
+    /// Non-string h_mems skipped (structural dedup is the EAV path's job).
+    pub skipped_non_string: usize,
+}
+
+/// Normalize a string value for near-duplicate comparison: lowercase,
+/// strip leading/trailing whitespace, collapse internal whitespace runs to
+/// a single space, and strip common punctuation. Two values that differ only
+/// in case, spacing, or trailing punctuation are treated as duplicates.
+fn normalize_value(value: &str) -> String {
+    let lower = value.to_lowercase();
+    let mut result = String::with_capacity(lower.len());
+    let mut prev_was_space = false;
+    for ch in lower.chars() {
+        if ch.is_whitespace() {
+            if !prev_was_space && !result.is_empty() {
+                result.push(' ');
+            }
+            prev_was_space = true;
+        } else if ch.is_ascii_punctuation() {
+            // Skip punctuation — "AAPL." and "aapl" are the same value.
+            prev_was_space = false;
+        } else {
+            result.push(ch);
+            prev_was_space = false;
+        }
+    }
+    result.trim_end().to_string()
+}
+
 /// Default memory life in days: 180 days (6 months × 30).
 ///
 /// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
@@ -688,6 +741,173 @@ impl MemoryStore {
         Ok(self.h_mem_store.query_below_confidence(threshold, limit)?)
     }
 
+    // ── Age-based pruning ──────────────────────────────────────────────
+    //
+    // Confidence decay (Wozniak-Gorzelanczyk) lowers recall weight over time
+    // but never deletes. Age-based pruning is the complementary operation:
+    // it hard-deletes h_mems older than a cutoff, bounding storage growth from
+    // the time axis. The caller can spare actively-recalled memories by
+    // setting `spare_recalled_within_days` — an h_mem recalled recently stays
+    // even if it is old.
+
+    /// Prune h_mems older than `max_age_days`, optionally sparing h_mems
+    /// recalled within the last `spare_recalled_within_days` days.
+    ///
+    /// Returns the count of deleted h_mems. Failures on individual deletes
+    /// are counted but do not abort the batch — a single stale row must not
+    /// block pruning of the rest.
+    pub fn prune_by_age(
+        &self,
+        max_age_days: i64,
+        spare_recalled_within_days: Option<i64>,
+    ) -> Result<PruneOutcome, MemoryStoreError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
+        let candidates = self.h_mem_store.query_older_than(&cutoff, 100_000)?;
+
+        let spare_cutoff = spare_recalled_within_days
+            .map(|days| chrono::Utc::now() - chrono::Duration::days(days));
+
+        let mut deleted_count = 0usize;
+        let mut spared_count = 0usize;
+        let mut failed_count = 0usize;
+
+        for h_mem in &candidates {
+            // Spare actively-recalled memories when the caller requested it.
+            if let Some(ref spare_cutoff) = spare_cutoff {
+                if h_mem.recalled_at > *spare_cutoff {
+                    spared_count += 1;
+                    continue;
+                }
+            }
+            match self.h_mem_store.delete_by_id(&h_mem.id) {
+                Ok(()) => deleted_count += 1,
+                Err(error) => {
+                    failed_count += 1;
+                    tracing::warn!(
+                        target: "reg.consolidation",
+                        %error,
+                        h_mem_id = %h_mem.id.as_uuid(),
+                        "Failed to delete aged h_mem during prune_by_age"
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "reg.consolidation",
+            max_age_days,
+            candidates = candidates.len(),
+            deleted = deleted_count,
+            spared = spared_count,
+            failed = failed_count,
+            "Age-based prune complete"
+        );
+
+        Ok(PruneOutcome {
+            candidates: candidates.len(),
+            deleted_count,
+            spared_count,
+            failed_count,
+        })
+    }
+
+    // ── Near-duplicate value dedup ─────────────────────────────────────
+    //
+    // Three existing dedup layers do NOT cover this case:
+    // 1. `recall_dedup::dedup_h_mems` — recall-time exact-EAV hash filter
+    //    (first-seen wins, no store mutation, no fuzzy matching).
+    // 2. `find_existing_by_eav` — exact-EAV write-time detection (not wired
+    //    into `store()`; available as a helper for Bayesian combination).
+    // 3. Therapy skill — LLM-driven semantic contradiction resolution
+    //    (operator-in-the-loop, handles divergent values, not near-duplicates).
+    //
+    // This pass is the missing fourth layer: deterministic fuzzy string
+    // dedup that batch-expires stored near-duplicates. It normalizes string
+    // values (lowercase, strip punctuation, collapse whitespace) and groups
+    // h_mems by (entity, attribute, normalized_value), keeping the
+    // highest-confidence one and expiring the rest. Non-string values are
+    // skipped — structural dedup is the EAV path's job.
+
+    /// Deduplicate h_mems by normalized string value within each
+    /// (entity, attribute) group. For each group of near-duplicate
+    /// values, the highest-confidence h_mem is kept and the rest are
+    /// expired (soft-delete via `valid_to`). Returns the count of
+    /// expired duplicates. Scans all live h_mems (no perspective filter)
+    /// — the curator's memory is a single store and dedup is global.
+    pub fn dedup_by_normalized_value(
+        &self,
+        limit: usize,
+    ) -> Result<DedupOutcome, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_all_live(limit)?;
+
+        // Group by (entity, attribute, normalized_value) for string values.
+        let mut groups: std::collections::HashMap<(String, String, String), Vec<&HMem>> =
+            std::collections::HashMap::new();
+        let mut skipped_non_string = 0usize;
+
+        for h_mem in &h_mems {
+            let Some(value_str) = h_mem.value.as_str() else {
+                skipped_non_string += 1;
+                continue;
+            };
+            let normalized = normalize_value(value_str);
+            let key = (h_mem.entity.clone(), h_mem.attribute.clone(), normalized);
+            groups.entry(key).or_default().push(h_mem);
+        }
+
+        let mut expired_count = 0usize;
+        let mut failed_count = 0usize;
+        let mut groups_with_dupes = 0usize;
+
+        for (_key, group) in &groups {
+            if group.len() < 2 {
+                continue;
+            }
+            groups_with_dupes += 1;
+            // Keep the highest-confidence h_mem; expire the rest.
+            let mut sorted = group.clone();
+            sorted.sort_by(|a, b| {
+                b.confidence
+                    .value()
+                    .partial_cmp(&a.confidence.value())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            // The first one is kept; expire the rest.
+            for h_mem in &sorted[1..] {
+                match self.h_mem_store.close_by_id(&h_mem.id) {
+                    Ok(()) => expired_count += 1,
+                    Err(error) => {
+                        failed_count += 1;
+                        tracing::warn!(
+                            target: "reg.consolidation",
+                            %error,
+                            h_mem_id = %h_mem.id.as_uuid(),
+                            "Failed to expire duplicate h_mem during dedup_by_normalized_value"
+                        );
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "reg.consolidation",
+            scanned = h_mems.len(),
+            groups_with_dupes,
+            expired = expired_count,
+            failed = failed_count,
+            skipped_non_string,
+            "Normalized-value dedup complete"
+        );
+
+        Ok(DedupOutcome {
+            scanned: h_mems.len(),
+            groups_with_dupes,
+            expired_count,
+            failed_count,
+            skipped_non_string,
+        })
+    }
+
     // ── Co-occurrence connectedness (Priority 3) ────────────────────────
     //
     // When memories are recalled together, their entities are linked.
@@ -746,5 +966,212 @@ impl MemoryStore {
         }
         let count = rows[0].get_int(0).unwrap_or(0) as u64;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::SqliteDriver;
+    use hkask_types::Confidence;
+
+    fn test_store() -> MemoryStore {
+        let driver = SqliteDriver::in_memory_driver();
+        let h_mem_store =
+            hkask_storage::HMemStore::from_driver(Arc::clone(&driver)).expect("h_mem store");
+        let embedding_store =
+            hkask_storage::EmbeddingStore::from_driver(driver, hkask_storage::embedding_dim())
+                .expect("embedding store");
+        MemoryStore::new(h_mem_store, embedding_store)
+    }
+
+    fn store_h_mem(store: &MemoryStore, entity: &str, attribute: &str, value: &str, webid: WebID) {
+        let h_mem = hkask_storage::HMem::new(
+            entity,
+            attribute,
+            serde_json::Value::String(value.to_string()),
+            webid,
+        );
+        store.store(h_mem).expect("store h_mem");
+    }
+
+    #[test]
+    fn prune_by_age_deletes_old_h_mems() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Insert an old h_mem by backdating its observed_at via direct store access.
+        let mut old = hkask_storage::HMem::new(
+            "company:AAPL",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        // Backdate valid_from in the DB by inserting then updating — simpler:
+        // insert directly with the backdated timestamp via the store's insert.
+        store.h_mem_store.insert(&old).expect("insert old h_mem");
+
+        // Insert a recent h_mem.
+        store_h_mem(&store, "company:MSFT", "sector", "technology", webid);
+
+        let outcome = store.prune_by_age(50, None).expect("prune succeeds");
+        assert_eq!(outcome.candidates, 1, "one h_mem is older than 50 days");
+        assert_eq!(outcome.deleted_count, 1);
+        assert_eq!(outcome.spared_count, 0);
+
+        // The recent h_mem survives.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity("company:MSFT")
+            .expect("query");
+        assert_eq!(remaining.len(), 1);
+
+        // The old h_mem is gone.
+        let old_remaining = store
+            .h_mem_store
+            .query_by_entity("company:AAPL")
+            .expect("query");
+        assert!(old_remaining.is_empty(), "old h_mem was pruned");
+    }
+
+    #[test]
+    fn prune_by_age_sares_recalled_within_grace_window() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Old h_mem that was recalled recently.
+        let mut old_recalled = hkask_storage::HMem::new(
+            "company:AAPL",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old_recalled.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        old_recalled.recalled_at = chrono::Utc::now() - chrono::Duration::days(1);
+        store.h_mem_store.insert(&old_recalled).expect("insert");
+
+        // Old h_mem that was NOT recalled recently.
+        let mut old_stale = hkask_storage::HMem::new(
+            "company:GOOG",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old_stale.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        old_stale.recalled_at = chrono::Utc::now() - chrono::Duration::days(90);
+        store.h_mem_store.insert(&old_stale).expect("insert");
+
+        let outcome = store.prune_by_age(50, Some(30)).expect("prune succeeds");
+        assert_eq!(outcome.candidates, 2);
+        assert_eq!(outcome.deleted_count, 1, "only the stale one is deleted");
+        assert_eq!(
+            outcome.spared_count, 1,
+            "the recently-recalled one is spared"
+        );
+
+        // The recalled one survives.
+        let survived = store
+            .h_mem_store
+            .query_by_entity("company:AAPL")
+            .expect("query");
+        assert_eq!(survived.len(), 1, "recently-recalled old h_mem was spared");
+
+        // The stale one is gone.
+        let gone = store
+            .h_mem_store
+            .query_by_entity("company:GOOG")
+            .expect("query");
+        assert!(gone.is_empty(), "stale old h_mem was pruned");
+    }
+
+    #[test]
+    fn dedup_by_normalized_value_expires_near_duplicates() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Three h_mems for the same entity+attribute with near-duplicate values.
+        store_h_mem(&store, "company:AAPL", "ticker", "AAPL", webid);
+        store_h_mem(&store, "company:AAPL", "ticker", "aapl.", webid);
+        store_h_mem(&store, "company:AAPL", "ticker", " AAPL ", webid);
+        // A distinct value that should NOT be expired.
+        store_h_mem(&store, "company:AAPL", "ticker", "MSFT", webid);
+        // A non-string value that should be skipped.
+        let numeric = hkask_storage::HMem::new(
+            "company:AAPL",
+            "price",
+            serde_json::Value::Number(serde_json::Number::from(150)),
+            webid,
+        );
+        store.store(numeric).expect("store numeric");
+
+        let outcome = store
+            .dedup_by_normalized_value(1000)
+            .expect("dedup succeeds");
+        assert_eq!(outcome.scanned, 5);
+        assert_eq!(
+            outcome.groups_with_dupes, 1,
+            "one group has near-duplicates"
+        );
+        assert_eq!(outcome.expired_count, 2, "two near-duplicates expired");
+        assert_eq!(outcome.skipped_non_string, 1, "numeric value skipped");
+
+        // The remaining h_mems for ticker: one of the AAPL variants + MSFT.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity_attribute("company:AAPL", "ticker")
+            .expect("query");
+        // query_by_entity_attribute returns live (valid_to IS NULL) h_mems only.
+        assert_eq!(
+            remaining.len(),
+            2,
+            "one AAPL variant + MSFT survive; two AAPL variants expired"
+        );
+    }
+
+    #[test]
+    fn dedup_keeps_highest_confidence() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Low-confidence duplicate inserted first.
+        let mut low = hkask_storage::HMem::new(
+            "company:AAPL",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        low.confidence = Confidence::new(0.3);
+        store.store(low).expect("store");
+
+        // High-confidence duplicate inserted second.
+        let mut high = hkask_storage::HMem::new(
+            "company:AAPL",
+            "sector",
+            serde_json::Value::String("Technology".to_string()),
+            webid,
+        );
+        high.confidence = Confidence::new(0.9);
+        store.store(high).expect("store");
+
+        let outcome = store
+            .dedup_by_normalized_value(1000)
+            .expect("dedup succeeds");
+        assert_eq!(outcome.expired_count, 1);
+
+        // The high-confidence one survives.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity_attribute("company:AAPL", "sector")
+            .expect("query");
+        assert_eq!(remaining.len(), 1);
+        assert!((remaining[0].confidence.value() - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn normalize_value_handles_case_punctuation_and_whitespace() {
+        // Direct unit test of the normalization helper.
+        assert_eq!(normalize_value("AAPL"), "aapl");
+        assert_eq!(normalize_value("AAPL."), "aapl");
+        assert_eq!(normalize_value(" aapl "), "aapl");
+        assert_eq!(normalize_value("AaPL,  Inc."), "aapl inc");
+        assert_eq!(normalize_value("  multiple   spaces  "), "multiple spaces");
+        assert_eq!(normalize_value(""), "");
     }
 }

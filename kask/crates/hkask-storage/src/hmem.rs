@@ -535,6 +535,54 @@ impl HMemStore {
     pub fn count(&self) -> Result<usize, HMemError> {
         self.count_rows("SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL", &[])
     }
+
+    /// Query h_mems whose `valid_from` (observation timestamp) is older than
+    /// the given cutoff. Used by age-based pruning — distinct from confidence
+    /// decay, which lowers recall weight but never deletes. An h_mem that is
+    /// old but frequently recalled (`recalled_at` recent) still qualifies for
+    /// age pruning here; the caller decides whether to spare actively-recalled
+    /// memories by filtering on `recalled_at` after the query.
+    ///
+    /// pre:  cutoff is a valid RFC 3339 timestamp
+    /// post: returns h_mems with `valid_from < cutoff` and `valid_to IS NULL`,
+    ///       ordered oldest first
+    #[must_use = "result must be used"]
+    pub fn query_older_than(
+        &self,
+        cutoff: &chrono::DateTime<chrono::Utc>,
+        limit: usize,
+    ) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE valid_to IS NULL AND valid_from < ?1 \
+                 ORDER BY valid_from ASC LIMIT ?2"
+            ),
+            &[
+                DbValue::Text(cutoff.to_rfc3339()),
+                DbValue::Integer(limit as i64),
+            ],
+        )
+    }
+
+    /// Query all live h_mems, without decay or dedup. Used by the dedup
+    /// tool to scan the full memory set for near-duplicate values.
+    ///
+    /// pre:  limit > 0
+    /// post: returns up to `limit` live h_mems (valid_to IS NULL),
+    ///       ordered newest first
+    #[must_use = "result must be used"]
+    pub fn query_all_live(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE valid_to IS NULL \
+                 ORDER BY valid_from DESC LIMIT ?1"
+            ),
+            &[DbValue::Integer(limit as i64)],
+        )
+    }
+
     // ── Ontology query paths (P5.4 dual-axis anchoring) ──────────────────
     //
     // The `ontology` column is a JSON blob, so these queries reach into it

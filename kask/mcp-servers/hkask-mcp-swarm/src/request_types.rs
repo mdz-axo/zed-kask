@@ -484,16 +484,31 @@ pub struct CreateLocalAgentRequest {
     /// response and stamps a deterministic `task_success` verdict.
     #[serde(default)]
     pub evaluators: Option<Vec<crate::local_registry::DeclaredEvaluator>>,
+    /// Opt-in structured reasoning trace. When true, the agent's executor
+    /// registers a `reasoning/think` tool the model may call to record
+    /// reasoning steps. See `LocalAgentCapabilities.reasoning`.
+    #[serde(default)]
+    pub reasoning: Option<bool>,
 }
 
 /// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).
-/// Dispatch N local agents in one call and aggregate. Each delegation runs
-/// sequentially to avoid ledger TOCTOU (the local ledger is single-writer;
-/// concurrent debits would race the balance read). Capped at `MAX_FANOUT`.
-/// No consent token — local mode.
+/// Dispatch N local agents in one call and aggregate. By default each
+/// delegation runs sequentially to avoid ledger TOCTOU (the local ledger is
+/// single-writer; concurrent debits would race the balance read). When
+/// `parallel` is true, the inference calls run concurrently via
+/// `tokio::join_all` for speed, and the ledger debits are batched
+/// sequentially after all delegations complete — the TOCTOU concern is
+/// resolved by deferring the debit, not by serializing the inference.
+/// Capped at `MAX_FANOUT`. No consent token — local mode.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FanoutLocalRequest {
     pub delegations: Vec<FanoutEntry>,
+    /// When true, run the inference calls concurrently and batch the ledger
+    /// debits after all complete. When false (default), run sequentially as
+    /// before. Parallel mode is faster for independent, read-heavy
+    /// delegations but uses more concurrent inference resources.
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1035,6 +1050,12 @@ pub struct PlanDelegation {
     /// check after the delegation and stamps `task_success` onto the result.
     /// When absent, `task_success` is left null (open task, no oracle).
     pub evaluator: Option<PlanEvaluator>,
+    /// Optional stable task identifier for the task board. When omitted,
+    /// a synthetic id is derived from (agent_name, task) so the same task
+    /// accumulates attempts across invocations rather than growing
+    /// unboundedly.
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 /// An evaluator spec within a plan delegation.
@@ -1057,6 +1078,47 @@ pub struct PlanEvaluator {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecutePlanLocalRequest {
     /// The delegations to execute, in order. Capped at 10 (same as fanout).
+    pub delegations: Vec<PlanDelegation>,
+    /// Optional swarm id. When set, task progress (status, attempt count,
+    /// fail count, last result) is recorded to the swarm's task board
+    /// (`<swarm_dir>/<swarm_id>/task_board.json`) so the Curator's ORIENT
+    /// phase can query durable task progress via `swarm_task_board`.
+    #[serde(default)]
+    pub swarm_id: Option<String>,
+}
+
+/// Request for `swarm_task_board` — query a swarm's persistent task board.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskBoardRequest {
+    /// The swarm id whose task board to query.
+    pub swarm_id: String,
+}
+
+/// Request for `swarm_eval_suite_local` — regression-test a swarm composition
+/// across a dataset of cases. Each case is a plan (list of delegations with
+/// evaluators). The suite runs each case via `swarm_execute_plan_local`,
+/// aggregates pass/fail, and returns a suite-level result. There is no
+/// improve-then-re-evaluate outer loop — the suite is measure-and-report,
+/// not measure-improve-remeasure.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalSuiteLocalRequest {
+    /// The swarm id to evaluate. Task progress is recorded to the swarm's
+    /// task board when set.
+    #[serde(default)]
+    pub swarm_id: Option<String>,
+    /// The test cases to run, in order. Capped at 10.
+    pub cases: Vec<EvalSuiteCase>,
+}
+
+/// A single test case in a swarm eval suite. Each case is a plan: a list of
+/// delegations with deterministic evaluators. The case passes when ALL
+/// delegations pass their evaluators.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalSuiteCase {
+    /// A short name for the case (for reporting).
+    pub name: String,
+    /// The delegations to execute for this case. Same shape as
+    /// `swarm_execute_plan_local` delegations.
     pub delegations: Vec<PlanDelegation>,
 }
 

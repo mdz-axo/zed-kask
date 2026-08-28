@@ -1087,6 +1087,142 @@ impl CuratorServer {
         })
         .await
     }
+
+    // ── Memory hygiene tools (age prune + dedup) ─────────────────────────
+    //
+    // Complements the confidence-based consolidation service with two
+    // deterministic, non-LLM axes: age-based hard-delete and near-duplicate
+    // string dedup. Both are operator-invoked — the curator proposes, the
+    // operator approves (same consent model as therapy/contradiction
+    // resolution).
+
+    /// Prune h_mems older than a specified age. Hard-deletes h_mems whose
+    /// observation timestamp is older than `max_age_days`, optionally
+    /// sparing h_mems recalled within a grace window. Distinct from
+    /// confidence decay (lowers weight, never deletes) and confidence-based
+    /// consolidation (deletes low-confidence).
+    #[tool(
+        description = "Prune curator h_mems older than max_age_days. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
+    )]
+    pub async fn curator_memory_prune(
+        &self,
+        Parameters(req): Parameters<MemoryPruneRequest>,
+    ) -> String {
+        execute_tool(self, "curator_memory_prune", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            if req.max_age_days <= 0 {
+                return Err(McpToolError::invalid_argument(
+                    "max_age_days must be positive",
+                ));
+            }
+
+            let outcome = memory
+                .prune_by_age(req.max_age_days, req.spare_recalled_within_days)
+                .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?;
+
+            RegulationSpan::Curation.emit("memory_pruned");
+
+            Ok(json!({
+                "pruned": true,
+                "max_age_days": req.max_age_days,
+                "spare_recalled_within_days": req.spare_recalled_within_days,
+                "candidates": outcome.candidates,
+                "deleted_count": outcome.deleted_count,
+                "spared_count": outcome.spared_count,
+                "failed_count": outcome.failed_count,
+            }))
+        })
+        .await
+    }
+
+    /// Deduplicate h_mems by normalized string value. Groups by
+    /// (entity, attribute, normalized_value), keeps highest-confidence,
+    /// expires the rest. Non-string values skipped.
+    #[tool(
+        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, expires the rest. Deterministic, non-LLM. Non-string values skipped."
+    )]
+    pub async fn curator_memory_dedup(
+        &self,
+        Parameters(req): Parameters<MemoryDedupRequest>,
+    ) -> String {
+        execute_tool(self, "curator_memory_dedup", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            let limit = req.limit.unwrap_or(10_000);
+            if limit == 0 {
+                return Err(McpToolError::invalid_argument("limit must be positive"));
+            }
+
+            let outcome = memory
+                .dedup_by_normalized_value(limit)
+                .map_err(|e| map_memory_store_error(e, "Normalized-value dedup failed"))?;
+
+            RegulationSpan::Curation.emit("memory_deduped");
+
+            Ok(json!({
+                "deduped": true,
+                "scanned": outcome.scanned,
+                "groups_with_dupes": outcome.groups_with_dupes,
+                "expired_count": outcome.expired_count,
+                "failed_count": outcome.failed_count,
+                "skipped_non_string": outcome.skipped_non_string,
+            }))
+        })
+        .await
+    }
+
+    /// Extract candidate semantic memories from a thread's turn history.
+    /// Queries the curator's memory for all h_mems with entity
+    /// `chat:thread:<thread_id>`, returns their IDs and content as
+    /// extraction candidates. The curator reviews and inserts the ones
+    /// worth keeping via `memory_insert` (which requires evidence citation).
+    /// This is the on-demand version of ALWAYS-mode learning — no
+    /// background LLM call, no automatic insertion.
+    #[tool(
+        description = "Extract candidate semantic memories from a thread's turn history. Returns turn h_mems with IDs and content. The curator reviews and inserts worth keeping via memory_insert. On-demand ALWAYS-mode learning — no background LLM, no automatic insertion."
+    )]
+    pub async fn curator_memory_extract(
+        &self,
+        Parameters(req): Parameters<MemoryExtractRequest>,
+    ) -> String {
+        execute_tool(self, "curator_memory_extract", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            let entity_prefix = format!("chat:thread:{}", req.thread_id);
+            let h_mems = memory
+                .h_mems_by_entity_prefix(&entity_prefix)
+                .map_err(|e| map_memory_store_error(e, "Failed to query thread turns"))?;
+
+            let candidates: Vec<serde_json::Value> = h_mems
+                .iter()
+                .map(|h| {
+                    json!({
+                        "h_mem_id": h.id.to_string(),
+                        "entity": h.entity,
+                        "attribute": h.attribute,
+                        "value": h.value,
+                        "confidence": h.confidence.value(),
+                        "observed_at": h.observed_at.to_rfc3339(),
+                        "evidence_citation": h.id.to_string(),
+                    })
+                })
+                .collect();
+
+            RegulationSpan::Curation.emit("memory_extracted");
+
+            Ok(json!({
+                "thread_id": req.thread_id,
+                "turn_count": candidates.len(),
+                "candidates": candidates,
+                "guidance": "Review the candidates and insert worth keeping via memory_insert. Each candidate's h_mem_id is the evidence_citation for memory_insert.",
+            }))
+        })
+        .await
+    }
 }
 
 // ── Server startup ─────────────────────────────────────────────────────

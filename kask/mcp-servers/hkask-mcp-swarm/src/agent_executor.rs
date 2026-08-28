@@ -21,6 +21,38 @@ use crate::local_registry::LocalAgentCard;
 /// is the credit gate, this is the round gate).
 pub const MAX_TOOL_ROUNDS: usize = 4;
 
+/// The built-in reasoning tool name. When an agent card opts into reasoning
+/// (`capabilities.reasoning: true`), the executor registers this tool and
+/// handles it locally — no IPC dispatch. The model calls it to record a
+/// structured reasoning step; the executor accumulates steps and returns
+/// them in `RawDelegateResult.reasoning_steps`.
+const REASONING_TOOL_NAME: &str = "reasoning/think";
+
+/// A single reasoning step recorded by the model via the `reasoning/think`
+/// tool. Inspired by Agno's `ReasoningTools.think`/`analyze` pattern: each
+/// call appends a step, and the full history is returned to the model so it
+/// can decide whether to continue. Termination is model-driven via
+/// `next_action: "final_answer"`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReasoningStep {
+    /// Short title for the step (what the model is reasoning about).
+    pub title: String,
+    /// The reasoning text itself.
+    pub reasoning: String,
+    /// Optional action taken or planned (e.g. "called web_search", "will
+    /// delegate to analyst").
+    pub action: Option<String>,
+    /// The model's signal for what to do next: `"continue"`, `"validate"`,
+    /// or `"final_answer"`. When `"final_answer"`, the model should emit
+    /// its final response without further tool calls.
+    pub next_action: String,
+    /// Optional self-assessed confidence (0.0–1.0). Not calibrated — the
+    /// Curator's Brier-scored outcomes calibrate confidence, not this.
+    pub confidence: Option<f64>,
+    /// Which tool-call round this step was recorded in.
+    pub round: usize,
+}
+
 /// The raw result of running an agent — text, model, token usage, and the
 /// tool execution summary. NOT debited. The caller
 /// (`LocalSwarmRuntime::delegate`) debits the ledger.
@@ -33,6 +65,11 @@ pub struct RawDelegateResult {
     /// captured. Callers that stamp verdicts (the harness) use it so the
     /// verdict lands in the same rollout group.
     pub rollout_id: String,
+    /// Structured reasoning steps recorded by the model via the
+    /// `reasoning/think` tool (when the agent card opts into reasoning).
+    /// Empty when reasoning is not enabled or the model never called the
+    /// tool. Consumed by the Curator's ORIENT phase as a reasoning trace.
+    pub reasoning_steps: Vec<ReasoningStep>,
 }
 
 /// A captured inference call — the `model_request` event payload. Built by
@@ -87,6 +124,7 @@ pub type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
 /// The agent-run policy: how a local agent executes (tool-loop
 /// orchestration). Owns the inference and tool-dispatch ports.
 /// Ledger-unaware — the runtime owns spending.
+#[derive(Clone)]
 pub struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
@@ -94,7 +132,7 @@ pub struct AgentExecutor {
     /// exactly as before — zero behavior change for non-captured paths).
     /// Interior mutability so the runtime can wire it through the shared
     /// `&LocalSwarmRuntime` the lazy getter hands out.
-    capture: std::sync::Mutex<Option<CaptureSender>>,
+    capture: std::sync::Arc<std::sync::Mutex<Option<CaptureSender>>>,
     /// Count of captures dropped because the channel was full. The drainer
     /// cannot observe send-side backpressure, so the count lives HERE —
     /// a drop is never silent (the harness report surfaces it).
@@ -109,7 +147,7 @@ impl AgentExecutor {
         Self {
             inference,
             tool_dispatch,
-            capture: std::sync::Mutex::new(None),
+            capture: std::sync::Arc::new(std::sync::Mutex::new(None)),
             capture_send_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
@@ -199,6 +237,35 @@ impl AgentExecutor {
                 },
             })
             .collect();
+        // When the agent opts into reasoning, register the built-in
+        // `reasoning/think` tool. It is handled locally by the executor
+        // (not dispatched via IPC), so it does not need to be in the
+        // `qualified_allowed` allowlist — the local handler short-circuits
+        // before the dispatch boundary.
+        let has_reasoning = agent.capabilities.reasoning;
+        let mut tool_defs = tool_defs;
+        if has_reasoning {
+            tool_defs.push(hkask_types::ChatToolDefinition {
+                tool_type: "function".to_string(),
+                function: hkask_types::ChatToolFunction {
+                    name: REASONING_TOOL_NAME.to_string(),
+                    description: "Record a structured reasoning step. Call this before \
+                        making tool calls or generating a final answer. Use next_action=\"final_answer\" \
+                        to signal you are ready to respond.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "title": { "type": "string", "description": "Short title for this reasoning step" },
+                            "reasoning": { "type": "string", "description": "The reasoning text" },
+                            "action": { "type": "string", "description": "Optional action taken or planned" },
+                            "next_action": { "type": "string", "enum": ["continue", "validate", "final_answer"], "description": "What to do next" },
+                            "confidence": { "type": "number", "description": "Optional self-assessed confidence (0.0-1.0)" }
+                        },
+                        "required": ["title", "reasoning", "next_action"]
+                    }),
+                },
+            });
+        }
         let tools_slice: Option<&[hkask_types::ChatToolDefinition]> =
             (!tool_defs.is_empty()).then_some(&tool_defs[..]);
 
@@ -219,6 +286,7 @@ impl AgentExecutor {
         let mut total_tokens: i64 = 0;
         let mut final_text = String::new();
         let mut final_model = String::new();
+        let mut reasoning_steps: Vec<ReasoningStep> = Vec::new();
         // The rollout id groups this run's events in the store. Derived from
         // the agent + a fresh uuid — the caller (harness or delegate path)
         // does not need to supply one; the harness stamps its own verdict
@@ -279,6 +347,28 @@ impl AgentExecutor {
             let mut round_results = Vec::new();
             for call in &result.tool_calls {
                 let qualified = &call.tool;
+
+                // Built-in reasoning tool: handled locally, not dispatched
+                // via IPC. Records a structured reasoning step and returns
+                // the full history to the model so it can decide whether to
+                // continue.
+                if has_reasoning && qualified == REASONING_TOOL_NAME {
+                    let step = parse_reasoning_step(&call.args, round);
+                    reasoning_steps.push(step.clone());
+                    let history = format_reasoning_history(&reasoning_steps);
+                    let summary = serde_json::json!({
+                        "tool": REASONING_TOOL_NAME,
+                        "ok": true,
+                        "step_count": reasoning_steps.len(),
+                    });
+                    tool_calls_made.push(summary);
+                    round_results.push(format!(
+                        "Reasoning step recorded ({count} total). History:\n{history}",
+                        count = reasoning_steps.len(),
+                    ));
+                    continue;
+                }
+
                 let declared = declared_tools
                     .iter()
                     .find(|(s, t)| format!("{s}/{t}") == *qualified);
@@ -362,8 +452,75 @@ impl AgentExecutor {
             tokens_used: total_tokens,
             tool_calls: tool_calls_made,
             rollout_id,
+            reasoning_steps,
         })
     }
+}
+
+/// Parse a `reasoning/think` tool call's arguments into a `ReasoningStep`.
+/// Missing optional fields default to `None`; missing required fields default
+/// to empty strings (the model was told they are required, but a malformed
+/// call should not crash the run).
+fn parse_reasoning_step(args: &serde_json::Value, round: usize) -> ReasoningStep {
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let reasoning = args
+        .get("reasoning")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let next_action = args
+        .get("next_action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("continue")
+        .to_string();
+    let confidence = args.get("confidence").and_then(|v| v.as_f64());
+    ReasoningStep {
+        title,
+        reasoning,
+        action,
+        next_action,
+        confidence,
+        round,
+    }
+}
+
+/// Format the full reasoning-step history as a numbered list for the model.
+/// The model sees this as the tool result and uses it to decide whether to
+/// continue reasoning or emit a final answer.
+fn format_reasoning_history(steps: &[ReasoningStep]) -> String {
+    steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| {
+            let action = step
+                .action
+                .as_deref()
+                .map(|a| format!(" | action: {a}"))
+                .unwrap_or_default();
+            let confidence = step
+                .confidence
+                .map(|c| format!(" | confidence: {c:.2}"))
+                .unwrap_or_default();
+            format!(
+                "{i}. [{next_action}] {title}{action}{confidence}\n   {reasoning}",
+                i = i + 1,
+                next_action = step.next_action,
+                title = step.title,
+                action = action,
+                confidence = confidence,
+                reasoning = step.reasoning,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[cfg(test)]
@@ -470,4 +627,82 @@ mod tests {
 
     use std::future::Future;
     use std::pin::Pin;
+
+    #[test]
+    fn parse_reasoning_step_extracts_all_fields() {
+        let args = serde_json::json!({
+            "title": "Analyze market",
+            "reasoning": "The market is trending up.",
+            "action": "called research/web_search",
+            "next_action": "continue",
+            "confidence": 0.8
+        });
+        let step = parse_reasoning_step(&args, 1);
+        assert_eq!(step.title, "Analyze market");
+        assert_eq!(step.reasoning, "The market is trending up.");
+        assert_eq!(step.action.as_deref(), Some("called research/web_search"));
+        assert_eq!(step.next_action, "continue");
+        assert_eq!(step.confidence, Some(0.8));
+        assert_eq!(step.round, 1);
+    }
+
+    #[test]
+    fn parse_reasoning_step_defaults_missing_optional_fields() {
+        let args = serde_json::json!({
+            "title": "Quick thought",
+            "reasoning": "Need to check.",
+            "next_action": "final_answer"
+        });
+        let step = parse_reasoning_step(&args, 0);
+        assert_eq!(step.action, None);
+        assert_eq!(step.confidence, None);
+        assert_eq!(step.next_action, "final_answer");
+    }
+
+    #[test]
+    fn parse_reasoning_step_defaults_missing_next_action() {
+        let args = serde_json::json!({
+            "title": "Step",
+            "reasoning": "Thinking."
+        });
+        let step = parse_reasoning_step(&args, 0);
+        assert_eq!(
+            step.next_action, "continue",
+            "missing next_action defaults to continue"
+        );
+    }
+
+    #[test]
+    fn format_reasoning_history_renders_all_steps() {
+        let steps = vec![
+            ReasoningStep {
+                title: "First".into(),
+                reasoning: "Initial thought.".into(),
+                action: None,
+                next_action: "continue".into(),
+                confidence: None,
+                round: 0,
+            },
+            ReasoningStep {
+                title: "Second".into(),
+                reasoning: "After tool call.".into(),
+                action: Some("called web_search".into()),
+                next_action: "final_answer".into(),
+                confidence: Some(0.9),
+                round: 1,
+            },
+        ];
+        let history = format_reasoning_history(&steps);
+        assert!(history.contains("1. [continue] First"));
+        assert!(history.contains("Initial thought."));
+        assert!(history.contains("2. [final_answer] Second"));
+        assert!(history.contains("action: called web_search"));
+        assert!(history.contains("confidence: 0.90"));
+    }
+
+    #[test]
+    fn format_reasoning_history_empty_renders_nothing() {
+        let history = format_reasoning_history(&[]);
+        assert!(history.is_empty());
+    }
 }

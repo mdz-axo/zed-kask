@@ -99,6 +99,13 @@ impl LocalSwarmRegistry {
         }
     }
 
+    /// The swarms directory (where `swarm.json` and `task_board.json` files
+    /// live). Exposed so the task board can persist alongside swarm rosters
+    /// without a separate storage path.
+    pub fn dir(&self) -> &str {
+        &self.dir
+    }
+
     /// Load (or reload) swarms from the directory. Returns the count loaded. A
     /// missing directory yields zero swarms (not an error). A malformed
     /// `swarm.json` aborts the load and returns `Err` — a corrupt roster must

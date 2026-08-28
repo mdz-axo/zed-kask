@@ -221,3 +221,67 @@ pub struct MemoryResolveContradictionRequest {
     /// contradiction observed).
     pub reason: String,
 }
+
+// ── Memory hygiene tools (age prune + dedup) ───────────────────────────
+//
+// The consolidation service handles confidence-based cleanup and budget
+// pruning. These tools add the two missing axes: age-based hard-delete
+// (memory_life_days is used for decay, never for deletion) and
+// near-duplicate string dedup (find_existing_by_eav does exact EAV
+// matching for Bayesian combination, not fuzzy value dedup).
+// Both are deterministic, non-LLM, and operator-invoked.
+
+/// Prune h_mems older than a specified age.
+///
+/// Hard-deletes h_mems whose observation timestamp (`valid_from`) is older
+/// than `max_age_days`. Optionally spares h_mems that have been recalled
+/// within the last `spare_recalled_within_days` days — actively-used
+/// memories survive even if they are old. This is distinct from confidence
+/// decay (which lowers recall weight but never deletes) and from
+/// confidence-based consolidation (which deletes low-confidence h_mems).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryPruneRequest {
+    /// Maximum age in days. h_mems older than this are candidates for deletion.
+    pub max_age_days: i64,
+    /// If set, spare h_mems recalled within this many days. An h_mem that was
+    /// recalled recently stays even if it is old — the decay clock was reset,
+    /// so it is still active in the recall path.
+    pub spare_recalled_within_days: Option<i64>,
+}
+
+/// Deduplicate h_mems by normalized string value.
+///
+/// Scans the curator's h_mems and groups them by (entity, attribute,
+/// normalized_value). For each group with 2+ near-duplicate values, the
+/// highest-confidence h_mem is kept and the rest are expired (soft-delete
+/// via `valid_to`). Non-string values are skipped — structural dedup is
+/// the EAV path's job (`find_existing_by_eav` + Bayesian combination).
+///
+/// Normalization: lowercase, strip punctuation, collapse whitespace.
+/// "AAPL." and "aapl" are treated as duplicates.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryDedupRequest {
+    /// Maximum h_mems to scan. Defaults to 10_000 if omitted. The scan is
+    /// bounded to prevent unbounded memory reads on very large stores.
+    pub limit: Option<usize>,
+}
+
+/// Extract candidate semantic memories from a thread's turn history.
+///
+/// This is the on-demand version of Agno's ALWAYS-mode learning: instead
+/// of automatically extracting memories after every turn (which requires
+/// a background LLM call and careful rate-limiting), the curator or operator
+/// calls this tool to extract candidate memories from a specific thread's
+/// turns. The tool returns the candidates — it does NOT insert them.
+/// Insertion still goes through `memory_insert`, which requires evidence
+/// citation (the turn h_mem ID), preserving the evidence-grounding invariant.
+///
+/// The tool queries the curator's memory for all h_mems with entity
+/// `chat:thread:<thread_id>`, returns their IDs and content, and suggests
+/// candidate (entity, attribute, value) triples the curator might extract.
+/// The curator reviews and inserts the ones worth keeping.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryExtractRequest {
+    /// The thread id whose turns to extract candidates from.
+    pub thread_id: String,
+}
