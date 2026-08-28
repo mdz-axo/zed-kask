@@ -58,6 +58,9 @@ pub struct MediaGenerateParams {
     pub duration: Option<f32>,
     /// Language hint for transcription.
     pub language: Option<String>,
+    /// Mask image (base64 data URI or URL) for region-selective editing (inpainting).
+    /// White regions are edited; black regions are preserved. None for whole-image transform.
+    pub mask: Option<String>,
 }
 
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.

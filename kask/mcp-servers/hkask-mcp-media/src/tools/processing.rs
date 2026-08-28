@@ -997,4 +997,30 @@ impl MediaServer {
         })
         .await
     }
+
+    /// Probe a video file for metadata — duration, dimensions, codec, fps,
+    /// bit rate. Uses `ffprobe` (bundled with ffmpeg). The timeline-editor
+    /// data source: the UI needs duration to render the timeline strip and
+    /// fps to compute frame positions.
+    #[tool(
+        description = "Probe a video file for metadata — duration, dimensions, codec, fps, bit rate. Uses ffprobe (bundled with ffmpeg)."
+    )]
+    pub async fn video_info(
+        &self,
+        Parameters(VideoInfoRequest { video_url }): Parameters<VideoInfoRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "video_info",
+            Self::ontology_anchor("video_info"),
+            async {
+                validate_tool_url_with_dns(&video_url).await?;
+                let ffmpeg = self.require_ffmpeg()?;
+                let info = ffmpeg.probe(&video_url).await.map_err(map_media_error)?;
+                Ok(serde_json::to_value(&info)
+                    .map_err(|e| McpToolError::internal(format!("encode video info: {e}")))?)
+            },
+        )
+        .await
+    }
 }

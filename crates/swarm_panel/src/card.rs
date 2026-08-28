@@ -377,6 +377,151 @@ impl SwarmPanel {
                         ),
                 )
             }
+            SwarmEntry::App(app) => {
+                let app_slug = app.slug.clone();
+                let spawn_slug = app_slug.clone();
+                let publish_slug = app_slug.clone();
+                let archive_slug = app_slug.clone();
+                let edit_slug = app_slug.clone();
+                let is_archived = app.archived;
+                let is_public = app.visibility == "public";
+                MarketplaceCard::new().child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .flex_1()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Label::new(if app.name.is_empty() {
+                                                app.slug.clone()
+                                            } else {
+                                                app.name.clone()
+                                            })
+                                            .color(Color::Default)
+                                            .truncate(),
+                                        )
+                                        .when(is_archived, |this| {
+                                            this.child(
+                                                Label::new("archived")
+                                                    .color(Color::Warning)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                        })
+                                        .when(!is_public && !is_archived, |this| {
+                                            this.child(
+                                                Label::new(&app.visibility)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                        })
+                                        .when(is_public, |this| {
+                                            this.child(
+                                                Label::new("public")
+                                                    .color(Color::Accent)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    Label::new(if app.tagline.is_empty() {
+                                        app.description.clone()
+                                    } else {
+                                        app.tagline.clone()
+                                    })
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall)
+                                    .truncate(),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .flex_shrink_0()
+                                .items_center()
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("edit-app-{edit_slug}")),
+                                        "Edit",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .tooltip(Tooltip::text(
+                                        "Open this App's manifest in the App author panel \
+                                         to view and edit its details.",
+                                    ))
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.load_app_into_form(edit_slug.clone(), window, cx);
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("spawn-app-{spawn_slug}")),
+                                        "Spawn",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(is_archived || self.spend.in_flight.is_some())
+                                    .tooltip(Tooltip::text(
+                                        "Spawn a new workspace from this App. \
+                                                 Seeds it with the App's initial_budget, \
+                                                 auto_hire, and initial_files.",
+                                    ))
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.spawn_app_workspace(spawn_slug.clone(), cx);
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("publish-app-{publish_slug}")),
+                                        "Publish",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(
+                                        is_public || is_archived || self.spend.in_flight.is_some(),
+                                    )
+                                    .tooltip(Tooltip::text(
+                                        "Promote this App's visibility to public. \
+                                                 Makes it browsable in the catalogue.",
+                                    ))
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.publish_app(publish_slug.clone(), cx);
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("archive-app-{archive_slug}")),
+                                        "Archive",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(is_archived || self.spend.in_flight.is_some())
+                                    .tooltip(Tooltip::text(
+                                        "Archive this App. Archived apps cannot \
+                                                 spawn new workspaces. Cannot be undone.",
+                                    ))
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.archive_app(archive_slug.clone(), cx);
+                                        },
+                                    )),
+                                ),
+                        ),
+                )
+            }
         }
     }
 }

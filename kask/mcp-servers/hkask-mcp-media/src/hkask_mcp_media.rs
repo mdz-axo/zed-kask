@@ -337,6 +337,7 @@ impl MediaServer {
             + Self::generation_router()
             + Self::models_router()
             + Self::jobs_router()
+            + Self::workflows_router()
     }
 
     /// Map a tool name to its OMC concept URI. The concept tags the
@@ -362,9 +363,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_57_registered_tools() {
+    fn tool_surface_is_exactly_66_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 57, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 66, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.

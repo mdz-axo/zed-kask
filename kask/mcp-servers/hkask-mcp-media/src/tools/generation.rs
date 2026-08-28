@@ -310,4 +310,190 @@ impl MediaServer {
         })
         .await
     }
+
+    /// Generate N image variants from a single prompt. Each variant is
+    /// persisted individually to the gallery with its own entry. Returns an
+    /// array of media blocks — one per variant — for grid display.
+    #[tool(
+        description = "Generate multiple image variants from a single prompt. Each variant is persisted individually to the gallery. Returns an array of media blocks for grid display. Default count: 4."
+    )]
+    pub async fn generate_variants(
+        &self,
+        Parameters(GenerateVariantsRequest {
+            prompt,
+            count,
+            image_size,
+            style,
+        }): Parameters<GenerateVariantsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "generate_variants",
+            Self::ontology_anchor("generate_variants"),
+            async {
+                if prompt.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("prompt must not be empty"));
+                }
+                let count = count.clamp(1, 10);
+                let mut media_params = hkask_types::MediaGenerateParams {
+                    prompt: Some(prompt.clone()),
+                    size: image_size.clone(),
+                    count: Some(count),
+                    ..Default::default()
+                };
+                if let Some(style_name) = &style
+                    && let Some(preset) = crate::style::get_preset(style_name)
+                {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+                let result = self
+                    .vision_port
+                    .media_generate("generate_image", &media_params)
+                    .await
+                    .map_err(|e| classify_inference_error("Variant generation failed", e))?;
+
+                // The provider may return multiple images in data[]. Extract
+                // each one, persist it, and build a media block for it.
+                let data_array = result
+                    .get("data")
+                    .and_then(|d| d.as_array());
+                let variants = if let Some(data) = data_array {
+                    let mut blocks = Vec::with_capacity(data.len());
+                    for item in data {
+                        // Construct a single-image result for persistence.
+                        let single_result = serde_json::json!({ "data": [item] });
+                        match persist_generated_asset(self, &single_result, "image").await {
+                            Ok(path) => {
+                                tracing::info!(
+                                    target: "hkask.mcp.media",
+                                    path = %path.display(),
+                                    "Variant persisted to data directory"
+                                );
+                            }
+                            Err(error) => tracing::warn!(
+                                target: "hkask.mcp.media",
+                                %error,
+                                "Failed to persist variant (tool result still carries the provider URL)"
+                            ),
+                        }
+                        let block = crate::media_block::enrich_with_omc_and_provenance(
+                            single_result,
+                            "generate_variants",
+                            "image",
+                            serde_json::to_value(&media_params)
+                                .unwrap_or(serde_json::Value::Null),
+                            None,
+                        );
+                        blocks.push(block);
+                    }
+                    blocks
+                } else {
+                    // Provider returned a single-image response — persist and
+                    // return as a single-element array.
+                    match persist_generated_asset(self, &result, "image").await {
+                        Ok(path) => {
+                            tracing::info!(
+                                target: "hkask.mcp.media",
+                                path = %path.display(),
+                                "Variant persisted to data directory"
+                            );
+                        }
+                        Err(error) => tracing::warn!(
+                            target: "hkask.mcp.media",
+                            %error,
+                            "Failed to persist variant"
+                        ),
+                    }
+                    vec![crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "generate_variants",
+                        "image",
+                        serde_json::to_value(&media_params)
+                            .unwrap_or(serde_json::Value::Null),
+                        None,
+                    )]
+                };
+                Ok(serde_json::json!({
+                    "prompt": prompt,
+                    "count_requested": count,
+                    "count_returned": variants.len(),
+                    "variants": variants,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Apply a transform to a region of an image (inpainting). The mask
+    /// defines which regions are edited (white) and which are preserved
+    /// (black). The prompt describes the desired edit.
+    #[tool(
+        description = "Apply a region-selective edit to an image (inpainting). Provide a mask (base64 data URI, white = edit, black = preserve) and a prompt describing the edit."
+    )]
+    pub async fn image_edit_region(
+        &self,
+        Parameters(ImageEditRegionRequest {
+            image_url,
+            mask,
+            prompt,
+            strength,
+        }): Parameters<ImageEditRegionRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "image_edit_region",
+            Self::ontology_anchor("image_edit_region"),
+            async {
+                validate_tool_url_with_dns(&image_url).await?;
+                if prompt.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("prompt must not be empty"));
+                }
+                if mask.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("mask must not be empty"));
+                }
+                let strength = strength.unwrap_or(0.85);
+                if !(0.0..=1.0).contains(&strength) {
+                    return Err(McpToolError::invalid_argument(
+                        "strength must be between 0.0 and 1.0"
+                    ));
+                }
+                let media_params = hkask_types::MediaGenerateParams {
+                    image_url: Some(image_url.clone()),
+                    prompt: Some(prompt.clone()),
+                    strength: Some(strength),
+                    mask: Some(mask.clone()),
+                    ..Default::default()
+                };
+                let result = self
+                    .vision_port
+                    .media_generate("image_to_image", &media_params)
+                    .await
+                    .map_err(|e| classify_inference_error("Region edit failed", e))?;
+                match persist_generated_asset(self, &result, "image").await {
+                    Ok(path) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path.display(),
+                            "Region-edited image persisted"
+                        );
+                    }
+                    Err(error) => tracing::warn!(
+                        target: "hkask.mcp.media",
+                        %error,
+                        "Failed to persist region-edited image"
+                    ),
+                }
+                let args = serde_json::to_value(&media_params)
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "image_edit_region",
+                    "image",
+                    args,
+                    None,
+                ))
+            },
+        )
+        .await
+    }
 }

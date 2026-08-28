@@ -7,6 +7,17 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
 
+/// Video metadata from `ffprobe`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VideoProbeInfo {
+    pub duration_secs: f32,
+    pub width: u32,
+    pub height: u32,
+    pub codec: String,
+    pub fps: f32,
+    pub bit_rate: u64,
+}
+
 /// ffmpeg runner with availability detection.
 #[derive(Debug, Clone)]
 pub struct FfmpegRunner {
@@ -66,6 +77,88 @@ impl FfmpegRunner {
     fn output_path(&self, extension: &str) -> PathBuf {
         let name = uuid::Uuid::new_v4().to_string();
         self.temp_dir.join(format!("{}.{}", name, extension))
+    }
+
+    /// Probe a video file for metadata (duration, width, height, codec, fps).
+    /// Uses `ffprobe` (bundled with ffmpeg) with JSON output.
+    pub async fn probe(&self, input: &str) -> Result<VideoProbeInfo, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        // ffprobe is typically at the same path as ffmpeg with "probe" suffix,
+        // or in the same directory. Try "ffprobe" on PATH.
+        let output = Command::new("ffprobe")
+            .arg("-v")
+            .arg("quiet")
+            .arg("-print_format")
+            .arg("json")
+            .arg("-show_format")
+            .arg("-show_streams")
+            .arg(input)
+            .output()
+            .await
+            .map_err(|e| crate::MediaError::Io(format!("ffprobe failed: {e}")))?;
+        if !output.status.success() {
+            return Err(crate::MediaError::Io(format!(
+                "ffprobe exited with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| crate::MediaError::Io(format!("ffprobe JSON parse: {e}")))?;
+        // Extract the first video stream.
+        let streams = json.get("streams").and_then(|s| s.as_array());
+        let video_stream = streams.and_then(|s| {
+            s.iter()
+                .find(|st| st.get("codec_type").and_then(|t| t.as_str()) == Some("video"))
+        });
+        let format = json.get("format");
+        let duration = format
+            .and_then(|f| f.get("duration"))
+            .and_then(|d| d.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let width = video_stream
+            .and_then(|s| s.get("width"))
+            .and_then(|w| w.as_u64())
+            .unwrap_or(0) as u32;
+        let height = video_stream
+            .and_then(|s| s.get("height"))
+            .and_then(|h| h.as_u64())
+            .unwrap_or(0) as u32;
+        let codec = video_stream
+            .and_then(|s| s.get("codec_name"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let fps = video_stream
+            .and_then(|s| s.get("r_frame_rate"))
+            .and_then(|r| r.as_str())
+            .and_then(|s| {
+                let parts: Vec<&str> = s.split('/').collect();
+                if parts.len() == 2 {
+                    let num: f64 = parts[0].parse().ok()?;
+                    let den: f64 = parts[1].parse().ok()?;
+                    if den != 0.0 { Some(num / den) } else { None }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0.0);
+        let bit_rate = format
+            .and_then(|f| f.get("bit_rate"))
+            .and_then(|b| b.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        Ok(VideoProbeInfo {
+            duration_secs: duration as f32,
+            width,
+            height,
+            codec,
+            fps: fps as f32,
+            bit_rate,
+        })
     }
 
     /// Trim a video to specified start/end times.
@@ -482,5 +575,99 @@ impl FfmpegRunner {
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, frame_count = frames.len(), "Keyframes extracted");
         Ok(frames)
+    }
+
+    /// Trim an audio file to specified start/end times.
+    /// Uses stream copy (-c copy) for fast, lossless trimming.
+    pub async fn audio_trim(
+        &self,
+        input: &str,
+        start_sec: f32,
+        end_sec: f32,
+    ) -> Result<PathBuf, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        self.ensure_temp_dir()?;
+        let output = self.output_path("wav");
+        let duration = end_sec - start_sec;
+        let status = Command::new(&self.ffmpeg_path)
+            .arg("-ss")
+            .arg(format!("{:.3}", start_sec))
+            .arg("-t")
+            .arg(format!("{:.3}", duration))
+            .arg("-i")
+            .arg(input)
+            .arg("-c")
+            .arg("copy")
+            .arg(&output)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map_err(|e| crate::MediaError::Io(format!("ffmpeg audio_trim: {e}")))?;
+        if !status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "ffmpeg audio_trim failed with exit code: {:?}",
+                status.code()
+            )));
+        }
+        tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, output = %output.display(), "Audio trimmed");
+        Ok(output)
+    }
+
+    /// Concatenate multiple audio files into one.
+    /// Uses the concat demuxer for fast, lossless joining.
+    pub async fn audio_concat(&self, audio_paths: &[String]) -> Result<PathBuf, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        if audio_paths.is_empty() {
+            return Err(crate::MediaError::Io(
+                "audio_concat requires at least one file".to_string(),
+            ));
+        }
+        if audio_paths.len() == 1 {
+            // Single file — just copy it.
+            self.ensure_temp_dir()?;
+            let output = self.output_path("wav");
+            std::fs::copy(&audio_paths[0], &output)
+                .map_err(|e| crate::MediaError::Io(format!("copy single audio: {e}")))?;
+            return Ok(output);
+        }
+        self.ensure_temp_dir()?;
+        let output = self.output_path("wav");
+        // Build the concat demuxer list file.
+        let list_path = self.temp_dir.join("concat_list.txt");
+        let list_content: String = audio_paths
+            .iter()
+            .map(|p| format!("file '{}'\n", p))
+            .collect();
+        std::fs::write(&list_path, &list_content)
+            .map_err(|e| crate::MediaError::Io(format!("write concat list: {e}")))?;
+        let status = Command::new(&self.ffmpeg_path)
+            .arg("-f")
+            .arg("concat")
+            .arg("-safe")
+            .arg("0")
+            .arg("-i")
+            .arg(&list_path)
+            .arg("-c")
+            .arg("copy")
+            .arg(&output)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map_err(|e| crate::MediaError::Io(format!("ffmpeg audio_concat: {e}")))?;
+        let _ = std::fs::remove_file(&list_path);
+        if !status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "ffmpeg audio_concat failed with exit code: {:?}",
+                status.code()
+            )));
+        }
+        tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = audio_paths.len(), output = %output.display(), "Audio concatenated");
+        Ok(output)
     }
 }

@@ -922,6 +922,34 @@ impl GalleryStore {
         })
     }
 
+    /// List all saved workflows, newest first.
+    #[must_use = "result must be used"]
+    pub fn list_workflows(&self) -> std::result::Result<Vec<WorkflowRecord>, GalleryStoreError> {
+        Ok(query_map(
+            &*self.driver,
+            "SELECT id, graph_json, created_at FROM gallery_workflow ORDER BY created_at DESC",
+            &[],
+            Self::workflow_from_row,
+        )?)
+    }
+
+    /// Delete a workflow by id. Does not delete assets produced by the
+    /// workflow — only the workflow definition. Generation records referencing
+    /// this workflow have their `workflow_id` set to NULL (ON DELETE SET NULL).
+    pub fn delete_workflow(&self, workflow_id: &str) -> std::result::Result<(), GalleryStoreError> {
+        let affected = self.driver.execute(
+            "DELETE FROM gallery_workflow WHERE id = ?1",
+            &[DbValue::Text(workflow_id.to_string())],
+        )?;
+        if affected == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "workflow".to_string(),
+                id: workflow_id.to_string(),
+            }));
+        }
+        Ok(())
+    }
+
     /// Record the generation lineage for a gallery image. The image must
     /// already exist in `gallery_images` (the FK is enforced).
     pub fn record_generation(

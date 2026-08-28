@@ -442,4 +442,83 @@ impl MediaServer {
         })
         .await
     }
+
+    /// Trim an audio file to specified start/end times. Uses ffmpeg stream
+    /// copy for fast, lossless trimming.
+    #[tool(
+        description = "Trim an audio file to specified start/end times. Uses ffmpeg stream copy for fast, lossless trimming."
+    )]
+    pub async fn audio_trim(
+        &self,
+        Parameters(AudioTrimRequest {
+            audio_url,
+            start_sec,
+            end_sec,
+        }): Parameters<AudioTrimRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "audio_trim",
+            Self::ontology_anchor("audio_trim"),
+            async {
+                validate_tool_url_with_dns(&audio_url).await?;
+                let ffmpeg = self.require_ffmpeg()?;
+                if start_sec < 0.0 || end_sec <= start_sec {
+                    return Err(McpToolError::invalid_argument(
+                        "start_sec must be >= 0 and end_sec must be > start_sec",
+                    ));
+                }
+                let output = ffmpeg
+                    .audio_trim(&audio_url, start_sec, end_sec)
+                    .await
+                    .map_err(map_media_error)?;
+                Ok(serde_json::json!({
+                    "status": "trimmed",
+                    "source": audio_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "duration": end_sec - start_sec,
+                    "output": output.display().to_string(),
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Concatenate multiple audio files into one. Uses the ffmpeg concat
+    /// demuxer for fast, lossless joining.
+    #[tool(
+        description = "Concatenate multiple audio files into one. Uses the ffmpeg concat demuxer for fast, lossless joining."
+    )]
+    pub async fn audio_concat(
+        &self,
+        Parameters(AudioConcatRequest { audio_urls }): Parameters<AudioConcatRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "audio_concat",
+            Self::ontology_anchor("audio_concat"),
+            async {
+                if audio_urls.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "audio_urls must not be empty",
+                    ));
+                }
+                for url in &audio_urls {
+                    validate_tool_url_with_dns(url).await?;
+                }
+                let ffmpeg = self.require_ffmpeg()?;
+                let output = ffmpeg
+                    .audio_concat(&audio_urls)
+                    .await
+                    .map_err(map_media_error)?;
+                Ok(serde_json::json!({
+                    "status": "concatenated",
+                    "input_count": audio_urls.len(),
+                    "output": output.display().to_string(),
+                }))
+            },
+        )
+        .await
+    }
 }

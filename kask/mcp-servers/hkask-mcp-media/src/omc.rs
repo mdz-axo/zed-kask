@@ -25,11 +25,14 @@ pub use hkask_bridge_ontology::omc::explain_tool_for;
 pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
     match tool {
         // Generation — produces a new creative work.
-        "generate_image" | "generate_video" | "video_meme" | "expand_prompt" => Some(CREATIVE_WORK),
+        "generate_image" | "generate_video" | "video_meme" | "expand_prompt"
+        | "generate_variants" => Some(CREATIVE_WORK),
         // Transform / upscale — produces a version of an existing work.
-        "transform_image" | "upscale_image" | "image_remove_background" | "image_apply_style" => {
-            Some(VERSION)
-        }
+        "transform_image"
+        | "upscale_image"
+        | "image_remove_background"
+        | "image_apply_style"
+        | "image_edit_region" => Some(VERSION),
         // Analysis — produces a scene description (the scene is the subject).
         "describe_image" | "gallery_analyze" | "video_caption" => Some(SCENE),
         // Gallery management — produces/manages asset references.
@@ -59,10 +62,12 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "record_and_transcribe"
         | "voice_design"
         | "transcribe"
-        | "transcribe_bundle" => Some(MEDIA_SOURCE),
+        | "transcribe_bundle"
+        | "audio_trim"
+        | "audio_concat" => Some(MEDIA_SOURCE),
         // Video processing — produces a sequence (a clip is a sequence of shots).
         "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" | "video_add_caption"
-        | "video_remix" | "video_from_images" => Some(SEQUENCE),
+        | "video_remix" | "video_from_images" | "video_info" => Some(SEQUENCE),
         // Collage — produces a new creative work from sources.
         "image_create_collage" => Some(CREATIVE_WORK),
         // Frame extraction — produces shots (individual frames as gallery assets).
@@ -72,7 +77,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         // Model browser — the model/provider is a participant in the creation task.
         "model_list" | "model_info" => Some(PARTICIPANT),
         // Generation job queue — async job tracking (OMC Task).
-        "job_submit" | "job_list" | "job_status" | "job_cancel" => Some(TASK),
+        "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
+        | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),
         // Unknown tool — no OMC concept.
         _ => None,
     }

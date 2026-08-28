@@ -1,6 +1,6 @@
-# AGENT DISCIPLINE — READ BEFORE YOU CODE
+# Agent discipline
 
-AN AGENT THAT BEGINS EDITING CODE BEFORE READING THE PROJECT'S CORE ARCHITECTURE DOCS AND SPECIFICATIONS IS A DANGER TO THE PROJECT. THE ONLY CERTAINTY IS THAT THE AGENT WILL DAMAGE CODE IT TOUCHES WITHOUT UNDERSTANDING THE ARCHITECTURE OR CONTEXT. BEFORE ANY CODE CHANGE, READ THE RELEVANT DOCS (`kask/docs/architecture/`, `DIVERGENCE.md`, CRATE READMEs, THE `.rules` FOR THE CRATE YOU'RE TOUCHING). ORIENTATION PRECEDES ACTION — ALWAYS.
+* Before your first `edit_file`/`write_file` in a session, name (in your next message) one architecture doc you read and the invariant from it that constrains your edit. If you can't name one, you haven't oriented — read `kask/docs/architecture/core/magna-carta.md` or the crate's README, then try again. Agents that edit before orienting damage code they don't understand; the task that looks self-evident (a version bump, a rename) is the one with hidden architectural context (workspace inheritance, D-seams, crate ownership) that a grep never surfaces.
 
 # Corpus pipeline traps
 

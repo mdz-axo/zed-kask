@@ -1046,6 +1046,7 @@ async fn dispatch(
             scale: params.media_scale,
             duration: params.media_duration,
             language: params.media_language.clone(),
+            mask: None,
         };
         return match port.media_generate(op, &media_params).await {
             Ok(media) => InferenceOutcome::Media { media },

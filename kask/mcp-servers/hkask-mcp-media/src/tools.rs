@@ -5,3 +5,4 @@ pub mod generation;
 pub mod jobs;
 pub mod models;
 pub mod processing;
+pub mod workflows;

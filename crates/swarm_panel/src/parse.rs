@@ -207,6 +207,58 @@ pub(crate) struct LocalSwarmInfo {
     pub(crate) cloud_workspace_id: Option<String>,
 }
 
+// ── App primitive response (fermi v0.10.15+) ────────────────────────────────
+//
+// `swarm_list_apps` returns the App catalogue. The response shape is not
+// part of the verified ABW surface, so every field is `Option`/defaulting —
+// a malformed entry degrades to an empty row rather than failing the whole
+// list parse (same defensive pattern as `WorkspaceInfo`).
+
+/// A single App from the catalogue.
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct AppInfo {
+    /// App slug (unique identifier).
+    #[serde(default)]
+    pub(crate) slug: String,
+    /// Human-readable name.
+    #[serde(default)]
+    pub(crate) name: String,
+    /// One-line tagline.
+    #[serde(default)]
+    pub(crate) tagline: String,
+    /// Longer description.
+    #[serde(default)]
+    pub(crate) description: String,
+    /// Visibility: "private", "unlisted", or "public".
+    #[serde(default)]
+    pub(crate) visibility: String,
+    /// Whether the App has been archived.
+    #[serde(default)]
+    pub(crate) archived: bool,
+}
+
+/// Parse the app-list response defensively across plausible envelope
+/// shapes (top-level array, `apps` key, or `data.apps`). Returns an empty
+/// vec when no array is found.
+pub(crate) fn parse_app_list(content: serde_json::Value) -> Vec<AppInfo> {
+    let candidates = [Some(&content), content.get("data")];
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(arr) = candidate.as_array() {
+            return arr
+                .iter()
+                .filter_map(|a| serde_json::from_value::<AppInfo>(a.clone()).ok())
+                .collect();
+        }
+        if let Some(arr) = candidate.get("apps").and_then(|a| a.as_array()) {
+            return arr
+                .iter()
+                .filter_map(|a| serde_json::from_value::<AppInfo>(a.clone()).ok())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
 // ── Workspace action protocol response (fermi v0.10.15+) ─────────────────────
 //
 // `swarm_workspace_pending_actions` returns the pending action log entries.

@@ -49,7 +49,7 @@ impl SwarmPanel {
         // reads the filesystem and completes first, then the cloud fetch's
         // retain removes all agent entries, replacing them with fresh
         // Cloud-only ones).
-        self.in_flight = 2;
+        self.in_flight = 3;
         self.agents_error = None;
         self.swarms_error = None;
         // Reset the server-reported API-key status so a stale `true` from a
@@ -159,9 +159,12 @@ impl SwarmPanel {
                                             })
                                         })
                                         .collect::<Vec<_>>();
-                                    // Replace cloud agent entries, keep swarm entries.
-                                    // Local entries are added by the local fetch below.
-                                    this.entries.retain(|e| matches!(e, SwarmEntry::Swarm(_)));
+                                    // Replace cloud agent entries, keep swarm and
+                                    // app entries. Local entries are added by
+                                    // the local fetch below.
+                                    this.entries.retain(|e| {
+                                        matches!(e, SwarmEntry::Swarm(_) | SwarmEntry::App(_))
+                                    });
                                     this.entries.extend(agents);
                                     this.agents_error = None;
                                     this.note_fetch_success();
@@ -276,6 +279,7 @@ impl SwarmPanel {
                                     this.entries.retain(|e| match e {
                                         SwarmEntry::Agent(_) => true,
                                         SwarmEntry::Swarm(s) => s.source != AgentSource::Cloud,
+                                        SwarmEntry::App(_) => true,
                                     });
                                     swarms.append(&mut this.entries);
                                     this.entries = swarms;
@@ -479,6 +483,7 @@ impl SwarmPanel {
                                 this.entries.retain(|e| match e {
                                     SwarmEntry::Agent(_) => true,
                                     SwarmEntry::Swarm(s) => s.source != AgentSource::Local,
+                                    SwarmEntry::App(_) => true,
                                 });
                                 this.entries.extend(local_swarms);
                                 this.filter_entries(cx);
@@ -505,9 +510,75 @@ impl SwarmPanel {
             }
         })
         .detach();
-    }
 
-    /// Clone an ABW (cloud) agent to the local registry. Calls
+        // Apps (from `swarm_list_apps`). Apps are cloud-only (ABW
+        // catalogue). Runs as a separate spawn (parallel with the combined
+        // agents+swarms task and the local swarms fetch) because it has no
+        // dependency on either. A failed fetch is non-fatal — the panel
+        // still shows agents and swarms.
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_list_apps", json!({ "limit": 200 }))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
+                    match result {
+                        Ok(output) => {
+                            // Route tool-error envelopes (e.g.
+                            // `permission_denied` when no API key is
+                            // configured) away from the parse path — same
+                            // seam as the agents/swarms fetches.
+                            if let Some(err) = parse_tool_error(&output) {
+                                log::warn!(
+                                    "swarm-panel: apps fetch returned a server error: {} ({:?})",
+                                    err.message, err.kind
+                                );
+                                cx.notify();
+                                return;
+                            }
+                            let apps = parse_tool_response(&output)
+                                .map(crate::parse::parse_app_list)
+                                .unwrap_or_default();
+                            let app_entries = apps
+                                .into_iter()
+                                .map(|a| {
+                                    SwarmEntry::App(crate::AppCard {
+                                        slug: a.slug,
+                                        name: a.name,
+                                        tagline: a.tagline,
+                                        description: a.description,
+                                        visibility: a.visibility,
+                                        archived: a.archived,
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            // Replace existing App entries, keep agents and
+                            // swarms.
+                            this.entries.retain(|e| !matches!(e, SwarmEntry::App(_)));
+                            this.entries.extend(app_entries);
+                            this.filter_entries(cx);
+                        }
+                        Err(err) => {
+                            if err.is_retryable() {
+                                log::warn!(
+                                    "swarm-panel: apps fetch lost the MCP transport: {err}"
+                                );
+                            } else {
+                                log::debug!(
+                                    "swarm-panel: apps fetch failed (non-fatal): {err}"
+                                );
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
     /// `swarm_clone_to_local` on the swarm MCP server, which fetches the ABW
     /// card, writes it to `agents/local/curated/<id>/agent_card.json`, and
     /// sets `cloud_swarm_id` to mark it as synced. On success, re-fetches the agent

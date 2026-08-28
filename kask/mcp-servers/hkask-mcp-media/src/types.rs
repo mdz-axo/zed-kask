@@ -670,3 +670,92 @@ pub struct GalleryListAlbumMembersRequest {
     /// Album ID to list members for.
     pub album_id: String,
 }
+
+// ── Variant generation request types ────────────────────────────────────
+
+/// Request to generate N image variants from a single prompt. Each variant
+/// is persisted individually with its own gallery entry and lineage record.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateVariantsRequest {
+    /// The prompt for image generation.
+    pub prompt: String,
+    /// Number of variants to generate (1–10).
+    #[serde(default = "default_variant_count")]
+    pub count: u32,
+    /// Optional image size (e.g. "1024x1024").
+    pub image_size: Option<String>,
+    /// Optional style preset.
+    pub style: Option<String>,
+}
+
+fn default_variant_count() -> u32 {
+    4
+}
+
+// ── Region-selective editing request types ──────────────────────────────
+
+/// Request to apply a transform to a region of an image (inpaint/outpaint).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImageEditRegionRequest {
+    /// URL or data URI of the source image to edit.
+    pub image_url: String,
+    /// Mask image (base64 data URI). White regions are edited; black regions
+    /// are preserved. Must be the same dimensions as the source image.
+    pub mask: String,
+    /// The prompt describing the edit to apply in the masked region.
+    pub prompt: String,
+    /// Strength of the edit (0.0–1.0). Default: 0.85.
+    pub strength: Option<f32>,
+}
+
+// ── Workflow composer request types ─────────────────────────────────────
+
+/// Request to save a workflow definition.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowSaveRequest {
+    /// Serialized workflow JSON (the step sequence and parameters).
+    pub graph_json: String,
+}
+
+/// Request to load a saved workflow by ID.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowLoadRequest {
+    /// The workflow ID (returned by `workflow_save`).
+    pub workflow_id: String,
+}
+
+/// Request to delete a saved workflow.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowDeleteRequest {
+    /// The workflow ID to delete.
+    pub workflow_id: String,
+}
+
+// ── Video info request types ────────────────────────────────────────────
+
+/// Request to probe a video file for metadata (duration, dimensions, codec, fps).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VideoInfoRequest {
+    /// URL or path of the video to probe.
+    pub video_url: String,
+}
+
+// ── Audio editing request types ─────────────────────────────────────────
+
+/// Request to trim an audio file to specified start/end times.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AudioTrimRequest {
+    /// URL or path of the audio file to trim.
+    pub audio_url: String,
+    /// Start time in seconds.
+    pub start_sec: f32,
+    /// End time in seconds.
+    pub end_sec: f32,
+}
+
+/// Request to concatenate multiple audio files into one.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AudioConcatRequest {
+    /// List of audio file URLs or paths to concatenate, in order.
+    pub audio_urls: Vec<String>,
+}

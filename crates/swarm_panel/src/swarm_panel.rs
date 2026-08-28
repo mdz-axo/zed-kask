@@ -27,6 +27,7 @@
 //! curator's sovereign memory for cross-composition learning.
 
 mod agent_edit;
+mod app_edit;
 mod author;
 mod card;
 mod compose;
@@ -37,6 +38,7 @@ pub mod panel_button;
 mod parse;
 mod swarm_ops;
 
+use app_edit::AppForm;
 use author::AuthorForm;
 use compose::ComposeForm;
 
@@ -363,6 +365,7 @@ enum SwarmFilter {
     All,
     Swarms,
     Agents,
+    Apps,
 }
 
 /// Browse-list filter by backend source. Orthogonal to `SwarmFilter` (which
@@ -398,12 +401,25 @@ enum CreateTarget {
 /// A composition prompt waiting to be injected into the Steer conversation
 /// after `create_swarm` succeeds and the Steer conversation is constructed.
 /// Deferred to `render` because the injector needs `&mut Window`, which the
-/// `create_swarm` spawn closure does not have.
+/// spawn closure does not have.
 struct PendingCompositionPrompt {
     swarm_id: String,
     mission: String,
     agents: Vec<String>,
     is_local: bool,
+}
+
+/// A loaded App manifest waiting to be applied to the app form on the next
+/// `render` (which has `&mut Window` for `Editor::set_text`). Set by
+/// `load_app_into_form`'s spawn; consumed by `apply_pending_app_load`.
+struct AppDetailLoad {
+    name: String,
+    tagline: String,
+    description: String,
+    homepage_url: String,
+    icon_url: String,
+    workspace_template: String,
+    visibility: String,
 }
 
 /// The backend a creation form's target should carry when the operator
@@ -423,6 +439,7 @@ fn target_on_surface_entry(
     match mode {
         PanelMode::Compose => Some(active_backend),
         PanelMode::Author if !author_is_editing => Some(active_backend),
+        // AppAuthor is always cloud (ABW catalogue) — no target toggle.
         _ => None,
     }
 }
@@ -478,6 +495,10 @@ enum PanelMode {
     Browse,
     Author,
     Compose,
+    /// App authoring/detail: edit an existing App's manifest or create a
+    /// new App. Entered via an App card click (detail) or the Author toggle
+    /// when the Apps filter is active (new App).
+    AppAuthor,
     /// Steer: a `ConversationView` scoped to the swarm MCP server. The
     /// operator asks the curator to compose/steer a swarm; the curator's
     /// `SkillTool` invokes the `swarm-intelligence` cascade.
@@ -486,13 +507,34 @@ enum PanelMode {
 
 // ── View model ─────────────────────────────────────────────────────────────
 
-/// One row in the panel — either an ABW agent, a local agent, or an ABW
-/// swarm (workspace). The `source` field on agents distinguishes cloud,
-/// local, and synced (exists in both).
+/// One row in the panel — either an ABW agent, a local agent, an ABW
+/// swarm (workspace), or an ABW App (reusable agent-team manifest). The
+/// `source` field on agents distinguishes cloud, local, and synced (exists
+/// in both).
 #[derive(Clone, Debug)]
 enum SwarmEntry {
     Agent(AgentCard),
     Swarm(SwarmCard),
+    App(AppCard),
+}
+
+/// An App card in the browse list. Apps are cloud-only (ABW catalogue);
+/// there is no local App substrate.
+#[derive(Clone, Debug)]
+pub(crate) struct AppCard {
+    /// App slug (unique identifier, used for spawn/publish/archive calls).
+    pub(crate) slug: String,
+    /// Human-readable name.
+    pub(crate) name: String,
+    /// One-line tagline for catalogue surfacing.
+    pub(crate) tagline: String,
+    /// Longer description.
+    pub(crate) description: String,
+    /// Visibility: "private", "unlisted", or "public".
+    pub(crate) visibility: String,
+    /// Whether the App has been archived. Archived apps cannot spawn new
+    /// workspaces; the card shows an "archived" badge and disables Spawn.
+    pub(crate) archived: bool,
 }
 
 // ── Panel ──────────────────────────────────────────────────────────────────
@@ -583,6 +625,8 @@ pub struct SwarmPanel {
     /// as `author_scroll` — the compose form (name, mission, agents, Xaman Ek
     /// consultant, AI assist, action row) overflows on smaller panes.
     compose_scroll: ScrollHandle,
+    /// Scroll handle for the App authoring form's scrollable surface.
+    app_scroll: ScrollHandle,
     /// Number of fetch operations currently in flight (agents + swarms spawn
     /// independently). `is_fetching()` is true while any are in the air —
     /// avoids one fetch's completion hiding the other's spinner.
@@ -657,6 +701,13 @@ pub struct SwarmPanel {
     pending_composition_prompt: Option<PendingCompositionPrompt>,
     /// Composition form state.
     compose: ComposeForm,
+    /// App authoring/detail form state.
+    app_form: AppForm,
+    /// A loaded App detail waiting to be applied to the app form on the
+    /// next `render` (which has `&mut Window` for `Editor::set_text`). Set
+    /// by `load_app_into_form`'s spawn; consumed by `apply_pending_app_load`.
+    /// Mirrors the `pending_author_load` deferred-mutation pattern.
+    pending_app_load: Option<AppDetailLoad>,
     /// The Steer-mode surface: owns the scoped curator `ConversationView`
     /// lifecycle (construction + invalidation). Empty until the operator
     /// first selects Steer. Uses the retained-view pattern (one
@@ -886,9 +937,11 @@ impl SwarmPanel {
             let scroll_handle = UniformListScrollHandle::new();
             let author_scroll = ScrollHandle::new();
             let compose_scroll = ScrollHandle::new();
+            let app_scroll = ScrollHandle::new();
 
             let mut author = AuthorForm::new(window, cx);
             let mut compose = ComposeForm::new(window, cx);
+            let app_form = AppForm::new(window, cx);
             // Both forms start on the panel's backend context (seeded from
             // `kask.swarm.mode` above), not a hardcoded Cloud default —
             // otherwise a `kask.swarm.mode: local` operator lands on a Cloud
@@ -918,6 +971,7 @@ impl SwarmPanel {
                 list: scroll_handle,
                 author_scroll,
                 compose_scroll,
+                app_scroll,
                 in_flight: 0,
                 agents_error: None,
                 swarms_error: None,
@@ -939,6 +993,8 @@ impl SwarmPanel {
                 pending_author_reset: false,
                 pending_composition_prompt: None,
                 compose,
+                app_form,
+                pending_app_load: None,
                 steer: hkask_steer::SteerSurface::new(),
                 last_swarm_mode: Some(Self::current_swarm_mode(cx)),
                 spend: SpendState {
@@ -1128,6 +1184,7 @@ impl SwarmPanel {
             PanelMode::Browse => self.query_editor.read(cx).focus_handle(cx),
             PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
             PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
+            PanelMode::AppAuthor => self.app_form.slug.read(cx).focus_handle(cx),
             PanelMode::Steer => self
                 .steer
                 .conversation()
@@ -1153,7 +1210,7 @@ impl SwarmPanel {
             match self.mode {
                 PanelMode::Author => self.author.create_target = target,
                 PanelMode::Compose => self.compose.create_target = target,
-                PanelMode::Browse | PanelMode::Steer => {}
+                PanelMode::AppAuthor | PanelMode::Browse | PanelMode::Steer => {}
             }
         }
     }
@@ -1195,6 +1252,34 @@ impl SwarmPanel {
             .update(cx, |e, cx| e.clear(window, cx));
         self.author.agent_type = "research".to_string();
         self.author.visibility = "private".to_string();
+    }
+
+    /// Reset the App form to a blank create state. Called when the operator
+    /// clicks the "App" mode toggle — distinct from `load_app_into_form`,
+    /// which sets `editing_slug` and read-only before calling `set_mode`.
+    fn reset_app_form_for_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.app_form.editing_slug = None;
+        self.app_form.status = None;
+        self.app_form.busy = false;
+        self.app_form.visibility = "private".to_string();
+        self.app_form.slug.update(cx, |e, _| e.set_read_only(false));
+        self.app_form.slug.update(cx, |e, cx| e.clear(window, cx));
+        self.app_form.name.update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .tagline
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .description
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .homepage_url
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .icon_url
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .workspace_template
+            .update(cx, |e, cx| e.clear(window, cx));
     }
 
     /// Read the current swarm mode from `kask.swarm.mode` settings. Returns
@@ -2204,6 +2289,7 @@ impl SwarmPanel {
                     (SwarmFilter::All, _) => true,
                     (SwarmFilter::Swarms, SwarmEntry::Swarm(_)) => true,
                     (SwarmFilter::Agents, SwarmEntry::Agent(_)) => true,
+                    (SwarmFilter::Apps, SwarmEntry::App(_)) => true,
                     _ => false,
                 };
                 if !kind_matches {
@@ -2218,6 +2304,8 @@ impl SwarmPanel {
                         SwarmEntry::Swarm(s) => {
                             s.source == AgentSource::Cloud || s.source == AgentSource::Synced
                         }
+                        // Apps are always cloud (ABW catalogue).
+                        SwarmEntry::App(_) => true,
                     },
                     SourceFilter::Local => match entry {
                         SwarmEntry::Agent(a) => {
@@ -2226,6 +2314,8 @@ impl SwarmPanel {
                         SwarmEntry::Swarm(s) => {
                             s.source == AgentSource::Local || s.source == AgentSource::Synced
                         }
+                        // Apps are always cloud — hidden under Local filter.
+                        SwarmEntry::App(_) => false,
                     },
                 };
                 if !source_matches {
@@ -2240,6 +2330,9 @@ impl SwarmPanel {
                             }
                             SwarmEntry::Swarm(s) => {
                                 format!("{} {} {}", s.id, s.name, s.description)
+                            }
+                            SwarmEntry::App(a) => {
+                                format!("{} {} {} {}", a.slug, a.name, a.tagline, a.description)
                             }
                         };
                         haystack.to_lowercase().contains(q)
@@ -2426,6 +2519,14 @@ impl SwarmPanel {
                         "No agents that match your search.".into()
                     } else {
                         "No agents. Create one (Author), or clone a cloud agent to Local.".into()
+                    }
+                }
+                SwarmFilter::Apps => {
+                    if has_search {
+                        "No Apps that match your search.".into()
+                    } else {
+                        "No Apps in the catalogue. Apps are created on ABW or via the curator."
+                            .into()
                     }
                 }
             };
@@ -2893,6 +2994,11 @@ impl Render for SwarmPanel {
         if self.pending_author_load.is_some() {
             self.apply_pending_author_load(window, cx);
         }
+        // Apply a pending App detail load (set by `load_app_into_form`'s
+        // spawn). Same deferred-mutation pattern.
+        if self.pending_app_load.is_some() {
+            self.apply_pending_app_load(window, cx);
+        }
         // Consume a pending author-form reset (set by `delete_edited_agent`'s
         // spawn on a successful delete). Deferred to `render` for the same
         // reason — `Editor::clear` and `set_mode` need `&mut Window`.
@@ -3047,6 +3153,13 @@ impl Render for SwarmPanel {
                                         }),
                                     ),
                                     ToggleButtonSimple::new(
+                                        "App",
+                                        cx.listener(|this, _event, window, cx| {
+                                            this.reset_app_form_for_create(window, cx);
+                                            this.set_mode(PanelMode::AppAuthor, window, cx);
+                                        }),
+                                    ),
+                                    ToggleButtonSimple::new(
                                         "Steer",
                                         cx.listener(|this, _event, window, cx| {
                                             this.ensure_steer_conversation(window, cx);
@@ -3063,7 +3176,8 @@ impl Render for SwarmPanel {
                                 PanelMode::Browse => 0,
                                 PanelMode::Author => 1,
                                 PanelMode::Compose => 2,
-                                PanelMode::Steer => 3,
+                                PanelMode::AppAuthor => 3,
+                                PanelMode::Steer => 4,
                             })
                             .into_any_element(),
                         ),
@@ -3104,6 +3218,14 @@ impl Render for SwarmPanel {
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
+                                                ToggleButtonSimple::new(
+                                                    "Apps",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.filter = SwarmFilter::Apps;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
                                             ],
                                         )
                                         .style(ToggleButtonGroupStyle::Outlined)
@@ -3114,6 +3236,7 @@ impl Render for SwarmPanel {
                                             SwarmFilter::All => 0,
                                             SwarmFilter::Swarms => 1,
                                             SwarmFilter::Agents => 2,
+                                            SwarmFilter::Apps => 3,
                                         })
                                         .into_any_element(),
                                     ),
@@ -3227,6 +3350,23 @@ impl Render for SwarmPanel {
                                     ),
                             )
                             .into_any_element(),
+                        PanelMode::AppAuthor => this
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .w_full()
+                                    .vertical_scrollbar_for(&self.app_scroll, window, cx)
+                                    .child(
+                                        v_flex()
+                                            .id("app-scroll")
+                                            .size_full()
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.app_scroll)
+                                            .child(self.render_app_author(cx)),
+                                    ),
+                            )
+                            .into_any_element(),
                         PanelMode::Steer => {
                             // The `ConversationView` is lazily constructed
                             // in the Steer toggle handler; render it here. If
@@ -3327,6 +3467,7 @@ impl Focusable for SwarmPanel {
             PanelMode::Browse => self.query_editor.read(cx).focus_handle(cx),
             PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
             PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
+            PanelMode::AppAuthor => self.app_form.slug.read(cx).focus_handle(cx),
             PanelMode::Steer => self
                 .steer
                 .conversation()

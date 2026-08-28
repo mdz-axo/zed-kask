@@ -141,12 +141,15 @@ impl DeepInfraMediaProvider {
 
     /// Transform an image via DeepInfra's native inference API.
     /// Passes the image URL and prompt to the model's edit endpoint.
+    /// When `mask` is provided, it's included in the request body for
+    /// region-selective editing (inpainting).
     async fn image_to_image(
         &self,
         image_url: &str,
         prompt: &str,
         strength: Option<f32>,
         model: &str,
+        mask: Option<&str>,
     ) -> Result<Value, InferenceError> {
         let mut body = serde_json::json!({
             "prompt": prompt,
@@ -154,6 +157,9 @@ impl DeepInfraMediaProvider {
         });
         if let Some(s) = strength {
             body["strength"] = serde_json::json!(s);
+        }
+        if let Some(m) = mask {
+            body["mask_url"] = serde_json::json!(m);
         }
         self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
             .await
@@ -361,8 +367,14 @@ impl MediaProvider for DeepInfraMediaProvider {
                         crate::model_constants::DEFAULT_IMAGE_GEN_MODEL,
                     );
                     let model = strip_prefix(&model, "DeepInfra/");
-                    self.image_to_image(&image_url, &prompt, params.strength, &model)
-                        .await
+                    self.image_to_image(
+                        &image_url,
+                        &prompt,
+                        params.strength,
+                        &model,
+                        params.mask.as_deref(),
+                    )
+                    .await
                 }
                 MediaOp::RemoveBackground => {
                     let image_url = params.image_url.clone().unwrap_or_default();
