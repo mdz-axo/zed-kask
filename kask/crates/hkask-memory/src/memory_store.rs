@@ -172,7 +172,7 @@ impl MemoryStore {
         dim: usize,
     ) -> Result<Self, hkask_storage::DatabaseError> {
         use hkask_storage::database::sqlite::SqliteDriver;
-        let db = hkask_storage::Database::open(db_path, passphrase)?;
+        let db = hkask_storage::open_or_repair(db_path, passphrase)?;
         let pool = db.sqlite_pool()?;
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new_labeled(pool, db_path));

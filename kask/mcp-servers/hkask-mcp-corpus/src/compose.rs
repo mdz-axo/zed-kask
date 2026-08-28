@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hkask_memory::MemoryStore;
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{Database, EmbeddingStore, HMemStore};
+use hkask_storage::{EmbeddingStore, HMemStore, open_or_repair};
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use serde::Deserialize;
@@ -175,7 +175,7 @@ impl ComposeService {
         }
 
         // 1. Open DB + construct memory infrastructure
-        let db = Database::open(&request.db_path.to_string_lossy(), &request.db_passphrase)
+        let db = open_or_repair(&request.db_path.to_string_lossy(), &request.db_passphrase)
             .map_err(|e| ServiceError::Domain {
                 kind: ErrorKind::BadRequest,
                 domain: DomainKind::Storage,

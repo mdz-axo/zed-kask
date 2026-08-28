@@ -11,7 +11,7 @@
 //! wired (pre-login), the thread's ingest call site no-ops on `None`.
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
-use hkask_storage::Database;
+use hkask_storage::open_or_repair;
 #[cfg(test)]
 use hkask_storage::{EmbeddingStore, HMemStore};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
@@ -341,7 +341,7 @@ fn open_regulation_archive(
     passphrase: &str,
     role: &str,
 ) -> Option<Arc<hkask_storage::RegulationArchive>> {
-    let db = match Database::open(db_path, passphrase) {
+    let db = match open_or_repair(db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(

@@ -74,6 +74,14 @@ impl VideoPlayer {
         }
     }
 
+    /// Open a remote URL for streaming playback. FFmpeg's format input accepts
+    /// URL strings — its http/https protocol handlers stream directly. For
+    /// platform URLs (YouTube, Vimeo, etc.), the caller should resolve the
+    /// direct stream URL via `streaming::resolve_stream_url` first.
+    pub fn open_url(&mut self, url: &str) -> anyhow::Result<()> {
+        self.open(std::path::Path::new(url))
+    }
+
     /// Start playback. Transitions from any state (including Stopped after
     /// `open`) to Playing.
     pub fn play(&mut self) {

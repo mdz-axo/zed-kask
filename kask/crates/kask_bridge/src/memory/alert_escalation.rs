@@ -4,7 +4,7 @@
 //! memory port). `open_curator_escalation_queue` borrows `curator_db_path`
 //! from the parent's re-export of `curator_stores`.
 
-use hkask_storage::Database;
+use hkask_storage::open_or_repair;
 use std::sync::Arc;
 
 use super::curator_db_path;
@@ -24,7 +24,7 @@ pub fn open_curator_escalation_queue(
     passphrase: &str,
 ) -> Option<Arc<hkask_storage::EscalationQueue>> {
     let db_path = curator_db_path();
-    let db = match Database::open(&db_path, passphrase) {
+    let db = match open_or_repair(&db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(
@@ -147,7 +147,10 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     }
 
     fn auto_resolve_cleared(&self, output: &str, resolution_note: &str) {
-        match self.queue.resolve_pending_by_output(output, "cybernetics_loop:auto_resolve") {
+        match self
+            .queue
+            .resolve_pending_by_output(output, "cybernetics_loop:auto_resolve")
+        {
             Ok(count) => {
                 if count > 0 {
                     tracing::info!(

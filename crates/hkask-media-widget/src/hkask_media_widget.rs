@@ -29,6 +29,7 @@ pub mod audio_player;
 pub mod media_ref;
 pub mod media_widget;
 pub mod simple_slider;
+pub mod streaming;
 pub mod transport;
 pub mod video_decoder;
 

@@ -9,7 +9,7 @@
 //! reaches it via `use super::open_regulation_archive`.
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
-use hkask_storage::{Database, EmbeddingStore, HMemStore};
+use hkask_storage::{EmbeddingStore, HMemStore, open_or_repair};
 use std::sync::{Arc, RwLock};
 
 use super::open_regulation_archive;
@@ -174,7 +174,7 @@ pub(crate) fn build_curator_consolidation(
 fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<MemoryStore>> {
     let curator_db_path = curator_db_path();
 
-    let db = match Database::open(&curator_db_path, passphrase) {
+    let db = match open_or_repair(&curator_db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(

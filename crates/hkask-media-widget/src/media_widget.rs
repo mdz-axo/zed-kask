@@ -61,11 +61,19 @@ pub struct MediaWidget {
     // True while an audio file is being read off the foreground thread
     // (load_audio_file_async). Flows into the transport bar is_loading.
     audio_loading: bool,
+    // True while a video stream URL is being resolved off the foreground
+    // thread (load_video_stream_async). Flows into the transport bar
+    // is_loading so the user sees a loading state during yt-dlp resolution.
+    video_loading: bool,
     // Single-flight guard for `load_audio_file_async`: storing the latest spawn
     // here drops (cancels) any prior in-flight read, so a stale larger read
     // cannot overwrite a newer smaller one, and dropping the widget cancels the
     // outstanding read (no wasteful I/O after drop). See M3.
     audio_load_task: Option<Task<()>>,
+    // Single-flight guard for `load_video_stream_async`: same pattern as
+    // audio_load_task. Dropping the widget cancels the outstanding yt-dlp
+    // resolution.
+    video_load_task: Option<Task<()>>,
     error: Option<SharedString>,
     /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`,
     /// `fibo:Corporation`). Drives the "Explain" affordance's tool selection
@@ -169,7 +177,9 @@ impl MediaWidget {
             playback_task: None,
             last_transport: None,
             audio_loading: false,
+            video_loading: false,
             audio_load_task: None,
+            video_load_task: None,
             error: None,
             ontology: None,
             provenance: BlockProvenance::default(),
@@ -262,19 +272,35 @@ impl MediaWidget {
                 self.start_playback_loop(cx);
             }
             MediaKind::Video => {
-                if let Some(player) = &mut self.video_player {
-                    if let Some(path) = &resolved.path {
+                if let Some(path) = &resolved.path {
+                    if let Some(player) = &mut self.video_player {
                         if let Err(error) = player.open(path) {
                             self.error = Some(SharedString::from(error.to_string()));
                         }
-                    } else if let Some(url) = &resolved.url
-                        && let Some(path) = url.as_str().strip_prefix("file://")
-                        && let Err(error) = player.open(std::path::Path::new(path))
-                    {
-                        self.error = Some(SharedString::from(error.to_string()));
                     }
+                    self.start_playback_loop(cx);
+                } else if let Some(url) = &resolved.url {
+                    if let Some(path) = url.as_str().strip_prefix("file://") {
+                        if let Some(player) = &mut self.video_player {
+                            if let Err(error) = player.open(std::path::Path::new(path)) {
+                                self.error = Some(SharedString::from(error.to_string()));
+                            }
+                        }
+                        self.start_playback_loop(cx);
+                    } else if url.as_str().starts_with("http://")
+                        || url.as_str().starts_with("https://")
+                    {
+                        // Remote URL — resolve via yt-dlp if needed (for
+                        // platform URLs like YouTube), then stream via
+                        // FFmpeg's http/https protocol handler. Resolution
+                        // runs on a background thread to avoid blocking
+                        // the UI during the yt-dlp subprocess.
+                        self.load_video_stream_async(url.as_str(), cx);
+                    }
+                } else {
+                    // No path or URL — nothing to load.
+                    self.start_playback_loop(cx);
                 }
-                self.start_playback_loop(cx);
             }
             _ => {}
         }
@@ -303,6 +329,43 @@ impl MediaWidget {
                     }
                     Err(message) => {
                         widget.error = Some(message);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Resolve a remote video URL on a background thread, then open it in
+    /// the video player on the foreground thread. For direct video file URLs
+    /// (mp4, webm, etc.), FFmpeg streams directly. For platform URLs
+    /// (YouTube, Vimeo, etc.), `yt-dlp -g` resolves the direct stream URL
+    /// first. The loading state flows into the transport bar so the user
+    /// sees a spinner during resolution.
+    fn load_video_stream_async(&mut self, url: &str, cx: &mut Context<Self>) {
+        self.video_loading = true;
+        cx.notify();
+        let url = url.to_string();
+        self.video_load_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { crate::streaming::resolve_stream_url(&url) })
+                .await;
+            this.update(cx, |widget, cx| {
+                widget.video_loading = false;
+                match result {
+                    Ok(resolved_url) => {
+                        if let Some(player) = &mut widget.video_player {
+                            if let Err(error) = player.open_url(&resolved_url) {
+                                widget.error = Some(SharedString::from(format!(
+                                    "failed to open video stream: {error}"
+                                )));
+                            }
+                        }
+                        widget.start_playback_loop(cx);
+                    }
+                    Err(error) => {
+                        widget.error = Some(SharedString::from(error));
                     }
                 }
                 cx.notify();
@@ -413,7 +476,7 @@ impl MediaWidget {
             position: Duration::ZERO,
             duration: Duration::ZERO,
             volume: 1.0,
-            is_loading: self.audio_loading,
+            is_loading: self.audio_loading || self.video_loading,
         };
         let mut frame_decoded = false;
 

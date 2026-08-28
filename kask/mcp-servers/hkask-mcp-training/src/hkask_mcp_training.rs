@@ -400,7 +400,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                 let (store, adapter_store, job_store) = match passphrase.clone() {
                     Some(passphrase) => {
-                        let db = hkask_storage::Database::open(&db_path, &passphrase)
+                        let db = hkask_storage::open_or_repair(&db_path, &passphrase)
                             .map_err(|e| {
                                 anyhow::anyhow!(
                                     "Failed to open training database at {}: {}",
