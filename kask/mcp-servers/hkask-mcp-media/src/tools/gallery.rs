@@ -1365,4 +1365,157 @@ impl MediaServer {
         )
         .await
     }
+
+    /// Create a new album in the current gallery. Albums are metadata-only
+    /// groupings — assets stay in place on disk. An asset can be in
+    /// multiple albums.
+    #[tool(
+        description = "Create a new album in the current gallery. Albums are metadata-only groupings — assets stay in place on disk. An asset can be in multiple albums."
+    )]
+    pub async fn gallery_create_album(
+        &self,
+        Parameters(GalleryCreateAlbumRequest { name, parent_id }): Parameters<GalleryCreateAlbumRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_create_album",
+            Self::ontology_anchor("gallery_create_album"),
+            async {
+                if name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("album name must not be empty"));
+                }
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let record = self
+                    .gallery_store
+                    .create_album(&ga.gallery_id, &name, parent_id.as_deref())
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))?)
+            },
+        )
+        .await
+    }
+
+    /// List all albums in the current gallery.
+    #[tool(description = "List all albums in the current gallery.")]
+    pub async fn gallery_list_albums(&self) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_list_albums",
+            Self::ontology_anchor("gallery_list_albums"),
+            async {
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let albums = self
+                    .gallery_store
+                    .list_albums(&ga.gallery_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::to_value(&albums)
+                    .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))?)
+            },
+        )
+        .await
+    }
+
+    /// Add a gallery asset to an album.
+    #[tool(description = "Add a gallery asset to an album. Idempotent — re-adding is a no-op.")]
+    pub async fn gallery_move_to_album(
+        &self,
+        Parameters(GalleryMoveToAlbumRequest { image_index, album_id }): Parameters<GalleryMoveToAlbumRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_move_to_album",
+            Self::ontology_anchor("gallery_move_to_album"),
+            async {
+                let image_id = self
+                    .resolve_image_id(image_index)
+                    .map_err(map_media_error)?;
+                self.gallery_store
+                    .add_to_album(&album_id, &image_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::json!({
+                    "added": true,
+                    "album_id": album_id,
+                    "image_index": image_index,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Remove a gallery asset from an album.
+    #[tool(description = "Remove a gallery asset from an album. Idempotent — removing a non-member is a no-op.")]
+    pub async fn gallery_remove_from_album(
+        &self,
+        Parameters(GalleryRemoveFromAlbumRequest { image_index, album_id }): Parameters<GalleryRemoveFromAlbumRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_remove_from_album",
+            Self::ontology_anchor("gallery_remove_from_album"),
+            async {
+                let image_id = self
+                    .resolve_image_id(image_index)
+                    .map_err(map_media_error)?;
+                self.gallery_store
+                    .remove_from_album(&album_id, &image_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::json!({
+                    "removed": true,
+                    "album_id": album_id,
+                    "image_index": image_index,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Delete an album. Assets remain in the gallery — only the album
+    /// grouping and its memberships are removed.
+    #[tool(description = "Delete an album. Assets remain in the gallery — only the album grouping and its memberships are removed.")]
+    pub async fn gallery_delete_album(
+        &self,
+        Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_delete_album",
+            Self::ontology_anchor("gallery_delete_album"),
+            async {
+                self.gallery_store
+                    .delete_album(&album_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::json!({
+                    "deleted": true,
+                    "album_id": album_id,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// List all image indices in an album.
+    #[tool(description = "List all image indices in an album.")]
+    pub async fn gallery_list_album_members(
+        &self,
+        Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<GalleryListAlbumMembersRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "gallery_list_album_members",
+            Self::ontology_anchor("gallery_list_album_members"),
+            async {
+                let image_ids = self
+                    .gallery_store
+                    .list_album_members(&album_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                Ok(serde_json::json!({
+                    "album_id": album_id,
+                    "image_ids": image_ids,
+                    "count": image_ids.len(),
+                }))
+            },
+        )
+        .await
+    }
 }

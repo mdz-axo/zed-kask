@@ -2,7 +2,7 @@
 title: "Skill ↔ MCP ↔ Lisp Capabilities Seam — Architecture"
 audience: [architects, developers, agents]
 last_updated: 2026-08-20
-version: "0.38.0"
+version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, domain]

@@ -136,6 +136,27 @@ pub struct WorkflowRecord {
     pub created_at: String,
 }
 
+/// An album — a named grouping of assets within a gallery. Albums are
+/// metadata-only (assets stay in place on disk); an asset can be in
+/// multiple albums (many-to-many via `gallery_album_members`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumRecord {
+    pub id: String,
+    pub gallery_id: String,
+    pub name: String,
+    /// Optional parent album for nested grouping (None = top-level).
+    pub parent_id: Option<String>,
+    pub created_at: String,
+}
+
+/// Membership record linking an asset to an album.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumMemberRecord {
+    pub album_id: String,
+    pub image_id: String,
+    pub added_at: String,
+}
+
 /// Generation lineage for a gallery image — the full context that produced
 /// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored op+params)
 /// and `gallery_variants` (re-run with a new seed). Anti-lock-in: this is the
@@ -231,7 +252,26 @@ impl GalleryStore {
                 ON face_registry(status);
                 CREATE TABLE IF NOT EXISTS gallery_workflow (id TEXT PRIMARY KEY, graph_json TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS gallery_generation (id TEXT PRIMARY KEY, image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE, op TEXT NOT NULL, prompt TEXT, model TEXT, provider TEXT, seed INTEGER, params TEXT, workflow_id TEXT REFERENCES gallery_workflow(id) ON DELETE SET NULL, parent_image_id TEXT, created_at TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(image_id);",
+                CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(image_id);
+            CREATE TABLE IF NOT EXISTS gallery_albums (
+                id TEXT PRIMARY KEY,
+                gallery_id TEXT NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                parent_id TEXT REFERENCES gallery_albums(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_gallery_albums_gallery
+                ON gallery_albums(gallery_id);
+            CREATE TABLE IF NOT EXISTS gallery_album_members (
+                album_id TEXT NOT NULL REFERENCES gallery_albums(id) ON DELETE CASCADE,
+                image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (album_id, image_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_gallery_album_members_album
+                ON gallery_album_members(album_id);
+            CREATE INDEX IF NOT EXISTS idx_gallery_album_members_image
+                ON gallery_album_members(image_id);",
         )?;
         // Migration: add media_type column to gallery_images for DBs created
         // before this column existed. CREATE TABLE IF NOT EXISTS won't add
@@ -947,6 +987,121 @@ impl GalleryStore {
         )?)
     }
 
+    // ── Album CRUD ──────────────────────────────────────────────────────
+
+    /// Create a new album in a gallery.
+    pub fn create_album(
+        &self,
+        gallery_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+    ) -> std::result::Result<AlbumRecord, GalleryStoreError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        self.driver.execute(
+            "INSERT INTO gallery_albums (id, gallery_id, name, parent_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(gallery_id.to_string()),
+                DbValue::Text(name.to_string()),
+                parent_id
+                    .map(|s| DbValue::Text(s.to_string()))
+                    .unwrap_or(DbValue::Null),
+                DbValue::Text(now.clone()),
+            ],
+        )?;
+        Ok(AlbumRecord {
+            id,
+            gallery_id: gallery_id.to_string(),
+            name: name.to_string(),
+            parent_id: parent_id.map(String::from),
+            created_at: now,
+        })
+    }
+
+    /// List all albums in a gallery.
+    #[must_use = "result must be used"]
+    pub fn list_albums(
+        &self,
+        gallery_id: &str,
+    ) -> std::result::Result<Vec<AlbumRecord>, GalleryStoreError> {
+        Ok(query_map(
+            &*self.driver,
+            "SELECT id, gallery_id, name, parent_id, created_at
+             FROM gallery_albums WHERE gallery_id = ?1
+             ORDER BY created_at ASC",
+            &[DbValue::Text(gallery_id.to_string())],
+            Self::album_from_row,
+        )?)
+    }
+
+    /// Add an image to an album (idempotent — re-adding is a no-op).
+    pub fn add_to_album(
+        &self,
+        album_id: &str,
+        image_id: &str,
+    ) -> std::result::Result<(), GalleryStoreError> {
+        let now = now_rfc3339();
+        self.driver.execute(
+            "INSERT OR IGNORE INTO gallery_album_members (album_id, image_id, added_at)
+             VALUES (?1, ?2, ?3)",
+            &[
+                DbValue::Text(album_id.to_string()),
+                DbValue::Text(image_id.to_string()),
+                DbValue::Text(now),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Remove an image from an album (idempotent — removing a non-member is a no-op).
+    pub fn remove_from_album(
+        &self,
+        album_id: &str,
+        image_id: &str,
+    ) -> std::result::Result<(), GalleryStoreError> {
+        self.driver.execute(
+            "DELETE FROM gallery_album_members WHERE album_id = ?1 AND image_id = ?2",
+            &[
+                DbValue::Text(album_id.to_string()),
+                DbValue::Text(image_id.to_string()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete an album. Assets remain in the gallery — only the album grouping
+    /// and its memberships are removed.
+    pub fn delete_album(&self, album_id: &str) -> std::result::Result<(), GalleryStoreError> {
+        let affected = self.driver.execute(
+            "DELETE FROM gallery_albums WHERE id = ?1",
+            &[DbValue::Text(album_id.to_string())],
+        )?;
+        if affected == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "album".to_string(),
+                id: format!("album_id={}", album_id),
+            }));
+        }
+        Ok(())
+    }
+
+    /// List all image IDs in an album.
+    #[must_use = "result must be used"]
+    pub fn list_album_members(
+        &self,
+        album_id: &str,
+    ) -> std::result::Result<Vec<String>, GalleryStoreError> {
+        let rows = query_map(
+            &*self.driver,
+            "SELECT image_id FROM gallery_album_members WHERE album_id = ?1 ORDER BY added_at ASC",
+            &[DbValue::Text(album_id.to_string())],
+            |row| row.get_str(0).map(String::from),
+        )?;
+        Ok(rows)
+    }
+
     /// Delete an image record and all its associated data (tags, face
     /// associations, generation lineage). Does NOT delete the underlying
     /// file on disk — only the gallery index entry.
@@ -1026,6 +1181,21 @@ impl GalleryStore {
                 _ => None,
             },
             created_at: row.get_str(10)?.to_string(),
+        })
+    }
+
+    fn album_from_row(
+        row: &crate::database::value::DbRow,
+    ) -> std::result::Result<AlbumRecord, crate::database::types::DbError> {
+        Ok(AlbumRecord {
+            id: row.get_str(0)?.to_string(),
+            gallery_id: row.get_str(1)?.to_string(),
+            name: row.get_str(2)?.to_string(),
+            parent_id: match row.get(3)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            created_at: row.get_str(4)?.to_string(),
         })
     }
 }

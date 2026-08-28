@@ -319,7 +319,7 @@ default-members = ["crates/zed"]
 publish = false
 edition = "2024"
 # hKask crates inherit these; zed crates set their own.
-version = "0.38.0"
+version = "0.39.0"
 license = "MIT"
 repository = "https://github.com/mdz-axo/zed-kask"
 

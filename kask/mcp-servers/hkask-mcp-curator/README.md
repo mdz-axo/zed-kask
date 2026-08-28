@@ -2,7 +2,7 @@
 
 MCP server exposing Curator tools: system health, escalation management, Regulation observability, semantic memory search, memory recall, and algedonic event history.
 
-**Version:** v0.38.0 | **Crate:** `hkask-mcp-curator`
+**Version:** v0.39.0 | **Crate:** `hkask-mcp-curator`
 
 ## Tools (8)
 

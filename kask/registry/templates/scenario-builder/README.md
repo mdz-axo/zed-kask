@@ -2,7 +2,7 @@
 
 **Location:** `registry/manifests/scenario-builder.yaml`  
 **Templates:** `registry/templates/scenario-builder/`  
-**Version:** 0.38.0
+**Version:** 0.39.0
 
 ## Overview
 

@@ -1,3 +1,7 @@
+# AGENT DISCIPLINE — READ BEFORE YOU CODE
+
+AN AGENT THAT BEGINS EDITING CODE BEFORE READING THE PROJECT'S CORE ARCHITECTURE DOCS AND SPECIFICATIONS IS A DANGER TO THE PROJECT. THE ONLY CERTAINTY IS THAT THE AGENT WILL DAMAGE CODE IT TOUCHES WITHOUT UNDERSTANDING THE ARCHITECTURE OR CONTEXT. BEFORE ANY CODE CHANGE, READ THE RELEVANT DOCS (`kask/docs/architecture/`, `DIVERGENCE.md`, CRATE READMEs, THE `.rules` FOR THE CRATE YOU'RE TOUCHING). ORIENTATION PRECEDES ACTION — ALWAYS.
+
 # Corpus pipeline traps
 
 * `corpus_tag_chunks` `tag_batch_size` default is 10. The `extract_json_from_response` parser in `hkask-types/src/json_extract.rs` must handle JSON arrays (returns full `[{...}, {...}]`, not just the first object inside the array). If the parser only finds the first `{` instead of the first `[` or `{`, batching silently fails — only 1/N chunks per LLM call get real tags. Test: `extract_json_from_response("[{\"a\":1},{\"b\":2}]")` must return the full array, not `{"a":1}`.
@@ -111,6 +115,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. This generalizes to: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line. If no enforcement point exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
+* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior must be updated in the same PR. Agents read comments as ground truth and will follow stale comments over user instructions — a comment saying "waits for user login" when the code no longer waits causes agents to reproduce the old gating pattern. Grep for comments referencing the changed behavior (e.g. `post-login`, `pre-login`, `user resolves`, `logging mode`) and update or delete them. A stale comment is worse than no comment — no comment lets the agent read the code; a stale comment makes the agent trust the comment over the code.
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
 * MCP servers are leaf crates (zero external dependents). `pub mod` → `pub(crate) mod` tightening in leaf crates is churn — no external crate can observe the difference. Focus dead-code hunts on truly unused items (zero references anywhere, including `tests/`), not visibility tightening. Check `tests/` before declaring an item dead — test seams (`#[doc(hidden)] pub fn from_stores`) are alive even with zero `src/` callers.
 

@@ -2,7 +2,7 @@
 title: "Credential Resolution Chain — single keychain namespace via zed CredentialsProvider"
 audience: [architects, developers, operators]
 last_updated: 2026-08-24
-version: "0.38.0"
+version: "0.39.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition, lifecycle]

@@ -2,7 +2,7 @@
 title: "Passage Salience Specification"
 audience: [architects, developers, agents]
 last_updated: 2026-08-04
-version: "0.38.0"
+version: "0.39.0"
 status: "Active"
 domain: "Application"
 mds_categories: [domain, composition]

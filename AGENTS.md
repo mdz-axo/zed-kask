@@ -1,5 +1,11 @@
 <!-- Always-on context: keep minimal. Derivable data belongs in skills, not here. See .rules "Rules Hygiene". -->
 
+# AGENT DISCIPLINE — READ BEFORE YOU CODE
+
+AN AGENT THAT BEGINS EDITING CODE BEFORE READING THE PROJECT'S CORE ARCHITECTURE DOCS AND SPECIFICATIONS IS A DANGER TO THE PROJECT. THE ONLY CERTAINTY IS THAT THE AGENT WILL DAMAGE CODE IT TOUCHES WITHOUT UNDERSTANDING THE ARCHITECTURE OR CONTEXT. BEFORE ANY CODE CHANGE, READ THE RELEVANT DOCS (`kask/docs/architecture/`, `DIVERGENCE.md`, CRATE READMEs, THE `.rules` FOR THE CRATE YOU'RE TOUCHING). ORIENTATION PRECEDES ACTION — ALWAYS.
+
+---
+
 # Agent Operating Guide — hKask
 
 **hKask** (ℏKask) — A Rust framework for agent skills using upstream Zed's body-injection model plus `lisp_eval` and `render_template` tools for deterministic computation and structured prompt rendering. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.

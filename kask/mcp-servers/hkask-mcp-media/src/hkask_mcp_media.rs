@@ -362,9 +362,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_51_registered_tools() {
+    fn tool_surface_is_exactly_57_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 51, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 57, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.

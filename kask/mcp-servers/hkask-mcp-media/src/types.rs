@@ -632,3 +632,41 @@ pub struct GalleryAssetDetailRequest {
     /// Index of the gallery asset to inspect.
     pub image_index: usize,
 }
+
+// ── Album request types ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryCreateAlbumRequest {
+    /// Album name.
+    pub name: String,
+    /// Optional parent album ID for nested grouping.
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryMoveToAlbumRequest {
+    /// Gallery image index to add to the album.
+    pub image_index: usize,
+    /// Album ID to add the image to.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryRemoveFromAlbumRequest {
+    /// Gallery image index to remove from the album.
+    pub image_index: usize,
+    /// Album ID to remove the image from.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryDeleteAlbumRequest {
+    /// Album ID to delete.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryListAlbumMembersRequest {
+    /// Album ID to list members for.
+    pub album_id: String,
+}

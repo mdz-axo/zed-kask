@@ -11,7 +11,7 @@
 #   bash kask/scripts/build/install.sh --debug --skip-deps
 #
 # Environment variables:
-#   HKASK_VERSION       Tag to clone (default: 0.38.0; falls back to main only
+#   HKASK_VERSION       Tag to clone (default: 0.39.0; falls back to main only
 #                       if HKASK_ALLOW_FALLBACK=true)
 #   HKASK_BUILD_TYPE    release or debug (default: release)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
@@ -82,7 +82,7 @@ clone_repo() {
             HKASK_VERSION="$(awk -F'"' '/^version *=* "/{print $2; exit}' "$local_root/Cargo.toml")"
         fi
         if [ -z "$HKASK_VERSION" ]; then
-            HKASK_VERSION="0.38.0"
+            HKASK_VERSION="0.39.0"
             log_warning "Could not derive version from Cargo.toml — using default $HKASK_VERSION"
         fi
     fi
@@ -587,7 +587,7 @@ Options:
 
 Environment Variables:
     HKASK_VERSION         Tag to install (default: derived from workspace
-                          Cargo.toml version, or 0.38.0 if unreadable)
+                          Cargo.toml version, or 0.39.0 if unreadable)
     HKASK_BUILD_TYPE      release or debug (default: release)
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
