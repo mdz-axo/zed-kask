@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-08-24
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -64,19 +64,19 @@ P1–P3 are enforced through explicit capability boundaries: capability *separat
 
 **P4.1 — Per-User Data Directory as Capability Enforcement Perimeter (v0.31.1, re-anchored):** The per-user data directory IS the enforcement perimeter. Each user's encrypted SQLCipher file (`{data_dir}/agents/{sanitized_name}/{sanitized_name}.db`) is the isolation boundary — no connection handle to another user's file means no cross-user data access is structurally possible. The `hkask-pods` crate (ActivePods, PodDeployment, PodFactory, PodRegistry, `PerPodToolBinding`, etc.) was **deleted** in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction as the enforcement perimeter. Tool dispatch is scoped to the active user's MCP server bindings — cross-user dispatch is an invalid state because no user has a handle to another user's data directory. This structural perimeter is the whole of P4.1: it does not depend on any per-call check.
 
-**P4.2 — Tool authority is separated, not re-checked per call (2026-08-12):** `McpRuntime::invoke` meters and dispatches; it does not authorize. Its `agent: WebID` argument is an accounting identity, and its only pre-dispatch refusal is the runaway-loop call breaker (`EnergyBudgetExceeded`), which is fail-open on an agent the composition root never seeded (RR-0057). Which tools a caller may reach at all is decided at three boundaries whose contents the caller does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing or empty), each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`), and the per-server MCP env/credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038). There is no fourth gate. Information flow is **not** gated: Defense Layer 5 (information flow control) is **absent by decision** (RR-0053), in the same register as Layer 3 (RR-0010). Treat every tool path as taint-unaware.
+**P4.2 — Tool authority is separated, not re-checked per call (2026-08-12):** `McpRuntime::invoke` meters and dispatches; it does not authorize. Its `agent: WebID` argument is an accounting identity, and its only pre-dispatch refusal is the runaway-loop call breaker (`EnergyBudgetExceeded`), which is fail-open on an agent the composition root never seeded (RR-0057). Which tools a caller may reach at all is decided at three boundaries whose contents the caller does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing or empty), each swarm agent card's declared `mcp_tools` allowlist (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219, 431-437`), and the per-server MCP env/credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038). There is no fourth gate. Information flow is **not** gated: Defense Layer 5 (information flow control) is **absent by decision** (RR-0053), in the same register as Layer 3 (RR-0010). Treat every tool path as taint-unaware.
 
 ---
 
 ### 1.2 Operational Principles (How We Build)
 
 #### P2.1 — Shared vs Public Visibility (v0.31.0)
-Shared data is **consent-bound** and must pass `require_sovereignty` + `require_capability` gates (P2/P4). Public data is **unrestricted** and requires no consent gate. Semantic memory defaults to **Shared**; only explicitly public artifacts (e.g., template registry) use **Public**.
+Shared data is **consent-bound** and must pass `require_sovereignty` + `require_capability` gates (P2/P4) — **both OUGHT, not yet implemented** (zero hits in `kask/crates/` as of 2026-08-28; see magna-carta.md IS vs OUGHT Status). Public data is **unrestricted** and requires no consent gate. Semantic memory defaults to **Shared**; only explicitly public artifacts (e.g., template registry) use **Public**. The live per-artifact classification is the `Visibility` enum (`kask/crates/hkask-types/src/visibility.rs:34-39`).
 
 #### P5 — Essentialism & Minimalism
 Remove before adding. Every module must earn existence by reducing total system action.
 
-**P5.1 — Single Source of Truth for Skills (updated 2026-08-24):** Every skill has exactly one canonical source: its `SKILL.md` file in `.agents/skills/`. Skill execution is **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. The `*.j2` templates under each skill directory are companion resources the model retrieves on demand via the `render_template` tool — they are not a parallel representation of skill semantics. 62 skills ship in `.agents/skills/`. PDCA iteration is model-coordinated: the `SKILL.md` body describes convergence criteria, and the model uses `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding within iterations.
+**P5.1 — Single Source of Truth for Skills (updated 2026-08-24):** Every skill has exactly one canonical source: its `SKILL.md` file in `.agents/skills/`. Skill execution is **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. The `*.j2` templates under each skill directory are companion resources the model retrieves on demand via the `render_template` tool — they are not a parallel representation of skill semantics. 65 skills ship in `.agents/skills/` (verified 2026-08-28). PDCA iteration is model-coordinated: the `SKILL.md` body describes convergence criteria, and the model uses `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding within iterations.
 
 **P5.2 — 5W1H Ontological Core (v0.31.0):** Essentialism requires an anchor. The 5W1H framework — **Who, What, When, Where, Why, How** — is hKask's drop-dead-simple ontological core. Every artifact, module, representation, and claim in hKask must answer at least one of these six questions. An artifact that answers none is ontological noise and fails the minimalism test.
 
@@ -116,8 +116,9 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **swarm** | PKO | DC+BIBO | Onto4MAT (multi-agent teaming; Reynolds/Kennedy-Eberhart/Dorigo swarm-intelligence substrate) |
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 | **prediction-markets** | PKO | DC+BIBO | FIBO (financial contracts — CMP economic-object mapping) |
+| **media** | PKO | DC+BIBO | — (gallery, generation/processing jobs, workflows; added 2026-08-28) |
 
-> **Note (v0.31.0, in-process pivot; updated 2026-08-24):** The four servers `skill`, `memory`, `communication`, and `filesystem` are absent. Skill lifecycle is driven by **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. 62 skills ship in `.agents/skills/`. Memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (10 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. The condenser library crate (`kask/crates/hkask-condenser`) remains for in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
+> **Note (v0.31.0, in-process pivot; updated 2026-08-28):** The four servers `skill`, `memory`, `communication`, and `filesystem` are absent. Skill lifecycle is driven by **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. 65 skills ship in `.agents/skills/`. Memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 11 servers above are the surviving set on disk (11 total, registered in `BUILT_IN_MCP_SERVERS` at `kask/crates/kask_bridge/src/mcp_servers.rs:55`; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration), `prediction-markets` 2026-08-05, and `media` 2026-08-28. The condenser library crate (`kask/crates/hkask-condenser`) remains for in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
 
 **Bridge locations (v0.33.0 — single shared crate):**
 - Universal axes (DC+BIBO+CiTO state, PKO process) and all domain supplements (FIBO, ESO, GOLEM, ML-Schema) live in the single shared crate `crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.
@@ -183,11 +184,11 @@ Every skill emits six semantic spans, one per PDCA phase, mapped to the cybernet
 | `reg.skill.<id>.convergence` | Check | Are we done? |
 | `reg.skill.<id>.write` | Act | Commit artifact |
 
-These six spans are the same for every skill, regardless of domain. The typed enum `SkillFeedbackSpan` (`kask/crates/hkask-regulation/src/skill_span.rs`) encodes them. Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated). CI gate: `kask/scripts/check-skill-span-namespace.sh`.
+These six spans are the same for every skill, regardless of domain. They are a **convention**, not a typed enum — no `SkillFeedbackSpan` type exists (zero hits in `kask/` as of 2026-08-28). The live surface is stringly-typed: `RegulationRuntime::record_skill_span` stores `reg.skill.<skill_id>.<phase>` payloads in the bounded `SkillSpanStore` (`kask/crates/hkask-regulation/src/runtime.rs:765-805`). Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated). CI gate: `kask/scripts/check-skill-span-namespace.sh`.
 
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|
-| Tool dispatch (all MCP servers) | `reg.tool.*` | ~206 (one per tool method, counted via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01) | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
+| Tool dispatch (all MCP servers) | `reg.tool.*` | 362 registered `#[tool]` methods fleet-wide (verified 2026-08-28; method and caveats in `kask/docs/reference/mcp-servers/README.md:31,52`) | ✅ shared `ToolSpanGuard` RAII guard per tool (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:13`, emit at `:144-152`) | `Tool { subsystem }` |
 | Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
@@ -201,7 +202,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 | Memory | `reg.memory.*` | — | ✅ pre-existing | `MemoryEncode` |
 | Curation | `reg.curation` | — | ✅ pre-existing | `Curation` |
 
-> **Deleted rows (v0.31.0, in-process pivot):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone (only a slim admin CLI for backup/wallet/repair/admin remains, which emits `hkask.*` performative logs, not registered `reg.*` spans); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted. Performative telemetry for the surviving admin CLI uses `hkask.*` tracing targets, NOT registered `reg.*` spans.
+> **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (no `[[bin]]` target outside test fixtures, verified 2026-08-28); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
 **§9.2 — Span Emission Pattern**
 
@@ -234,14 +235,12 @@ Every action has an accountable host identity. No anonymous agency.
 
 > **Incorporated from:** `docs/architecture/mandates/P12-authenticated-host-mandate.md`
 
-Every interaction with hKask carries a per-user data directory (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Four in-process interaction surfaces map to host classes:
+Every interaction with hKask carries a per-user data directory (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Two in-process interaction surfaces map to host classes (the former kask panel (D10) was removed — its visualization views moved to inline chat-stream widgets under D18; the slim admin CLI referenced by earlier revisions of this table is also gone — no `kask` binary ships, verified 2026-08-28):
 
 | Surface | Host | WebID Source | Storage | Keychain |
 |---------|------|-------------|---------|----------|
 | **Agent panel** (zed Assistant) | Human user (via per-user data directory) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active user from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/{sanitized_name}.db` (SQLCipher) | OS keychain via `hkask-keystore` |
-| **Kask panel (D10)** | Human user (via per-user data directory) | Same composition-root resolution | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
-| **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via per-user data directory) | `kask admin` subcommand resolves the user from settings | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
-| **MCP servers** (13, child processes over stdio governed by the in-process `McpRuntime`) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
+| **MCP servers** (11, child processes over stdio governed by the in-process `McpRuntime`; registered in `BUILT_IN_MCP_SERVERS` at `kask/crates/kask_bridge/src/mcp_servers.rs:55`) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
 
 **Dual-presence pattern:** The agent panel hosts both the user's agent AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's agent is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 

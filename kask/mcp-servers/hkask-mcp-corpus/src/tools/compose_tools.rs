@@ -19,12 +19,12 @@ use crate::inference_svc::InferenceContext;
 use crate::{McpToolError, Parameters, execute_tool_semantic, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
-fn embedding_model() -> String {
+fn embedding_model() -> Result<String, McpToolError> {
     hkask_services_core::settings::HkaskSettings::load().embedding_model()
 }
 
 /// Resolve the generation model from InferenceConfig.
-fn generation_model() -> String {
+fn generation_model() -> Result<String, McpToolError> {
     hkask_inference::InferenceConfig::from_env().default_model
 }
 
@@ -121,7 +121,7 @@ pub(crate) struct RewriteRequest {
     pub config_path: Option<String>,
 }
 
-fn default_composite() -> String {
+fn default_composite() -> Result<String, McpToolError> {
     "composite".to_string()
 }
 
@@ -130,7 +130,7 @@ impl crate::CorpusServer {
     #[tool(
         description = "Generate prose in an author's style using exemplar retrieval and centroid validation. When config_path is provided, loads a cognition config YAML (mashup or style synthesizer) for the Jinja2 system prompt and validation thresholds. The db_path and passphrase connect to the corpus memory DB for exemplar retrieval."
     )]
-    pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
+    pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_compose",
@@ -170,7 +170,7 @@ impl crate::CorpusServer {
     #[tool(
         description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). When config_path is provided, loads a cognition config YAML for the Jinja2 system prompt and validation thresholds. Delegates to corpus_compose with dimension-specific guidance."
     )]
-    pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> String {
+    pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_rewrite",

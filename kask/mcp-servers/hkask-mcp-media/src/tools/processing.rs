@@ -14,7 +14,7 @@ impl MediaServer {
             image_index,
             new_bg_color: _new_bg_color,
         }): Parameters<RemoveBackgroundRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "image_remove_background",
@@ -70,7 +70,7 @@ impl MediaServer {
             style_prompt,
             strength,
         }): Parameters<ApplyStyleRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "image_apply_style",
@@ -124,7 +124,7 @@ impl MediaServer {
             spacing,
             canvas_size,
         }): Parameters<CreateCollageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "image_create_collage", Self::ontology_anchor("image_create_collage"), async {
             let mode_count =
                 search_terms.is_some() as u8 + similar_to_index.is_some() as u8 + image_indices.is_some() as u8;
@@ -325,7 +325,7 @@ impl MediaServer {
             start_sec,
             end_sec,
         }): Parameters<VideoClipRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_clip",
@@ -388,7 +388,7 @@ impl MediaServer {
             width,
             fps,
         }): Parameters<VideoToGifRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_to_gif",
@@ -462,7 +462,7 @@ impl MediaServer {
             duration,
             model,
         }): Parameters<ImageToVideoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "image_to_video",
@@ -512,7 +512,7 @@ impl MediaServer {
             position,
             font_size,
         }): Parameters<VideoAddCaptionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_add_caption",
@@ -571,7 +571,7 @@ impl MediaServer {
             end_sec,
             caption_text,
         }): Parameters<VideoRemixRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_remix",
@@ -655,7 +655,7 @@ impl MediaServer {
             fps,
             format,
         }): Parameters<VideoFromImagesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_from_images",
@@ -715,7 +715,7 @@ impl MediaServer {
     pub async fn video_concat(
         &self,
         Parameters(VideoConcatRequest { video_urls }): Parameters<VideoConcatRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_concat",
@@ -763,7 +763,7 @@ impl MediaServer {
     pub async fn video_caption(
         &self,
         Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "video_caption", Self::ontology_anchor("video_caption"), async {
             validate_tool_url_with_dns(&video_url).await?;
 
@@ -837,7 +837,7 @@ impl MediaServer {
             interval_sec,
             max_frames,
         }): Parameters<VideoExtractFramesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_extract_frames",
@@ -920,7 +920,7 @@ impl MediaServer {
             duration,
             font_path,
         }): Parameters<VideoMemeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "video_meme", Self::ontology_anchor("video_meme"), async {
             let image_path = self
                 .resolve_image_path(image_index)
@@ -1009,7 +1009,7 @@ impl MediaServer {
     pub async fn video_info(
         &self,
         Parameters(VideoInfoRequest { video_url }): Parameters<VideoInfoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_info",
@@ -1036,7 +1036,7 @@ impl MediaServer {
     pub async fn video_fetch(
         &self,
         Parameters(VideoFetchRequest { url }): Parameters<VideoFetchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "video_fetch",

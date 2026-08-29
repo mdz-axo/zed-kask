@@ -86,7 +86,7 @@ impl CompaniesServer {
     #[tool(
         description = "Persist a JSON artifact (screen or report) produced by the companies server or a skill."
     )]
-    pub async fn report_save(&self, Parameters(req): Parameters<ReportSaveRequest>) -> String {
+    pub async fn report_save(&self, Parameters(req): Parameters<ReportSaveRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_save",
@@ -119,7 +119,7 @@ impl CompaniesServer {
     #[tool(
         description = "Load a previously saved JSON artifact (screen or report) by name. Returns the full JSON payload. Returns a not-found error if no artifact with that name exists."
     )]
-    pub async fn report_load(&self, Parameters(req): Parameters<ReportLoadRequest>) -> String {
+    pub async fn report_load(&self, Parameters(req): Parameters<ReportLoadRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_load",
@@ -152,7 +152,7 @@ impl CompaniesServer {
     #[tool(
         description = "List saved artifact names (without extension) for a kind. Use kind='screen' or kind='report'. Returns a JSON array of names sorted alphabetically."
     )]
-    pub async fn report_list(&self, Parameters(req): Parameters<ReportListRequest>) -> String {
+    pub async fn report_list(&self, Parameters(req): Parameters<ReportListRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_list",

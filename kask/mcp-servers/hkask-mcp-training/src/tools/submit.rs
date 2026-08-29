@@ -37,7 +37,7 @@ impl TrainingServer {
             merged_output_path,
             confirmed,
         }): Parameters<TrainSubmitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_submit", Self::ontology_anchor("training_submit"), async {
             // P2 consent gate — enforce operator authorization before GPU spend.
             // The historical pipeline runner enforced this but was lost when the

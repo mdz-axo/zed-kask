@@ -534,7 +534,8 @@ mod smoke_tests {
         let server = make_server();
         let output = server
             .swarm_list_local_swarms(Parameters(ListLocalSwarmsRequest {}))
-            .await;
+            .await
+            .expect("tool ok");
 
         let parsed: Value = serde_json::from_str(&output).expect("tool output must be valid JSON");
         let content = parsed
@@ -556,7 +557,8 @@ mod smoke_tests {
         let server = make_server();
         let output = server
             .swarm_a2a_card(Parameters(A2aCardRequest { agent_name: None }))
-            .await;
+            .await
+            .expect("tool ok");
 
         let parsed: Value = serde_json::from_str(&output).expect("tool output must be valid JSON");
         let content = parsed

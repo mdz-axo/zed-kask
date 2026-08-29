@@ -277,7 +277,16 @@ impl ComposeService {
                     .find(|t| t.attribute == "salience")
                     .and_then(|t| t.value.as_f64())
                     .unwrap_or(0.0),
-                _ => 0.0,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.corpus.compose",
+                        entity_ref = %r.embedding.entity_ref,
+                        error = %e,
+                        "Salience lookup failed — passage filtered by default \
+                         salience_min (treated as 0.0)"
+                    );
+                    0.0
+                }
             };
 
             if salience < retrieval.salience_min {
@@ -362,6 +371,8 @@ impl ComposeService {
         // 6. Generate prose — model comes from InferenceContext (operational concern),
         // not from CognitionConfig (pipeline/corpus concern). The embedding model
         // is tied to stored vector dimensions; the generation model is deployment-specific.
+        // Pass `gen_model` as the model_override so the operator's configured
+        // generation model is actually used, not silently replaced by the bridge default.
         let params = LLMParameters {
             temperature: 0.7,
             top_p: 0.9,
@@ -375,7 +386,9 @@ impl ComposeService {
             adapter: None,
             system_prompt: None,
         };
-        let result = inference.generate(&system_prompt, &params, None).await?;
+        let result = inference
+            .generate_with_model(&system_prompt, &params, Some(&gen_model), None)
+            .await?;
         let generated_prose = result.text.trim().to_string();
 
         // 7. Validate centroid distance (optional)

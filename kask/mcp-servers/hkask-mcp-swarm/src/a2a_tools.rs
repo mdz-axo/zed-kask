@@ -27,7 +27,7 @@ impl SwarmServer {
     #[tool(
         description = "Send an A2A (Agent2Agent) protocol message to a local agent. Wraps in A2A types (Message/Task/Artifact) and dispatches in-process. Returns an A2A Task with the agent's response as a text Artifact. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to communicate with each other."
     )]
-    pub(crate) async fn swarm_a2a_send(&self, parameters: Parameters<A2aSendRequest>) -> String {
+    pub(crate) async fn swarm_a2a_send(&self, parameters: Parameters<A2aSendRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_a2a_send",
@@ -83,7 +83,7 @@ impl SwarmServer {
     #[tool(
         description = "Get the A2A (Agent2Agent) Agent Card for a local agent, or all local agents if agent_name is omitted. The card describes the agent's capabilities, skills, and supported interface. A2A-compliant discovery."
     )]
-    pub(crate) async fn swarm_a2a_card(&self, parameters: Parameters<A2aCardRequest>) -> String {
+    pub(crate) async fn swarm_a2a_card(&self, parameters: Parameters<A2aCardRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_a2a_card",
@@ -135,7 +135,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_a2a_broadcast(
         &self,
         parameters: Parameters<A2aBroadcastRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_a2a_broadcast",

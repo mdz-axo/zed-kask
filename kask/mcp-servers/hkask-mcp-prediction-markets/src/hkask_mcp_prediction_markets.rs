@@ -172,7 +172,7 @@ impl PredictionMarketsServer {
     async fn prediction_markets_status(
         &self,
         Parameters(_req): Parameters<StatusRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "prediction_markets_status",
@@ -200,7 +200,10 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated MarketRecords: every probability is paired with spread/volume/calibration/volatility/reliability_tier and a dual-axis (PKO + Dublin Core) ontology mapping. Never returns a bare probability."
     )]
-    pub async fn market_lookup(&self, Parameters(req): Parameters<MarketLookupRequest>) -> String {
+    pub async fn market_lookup(
+        &self,
+        Parameters(req): Parameters<MarketLookupRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_lookup",
@@ -227,7 +230,10 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Returns confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuse low-confidence matches rather than anchoring on a wrong-event market."
     )]
-    pub async fn market_match(&self, Parameters(req): Parameters<MarketMatchRequest>) -> String {
+    pub async fn market_match(
+        &self,
+        Parameters(req): Parameters<MarketMatchRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_match",
@@ -252,7 +258,7 @@ impl PredictionMarketsServer {
     pub async fn market_ontology_map(
         &self,
         Parameters(_req): Parameters<MarketOntologyMapRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_ontology_map",
@@ -272,7 +278,7 @@ impl PredictionMarketsServer {
     pub async fn market_calibration(
         &self,
         Parameters(req): Parameters<MarketCalibrationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_calibration",
@@ -299,7 +305,7 @@ impl PredictionMarketsServer {
     pub async fn market_record_resolution(
         &self,
         Parameters(req): Parameters<MarketRecordResolutionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_record_resolution",
@@ -350,7 +356,7 @@ impl PredictionMarketsServer {
     pub async fn market_subscribe_resolutions(
         &self,
         Parameters(req): Parameters<MarketSubscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_subscribe_resolutions",
@@ -409,7 +415,10 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Kalshi series ticker or Polymarket event slug; both platforms are probed. Unparsable deadlines sort last with null maturity; per-platform failures surface in warnings — the ladder never fabricates a maturity."
     )]
-    pub async fn market_ladder(&self, Parameters(req): Parameters<MarketLadderRequest>) -> String {
+    pub async fn market_ladder(
+        &self,
+        Parameters(req): Parameters<MarketLadderRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_ladder",
@@ -509,7 +518,10 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Constant Maturity Prediction (CMP): synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns bucketed_sparse with the bracket width rather than a fabricated tight curve. Base events come only from HKASK_PREDICTION_MARKETS_BASE_EVENTS — unregistered series are refused."
     )]
-    pub async fn market_cmp(&self, Parameters(req): Parameters<MarketCmpRequest>) -> String {
+    pub async fn market_cmp(
+        &self,
+        Parameters(req): Parameters<MarketCmpRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_cmp",
@@ -563,7 +575,7 @@ impl PredictionMarketsServer {
     pub async fn market_residual(
         &self,
         Parameters(req): Parameters<MarketResidualRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_residual",
@@ -637,7 +649,7 @@ impl PredictionMarketsServer {
     pub async fn market_check_resolutions(
         &self,
         Parameters(req): Parameters<MarketCheckResolutionsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_check_resolutions",
@@ -758,7 +770,7 @@ impl PredictionMarketsServer {
     pub async fn market_history(
         &self,
         Parameters(req): Parameters<MarketHistoryRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_history",
@@ -820,7 +832,7 @@ impl PredictionMarketsServer {
     pub async fn market_cmp_index(
         &self,
         Parameters(req): Parameters<MarketCmpIndexRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_cmp_index",
@@ -893,7 +905,7 @@ impl PredictionMarketsServer {
             k,
             activity_proxy,
         }): Parameters<MarketVolatilityRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_volatility",
@@ -960,7 +972,7 @@ impl PredictionMarketsServer {
         Parameters(MarketCmpIndexStoreRequest { series, date }): Parameters<
             MarketCmpIndexStoreRequest,
         >,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_cmp_index_store",
@@ -1318,7 +1330,7 @@ impl PredictionMarketsServer {
             direction_up,
             date,
         }): Parameters<MarketCmpPortfolioStoreRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_cmp_portfolio_store",
@@ -1374,7 +1386,7 @@ impl PredictionMarketsServer {
         Parameters(MarketCmpContextSuggestRequest { series }): Parameters<
             MarketCmpContextSuggestRequest,
         >,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_cmp_context_suggest",
@@ -1729,7 +1741,8 @@ mod smoke {
         let server = make_server();
         let output = server
             .prediction_markets_status(Parameters(StatusRequest {}))
-            .await;
+            .await
+            .expect("tool ok");
         let content = unwrap_content(&output);
         assert_eq!(
             content["server"], "hkask-mcp-prediction-markets",
@@ -1773,7 +1786,8 @@ mod smoke {
                 k: None,
                 activity_proxy: None,
             }))
-            .await;
+            .await
+            .expect("tool ok");
         let content = unwrap_content(&output);
         assert_eq!(
             content["model"], "DR-AS (Xi, Moallemi, Pai & Wang, arXiv:2607.08199)",

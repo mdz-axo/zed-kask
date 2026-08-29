@@ -1,7 +1,7 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-08-20
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -29,7 +29,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [Catch and Release](#catch-and-release) | Data sovereignty catch-and-release model |
 | [The Curator as Enforcer](#the-curator-as-enforcer) | Curator role in enforcing the Magna Carta |
 | [Regulation Integration](#regulation-integration) | Algedonic alerts and sovereignty monitoring |
-| [Magna Carta Verifier](#magna-carta-verifier) | Verification skill, triggers, and resolution |
+| [Magna Carta Verifier](#magna-carta-verifier) | Intended (OUGHT) verification skill, triggers, and resolution |
 | [Implementation](#implementation) | Code-level enforcement mechanisms |
 | [The Promise](#the-promise) | The pledge to users |
 | [Enforcement](#enforcement) | Runtime enforcement and audit |
@@ -53,7 +53,7 @@ hKask operates under a Magna Carta — a charter of liberties that honors user s
 
 ## IS vs OUGHT Status
 
-The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principles hKask is built to uphold. Some of the surface it names is **live in code (IS)**; the rest is **intended design (OUGHT)** that is not yet enforced. This section is the single source of truth for which is which, so a reader (human or agent) never implements an OUGHT type as if it were live code. Every status claim below was verified by grep of `kask/crates/**/*.rs` on 2026-08-04.
+The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principles hKask is built to uphold. Some of the surface it names is **live in code (IS)**; the rest is **intended design (OUGHT)** that is not yet enforced. This section is the single source of truth for which is which, so a reader (human or agent) never implements an OUGHT type as if it were live code. Every status claim below was verified by grep of `kask/crates/**/*.rs` and `kask/mcp-servers/**/*.rs` on 2026-08-28.
 
 ### Live enforcement (IS)
 
@@ -61,16 +61,16 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
 | Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | **The authority gate for delegated dispatch.** Refuses any `server/tool` outside the child-declared allowlist, before dispatch |
-| Per-agent `mcp_tools` allowlist | `hkask-mcp-swarm/src/agent_executor.rs:238,340` | Restricts which tools a swarm agent may call at all |
+| Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219` (declared set), `:431-437` (refusal) | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
-| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager`, charged in `McpRuntime::invoke` | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
+| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1320`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist
 > rows above — boundaries whose list the caller being checked does not choose.
 
-### Intended design (OUGHT) — NOT in code as of 2026-08-04
+### Intended design (OUGHT) — NOT in code as of 2026-08-28
 
-The following charter types are **design intentions, not verifiable code**. Each was verified absent by grep of `kask/crates/**/*.rs` on 2026-08-04:
+The following charter types are **design intentions, not verifiable code**. Each was verified absent by grep of `kask/crates/**/*.rs` and `kask/mcp-servers/**/*.rs` on 2026-08-28:
 
 | Surface | Status | Note |
 |---|---|---|
@@ -80,9 +80,11 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `SovereigntyConsent` / `DenyAllConsent` | OUGHT — zero hits | Intended consent port and fail-closed default |
 | `require_sovereignty` | OUGHT — zero hits | Intended data-class policy gate; not yet enforced |
 | `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous (RR-0056). Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
-| `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `hkask-types/src/visibility.rs:18-20` and `:29-30`; no struct or impl exists |
+| `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `hkask-types/src/visibility.rs:18-19` and `:29-31`; no struct or impl exists |
 
-The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch. The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
+One nuance: the `reg.sovereignty.*` span namespaces (`reg.sovereignty`, `reg.sovereignty.consent_anomaly`, `reg.sovereignty.consent_audited`, `reg.sovereignty.governance_report`, `reg.sovereignty.portability_failure`, `reg.sovereignty.portability_verified`) **are registered** in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:277-282`) — but no code emits them (zero emission sites as of 2026-08-28). Registered namespace, no enforcement: still OUGHT.
+
+The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`). The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
 
 ---
 
@@ -143,7 +145,7 @@ Default is deny. Nothing passes without an explicit yes. Consent is not a one-ti
 
 The intended runtime type is a `bool` (`requires_affirmative_consent: bool`); the intended `DataSovereigntyBoundary::hkask_default()` would set it to `true`, satisfying the "default deny" charter.
 
-**OUGHT — Not Implemented.** No `DataSovereigntyBoundary` exists in `kask/crates/` as of 2026-08-04.
+**OUGHT — Not Implemented.** No `DataSovereigntyBoundary` exists in `kask/crates/` as of 2026-08-28.
 
 ```rust
 // OUGHT — intended design; not yet implemented in hkask-types
@@ -185,7 +187,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-04; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-28; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
 
 ---
 
@@ -195,7 +197,7 @@ Within boundaries, hKask is maximally generative. This is not a ban on constrain
 
 ### Settings Exposure
 
-Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. After the in-process pivot, the user-facing inference settings surface is zed's `KaskSettings` (D9a), which configures the `LanguageModelInferencePort` in `kask_bridge` over zed's `LanguageModelRegistry`. Whatever providers the user has configured in zed (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) are the providers hKask uses. The old `InferenceRouter` with 9 hard-coded providers is gone; it survives only as an MCP-server-internal detail of `hkask-inference` and is not exposed to in-process surfaces.
+Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. After the in-process pivot, the user-facing inference settings surface is zed's `KaskSettings` (D9a), which configures the `LanguageModelInferencePort` in `kask_bridge` (`kask/crates/kask_bridge/src/inference_chat.rs:190`) over zed's `LanguageModelRegistry`. Whatever providers the user has configured in zed (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) are the providers hKask uses. The old `InferenceRouter` with 9 hard-coded providers is gone entirely — zero hits in `kask/crates/` and `kask/mcp-servers/` as of 2026-08-28.
 
 ### No Privileged Engineer Access
 
@@ -235,11 +237,11 @@ per-call capability token today.**
      dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
      missing or empty allowlist;
    - each swarm agent card's declared `mcp_tools` allowlist
-     (`hkask-mcp-swarm/src/agent_executor.rs`);
+     (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`);
    - the per-server MCP env/credential allowlists (`kask_bridge/src/mcp_servers.rs`).
 2. **`require_sovereignty` (OUGHT — not yet enforced)** — Verify the data
    category access is permitted by the user's sovereignty boundary and explicit
-   consent. Zero hits in `kask/crates/` as of 2026-08-04; no `SovereigntyChecker`
+   consent. Zero hits in `kask/crates/` as of 2026-08-28; no `SovereigntyChecker`
    struct or `require_sovereignty` function exists. See
    [IS vs OUGHT Status](#is-vs-ought-status).
 
@@ -349,16 +351,26 @@ When triggered, the Curator escalates to:
 
 ### Magna Carta Verifier
 
-The Magna Carta Verifier is a skill that verifies each principle using YAML manifests and Jinja2 templates. It is part of the hKask verification infrastructure, anchored to the principles for stability as implementations evolve.
+> **OUGHT — the verifier skill does not exist.** There is no
+> `.agents/skills/magna-carta-verifier/` directory (verified 2026-08-28);
+> the skill structure, manifests, and assertion tables below are the
+> **intended design**, not a shipping surface. The live
+> principle-verification surface is the `principle-constraints` skill
+> (`.agents/skills/principle-constraints/`), whose approved constraint
+> sets are recorded in `kask/docs/architecture/principle-constraints.yaml`
+> (currently empty: `principles: []`) and drift-checked by
+> `kask/scripts/check-principle-constraints.sh`. The assertions below
+> reference `SovereigntyChecker` and `require_sovereignty` as the
+> enforcement gate; both are charter design intentions, not verifiable
+> code (`SovereigntyChecker` appears only in doc comments at
+> `hkask-types/src/visibility.rs:18-19, 29-31`; `require_sovereignty` has
+> zero hits). The manifest's `gate: require_sovereignty` field describes
+> the intended (OUGHT) surface. The live denial gate is the delegated-tool
+> allowlist on the inference IPC `tool_invoke` dispatch
+> (`kask_bridge/src/inference_ipc_server.rs:813-831`). See
+> [IS vs OUGHT Status](#is-vs-ought-status).
 
-> **OUGHT — not implemented.** The assertions below reference `SovereigntyChecker`
-> and `require_sovereignty` as the enforcement gate; both are charter design
-> intentions, not verifiable code (`SovereigntyChecker` appears only in doc
-> comments at `hkask-types/src/visibility.rs:18-20, 29-30`; `require_sovereignty`
-> has zero hits). The manifest's `gate: require_sovereignty` field describes the
-> intended (OUGHT) surface. The live denial gate is the delegated-tool allowlist
-> on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`).
-> See [IS vs OUGHT Status](#is-vs-ought-status).
+The intended verifier would verify each principle using YAML manifests and Jinja2 templates, anchored to the principles for stability as implementations evolve.
 
 ### Skill Structure
 
@@ -431,11 +443,11 @@ assertions:
 
 ### Triggers
 
-Verification is triggered by:
+Verification is triggered by (all OUGHT — no verifier runs at start-up today):
 
 | Trigger | When |
 |---------|------|
-| Start-up | Verification runs when zed-kask starts (composition root — `crates/zed/src/main.rs`) |
+| Start-up | Intended: verification runs when zed-kask starts (composition root — `crates/zed/src/main.rs`) |
 | Expiration | Consent grants expire → re-verification scheduled |
 | User change | New consent, settings change, new API key → re-verify affected assertions |
 | Resource/service change | New version of MCP server, inference provider, or model → re-verify affected assertions |
@@ -452,18 +464,21 @@ When an assertion fails, the verification report is escalated to the Curator. Th
 > design, not live code). Every type named here —
 > `DataSovereigntyBoundary`, `UserSovereigntyState`, `DefaultSpecCurator`,
 > `check_sovereignty`, `SovereigntyChecker`, `SovereigntyConsent`,
-> `DenyAllConsent`, `require_sovereignty` — has zero hits in `kask/crates/` as
-> of 2026-08-04 (see [IS vs OUGHT Status](#is-vs-ought-status)). The live
-> per-h_mem enforcement is the `Visibility` enum at
-> `hkask-types/src/visibility.rs:34-39`; the live denial gate is
-> `McpRuntime::invoke` at `hkask-mcp/src/runtime.rs:508-514`. Treat every block
-> below as OUGHT, not IS.
+> `DenyAllConsent`, `require_sovereignty` — has zero hits in `kask/crates/` and
+> `kask/mcp-servers/` as of 2026-08-28 (see
+> [IS vs OUGHT Status](#is-vs-ought-status)). The live per-h_mem enforcement is
+> the `Visibility` enum at `hkask-types/src/visibility.rs:34-39`; the live denial
+> gate is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch
+> (`kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`), with the
+> runaway-loop call breaker charged in `McpRuntime::invoke`
+> (`kask/crates/hkask-mcp/src/runtime.rs:1287`, breaker at `:1316-1345`). Treat
+> every block below as OUGHT, not IS.
 
 ### Sovereignty State Tracking
 
 Sovereignty state tracking implements privacy-by-design principles:[^solove-taxonomy]
 
-**OUGHT — Not Implemented.** `UserSovereigntyState` has zero hits in `kask/crates/` as of 2026-08-04.
+**OUGHT — Not Implemented.** `UserSovereigntyState` has zero hits in `kask/crates/` as of 2026-08-28.
 
 ```rust
 // OUGHT — intended design; not yet implemented in hkask-types
@@ -476,9 +491,9 @@ pub struct UserSovereigntyState {
 
 ### Curator Pipeline Integration (OUGHT — not yet implemented)
 
-The `DefaultSpecCurator` is the **intended** curator that enforces the Magna Carta. It would record sovereignty checks as `reg.sovereignty.checked` `RegulationRecord`s when an event sink is wired. The per-user data directory's `SovereigntyChecker` (OUGHT) would enforce the sovereignty policy on every memory access. Neither type exists in code as of 2026-08-04 (zero hits in `kask/crates/`); the `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction and has no successor yet.
+The `DefaultSpecCurator` is the **intended** curator that enforces the Magna Carta. It would record sovereignty checks as `reg.sovereignty.checked` `RegulationRecord`s when an event sink is wired. The per-user data directory's `SovereigntyChecker` (OUGHT) would enforce the sovereignty policy on every memory access. Neither type exists in code as of 2026-08-28 (zero hits in `kask/crates/`); the `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction and has no successor yet.
 
-**OUGHT — Not Implemented.** Neither `DefaultSpecCurator` nor `SovereigntyChecker` exists in `kask/crates/` as of 2026-08-04.
+**OUGHT — Not Implemented.** Neither `DefaultSpecCurator` nor `SovereigntyChecker` exists in `kask/crates/` as of 2026-08-28.
 
 ```rust
 // OUGHT — intended design; not yet implemented in zed-kask
@@ -520,7 +535,7 @@ The Magna Carta is not aspirational. It is enforced:
 2. **Sovereignty Checks (OUGHT — not yet enforced)** — The charter intent is that every invocation is sovereignty-checked; `require_sovereignty` is not yet implemented (see [IS vs OUGHT Status](#is-vs-ought-status))
 3. **Consent Verification (OUGHT — not yet enforced)** — Scoped, versioned, expiring consent is the charter intent; `SovereigntyConsent`/`DenyAllConsent` are not yet implemented
 4. **Regulation Alerts (IS)** — Violations of the live capability gate trigger `Regulation` alerts
-5. **Magna Carta Verifier** — YAML manifests and Jinja2 templates verify each principle. Invoked via the `magna-carta-verifier` skill through the agent panel. (The deleted `kask sovereignty verify` CLI and the deleted `reg_verify_magna_carta` MCP tool from `hkask-mcp-regulation` are both gone — the skill is the sole entry point. The former kask panel (D10) surface was also deleted; the skill is invoked via the agent panel only.)
+5. **Magna Carta Verifier (OUGHT — not implemented)** — YAML manifests and Jinja2 templates are the intended verification surface; no `magna-carta-verifier` skill exists (verified 2026-08-28). The live principle-verification surface is the `principle-constraints` skill with its approved constraint sets in `kask/docs/architecture/principle-constraints.yaml`, drift-checked by `kask/scripts/check-principle-constraints.sh`. (The deleted `kask sovereignty verify` CLI and the deleted `reg_verify_magna_carta` MCP tool from `hkask-mcp-regulation` are both gone. The former kask panel (D10) surface was also deleted.)
 6. **Audit Trail** — All decisions recorded
 
 ---

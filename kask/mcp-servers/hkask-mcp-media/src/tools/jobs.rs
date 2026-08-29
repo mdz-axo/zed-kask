@@ -61,7 +61,7 @@ impl MediaServer {
     pub async fn job_submit(
         &self,
         Parameters(JobSubmitRequest { op, params }): Parameters<JobSubmitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "job_submit",
@@ -177,7 +177,7 @@ impl MediaServer {
     pub async fn job_list(
         &self,
         Parameters(JobListRequest { status, limit }): Parameters<JobListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "job_list", Self::ontology_anchor("job_list"), async {
             let store = self
                 .job_store
@@ -206,7 +206,7 @@ impl MediaServer {
     pub async fn job_status(
         &self,
         Parameters(JobStatusRequest { job_id }): Parameters<JobStatusRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "job_status",
@@ -236,7 +236,7 @@ impl MediaServer {
     pub async fn job_cancel(
         &self,
         Parameters(JobCancelRequest { job_id }): Parameters<JobCancelRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "job_cancel",

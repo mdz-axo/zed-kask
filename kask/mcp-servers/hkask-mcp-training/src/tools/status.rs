@@ -3,6 +3,7 @@ use crate::adapters::AdapterMetrics;
 use crate::providers::TrainingJobStatus;
 use crate::tools::error_mapping::{map_adapter_store_error, map_host_provider_error};
 use crate::types::TrainStatusRequest;
+use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_server::server::execute_tool_semantic;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -16,7 +17,7 @@ impl TrainingServer {
     pub async fn training_status(
         &self,
         Parameters(TrainStatusRequest { job_id }): Parameters<TrainStatusRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_status", Self::ontology_anchor("training_status"), async {
             match self.host.status(&job_id).await {
                 Ok(pod_status) => {

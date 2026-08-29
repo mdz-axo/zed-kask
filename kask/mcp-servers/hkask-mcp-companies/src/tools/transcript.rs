@@ -21,7 +21,7 @@ impl CompaniesServer {
     pub async fn company_transcript(
         &self,
         Parameters(request): Parameters<CompanyTranscriptRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "company_transcript", Self::ontology_anchor("company_transcript"), async {
             validate_symbol(&request.symbol)?;
 

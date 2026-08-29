@@ -15,7 +15,7 @@ impl CorpusServer {
     pub async fn corpus_cache(
         &self,
         Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_cache",
@@ -105,7 +105,7 @@ impl CorpusServer {
             db_path,
             passphrase,
         }): Parameters<QueryRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_query", Self::ontology_anchor("corpus_query"), async {
             if query.is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -296,7 +296,7 @@ impl CorpusServer {
     pub async fn corpus_clear_index(
         &self,
         Parameters(ClearIndexRequest {}): Parameters<ClearIndexRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_clear_index",
@@ -324,7 +324,7 @@ impl CorpusServer {
     #[tool(
         description = "Purge QA embeddings and h_mems by entity-ref prefix. Deletes embeddings matching the prefix, then deletes h_mems with matching entity or attribute. Useful for clearing old training data before re-ingesting."
     )]
-    pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
+    pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
             if req.passphrase.is_empty() {
                 return Err(McpToolError::permission_denied(
@@ -732,6 +732,6 @@ pub(crate) struct PurgeQaRequest {
     pub passphrase: String,
 }
 
-fn default_purge_prefix() -> String {
+fn default_purge_prefix() -> Result<String, McpToolError> {
     "corpus:researcher:".to_string()
 }

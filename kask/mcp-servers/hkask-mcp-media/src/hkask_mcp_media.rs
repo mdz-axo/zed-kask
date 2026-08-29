@@ -1071,9 +1071,9 @@ mod tool_behavior_tests {
     }
 
     #[tokio::test]
-    async fn gallery_refresh_before_init_returns_structured_error_envelope() {
+    async fn gallery_refresh_before_init_returns_typed_error() {
         let server = make_server();
-        let output = server
+        let result = server
             .gallery_refresh(Parameters(GalleryRefreshRequest {
                 recursive: false,
                 include_faces: false,
@@ -1081,17 +1081,19 @@ mod tool_behavior_tests {
             }))
             .await;
 
-        let parsed: serde_json::Value = serde_json::from_str(&output)
-            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
-        let error = parsed
-            .get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or_else(|| {
-                panic!("uninitialized gallery must yield an error envelope, got: {parsed}")
-            });
+        // The core wire pattern: a tool-logical error is a typed `Err` —
+        // rmcp marks the wire result `is_error` and carries the kind in
+        // `structured_content`. No in-band envelope to parse on the client.
+        let error = result.expect_err("uninitialized gallery must yield a typed error");
         assert!(
-            error.to_lowercase().contains("gallery"),
-            "error should name the gallery state problem, got: {error}"
+            error.message.to_lowercase().contains("gallery"),
+            "error should name the gallery state problem, got: {}",
+            error.message
+        );
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+            "gallery-not-initialized is a caller-fixable error, got {:?}",
+            error.kind
         );
     }
 }

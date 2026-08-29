@@ -41,7 +41,7 @@ impl CompaniesServer {
     pub async fn portfolio_delete(
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_delete",
@@ -66,7 +66,7 @@ impl CompaniesServer {
             format,
             data,
         }): Parameters<LedgerImportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "ledger_import",
@@ -113,7 +113,7 @@ impl CompaniesServer {
     pub async fn ledger_export(
         &self,
         Parameters(LedgerExportRequest { portfolio, format }): Parameters<LedgerExportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "ledger_export", Self::ontology_anchor("ledger_export"), async {
             let output_format = format.clone();
             let data = run_portfolio(self.portfolio.clone(), move |manager| match format {
@@ -137,7 +137,7 @@ impl CompaniesServer {
             tx_id,
             note,
         }): Parameters<TransactionNoteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "transaction_note_append",
@@ -163,7 +163,7 @@ impl CompaniesServer {
             portfolio_a,
             portfolio_b,
         }): Parameters<PortfolioCompareRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_comparison",
@@ -186,7 +186,7 @@ impl CompaniesServer {
             from,
             to,
         }): Parameters<PortfolioReturnsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_returns",
@@ -356,7 +356,7 @@ impl CompaniesServer {
             body,
             tags,
         }): Parameters<NoteAddRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "note_add", Self::ontology_anchor("note_add"), async {
             let id = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.add_note(&portfolio, &symbol, &date, &title, &body, &tags)
@@ -377,7 +377,7 @@ impl CompaniesServer {
             date_to,
             tags,
         }): Parameters<NoteListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "note_list",
@@ -403,7 +403,7 @@ impl CompaniesServer {
     pub async fn note_delete(
         &self,
         Parameters(NoteDeleteRequest { note_id }): Parameters<NoteDeleteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "note_delete",
@@ -432,7 +432,7 @@ impl CompaniesServer {
             data,
             notes,
         }): Parameters<FileAttachRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "file_attach",
@@ -454,7 +454,7 @@ impl CompaniesServer {
     pub async fn file_list(
         &self,
         Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "file_list",
@@ -474,7 +474,7 @@ impl CompaniesServer {
     pub async fn file_delete(
         &self,
         Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "file_delete",

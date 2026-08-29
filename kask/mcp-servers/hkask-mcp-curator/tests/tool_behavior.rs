@@ -214,23 +214,20 @@ async fn escalations_lists_pending_empty() {
 #[tokio::test]
 async fn resolve_nonexistent_id_returns_not_found() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_escalation_resolve(Parameters(EscalationResolveRequest {
-                id: "does-not-exist".to_string(),
-                resolution: "tested".to_string(),
-            }))
-            .await,
-    );
-
-    assert_eq!(
-        response["kind"].as_str(),
-        Some("not_found"),
-        "a nonexistent escalation id must classify as not_found, not internal — got: {response}",
+    let error = server
+        .curator_escalation_resolve(Parameters(EscalationResolveRequest {
+            id: "does-not-exist".to_string(),
+            resolution: "tested".to_string(),
+        }))
+        .await
+        .expect_err("resolving a nonexistent escalation must fail");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
+        "a nonexistent escalation id must classify as not_found, not internal — got: {error:?}",
     );
     assert!(
-        response["error"].as_str().is_some(),
-        "the error envelope must carry a message — got: {response}",
+        error.message.contains("does-not-exist"),
+        "the error message must name the missing id — got: {error:?}",
     );
 }
 
@@ -239,19 +236,16 @@ async fn resolve_nonexistent_id_returns_not_found() {
 #[tokio::test]
 async fn dismiss_nonexistent_id_returns_not_found() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_escalation_dismiss(Parameters(EscalationDismissRequest {
-                id: "does-not-exist".to_string(),
-                reason: "duplicate".to_string(),
-            }))
-            .await,
-    );
-
-    assert_eq!(
-        response["kind"].as_str(),
-        Some("not_found"),
-        "a nonexistent escalation id must classify as not_found — got: {response}",
+    let error = server
+        .curator_escalation_dismiss(Parameters(EscalationDismissRequest {
+            id: "does-not-exist".to_string(),
+            reason: "duplicate".to_string(),
+        }))
+        .await
+        .expect_err("dismissing a nonexistent escalation must fail");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
+        "a nonexistent escalation id must classify as not_found — got: {error:?}",
     );
 }
 
@@ -439,21 +433,24 @@ async fn dismiss_by_pattern_no_matches_returns_zero() {
 #[tokio::test]
 async fn memory_recall_ontology_axis_without_value_is_rejected() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
-                entity: "test-entity".to_string(),
-                recall_shape: MemoryRecallType::default(),
-                ontology_axis: Some("dc_type".to_string()),
-                ontology_value: None,
-            }))
-            .await,
+    let error = server
+        .curator_memory_recall(Parameters(MemoryRecallRequest {
+            entity: "test-entity".to_string(),
+            recall_shape: MemoryRecallType::default(),
+            ontology_axis: Some("dc_type".to_string()),
+            ontology_value: None,
+        }))
+        .await
+        .expect_err("ontology_axis without ontology_value must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "ontology_axis without ontology_value must be invalid_argument — got: {error:?}",
     );
-
-    assert_eq!(
-        response["kind"].as_str(),
-        Some("invalid_argument"),
-        "ontology_axis without ontology_value must be invalid_argument — got: {response}",
+    assert!(
+        error
+            .message
+            .contains("ontology_axis requires ontology_value"),
+        "the error must name the contract violation — got: {error:?}",
     );
 }
 
@@ -462,21 +459,22 @@ async fn memory_recall_ontology_axis_without_value_is_rejected() {
 #[tokio::test]
 async fn memory_recall_rejects_unknown_ontology_axis() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
-                entity: "test-entity".to_string(),
-                recall_shape: MemoryRecallType::default(),
-                ontology_axis: Some("bogus_axis".to_string()),
-                ontology_value: Some("whatever".to_string()),
-            }))
-            .await,
+    let error = server
+        .curator_memory_recall(Parameters(MemoryRecallRequest {
+            entity: "test-entity".to_string(),
+            recall_shape: MemoryRecallType::default(),
+            ontology_axis: Some("bogus_axis".to_string()),
+            ontology_value: Some("whatever".to_string()),
+        }))
+        .await
+        .expect_err("an unknown ontology_axis must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "an unknown ontology_axis must be invalid_argument — got: {error:?}",
     );
-
-    assert_eq!(
-        response["kind"].as_str(),
-        Some("invalid_argument"),
-        "an unknown ontology_axis must be invalid_argument — got: {response}",
+    assert!(
+        error.message.contains("unknown ontology_axis 'bogus_axis'"),
+        "the error must name the rejected axis — got: {error:?}",
     );
 }
 

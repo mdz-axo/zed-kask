@@ -14,7 +14,7 @@ impl MediaServer {
             num_images,
             style,
         }): Parameters<GenerateImageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "generate_image",
@@ -83,7 +83,7 @@ impl MediaServer {
             strength,
             style,
         }): Parameters<TransformImageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "transform_image",
@@ -144,7 +144,7 @@ impl MediaServer {
     pub async fn upscale_image(
         &self,
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "upscale_image",
@@ -198,7 +198,7 @@ impl MediaServer {
             duration,
             style,
         }): Parameters<GenerateVideoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "generate_video",
@@ -255,7 +255,7 @@ impl MediaServer {
     pub async fn expand_prompt(
         &self,
         Parameters(ExpandPromptRequest { prompt, style }): Parameters<ExpandPromptRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "expand_prompt", Self::ontology_anchor("expand_prompt"), async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
@@ -325,7 +325,7 @@ impl MediaServer {
             image_size,
             style,
         }): Parameters<GenerateVariantsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "generate_variants",
@@ -451,7 +451,7 @@ impl MediaServer {
             prompt,
             strength,
         }): Parameters<ImageEditRegionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "image_edit_region",

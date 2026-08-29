@@ -18,8 +18,8 @@ condensation; git history preserves the originals.
 # Part I — The Agent System Prompt
 
 > **Scope:** the agent system prompt only. Verified against zed-kask `HEAD`
-> (`47e1c3b1d5`) and upstream Zed `upstream/main` (`6bd93fc319`). Every claim
-> here is traceable to a `file:line` or a named test.
+> (`67a5604b55`) and upstream Zed `upstream/main` (`e3adf43f37`) on
+> 2026-08-28. Every claim here is traceable to a `file:line` or a named test.
 
 ## 1. Purpose
 
@@ -42,15 +42,15 @@ plus **three overlays**, all delivered through a single channel.
 
 | # | Surface | Location | Size | Scope |
 |---|---------|----------|------|-------|
-| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 23,949 B / 313 lines | Every thread |
-| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37-59` (`CURATOR_STATIC_CONTEXT`) | ~1.1 KB | Curator threads |
-| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs:126-299` (`steer_system_prompt`) | ~9.7 KB | Swarm panel, Steer mode |
-| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs:210-245` (`steer_system_prompt`) | ~2.2 KB | Kanban panel, Steer mode |
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 22,277 B / 302 lines | Every thread |
+| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37-68` (`CURATOR_STATIC_CONTEXT`) | ~1.7 KB | Curator threads |
+| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs:155-313` (`steer_system_prompt`) | ~9.8 KB | Swarm panel, Steer mode |
+| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs:311-351` (`steer_system_prompt`) | ~2.4 KB | Kanban panel, Steer mode |
 
-Upstream's base template is 19,815 B, so zed-kask carries **+4.1 KB** of
-fork-specific instruction in the base plus up to ~9.7 KB more when an overlay is
+Upstream's base template is 19,815 B, so zed-kask carries **+2.4 KB** of
+fork-specific instruction in the base plus up to ~9.8 KB more when an overlay is
 active. The swarm overlay is the largest single instruction block in the system —
-roughly 40 % of the base prompt's size.
+roughly 44 % of the base prompt's size.
 
 Overlays are **appended, never substituted**: the Zed coding instructions remain
 intact and the overlay adds role and scope on top. `CuratorAgentServer` documents
@@ -61,7 +61,7 @@ modified, so upstream changes to it keep flowing through[^martin-ocp].
 
 ## 3. Rendering pipeline
 
-`SystemPromptTemplate` (`crates/agent/src/templates.rs:36-65`) is the Handlebars
+`SystemPromptTemplate` (`crates/agent/src/templates.rs:37-65`) is the Handlebars
 render context; `TEMPLATE_NAME` pins it to `system_prompt.hbs` (`:67-69`).
 
 ```mermaid
@@ -85,8 +85,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PROMPT-001
-verified_date: 2026-08-26
-verified_against: crates/agent/src/templates.rs:36-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context → KaskThreadState::set_static_context), crates/agent/src/kask_thread_state.rs (KaskThreadState::static_context, set_static_context)
+verified_date: 2026-08-28
+verified_against: crates/agent/src/templates.rs:37-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context → KaskThreadState::set_static_context), crates/agent/src/kask_thread_state.rs (KaskThreadState::static_context, set_static_context)
 status: VERIFIED
 -->
 
@@ -104,15 +104,15 @@ cannot honour[^parnas-1972].
 
 | Guard | Line | Effect when false |
 |-------|------|-------------------|
-| `(gt (len available_tools) 0)` | `:34` | Entire tool-use half is replaced by a no-tools instruction (`:139-145`) |
-| `(contains available_tools 'grep')` | `:63` | Drops the grep/find_path search guidance |
-| `(contains available_tools 'spawn_agent')` | `:117` | Drops `## Multi-agent delegation` |
-| `sandboxing` + `(contains available_tools 'terminal')` | `:159-160` | Drops `## Terminal sandbox` entirely |
-| `is_linux` / `is_windows` | `:166`, `:173`, `:190` | Selects the platform-correct writable-temp and network story |
-| `model_name` | `:217` | Drops `## Model Information` |
-| `has_skills` | `:223` | Drops `## Agent Skills` and the `<available_skills>` catalog |
-| `(or user_agents_md has_rules)` | `:271` | Drops `## User's Custom Instructions` |
-| `static_context` | `:305` | Drops `## Session Context` |
+| `(gt (len available_tools) 0)` | `:34` | Entire tool-use half is replaced by a no-tools instruction (`:140-146`) |
+| `(contains available_tools 'grep')` | `:64` | Drops the grep/find_path search guidance |
+| `(contains available_tools 'spawn_agent')` | `:118` | Drops `## Multi-agent delegation` |
+| `sandboxing` + `(contains available_tools 'terminal')` | `:160-161` | Drops `## Terminal sandbox` entirely |
+| `is_linux` / `is_windows` | `:167`, `:174`, `:191` | Selects the platform-correct writable-temp and network story |
+| `model_name` | `:218` | Drops `## Model Information` |
+| `has_skills` | `:224` | Drops `## Agent Skills` and the `<available_skills>` catalog |
+| `(or user_agents_md has_rules)` | `:252` | Drops `## User's Custom Instructions` |
+| `static_context` | `:293` | Drops `## Session Context` |
 
 ## 4. Section inventory
 
@@ -125,34 +125,37 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 | Section | Line | Status vs. upstream |
 |---------|------|---------------------|
 | Communication | `:3` | Identical |
-| Formatting Responses | `:13` | **Modified** (§5.3) |
-| Tool Use | `:35` | **Modified** (§5.4) |
-| Task Execution | `:49` | **Modified** (§5.2) |
-| Searching and Reading | `:56` | Identical |
-| Making Code Changes | `:69` | Identical |
-| Ambition vs. Precision | `:82` | Identical |
-| Validation | `:88` | Identical |
-| Fixing Diagnostics | `:96` | Identical |
-| Debugging | `:101` | Identical |
-| Calling External APIs | `:110` | Identical |
-| Multi-agent delegation | `:118` | Identical |
-| Final Message | `:133` | Identical |
-| System Information | `:147` | Identical |
-| Terminal sandbox | `:161` | Identical |
-| Model Information | `:218` | Identical |
-| Agent Skills | `:224` | **Rewritten** (§5.5) |
-| → Multi-skill composition with `skill_bundle` | `:255` | **New section** (§5.6) |
-| User's Custom Instructions | `:272` | Identical |
-| → Personal `AGENTS.md` | `:277` | Identical |
-| → Project Rules | `:287` | Identical |
-| Session Context | `:305` | **New section** (§5.1) |
+| Formatting Responses | `:13` | **Modified** (§5.3, §5.4) |
+| Tool Use | `:35` | **Modified** (structured tool-call bullet, `:39`) |
+| Task Execution | `:50` | **Modified** (§5.2) |
+| Searching and Reading | `:57` | Identical |
+| Making Code Changes | `:70` | Identical |
+| Ambition vs. Precision | `:83` | Identical |
+| Validation | `:89` | Identical |
+| Fixing Diagnostics | `:97` | Identical |
+| Debugging | `:102` | Identical |
+| Calling External APIs | `:111` | Identical |
+| Multi-agent delegation | `:119` | Identical |
+| Final Message | `:134` | Identical |
+| System Information | `:148` | Identical |
+| Terminal sandbox | `:162` | Identical |
+| Model Information | `:219` | Identical |
+| Agent Skills | `:225` | **Modified** — em-dash only (§5.5) |
+| User's Custom Instructions | `:253` | Identical |
+| → Personal `AGENTS.md` | `:258` | Identical |
+| → Project Rules | `:268` | Identical |
+| Tool failure-mode warnings (kask) | `:285` | **New section** (§5.1) |
+| Session Context | `:294` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
 
 `git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs` reports
-**40 insertions, 6 deletions across 5 hunks**. Each is catalogued below with its
-D-seam and its pinning test. Every zed-kask deviation that disables or replaces
-upstream behaviour carries a test, per the repo's divergence rule.
+**25 insertions, 2 deletions across 5 hunks**. Each is catalogued below with its
+D-seam and its pinning test, except the structured tool-call bullet (`:39`, a
+single added line in `## Tool Use` instructing the model to emit tool calls via
+the structured tool-call mechanism rather than narrating parameters as text).
+Every zed-kask deviation that disables or replaces upstream behaviour carries a
+test, per the repo's divergence rule.
 
 ### 5.1 `## Session Context` — new section (D2 / D6)
 
@@ -187,11 +190,11 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 
 ### 5.2 Loop-termination guardrail — new bullet
 
-- **zed-kask** `:54`: *"If a tool loop repeats without measurable progress (the
+- **zed-kask** `:53`: *"If a tool loop repeats without measurable progress (the
   same error recurring or no new state appearing) **three times**, stop, summarize
   what you tried, and ask the user rather than continuing indefinitely."*
 - **Upstream** `## Task Execution` ends at its `:51` with no loop bound.
-- **Why:** upstream pairs a strong autonomy injunction (`:51-52`, "keep going
+- **Why:** upstream pairs a strong autonomy injunction (`:49`, "keep going
   until… completely resolved") with no termination signal. A control loop with no
   bound on corrective action is an unregulated loop; the bound is what makes the
   autonomy safe rather than open-ended[^ashby-1956]. The threshold is a concrete
@@ -204,8 +207,9 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 
 - **zed-kask** `:26` names the exact directives the renderer accepts —
   `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`, `treemap`,
-  `block`, `kanban` — and separately notes that ` ```graph `, ` ```media `,
-  ` ```portfolio `, ` ```scenarios ` fenced blocks are kask viz widgets, not
+  `block`, `kanban` — and separately notes that the ` ```media `, ` ```graph `,
+  ` ```kanban `, ` ```portfolio `, ` ```scenarios `, and
+  ` ```swarm_delegate_results ` fenced blocks are kask viz widgets, not
   mermaid.
 - **Upstream** `:26` lists only its thirteen core types.
 - **Why:** the renderer's allowlist is `crates/markdown/src/mermaid.rs:428-451`,
@@ -222,82 +226,72 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 
 ### 5.4 Media display-hint bullets (D18)
 
-- **zed-kask** `:46-47`: copy the ` ```media ` block from a `display_hint` /
+- **zed-kask** `:48-49`: copy the ` ```media ` block from a `display_hint` /
   `display_hints` tool-result field verbatim into the reply.
 - **Upstream** has neither bullet.
 - **Why load-bearing:** the media block *renderer* lives in
   `hkask_viz_core::block_renderer()` (wired at
-  `crates/agent_ui/src/conversation_view.rs:3516`), so the prompt bullets
+  `crates/agent_ui/src/conversation_view.rs:3539`), so the prompt bullets
   remain live for any tool that emits the ` ```media ` fenced block.
 
 ### 5.5 `## Agent Skills` — body injection (D1)
 
-This is the largest behavioural divergence in the prompt.
+**Reverted 2026-08-20 (commit `24d2bd7fd3`, "revert skill cascade") — the
+prompt-side divergence is gone.** Body injection still happens, but as runtime
+behaviour of the `skill` tool, not as prompt text.
 
-| | Upstream | zed-kask |
-|---|---|---|
-| What `skill` returns | "the full instructions" (`upstream:223`) | the SKILL.md body, injected via `render_skill_envelope` (`:228`) |
-| Model's job | "Follow the instructions in the Skill" (`upstream:244`) | read the injected body and follow it (`:253`) |
-| `SKILL.md` body | read it; `read_file` referenced files (`upstream:245`) | **never** read it via `read_file`; `read_file` refuses (`:250`) |
+- **zed-kask** `:225-250` is byte-identical to upstream except an em-dash
+  (`:227`): it instructs the model to "use the `skill` tool to retrieve the
+  full instructions", "Follow the instructions in the Skill", and to use
+  `read_file` for files a Skill references — exactly upstream's text.
+- **Body injection lives at the tool boundary:** `SkillTool::run`
+  (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from
+  disk via `agent_skills::read_skill_body` (`:256`) and wraps it via
+  `render_skill_envelope` (`:47`, applied at `:261`), returning
+  `SkillToolOutput::Found { rendered }` (`:263`). The model reads the injected
+  body and follows it; the prompt catalog carries only `name`, `description`,
+  and `location`.
 
-Upstream's step 4 instructs precisely the behaviour zed-kask's `:250` prohibits.
-`SKILL.md` in zed-kask is a discovery-only catalog entry; the body is injected via
-`render_skill_envelope` when the `skill` tool is invoked — not read via `read_file`.
+This is the progressive disclosure pattern. Anthropic's Agent Skills use
+*progressive disclosure*: only `name` and `description` are preloaded into the
+system prompt, and the `SKILL.md` body loads only when judged
+relevant[^anthropic-skills]. zed-kask keeps the catalog-in-prompt half and
+injects the body via the `skill` tool when the model invokes it.
 
-**This is the progressive disclosure pattern.** Anthropic's Agent Skills use *progressive
-disclosure*: only `name` and `description` are preloaded into the system prompt, and
-the `SKILL.md` body loads only when judged relevant[^anthropic-skills]. zed-kask
-keeps the catalog-in-prompt half and injects the body via the `skill` tool when the
-model invokes it. Skill execution is upstream-Zed body injection via `SkillTool::run`
-(`crates/agent/src/tools/skill_tool.rs:266`).
+**The former `read_file` gate is a no-op stub.** The earlier prohibition —
+prompt text forbidding `read_file` on `SKILL.md`, backed by
+`refuse_skill_catalog_read` and the `skill.catalog_read_blocked` telemetry key —
+was removed with the cascade revert:
 
-**The cost of being one step ahead** is that the model's trained prior — every
-other major agent system loads skill bodies as prose — actively pushes against the
-invariant. Prompt text alone could not hold it, which is why the prohibition is
-now backed by a runtime gate:
+- `refuse_skill_catalog_read` (`crates/agent/src/tools/read_file_tool.rs:37-45`)
+  now returns `Ok(())` unconditionally; its body carries the revert comment:
+  "zed-kask D1 revert: SKILL.md body injection is restored. `read_file` may
+  read SKILL.md files — the `skill` tool also reads them and injects the body
+  into the conversation. No gate needed."
+- The `skill.catalog_read_blocked` telemetry key no longer exists.
+- No no-body fallback remains: `SkillToolOutput` has only `Found`/`Error`
+  (`skill_tool.rs:94-104`); an unreadable `SKILL.md` body surfaces as
+  `SkillToolOutput::Error` via `read_skill_body` (`:256-259`).
 
-- `refuse_skill_catalog_read` (`crates/agent/src/tools/read_file_tool.rs`) returns
-  a tool error redirecting the model to the `skill` tool, wired into **both** the
-  global-skills fast path and the project-path path.
-- Resource files *inside* a skill directory stay readable, so a cascade result can
-  legitimately point at a template or reference.
-- Blocked attempts log `skill.catalog_read_blocked`. That key is deliberately
-  **not** in the `reg.skill.*` namespace, which is reserved for per-skill feedback
-  spans and CI-enforced by `kask/scripts/check-skill-span-namespace.sh`.
-- Pinned by `test_refuse_skill_catalog_read_redirects_to_skill_tool`,
-  `test_refuse_skill_catalog_read_allows_skill_resources_and_other_files`,
-  `test_read_file_refuses_global_skill_catalog_entry`, and
-  `test_blocked_read_telemetry_key_avoids_reserved_skill_span_namespace`.
+**Pinned by** `test_system_prompt_skills_section_describes_body_retrieval`
+(`templates.rs:546`), which asserts the retrieval phrasing ("use the `skill`
+tool to retrieve the full instructions"), and on the `read_file` side by
+`test_read_file_allows_global_skill_catalog_entry` (`read_file_tool.rs:1848`)
+and `test_refuse_skill_catalog_read_allows_skill_md` (`:589`).
 
-Installing the gate is what made it safe to trim ~400 B of justification prose
-from this section while making the prohibition *stronger* — a statement of fact
-("`read_file` refuses it") rather than a request. The general rule this yielded:
-**when prose is the only enforcement of an invariant, the move is never "delete"
-or "keep" — it is "install the gate, then delete."** This mirrors the finding that
-runtime permission enforcement belongs outside the model's instructions, and that
-vendors are explicit about where such enforcement does *not* apply[^augment-permissions].
+### 5.6 `skill_bundle` composition — removed section (D1)
 
-`:251` retains the no-body fallback for skills with no `SKILL.md` file. It is
-unreachable for shipped skills — 60 SKILL.md directories exist in `.agents/skills/`
-— but still live for a user-authored skill with no body
-(`skill_tool.rs:544`).
-
-**Pinned by** `test_system_prompt_skills_section_describes_body_injection`,
-which asserts on the *invariant* (a prohibition naming `read_file` and
-`SKILL.md`, plus the enforcement claim) rather than one exact sentence, so prose
-can be tightened without a false failure.
-
-### 5.6 `skill_bundle` composition — new section (D1)
-
-- **zed-kask** `:255-268` documents `skill_bundle`: use it once for **three or
-  more peer-level skills**; use `skill` individually for one, two, or a delegation
-  relationship. Output carries `<composition_score>` and `<bundle_manifest>`.
-- **Upstream** has no such tool or section.
+**Removed 2026-08-20 (commit `24d2bd7fd3`, "revert skill cascade").** The
+`## Multi-skill composition with skill_bundle` prompt section and the
+`skill_bundle` tool no longer exist: the template carries no `skill_bundle`
+text, and no `skill_bundle` tool is registered in `crates/agent/src`. Bundle
+composition is now driven by the **skill-bundler** skill (see Part II,
+"Composing Skill Bundles").
 
 ## 6. Divergence-free sections
 
-Fourteen of the sixteen upstream `##` sections are byte-identical, including all
-of `## Terminal sandbox` (`:161-215`) with its platform matrix. This is
+Fourteen of the eighteen upstream `##` sections are byte-identical, including all
+of `## Terminal sandbox` (`:162-216`) with its platform matrix. This is
 deliberate: the fork's leverage is in skill execution and context injection, not
 in re-litigating upstream's coding guidance. Keeping unrelated sections identical
 is what makes `git merge upstream/main` tractable on this file — every additional
@@ -317,7 +311,7 @@ sync:
 
 1. Merge normally. Conflicts will land in the five hunks of §5.
 2. Re-apply each §5 divergence. The pinning tests are the checklist — run
-   `cargo test -p agent --lib templates::` (14 tests) and
+   `cargo test -p agent --lib templates::` (16 tests) and
    `cargo test -p markdown --lib mermaid` (21 tests). A dropped divergence fails a
    named test rather than silently reverting.
 3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,
@@ -334,19 +328,19 @@ it[^popper-1959].
 
 ```sh
 # Structure and size
-wc -c crates/agent/src/templates/system_prompt.hbs          # 23949
+wc -c crates/agent/src/templates/system_prompt.hbs          # 22277
 git show upstream/main:crates/agent/src/templates/system_prompt.hbs | wc -c  # 19815
 
 # The complete divergence
 git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs
 
 # The pinning tests
-cargo test -p agent --lib templates::                        # 14 pass
-cargo test -p agent --lib read_file_tool                     # 27 pass
+cargo test -p agent --lib templates::                        # 16 pass
+cargo test -p agent --lib read_file_tool                     # 25 pass
 cargo test -p markdown --lib mermaid                         # 21 pass
 
-# The skill count (60 SKILL.md directories in .agents/skills/)
-ls .agents/skills/ | wc -l                                    # 60
+# The skill count (65 SKILL.md directories in .agents/skills/)
+ls .agents/skills/ | wc -l                                    # 65
 ```
 
 ## References
@@ -362,9 +356,6 @@ ls .agents/skills/ | wc -l                                    # 60
 
 [^anthropic-skills]: Anthropic. (2025). *Equipping agents for the real world with Agent Skills*. https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills.
     Cited for progressive disclosure (name + description preloaded, body loaded on relevance). zed-kask's body injection is this pattern with the body-loading step replaced rather than removed.
-
-[^augment-permissions]: Augment Code. (2025). *Tool permissions*. https://docs.augmentcode.com/cli/permissions.
-    Cited for runtime tool-permission enforcement applied per tool call, and for the explicit statement that it is "not enforced in the Augment code extension" — the precedent for backing a prompt-stated invariant with a runtime gate rather than prose.
 
 [^hunt-thomas-1999]: Hunt, A., & Thomas, D. (1999). *The pragmatic programmer: From journeyman to master*. Addison-Wesley.
     Cited for the discipline of testing observable behaviour over implementation presence; §5.1's defect was wired code that produced no output, invisible to every existing test.
@@ -383,7 +374,7 @@ ls .agents/skills/ | wc -l                                    # 60
 
 # Skills and Composition
 
-Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
+Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
 
 This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtins inside the editor and are launched as child processes over stdio by zed's `context_server` host (D3); the standalone `kask mcp start <id>` CLI is deleted.
 
@@ -405,7 +396,7 @@ A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kas
 
 When the agent invokes the `skill` tool with a skill name:
 
-1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:172`) receives the skill name from `SkillToolInput`.
+1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) receives the skill name from `SkillToolInput`.
 2. It resolves the skill directory and reads the `SKILL.md` body from disk.
 3. It calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`), which wraps the body in a structured envelope.
 4. The envelope is returned to the agent as the tool result (`SkillToolOutput::Found { rendered }`).
@@ -543,7 +534,7 @@ The agent panel routes this through `SkillTool::run` (D1), which:
 
 ## Invoking Skills
 
-Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:172`), which reads the `SKILL.md` body and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
+Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`), which reads the `SKILL.md` body and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
 
 ### Via the Agent Panel
 
@@ -561,7 +552,7 @@ When a skill is invoked in-process:
 
 1. **Lookup** — The skill name is resolved against the loaded skill catalog (from `agent_skills`). The `SkillTool` reads the `SKILL.md` body from disk.
 2. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`) wraps the body in a structured envelope.
-3. **Return to agent** — The envelope is returned as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:268`).
+3. **Return to agent** — The envelope is returned as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:263`).
 4. **Agent follows instructions** — The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
 5. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
 

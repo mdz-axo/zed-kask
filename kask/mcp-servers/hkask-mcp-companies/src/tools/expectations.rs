@@ -8,7 +8,7 @@
 //! Produces a structured gap report showing where consensus diverges from
 //! market pricing — the core of Mauboussin's Expectations Investing framework.
 use crate::{CompaniesServer, fibo, financial_model, research, types, validate_symbol};
-use hkask_mcp_server::server::execute_tool_semantic;
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = expectations_router, vis = "pub")]
@@ -19,7 +19,7 @@ impl CompaniesServer {
     pub async fn expectations_gap(
         &self,
         Parameters(req): Parameters<types::ExpectationsGapRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "expectations_gap",

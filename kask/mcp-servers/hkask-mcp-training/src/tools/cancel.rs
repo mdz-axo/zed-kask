@@ -1,6 +1,7 @@
 use crate::TrainingServer;
 use crate::tools::error_mapping::map_host_provider_error;
 use crate::types::TrainCancelRequest;
+use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_server::server::execute_tool_semantic;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -12,7 +13,7 @@ impl TrainingServer {
     pub async fn training_cancel(
         &self,
         Parameters(TrainCancelRequest { job_id }): Parameters<TrainCancelRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "training_cancel",

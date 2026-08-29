@@ -13,10 +13,17 @@ mds_categories: [domain, curation]
 **Crate:** `hkask-bridge-ontology` (`kask/crates/hkask-bridge-ontology/`)
 
 The single source of truth for ontology vocabulary and the dual-axis
-domain-selection logic in hKask. No ontology vocabulary lives inside any MCP
-server; every server that does tagging depends on this crate.
+domain-selection logic in hKask. Nine ontologies across ten modules: two
+universal axes, one upper ontology, and six domain supplements
+(`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:4-6`).
+No ontology vocabulary lives inside any MCP server; every server that does
+tagging depends on this crate (user directive 2026-08-05, recorded at
+`hkask_bridge_ontology.rs:36-39`).
 
 ## Modules
+
+Declared at `hkask_bridge_ontology.rs:58-67`: `axis`, `dc_bibo`, `eso`,
+`fibo`, `golem`, `ml_schema`, `omc`, `pko`, `sdmx`, `sumo`.
 
 ### `dc_bibo` — Dublin Core + BIBO + CiTO (state axis, universal)
 
@@ -28,25 +35,19 @@ citation relationships. The universal "what is this" axis.
 | `TITLE` | `dcterms:title` |
 | `CREATOR` | `dcterms:creator` |
 | `DATE` | `dcterms:date` |
-| `DESCRIPTION` | `dcterms:description` |
 | `IDENTIFIER` | `dcterms:identifier` |
-| `SUBJECT` | `dcterms:subject` |
-| `TYPE` | `dcterms:type` |
 | `TEXT` | `dcterms:Text` |
 | `DATASET` | `dcterms:Dataset` |
-| `COLLECTION` | `dcterms:Collection` |
 | `ARTICLE` | `bibo:Article` |
-| `DOCUMENT` | `bibo:Document` |
-| `PREPRINT` | `bibo:Preprint` |
 | `CITES` | `cito:cites` |
 | `SUPPORTS` | `cito:supports` |
 | `REFUTES` | `cito:refutes` |
 
 Full list: `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs`
 
-**Helpers:**
-- `mime_to_dc_type(mime: &str) -> Option<DcConcept>` — MIME → DC type
-- `kind_to_bibo(kind: &str) -> Option<DcConcept>` — informal label → BIBO type
+**Helpers:** `mime_to_dc_type(mime: &str) -> Option<DcConcept>`
+(`dc_bibo.rs:73`), `kind_to_bibo(kind: &str) -> Option<DcConcept>`
+(`dc_bibo.rs:85`).
 
 ### `pko` — Procedural Knowledge Ontology (process axis, universal)
 
@@ -59,23 +60,20 @@ The universal "how did this come to be" axis.
 | `STEP` | `pko:Step` |
 | `STEP_EXECUTION` | `pko:StepExecution` |
 | `PROCEDURE_EXECUTION` | `pko:ProcedureExecution` |
-| `FUNCTION` | `pko:Function` |
 | `STEP_VERIFICATION` | `pko:StepVerification` |
 | `ACTION` | `pko:Action` |
 
 Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
-**Helpers:**
-- `kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept>`
-- `corpus_stage_to_pko_step(stage: &str) -> Option<PkoConcept>`
-- `research_stage_to_pko(stage: &str) -> Option<PkoConcept>`
-- `task_breakdown_field_to_pko(field: &str) -> Option<PkoConcept>`
+**Helpers:** `kanban_status_to_pko_execution` (`pko.rs:102`),
+`corpus_stage_to_pko_step` (`pko.rs:114`), `research_stage_to_pko`
+(`pko.rs:128`), `task_breakdown_field_to_pko` (`pko.rs:150`).
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 
-Canonical URI constants for financial and business analysis. This module is
-the union of the two former non-overlapping FIBO subsets (companies-server
-financial ratios + corpus-server competitive-advantage concepts).
+Canonical URI constants for financial and business analysis. The union of
+the two former non-overlapping FIBO subsets (companies-server financial
+ratios + corpus-server competitive-advantage concepts).
 
 | Constant | URI |
 |----------|-----|
@@ -85,7 +83,6 @@ financial ratios + corpus-server competitive-advantage concepts).
 | `DISCOUNT_RATE` | `fibo-fbc-fct-ra:DiscountRate` |
 | `FREE_CASH_FLOW` | `fibo-fbc-fct-ra:FreeCashFlow` |
 | `PORTFOLIO` | `fibo-sec-sec-ast:Portfolio` |
-| `WEIGHTED_AVERAGE` | `fibo-ind-ind-ind:WeightedAverage` |
 | `COMPETITIVE_ADVANTAGE` | `fibo:hasCompetitiveAdvantage` |
 | `ECONOMIC_PROFIT` | `fibo:economicProfit` |
 
@@ -93,34 +90,26 @@ Full list: `kask/crates/hkask-bridge-ontology/src/fibo.rs`
 
 ### `eso` — Epistemic Science Ontology (scientific domain)
 
-Canonical predicate URIs for epistemic and scientific reasoning.
-
-| Constant | URI |
-|----------|-----|
-| `HAS_HYPOTHESIS` | `eso:hasHypothesis` |
-| `HAS_EVIDENCE` | `eso:hasEvidence` |
-| `FALSIFIED_BY` | `eso:falsifiedBy` |
-| `CORROBORATED_BY` | `eso:corroboratedBy` |
-| `HAS_UNCERTAINTY` | `eso:hasUncertainty` |
+Canonical predicate URIs for epistemic and scientific reasoning:
+`HAS_HYPOTHESIS` (`eso:hasHypothesis`), `HAS_EVIDENCE` (`eso:hasEvidence`),
+`FALSIFIED_BY` (`eso:falsifiedBy`), `CORROBORATED_BY` (`eso:corroboratedBy`),
+`HAS_UNCERTAINTY` (`eso:hasUncertainty`).
 
 Full list: `kask/crates/hkask-bridge-ontology/src/eso.rs`
 
 ### `golem` — GOLEM narrative ontology (narrative domain)
 
-Canonical predicate URIs for narrative concepts.
-
-| Constant | URI |
-|----------|-----|
-| `CHARACTER` | `golem:G1_Character` |
-| `EVENT` | `golem:G1_Event` |
-| `HAS_THEME` | `golem:hasTheme` |
-| `METAPHOR_FOR` | `golem:metaphorFor` |
+Canonical predicate URIs for narrative concepts: `CHARACTER`
+(`golem:G1_Character`), `EVENT` (`golem:G1_Event`), `HAS_THEME`
+(`golem:hasTheme`), `METAPHOR_FOR` (`golem:metaphorFor`).
 
 Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 
-### `mlschema` — ML-Schema (ML training domain)
+### `ml_schema` — ML-Schema (ML training domain)
 
-Canonical concept URIs for machine-learning experiments.
+Canonical concept URIs for machine-learning experiments. The module is
+`ml_schema` (snake_case; the crate re-exports it and servers alias it as
+`mlschema`, e.g. `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:315`).
 
 | Constant | URI |
 |----------|-----|
@@ -128,35 +117,59 @@ Canonical concept URIs for machine-learning experiments.
 | `RUN` | `mls:Run` |
 | `DATA` | `mls:Data` |
 | `HYPER_PARAMETER` | `mls:HyperParameter` |
+| `HYPER_PARAMETER_SETTING` | `mls:HyperParameterSetting` |
 | `EVALUATION` | `mls:Evaluation` |
+| `EVALUATION_MEASURE` | `mls:EvaluationMeasure` |
+| `WAS_DERIVED_FROM` | `mls:wasDerivedFrom` |
+| `IMPLEMENTED_BY` | `mls:implementedBy` |
+| `HAS_DATA` | `mls:hasData` |
 
-Full list: `kask/crates/hkask-bridge-ontology/src/mlschema.rs`
+Full list: `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21-48`
 
-### `five_w_one_h` — 5W1H interrogative ontology (universal core)
+### `sdmx` — SDMX (statistical data domain)
 
-The six interrogative pronouns (Who/What/When/Where/Why/How) as a first-class
-ontology vocabulary. The universal ground — every artifact answers at least
-one interrogative. Maps to the state axis (Who/What/When/Where → Dublin Core)
-and the process axis (Why/How → PKO).
+Statistical Data and Metadata eXchange — statistical data from FRED,
+DBnomics, World Bank, IMF, OECD, ECB, INSEE
+(`hkask_bridge_ontology.rs:29-30`).
 
-| Concept | URI |
-|--------|-----|
-| `WHO` | `5w1h:Who` |
-| `WHAT` | `5w1h:What` |
-| `WHEN` | `5w1h:When` |
-| `WHERE` | `5w1h:Where` |
-| `WHY` | `5w1h:Why` |
-| `HOW` | `5w1h:How` |
+| Constant | URI |
+|----------|-----|
+| `DATASET` | `sdmx:DataSet` |
+| `DATA_FLOW` | `sdmx:DataFlow` |
+| `DATA_STRUCTURE` | `sdmx:DataStructureDefinition` |
+| `TIME_SERIES` | `sdmx:TimeSeries` |
+| `OBSERVATION` | `sdmx:Observation` |
+| `CATEGORY` | `sdmx:Category` |
+| `DATA_PROVIDER` | `sdmx:DataProvider` |
 
-Full list: `kask/crates/hkask-bridge-ontology/src/five_w_one_h.rs`
+Full list: `kask/crates/hkask-bridge-ontology/src/sdmx.rs:23-40`
+
+### `omc` — MovieLabs OMC (media production domain)
+
+Media production workflows (capture → post → distribution)
+(`hkask_bridge_ontology.rs:31-32`).
+
+| Constant | URI |
+|----------|-----|
+| `CREATIVE_WORK` | `omc:CreativeWork` |
+| `SCENE` | `omc:Scene` |
+| `SHOT` | `omc:Shot` |
+| `SEQUENCE` | `omc:Sequence` |
+| `PARTICIPANT` | `omc:Participant` |
+| `MEDIA_SOURCE` | `omc:MediaSource` |
+| `ASSET` | `omc:Asset` |
+| `TASK` | `omc:Task` |
+| `VERSION` | `omc:Version` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs:29-53`
 
 ### `sumo` — SUMO upper ontology (universal fallback)
 
 The Suggested Upper Merged Ontology — the general-purpose fallback for
 domains that don't map to a specific supplement. Provides foundational
-categories (Entity, Process, Object, Agent, Relation) that all domain
-supplements specialize. Unknown domains route to SUMO rather than the bare
-5W1H core, so they get formal categorization.
+categories that all domain supplements specialize. Unknown domains route to
+SUMO rather than the bare 5W1H core, so they get formal categorization
+(`hkask_bridge_ontology.rs:19-24`).
 
 | Concept | URI |
 |--------|-----|
@@ -165,95 +178,104 @@ supplements specialize. Unknown domains route to SUMO rather than the bare
 | `PROCESS` | `sumo:Process` |
 | `AGENT` | `sumo:Agent` |
 | `RELATION` | `sumo:Relation` |
-| `PROPOSITION` | `sumo:Proposition` |
 
-Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs`
+Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs:32-48`
+
+> **Deleted surface:** there is no `five_w_one_h` module. The 5W1H
+> interrogative survives only as the `Core` anchor tier (label
+> `"5w1h_core"`, `kask/crates/hkask-bridge-ontology/src/axis.rs:192`) — the
+> ground for artifacts with an empty domain hint.
 
 ### `axis` — Domain-selection logic
 
 The core of the system: maps a domain hint to its axis anchoring.
 
-**Types:**
+**Types** (`kask/crates/hkask-bridge-ontology/src/axis.rs`):
 
 | Type | Description |
 |------|-------------|
-| `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework |
-| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Sdmx` — which domain supplement (SUMO is the universal fallback) |
-| `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier ontology tier |
+| `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework (`axis.rs:33`) |
+| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `MlSchema`, `Sdmx`, `Sumo` — which domain supplement (`axis.rs:47-63`) |
+| `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier anchoring (`axis.rs:126-138`) |
 
 **Functions:**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → SUMO (universal fallback); empty → Core (5W1H ground). |
-| `OntologyNamespace::dc_concept` | `(&self) -> DcConcept` | Map namespace to its canonical DC concept. |
-| `OntologyNamespace::pko_concept` | `(&self) -> PkoConcept` | Map namespace to its canonical PKO concept. |
-| `OntologyAnchor::confidence_modifier` | `(&self) -> f64` | Confidence modifier for saliency weighting. |
-| `OntologyAnchor::density_factor` | `(&self) -> f64` | Information density expectation. |
-| `OntologyAnchor::axis` | `(&self) -> Option<OntologyAxis>` | Which axis this anchor belongs to. |
-| `OntologyAnchor::tier_label` | `(&self) -> &str` | Human-readable tier label. |
+| `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` (`axis.rs:210`) | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → SUMO; empty → Core. |
+| `OntologyNamespace::dc_concept` | `(&self) -> DcConcept` (`axis.rs:67`) | Map namespace to its canonical DC concept. |
+| `OntologyNamespace::pko_concept` | `(&self) -> PkoConcept` (`axis.rs:79`) | Map namespace to its canonical PKO concept. |
+| `OntologyAnchor::confidence_modifier` | `(&self) -> f64` (`axis.rs:149`) | Confidence modifier for saliency weighting. |
+| `OntologyAnchor::density_factor` | `(&self) -> f64` (`axis.rs:162`) | Information density expectation. |
+| `OntologyAnchor::axis` | `(&self) -> Option<OntologyAxis>` (`axis.rs:181`) | Which axis this anchor belongs to. |
+| `OntologyAnchor::tier_label` | `(&self) -> &str` (`axis.rs:190`) | Human-readable tier label. |
+
+Keyword matching is token-aware (`axis.rs:212-221`): the hint must equal the
+keyword, start with it, or contain it preceded by `_` or space — so
+`company_profile` matches `company` but `logistics` does not match `log`.
 
 ## Domain → ontology mapping
 
+Verified against `select_ontology_anchor` (`axis.rs:210-347`):
+
 | Domain hint keywords | Namespace | State axis | Process axis |
 |---------------------|-----------|------------|--------------|
-| `finance`, `company`, `stock`, `portfolio`, `dcf`, `prediction-markets` | FIBO | DC | FIBO |
+| `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` | SDMX | DC | SDMX |
+| `finance`, `company`, `stock`, `portfolio`, `dcf`, `screener`, `forecast`, `scenario`, `prediction-markets` | FIBO | DC | FIBO |
 | `science`, `research`, `hypothesis`, `evidence` | ESO | DC | ESO |
-| `narrative`, `corpus`, `persona`, `author` | GOLEM | DC | GOLEM |
-| `training`, `ml`, `adapter`, `lora` | ML-Schema | DC | ML-Schema |
-| `memory`, `cognitive`, `episodic` | SUMO | DC | SUMO |
-| `kanban`, `task`, `spec`, `skill`, `curator` | (PKO) | DC | PKO |
+| `narrative`, `literature`, `persona`, `author`, `corpus` | GOLEM | DC | GOLEM |
+| `training`, `ml`, `adapter`, `sweep`, `lora` | ML-Schema | DC | ML-Schema |
+| `kanban`, `board`, `task`, `spec`, `skill`, `docproc`, `curator`, `kata`, `condenser` | (PKO) | DC | PKO |
 | `file`, `web`, `registry`, `wallet` | (DC+BIBO) | DC | DC+BIBO |
-| (unknown, non-empty) | SUMO | DC | SUMO |
 | (empty) | (Core) | DC | PKO |
+| (unknown, non-empty) | SUMO | DC | SUMO |
 
 ## Unified ontology tag shape
 
-Every MCP server emits a single top-level `"ontology"` key in each tool output
-JSON, carrying a concept URI string (e.g. `"pko:Step"`,
-`"fibo:Portfolio"`, `"dcterms:Dataset"`). Every widget parses
-an `ontology: Option<String>` field on its block body struct. This is the
-unified contract — one key name, one value shape, across all servers and
-widgets.
+MCP servers emit a single top-level `"ontology"` key in tool output JSON,
+carrying a concept URI string (e.g. `"pko:Step"`, `"fibo:Portfolio"`,
+`"omc:CreativeWork"`). Verified emitters:
 
-| Server | JSON key | Value example |
-|---|---|---|
-| companies | `"ontology"` | `"fibo:Portfolio"` |
-| scenarios | `"ontology"` | `"pko:Procedure"` or `"dcterms:Dataset"` |
-| kata-kanban | `"ontology"` | `"pko:Step"` |
+| Server | JSON key | Value example | Evidence |
+|---|---|---|---|
+| companies | `"ontology"` | `"fibo:Portfolio"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:149-161` |
+| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:599` |
+| media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
+| portfolio | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:54` |
+| scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |
+| training | span tag via `ToolSpanGuard::with_ontology` | `mls:Data`/`mls:Run`/`mls:Model` | `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:314-326` |
 
 The companies server also emits a `"fibo": {...}` map for per-field display
-metadata — that's a separate concern (display vocabulary, not dispatch
-metadata). The `"ontology"` field is the dispatch concept; the `"fibo"` map
-is the per-field vocabulary.
+metadata — a separate concern (display vocabulary, not dispatch metadata).
 
-### The "I" pattern (ontology-bounded affordances)
+### OMC-bounded affordances (`explain_tool_for`)
 
-The crate root exports `explain_tool_for(ontology: &str) -> &'static str` —
-the unified dispatch function that maps an ontology concept to the explain
-tool a widget should invoke. Widgets call this single function instead of
-reimplementing their own ontology-specific dispatch.
+The crate root of `omc` exports `explain_tool_for(omc: &str) -> &'static str`
+(`kask/crates/hkask-bridge-ontology/src/omc.rs:76-82`) — the unified dispatch
+function mapping an OMC concept to the explain tool a media widget should
+invoke:
 
-| Concept prefix | Explain tool |
+| Concept | Explain tool |
 |---|---|
-| `fibo:*` | `research_search` |
-| `pko:*` | `kanban_task_list` |
-| `dcterms:*` / `dublin-core` | `research_search` |
-| empty / unknown | `research_search` (general fallback) |
+| `omc:Scene` / `omc:Asset` | `gallery_analyze` |
+| others / empty / unknown | `describe_image` (general vision fallback) |
 
-The portfolio widget's "Explain" uses provenance-based dispatch
-(server → tool) which is already context-appropriate; the ontology tag is
-in the compose-back body for agent correlation.
+This is OMC-specific dispatch. There is no crate-level fibo/pko/dcterms →
+explain-tool mapping; the portfolio widget's "Explain" uses provenance-based
+dispatch (server → tool), with the ontology tag carried in the compose-back
+body for agent correlation.
 
 ## Dependencies
 
-The crate has no dependencies beyond `serde` and `schemars` (for the
-`OntologyAnchor`/`OntologyAxis`/`OntologyNamespace` derives). It is pure
-vocabulary + selection logic — no reasoners, no OWL parsing, no graph
-databases.
+The crate is pure vocabulary + selection logic — no reasoners, no OWL
+parsing, no graph databases (`hkask_bridge_ontology.rs:41-43` describes the
+orthogonality invariant).
 
 ## See also
 
-- [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge architecture and domain-selection flow (consolidated; formerly `architecture-ontology-bridge.md`).
-- [Using the Ontology Bridge](../diataxis/hkask-bridge-ontology/how-to.md) — a how-to guide for servers.
-- [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the dual-axis framework principles.
+- [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge
+  architecture and domain-selection flow (consolidated 2026-08-28).
+- [Using the Ontology Bridge](../diataxis/hkask-bridge-ontology/how-to.md) —
+  a how-to guide for servers.
+- [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the
+  dual-axis framework principles.

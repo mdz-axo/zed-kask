@@ -48,7 +48,7 @@ impl CorpusServer {
             bloom_levels,
             model,
         }): Parameters<GenerateQaRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_generate_qa", Self::ontology_anchor("corpus_generate_qa"), async {
             let is_cross_ref = _texts.as_ref().is_some_and(|t| !t.is_empty());
             let single_text = _text.unwrap_or_default();
@@ -129,7 +129,7 @@ impl CorpusServer {
             concurrency,
             model,
         }): Parameters<GenerateQaBatchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_generate_qa_batch",
@@ -162,7 +162,7 @@ impl CorpusServer {
             owner,
             concurrency,
         }): Parameters<ExtractAssertionsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_extract_assertions",
@@ -197,7 +197,7 @@ impl CorpusServer {
             model,
             batch_size,
         }): Parameters<EmbedRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_embed",

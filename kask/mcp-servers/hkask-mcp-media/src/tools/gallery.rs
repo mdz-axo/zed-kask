@@ -16,7 +16,7 @@ impl MediaServer {
             recursive,
             auto_analyze,
         }): Parameters<GalleryOrganizeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_organize",
@@ -158,7 +158,7 @@ impl MediaServer {
     }
 
     #[tool(description = "Get gallery status: path, mode, image count, and total size.")]
-    pub async fn gallery_status(&self) -> String {
+    pub async fn gallery_status(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_status",
@@ -191,7 +191,7 @@ impl MediaServer {
             tag_types,
             min_similarity,
         }): Parameters<GallerySearchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_search",
@@ -294,7 +294,7 @@ impl MediaServer {
             limit,
             min_similarity,
         }): Parameters<GalleryFindSimilarRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "gallery_find_similar", Self::ontology_anchor("gallery_find_similar"), async {
             let query_label = text
                 .clone()
@@ -443,7 +443,7 @@ impl MediaServer {
             include_faces,
             max_images,
         }): Parameters<GalleryRefreshRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_refresh",
@@ -565,7 +565,7 @@ impl MediaServer {
     pub async fn describe_image(
         &self,
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "describe_image",
@@ -607,7 +607,7 @@ impl MediaServer {
             pipelines,
             max_images,
         }): Parameters<GalleryAnalyzeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_analyze",
@@ -685,7 +685,7 @@ impl MediaServer {
             name,
             face_id,
         }): Parameters<GalleryNameFaceRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_name_face",
@@ -761,7 +761,7 @@ impl MediaServer {
     pub async fn face_validate(
         &self,
         Parameters(FaceValidateRequest { image_index }): Parameters<FaceValidateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "face_validate",
@@ -799,7 +799,7 @@ impl MediaServer {
             last_name,
             force,
         }): Parameters<FaceRegisterRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "face_register",
@@ -842,7 +842,7 @@ impl MediaServer {
     pub async fn face_scan_folder(
         &self,
         Parameters(FaceScanFolderRequest { folder_path, force }): Parameters<FaceScanFolderRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "face_scan_folder",
@@ -877,7 +877,7 @@ impl MediaServer {
     pub async fn face_list(
         &self,
         Parameters(FaceListRequest { status }): Parameters<FaceListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "face_list",
@@ -903,7 +903,7 @@ impl MediaServer {
     pub async fn face_remove(
         &self,
         Parameters(FaceRemoveRequest { face_id }): Parameters<FaceRemoveRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "face_remove",
@@ -932,7 +932,7 @@ impl MediaServer {
             per_period,
             search_terms,
         }): Parameters<GalleryTimelineRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_timeline",
@@ -1036,7 +1036,7 @@ impl MediaServer {
             workflow_id,
             parent_image_index,
         }): Parameters<GalleryRecordGenerationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_record_generation",
@@ -1079,7 +1079,7 @@ impl MediaServer {
     pub async fn gallery_lineage(
         &self,
         Parameters(GalleryLineageRequest { image_index }): Parameters<GalleryLineageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_lineage",
@@ -1108,7 +1108,7 @@ impl MediaServer {
     pub async fn gallery_asset_detail(
         &self,
         Parameters(GalleryAssetDetailRequest { image_index }): Parameters<GalleryAssetDetailRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_asset_detail",
@@ -1148,7 +1148,7 @@ impl MediaServer {
     pub async fn gallery_reproduce(
         &self,
         Parameters(GalleryReproduceRequest { image_index }): Parameters<GalleryReproduceRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "gallery_reproduce", Self::ontology_anchor("gallery_reproduce"), async {
             let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
             let lineage = self
@@ -1208,7 +1208,7 @@ impl MediaServer {
             image_index,
             delete_file,
         }): Parameters<GalleryDeleteImageRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_delete_image",
@@ -1256,7 +1256,7 @@ impl MediaServer {
     pub async fn gallery_add_video(
         &self,
         Parameters(GalleryAddVideoRequest { path, width, height }): Parameters<GalleryAddVideoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_add_video",
@@ -1315,7 +1315,7 @@ impl MediaServer {
     pub async fn gallery_add_audio(
         &self,
         Parameters(GalleryAddAudioRequest { path }): Parameters<GalleryAddAudioRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_add_audio",
@@ -1375,7 +1375,7 @@ impl MediaServer {
     pub async fn gallery_create_album(
         &self,
         Parameters(GalleryCreateAlbumRequest { name, parent_id }): Parameters<GalleryCreateAlbumRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_create_album",
@@ -1398,7 +1398,7 @@ impl MediaServer {
 
     /// List all albums in the current gallery.
     #[tool(description = "List all albums in the current gallery.")]
-    pub async fn gallery_list_albums(&self) -> String {
+    pub async fn gallery_list_albums(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_list_albums",
@@ -1421,7 +1421,7 @@ impl MediaServer {
     pub async fn gallery_move_to_album(
         &self,
         Parameters(GalleryMoveToAlbumRequest { image_index, album_id }): Parameters<GalleryMoveToAlbumRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_move_to_album",
@@ -1448,7 +1448,7 @@ impl MediaServer {
     pub async fn gallery_remove_from_album(
         &self,
         Parameters(GalleryRemoveFromAlbumRequest { image_index, album_id }): Parameters<GalleryRemoveFromAlbumRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_remove_from_album",
@@ -1476,7 +1476,7 @@ impl MediaServer {
     pub async fn gallery_delete_album(
         &self,
         Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_delete_album",
@@ -1499,7 +1499,7 @@ impl MediaServer {
     pub async fn gallery_list_album_members(
         &self,
         Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<GalleryListAlbumMembersRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "gallery_list_album_members",

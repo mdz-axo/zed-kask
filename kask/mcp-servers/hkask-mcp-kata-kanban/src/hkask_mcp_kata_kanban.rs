@@ -246,7 +246,7 @@ impl KanbanServer {
             columns,
             idempotency_key,
         }): Parameters<BoardCreateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_board_create",
@@ -309,7 +309,7 @@ impl KanbanServer {
     pub async fn kanban_board_list(
         &self,
         Parameters(BoardListRequest {}): Parameters<BoardListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_board_list",
@@ -359,7 +359,7 @@ impl KanbanServer {
     pub async fn kanban_board_delete(
         &self,
         Parameters(BoardDeleteRequest { board_id }): Parameters<BoardDeleteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_board_delete",
@@ -401,7 +401,7 @@ impl KanbanServer {
             idempotency_key,
             rjoule_budget,
         }): Parameters<TaskCreateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_create",
@@ -455,7 +455,7 @@ impl KanbanServer {
             priority,
             labels,
         }): Parameters<TaskUpdateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_update",
@@ -509,7 +509,7 @@ impl KanbanServer {
     pub async fn kanban_task_list(
         &self,
         Parameters(TaskListRequest { board_id, status }): Parameters<TaskListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_list",
@@ -563,7 +563,7 @@ impl KanbanServer {
             task_id,
             target_status,
         }): Parameters<TaskMoveRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         use pko::kanban_type_to_pko;
 
         execute_tool_semantic(
@@ -608,7 +608,7 @@ impl KanbanServer {
     pub async fn kanban_task_assign(
         &self,
         Parameters(TaskAssignRequest { task_id }): Parameters<TaskAssignRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_assign",
@@ -635,7 +635,7 @@ impl KanbanServer {
     pub async fn kanban_task_delete(
         &self,
         Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_delete",
@@ -659,7 +659,7 @@ impl KanbanServer {
     pub async fn kanban_task_unassign(
         &self,
         Parameters(TaskUnassignRequest { task_id }): Parameters<TaskUnassignRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_unassign",
@@ -685,7 +685,7 @@ impl KanbanServer {
     pub async fn kanban_task_verify(
         &self,
         Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_verify",
@@ -715,7 +715,7 @@ impl KanbanServer {
     pub async fn kanban_task_add_rjoules(
         &self,
         Parameters(TaskAddRjoulesRequest { task_id, amount }): Parameters<TaskAddRjoulesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_add_rjoules",
@@ -746,7 +746,7 @@ impl KanbanServer {
     pub async fn kanban_task_comment(
         &self,
         Parameters(TaskCommentRequest { task_id, body }): Parameters<TaskCommentRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_comment",
@@ -784,7 +784,7 @@ impl KanbanServer {
             task_id,
             since_index,
         }): Parameters<TaskCommentsSinceRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_comments_since",
@@ -825,7 +825,7 @@ impl KanbanServer {
         Parameters(TaskAddDeliverableRequest { task_id, path }): Parameters<
             TaskAddDeliverableRequest,
         >,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_add_deliverable",
@@ -859,7 +859,7 @@ impl KanbanServer {
             task_id,
             rjoule_budget,
         }): Parameters<TaskReopenRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_reopen",
@@ -899,7 +899,7 @@ impl KanbanServer {
     pub async fn kanban_task_kata_coaching(
         &self,
         Parameters(TaskKataCoachingRequest { task_id }): Parameters<TaskKataCoachingRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_kata_coaching",
@@ -925,7 +925,7 @@ impl KanbanServer {
     pub async fn kanban_task_kata_improvement(
         &self,
         Parameters(TaskKataImprovementRequest { task_id }): Parameters<TaskKataImprovementRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_kata_improvement",
@@ -954,7 +954,7 @@ impl KanbanServer {
             task_id,
             sub_problem,
         }): Parameters<TaskKataPracticeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_kata_practice",
@@ -998,7 +998,7 @@ impl KanbanServer {
             rjoule_budget,
             swarm_id,
         }): Parameters<TaskSpawnRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_spawn",
@@ -1323,7 +1323,7 @@ impl KanbanServer {
     pub async fn kanban_task_delegate_result(
         &self,
         Parameters(TaskDelegateResultRequest { task_id }): Parameters<TaskDelegateResultRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_task_delegate_result",
@@ -1372,7 +1372,7 @@ impl KanbanServer {
             board_id,
             proposals,
         }): Parameters<ContractProposeExpect>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "contract_propose_expect", kanban_type_to_pko("contract_propose_expect"), async {
             let bid = parse_board_id(&board_id)?;
 
@@ -1436,7 +1436,7 @@ impl KanbanServer {
     pub async fn kanban_board_export(
         &self,
         Parameters(BoardExportRequest { board_id }): Parameters<BoardExportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_board_export",
@@ -1494,7 +1494,7 @@ impl KanbanServer {
             board_name,
             idempotency_key,
         }): Parameters<BoardImportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "kanban_board_import",

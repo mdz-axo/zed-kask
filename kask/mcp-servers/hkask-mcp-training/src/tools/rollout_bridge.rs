@@ -48,7 +48,7 @@ impl TrainingServer {
     pub async fn training_bridge_rollouts(
         &self,
         parameters: Parameters<BridgeRolloutsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "training_bridge_rollouts",

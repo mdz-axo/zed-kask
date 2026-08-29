@@ -168,7 +168,7 @@ impl PortfolioServer {
     pub async fn portfolio_create(
         &self,
         Parameters(PortfolioCreateRequest { name, asset_type }): Parameters<PortfolioCreateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "portfolio_create", ontology_anchor("portfolio_create"), async {
             let response_name = name.clone();
             run_store(self.store.clone(), move |store| store.create(&name, asset_type)).await?;
@@ -181,7 +181,7 @@ impl PortfolioServer {
     pub async fn portfolio_delete(
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_delete",
@@ -196,7 +196,7 @@ impl PortfolioServer {
     }
 
     #[tool(description = "List all portfolios in this owner's store.")]
-    pub async fn portfolio_list(&self) -> String {
+    pub async fn portfolio_list(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_list",
@@ -218,7 +218,7 @@ impl PortfolioServer {
             portfolio,
             transaction,
         }): Parameters<LedgerApplyRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "ledger_apply", ontology_anchor("ledger_apply"), async {
             let tx_id = transaction.id.clone();
             let response_portfolio = portfolio.clone();
@@ -244,7 +244,7 @@ impl PortfolioServer {
             from_date,
             to_date,
         }): Parameters<LedgerReadRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "ledger_read", ontology_anchor("ledger_read"), async {
             let txs = run_store(self.store.clone(), move |store| {
                 store.ledger(
@@ -272,7 +272,7 @@ impl PortfolioServer {
         Parameters(PortfolioSnapshotRequest { portfolio, date }): Parameters<
             PortfolioSnapshotRequest,
         >,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_snapshot",
@@ -312,7 +312,7 @@ impl PortfolioServer {
             from,
             to,
         }): Parameters<PortfolioReturnsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_returns",
@@ -375,7 +375,7 @@ impl PortfolioServer {
             format,
             data,
         }): Parameters<LedgerImportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "ledger_import",
@@ -396,7 +396,7 @@ impl PortfolioServer {
     pub async fn ledger_export(
         &self,
         Parameters(LedgerExportRequest { portfolio, format }): Parameters<LedgerExportRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "ledger_export",
@@ -426,7 +426,7 @@ impl PortfolioServer {
             close,
             source,
         }): Parameters<PriceSeedRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_seed_price",
@@ -461,7 +461,7 @@ impl PortfolioServer {
             quantity,
             price,
         }): Parameters<PortfolioRollRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_roll",
@@ -509,7 +509,7 @@ impl PortfolioServer {
     pub async fn portfolio_rebuild_views(
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_rebuild_views",
@@ -533,7 +533,7 @@ impl PortfolioServer {
             from,
             to,
         }): Parameters<PortfolioReturnsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_materialize_returns",
@@ -570,7 +570,7 @@ impl PortfolioServer {
             from,
             to,
         }): Parameters<PortfolioReturnsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_daily_returns",

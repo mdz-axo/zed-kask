@@ -1,7 +1,7 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-08-24
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 ## 1. Purpose
 
-This standard governs every markdown document under `docs/`. It
+This standard governs every markdown document under `kask/docs/` (the repo-root `docs/` is upstream Zed's book and is out of scope). It
 operationalises the MDS taxonomy[^mds] and enforces the
 non-negotiable biases of this project:
 
@@ -53,7 +53,7 @@ The metadata, diagram, citation, and writing excellence conventions below implem
 Every document directly under `docs/**` (excluding `archive/`) MUST
 begin with YAML frontmatter delimited by `---` containing the following
 six fields. The header format shown below uses the 5-category MDS taxonomy
-per [`../architecture/MDS.md`](../architecture/core/MDS.md) §1:
+per [`../architecture/MDS.md`](../architecture/core/MDS.md) §2 (Five Categories):
 
 ```yaml
 ---
@@ -75,7 +75,7 @@ Conventions:
 | Last-Updated | ISO 8601 date on every content-bearing edit[^iso8601]. |
 | Status | Exactly one of the four values. `Deprecated` and `Superseded` documents are removed from the active tree (`git rm`) at the next review; git history is the canonical archive of record. A local `docs/archive/` snapshot may be kept on a maintainer's disk for personal reference but is gitignored. |
 | Audience | Named roles; avoid "everyone." |
-| MDS Categories | One or more of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §1: `domain`, `composition`, `trust`, `lifecycle`, `curation`. See [`MDS.md`](../architecture/core/MDS.md) §9.1 for category → directory mapping. Documents that spanned the deprecated 9-category DDMVSS taxonomy have been migrated; the old categories map as: `capability`→`trust`, `interface`→`composition`, `observability`→`lifecycle`, `persistence`→`lifecycle`. |
+| MDS Categories | One or more of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §2: `domain`, `composition`, `trust`, `lifecycle`, `curation`. See [`MDS.md`](../architecture/core/MDS.md) §9.1 for category → directory mapping. Documents that spanned the deprecated 9-category DDMVSS taxonomy have been migrated; the old categories map as: `capability`→`trust`, `interface`→`composition`, `observability`→`lifecycle`, `persistence`→`lifecycle`. |
 | Domain | Optional for cross-cutting documents; mandatory for domain-specific documents. |
 
 ## 3. Lifecycle
@@ -87,6 +87,7 @@ stateDiagram-v2
     Active --> Active: content edits (PATCH/MINOR)
     Active --> Deprecated: replacement written
     Active --> Superseded: wholesale rewrite at new path
+    Active --> Removed: condensation (no formal role; folded or deleted, successor recorded in README ledger)
     Deprecated --> Removed: git rm in follow-up commit
     Superseded --> Removed: git rm; replacement carries Replaces: header
     Removed --> [*]
@@ -99,12 +100,14 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
-verified_date: 2026-07-29
-verified_against: docs/architecture/DOCUMENTATION_STANDARDS.md; .gitignore; docs/research/archive/
+verified_date: 2026-08-28
+verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md; kask/docs/README.md (Document lifecycle ledger, 2026-08-28 condensation); .gitignore
 status: VERIFIED
 -->
 
 **Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. No active-tree document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves this purpose permanently.
+
+**Condensation requirement (2026-08-28):** The docs tree is capped at **fewer than 70 documents**. A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
 
 Git history is the project's Architecture Repository[^archrepo]. Retired
 documents are recoverable through `git log --all --diff-filter=D -- <path>`
@@ -212,10 +215,7 @@ Unacceptable:
 
 ### 5.3 Enforcement
 
-The Portal README ([`../README.md`](../README.md)) lists the minimum
-citation density per directory. Reviewers check by running
-`grep -c '\[\^' <document>.md` and confirming ≥ 1 citation per `##`-level
-section.
+Reviewers check by running `grep -c '\[\^' <document>.md` and confirming ≥ 1 citation per `##`-level section (scope per §5.1).
 
 ## 6. Document location policy
 
@@ -235,19 +235,16 @@ This ensures:
 
 ### 6.2 What belongs where
 
-For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §2. The table below is a simplified content-type view:
+For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the post-condensation tree (2026-08-28 — `plans/`, `explanation/`, `status/`, `qa/`, and `research/` were deleted; their durable content was folded into the surviving directories and each deletion is recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger):
 
 | Content | Location |
 |---------|----------|
-| Architecture, design docs, ADRs | `docs/architecture/` |
-| Reference documentation | `docs/reference/` |
-| Explanation documentation | `docs/explanation/` |
-| Plans, roadmaps | `docs/plans/` |
-| Standards, policies | `docs/architecture/` |
-| Status reports, inventories | `docs/status/` |
-| QA strategy, contracts | `docs/qa/` |
-| Per-crate Diataxis docs | `docs/diataxis/` |
-| Research reports | `docs/research/` |
+| Architecture, design docs, standards | `kask/docs/architecture/` |
+| Foundational charters and taxonomy | `kask/docs/architecture/core/` |
+| Reference documentation (MCP servers, skills, settings) | `kask/docs/reference/` |
+| Per-crate Diataxis docs | `kask/docs/diataxis/` |
+| Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
+| Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |
 
 ### 6.3 Enforcement
@@ -263,7 +260,7 @@ Naming conventions below align with POSIX portable filename rules[^posix-filenam
 
 | Artifact | Naming rule |
 |----------|-------------|
-| Directory | Lowercase, singular or plural as semantically natural (`architecture/`, `plans/`, `archive/`) |
+| Directory | Lowercase, singular or plural as semantically natural (`architecture/`, `reference/`, `archive/`) |
 | Document | UPPER_SNAKE_CASE for canonical specifications; `README.md` per directory |
 | ADR | `ADR-NNN-kebab-case-title.md`, three-digit zero-padded numbering |
 | Diagram id | `DIAG-<AREA>-<NNN>` — area is a 3–10 letter scope tag (`STD`, `VISION`, `APP`, `DATA`, etc.) |
@@ -284,11 +281,11 @@ or point to git history (`git log --diff-filter=D -- <path>`).
 ```markdown
 [Docs Like Code](https://www.docslikecode.com/)
 <!-- Example relative links (update for your repository structure) -->
-<!-- [REQUIREMENTS.md](REQUIREMENTS.md) -->
-<!-- [stack-domain-types](../../crates/hkask-types/src/lib.rs) -->
+<!-- [PRINCIPLES.md](core/PRINCIPLES.md) -->
+<!-- [agent_paths](../../crates/hkask-types/src/agent_paths.rs) -->
 ```
 
-(Example paths above resolve against the `docs/standards/` directory. External
+(Example paths above resolve against the `kask/docs/architecture/` directory. External
 URLs like the first example are not checked by the link gate — only relative
 cross-references within the repository are verified.)
 
@@ -336,7 +333,8 @@ Before a document is merged:
 - [ ] `MDS Categories` field present with ≥1 category
 - [ ] Every `##` section has ≥ 1 footnoted citation with URL
 - [ ] Every Mermaid block has a `DIAGRAM_ALIGNMENT` metadata comment
-- [ ] All internal links resolve
+- [ ] All internal links resolve (broken-link sweep: every relative link in the document resolves to a file in the tree — links to deleted documents fail this gate)
+- [ ] Document-count gate: the tree holds fewer than 70 documents (`find kask/docs -name '*.md' | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count
 - [ ] No aspirational content (if document is in `architecture/` or `status/`)
 - [ ] `Last-Updated` date reflects the date of the final edit
 - [ ] Writing Excellence: document passes ≥ 3 of 4 perspective tests (see Appendix A §A.5)
@@ -350,7 +348,7 @@ Before a document is merged:
 
 ## 11. MDS Alignment
 
-All architecture documents MUST map to at least one of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §1:
+All architecture documents MUST map to at least one of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §2:
 
 1. **Domain** — Bounded context, ν-events, entities
 2. **Composition** — Registry, cascade rules, template types, MCP/in-process surfaces, equivalence matrix
@@ -416,32 +414,28 @@ This documentation standard itself maps to the 5 MDS categories:
 
 | Directory | Owner | Review Cadence |
 |-----------|-------|---------------|
-| `docs/architecture/` | Architecture steward | Per-release |
-| `docs/diataxis/` | Documentation steward | Per-release |
-| `docs/explanation/` | Architecture steward | Per-release |
-| `docs/plans/` | Workstream lead | Weekly |
-| `docs/qa/` | CI/CD steward | Per-build |
-| `docs/reference/` | Documentation steward | Per-release |
-| `docs/research/` | Research steward | Per-sweep (archive is historical) |
-| `docs/status/` | CI/CD steward | Per-build |
+| `kask/docs/architecture/` | Architecture steward | Per-release |
+| `kask/docs/diataxis/` | Documentation steward | Per-release |
+| `kask/docs/reference/` | Documentation steward | Per-release |
+| `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` | Architecture steward | Per-release |
+| `kask/docs/README.md` (portal + lifecycle ledger) | Documentation steward | Per-release |
 
 ### 12.2 Responsibilities
 
 - **Architecture steward:** Maintain `zed-host-architecture-plan.md`, review framework docs per release, approve ADRs.
-- **Documentation steward:** Run corpus hygiene sweeps, maintain portal accuracy, own `corpus_inventory.yaml`.
-- **CI/CD steward:** Maintain verification scripts, own `PROJECT_STATUS.md`.
-- **Workstream lead:** Maintain `TODO.md`, review plans for staleness weekly.
-- **User advocate:** Maintain user guides, test against current in-process surfaces (agent panel, kask panel).
+- **Documentation steward:** Run corpus hygiene sweeps (document-count gate, broken-link sweep), maintain the portal README and its lifecycle ledger.
+- **CI/CD steward:** Maintain verification scripts (`kask/scripts/check-*.sh`).
+- **User advocate:** Maintain user guides, test against current in-process surfaces (agent panel).
 - **Methodology steward:** Maintain research/practice guides.
 
 ### 12.3 Review Cadence
 
 | Trigger | Action | Owner |
 |---------|--------|-------|
-| Pre-release | Full corpus hygiene sweep | Documentation steward |
-| Post-merge (≥10 new docs) | Regenerate corpus inventory | Documentation steward |
-| Weekly | Review plans for staleness | Workstream lead |
-| Per-session | Clean superseded handoffs | Agent / userpod |
+| Pre-release | Full corpus hygiene sweep (count gate + link sweep) | Documentation steward |
+| Post-merge (≥10 new docs) | Regenerate portal README tables | Documentation steward |
+| Per-release | Review architecture docs for staleness against code | Architecture steward |
+| Per-session | Fold or delete superseded handoffs; record successors in the README ledger | Agent / human user |
 
 ---
 
@@ -469,12 +463,6 @@ This documentation standard itself maps to the 5 MDS categories:
 [^gentle-code]: Gentle, A. (2017). *Docs Like Code*. Just Write Click. <https://www.docslikecode.com/>.
 
 [^hackos-ipmm]: Hackos, J. (2006). *Information Development: Managing Your Documentation Projects, Portfolio, and People*. Wiley. Introduces the Information Process Maturity Model (IPMM) used as the publication-gate reference.
-
----
-
-## 11. Handoff Lifecycle Policy
-
-> See [Appendix B](#appendix-b-handoff-lifecycle-policy) for the canonical Handoff Lifecycle Policy.
 
 ---
 
@@ -585,7 +573,7 @@ Created → Active → Superseded → Archived (git history)
 
 **Created:** An agent creates a handoff at session end. Includes: date (ISO 8601) in filename `{topic}-YYYY-MM-DD.md`, what was accomplished, what remains, key architectural decisions made, reference to predecessor handoff, recommended next steps.
 
-**Active:** Lives in `docs/handoffs/`. Has a clear successor path, created within last 30 days, contains state not yet encoded elsewhere (code, ADRs, specs).
+**Active:** A handoff is **session-scoped state, not a tree document** — the 2026-08-28 condensation removed the reserved `docs/handoffs/` and `docs/plans/` directories; the capped tree holds no handoff class. A handoff lives only for the session (chat context or a working-tree scratch file outside `kask/docs/`), has a clear successor path, and contains state not yet encoded elsewhere (code, docs, the README lifecycle ledger).
 
 **Superseded:** A newer handoff in the same workstream explicitly carries forward essential state. The successor must reference the superseded handoff by filename, re-encode all essential architectural decisions, and state: "This session builds on {predecessor}, which carried state X, Y, Z". The successor removes the superseded handoff from the working tree with `git rm`.
 
@@ -594,43 +582,36 @@ Created → Active → Superseded → Archived (git history)
 ### B.3 Archive Procedure
 
 1. Verify the handoff is superseded or stale.
-2. Remove from working tree: `git rm docs/handoffs/{filename}`
-3. Commit with message: `docs: archive handoff {filename} (superseded by {successor})` or `docs: archive stale handoff {filename}`
-4. No on-disk archive copy is kept. Git history is the canonical archive.
+2. Fold durable content into the successor document (or the README lifecycle ledger) and delete the scratch file.
+3. No on-disk archive copy is kept. Git history is the canonical archive for anything committed.
 
-`docs/archive/MANIFEST.md` records archive decisions but stores no document contents. Handoffs never go to `docs/archive/`.
+The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-delete decisions; it stores no document contents.
 
 ### B.4 Handoff Hygiene Rules
 
 | Rule | Enforcement |
 |------|-------------|
-| No handoff stays in working tree >30 days without a successor | Manual review; CI flag (future) |
+| No handoff scratch file survives its session without a successor | Manual review |
 | Every handoff must reference its predecessor (if continuing workstream) | Manual review |
-| Superseded handoffs are `git rm`'d, not moved to archive/ | Policy; verifiable via `git log -- docs/handoffs/` |
-| Handoffs never contain forward-looking plans — plans live in `docs/plans/` | Manual review |
+| Superseded handoffs are deleted, not parked in the docs tree | Policy; count gate catches strays |
+| Handoffs never contain forward-looking plans — durable plans are folded into active architecture documents with the deletion recorded in the README ledger | Manual review |
 | No YAML frontmatter required (handoffs are transient, not formal docs) | Deliberate exclusion |
 
 ### B.5 Relationship to Other Lifecycle Policies
 
 - **DOCUMENTATION_STANDARDS.md** governs formal documents with frontmatter. Handoffs skip frontmatter.
-- **MDS.md §9** governs document placement. Handoffs live only in `docs/handoffs/`.
-- **docs/archive/MANIFEST.md** records retired non-handoff documents. Git commit history tracks handoff archival.
-- **docs/plans/** holds forward-looking work. Rewrite handoffs that drift into planning as plan documents.
+- **MDS.md §9** governs placement of formal documents. Handoffs are not formal documents and hold no reserved directory in the capped tree.
+- **The README lifecycle ledger** records fold-and-delete decisions for anything that transits through a handoff into (or out of) the tree.
+- **Forward-looking work** lives inside active architecture documents (or the workstream's own tooling), not in a reserved plans directory.
 
 ### B.6 Verification
 
 ```bash
-# Count active handoffs in working tree
-ls docs/handoffs/*.md 2>/dev/null | wc -l
+# The docs tree holds no handoff class — the count gate is the enforcement:
+find kask/docs -name '*.md' | wc -l   # must stay < 70
 
-# View handoff history
-git --no-pager log --oneline -- docs/handoffs/
-
-# Check for handoffs older than 30 days
-find docs/handoffs -name "*.md" -mtime +30 2>/dev/null
-
-# Verify no handoffs in archive/
-ls docs/archive/handoffs/ 2>/dev/null && echo "VIOLATION: Handoffs in archive/ directory" || echo "OK"
+# Anything durable from a handoff must be traceable to the ledger:
+grep -n "lifecycle ledger" kask/docs/README.md
 ```
 
 ---

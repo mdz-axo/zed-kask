@@ -83,7 +83,7 @@ impl CompaniesServer {
     pub async fn comparable_analysis(
         &self,
         Parameters(req): Parameters<types::ComparableAnalysisRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "comparable_analysis", Self::ontology_anchor("comparable_analysis"), async {
             validate_symbol(&req.symbol)?;
 
@@ -378,7 +378,7 @@ impl CompaniesServer {
     pub async fn sensitivity_analysis(
         &self,
         Parameters(req): Parameters<types::SensitivityAnalysisRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "sensitivity_analysis", Self::ontology_anchor("sensitivity_analysis"), async {
             validate_symbol(&req.symbol)?;
 
@@ -481,7 +481,7 @@ impl CompaniesServer {
     pub async fn equity_duration(
         &self,
         Parameters(req): Parameters<types::EquityDurationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "equity_duration", Self::ontology_anchor("equity_duration"), async {
             validate_symbol(&req.symbol)?;
 
@@ -565,7 +565,7 @@ impl CompaniesServer {
     pub async fn monte_carlo_dcf(
         &self,
         Parameters(req): Parameters<types::MonteCarloDcfRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "monte_carlo_dcf", Self::ontology_anchor("monte_carlo_dcf"), async {
             validate_symbol(&req.symbol)?;
 
@@ -668,7 +668,7 @@ impl CompaniesServer {
     pub async fn scenario_impact_valuation(
         &self,
         Parameters(req): Parameters<types::ScenarioImpactValuationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_impact_valuation", Self::ontology_anchor("scenario_impact_valuation"), async {
             validate_symbol(&req.symbol)?;
 
@@ -816,7 +816,7 @@ impl CompaniesServer {
     pub async fn calibrate_forecast(
         &self,
         Parameters(req): Parameters<types::CalibrateForecastRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "calibrate_forecast", Self::ontology_anchor("calibrate_forecast"), async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
@@ -1005,7 +1005,7 @@ impl CompaniesServer {
     pub async fn forecast_get(
         &self,
         Parameters(req): Parameters<types::ForecastGetRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "forecast_get",
@@ -1029,7 +1029,7 @@ impl CompaniesServer {
     pub async fn forecast_list(
         &self,
         Parameters(req): Parameters<types::ForecastListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "forecast_list",
@@ -1049,7 +1049,7 @@ impl CompaniesServer {
     pub async fn forecast_persist(
         &self,
         Parameters(req): Parameters<types::ForecastPersistRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "forecast_persist", Self::ontology_anchor("forecast_persist"), async {
             validate_symbol(&req.symbol)?;
             if let Some(value) = req.forecast_multiple {
@@ -1153,7 +1153,7 @@ impl CompaniesServer {
     pub async fn forecast_record(
         &self,
         Parameters(req): Parameters<types::ForecastRecordRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "forecast_record", Self::ontology_anchor("forecast_record"), async {
             validate_symbol(&req.symbol)?;
             for (name, value) in [
@@ -1413,7 +1413,7 @@ impl CompaniesServer {
             comments,
             provider,
         }): Parameters<types::ResultFeedbackRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "result_feedback",
@@ -1494,7 +1494,7 @@ impl CompaniesServer {
     pub async fn driver_forecast(
         &self,
         Parameters(req): Parameters<types::DriverForecastRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "driver_forecast", Self::ontology_anchor("driver_forecast"), async {
             validate_symbol(&req.symbol)?;
 

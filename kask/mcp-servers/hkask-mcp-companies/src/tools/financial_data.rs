@@ -13,7 +13,7 @@ impl CompaniesServer {
     pub async fn company_profile(
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "company_profile",
@@ -31,7 +31,7 @@ impl CompaniesServer {
     pub async fn stock_quote(
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "stock_quote",
@@ -49,7 +49,7 @@ impl CompaniesServer {
     pub async fn income_statement(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "income_statement",
@@ -68,7 +68,7 @@ impl CompaniesServer {
     pub async fn balance_sheet(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "balance_sheet",
@@ -87,7 +87,7 @@ impl CompaniesServer {
     pub async fn cash_flow_statement(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "cash_flow_statement",
@@ -106,7 +106,7 @@ impl CompaniesServer {
     pub async fn key_metrics(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "key_metrics",
@@ -127,7 +127,7 @@ impl CompaniesServer {
     pub async fn historical_price(
         &self,
         Parameters(HistoricalRequest { symbol, from, to }): Parameters<HistoricalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "historical_price",
@@ -147,7 +147,7 @@ impl CompaniesServer {
     pub async fn symbol_search(
         &self,
         Parameters(SearchRequest { query, limit }): Parameters<SearchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "symbol_search",
@@ -186,7 +186,7 @@ impl CompaniesServer {
     pub async fn resolve_symbol(
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "resolve_symbol",

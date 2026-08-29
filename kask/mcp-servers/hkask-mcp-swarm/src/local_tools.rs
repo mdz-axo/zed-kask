@@ -176,7 +176,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_delegate_local(
         &self,
         parameters: Parameters<DelegateLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_delegate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
@@ -294,7 +294,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_fanout_local(
         &self,
         parameters: Parameters<FanoutLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_fanout_local",
@@ -509,7 +509,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_pipeline_local(
         &self,
         parameters: Parameters<PipelineLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_pipeline_local",
@@ -628,7 +628,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_list_local_agents(
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_list_local_agents",
@@ -667,7 +667,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_clone_to_local(
         &self,
         parameters: Parameters<CloneToLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_clone_to_local",
@@ -854,7 +854,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_push_to_cloud(
         &self,
         parameters: Parameters<PushToCloudSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_push_to_cloud",
@@ -951,7 +951,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_remove_local(
         &self,
         parameters: Parameters<RemoveLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_remove_local",
@@ -1029,7 +1029,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_create_local_agent(
         &self,
         parameters: Parameters<CreateLocalAgentRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_create_local_agent",
@@ -1126,7 +1126,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_reconfigure_local_agent(
         &self,
         parameters: Parameters<ReconfigureLocalAgentRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_reconfigure_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
@@ -1191,7 +1191,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_create_local_swarm(
         &self,
         parameters: Parameters<CreateLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_create_local_swarm",
@@ -1223,7 +1223,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_list_local_swarms(
         &self,
         _parameters: Parameters<ListLocalSwarmsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_list_local_swarms",
@@ -1246,7 +1246,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_get_local_swarm(
         &self,
         parameters: Parameters<GetLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_get_local_swarm",
@@ -1278,7 +1278,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_delete_local_swarm(
         &self,
         parameters: Parameters<DeleteLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_delete_local_swarm",
@@ -1310,7 +1310,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_add_agent_local(
         &self,
         parameters: Parameters<AddAgentToLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_add_agent_local",
@@ -1343,7 +1343,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_remove_agent_local(
         &self,
         parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_remove_agent_local",
@@ -1378,7 +1378,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_update_local_swarm(
         &self,
         parameters: Parameters<UpdateLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_update_local_swarm",
@@ -1418,7 +1418,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_clone_local_swarm(
         &self,
         parameters: Parameters<CloneLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_clone_local_swarm",
@@ -1453,7 +1453,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_push_local_swarm(
         &self,
         parameters: Parameters<PushLocalSwarmRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_push_local_swarm",
@@ -1596,7 +1596,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_pull_swarm_to_local(
         &self,
         parameters: Parameters<PullSwarmToLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_pull_swarm_to_local",
@@ -1668,7 +1668,7 @@ impl SwarmServer {
     #[tool(
         description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the inference port directly to generate composition guidance. The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
     )]
-    pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> String {
+    pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_ai_assist", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             match req.action.as_str() {
@@ -1907,7 +1907,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_evaluate_local(
         &self,
         parameters: Parameters<EvaluateLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_evaluate_local",
@@ -1954,7 +1954,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_execute_plan_local(
         &self,
         parameters: Parameters<ExecutePlanLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_execute_plan_local",
@@ -2176,7 +2176,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_task_board(
         &self,
         parameters: Parameters<TaskBoardRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_task_board",
@@ -2218,7 +2218,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_eval_suite_local(
         &self,
         parameters: Parameters<EvalSuiteLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_eval_suite_local",
@@ -2473,7 +2473,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_eval_agent_local(
         &self,
         parameters: Parameters<EvalAgentLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_eval_agent_local",

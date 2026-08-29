@@ -17,7 +17,7 @@ impl MediaServer {
     pub async fn workflow_save(
         &self,
         Parameters(WorkflowSaveRequest { graph_json }): Parameters<WorkflowSaveRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "workflow_save",
@@ -41,7 +41,7 @@ impl MediaServer {
 
     /// List all saved workflows, newest first.
     #[tool(description = "List all saved media generation workflows, newest first.")]
-    pub async fn workflow_list(&self) -> String {
+    pub async fn workflow_list(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "workflow_list",
@@ -65,7 +65,7 @@ impl MediaServer {
     pub async fn workflow_load(
         &self,
         Parameters(WorkflowLoadRequest { workflow_id }): Parameters<WorkflowLoadRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "workflow_load",
@@ -90,7 +90,7 @@ impl MediaServer {
     pub async fn workflow_delete(
         &self,
         Parameters(WorkflowDeleteRequest { workflow_id }): Parameters<WorkflowDeleteRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "workflow_delete",

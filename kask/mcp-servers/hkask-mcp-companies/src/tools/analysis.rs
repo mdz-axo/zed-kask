@@ -4,7 +4,7 @@ use crate::{
     types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
-use hkask_mcp_server::server::execute_tool_semantic;
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = analysis_router, vis = "pub")]
@@ -15,7 +15,7 @@ impl CompaniesServer {
     pub async fn moat_check(
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "moat_check",
@@ -101,7 +101,7 @@ impl CompaniesServer {
     pub async fn management_scorecard(
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "management_scorecard", Self::ontology_anchor("management_scorecard"), async {
             validate_symbol(&symbol)?;
 
@@ -167,7 +167,7 @@ impl CompaniesServer {
     pub async fn working_capital_cycle(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "working_capital_cycle", Self::ontology_anchor("working_capital_cycle"), async {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
@@ -255,7 +255,7 @@ impl CompaniesServer {
     pub async fn company_screener(
         &self,
         Parameters(req): Parameters<types::ScreenerRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "company_screener", Self::ontology_anchor("company_screener"), async {
             // Parse the natural language prompt into structured criteria
             let mut criteria = screener::parse_screening_prompt(&req.prompt);
@@ -336,7 +336,7 @@ impl CompaniesServer {
     pub async fn stock_universe(
         &self,
         Parameters(req): Parameters<types::StockUniverseRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "stock_universe",
@@ -372,7 +372,7 @@ impl CompaniesServer {
     pub async fn company_research_search(
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "company_research_search", Self::ontology_anchor("company_research_search"), async {
             // 1. Fetch company profile for name (typed view — `companyName`
             //    knowledge lives in the `CompanyProfile` accessor).

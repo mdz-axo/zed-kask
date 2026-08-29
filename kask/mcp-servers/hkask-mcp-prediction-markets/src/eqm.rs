@@ -169,6 +169,12 @@ pub struct EqmResult {
     pub interpretation: String,
     pub model: String,
     pub caveat: String,
+    /// EQM dimensions the LLM omitted from its response. Non-empty means
+    /// the composite score is pulled toward 0 for those dimensions — the
+    /// operator should treat a low score with missing EQMs as "incomplete
+    /// assessment," not "low quality."
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_eqms: Vec<String>,
 }
 
 // ── Error type ─────────────────────────────────────────────────────────────
@@ -309,13 +315,27 @@ pub async fn score_rationale(
     let mut composite = 0.0_f64;
     let mut red_flags = Vec::new();
     let mut green_flags = Vec::new();
+    let mut missing_eqms = Vec::new();
 
     for eqm in KEY_EQMS {
-        let raw = raw_scores
-            .get(eqm.id)
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            .min(2) as u8;
+        let raw = match raw_scores.get(eqm.id) {
+            Some(v) => match v.as_u64() {
+                Some(n) => n.min(2) as u8,
+                None => {
+                    tracing::warn!(
+                        target: "hkask.mcp.prediction_markets.eqm",
+                        eqm = eqm.id,
+                        value = %v,
+                        "LLM returned non-integer EQM score — treating as 0"
+                    );
+                    0
+                }
+            },
+            None => {
+                missing_eqms.push(eqm.id.to_string());
+                0
+            }
+        };
 
         let score = EqmScore {
             id: eqm.id.to_string(),
@@ -347,6 +367,17 @@ pub async fn score_rationale(
     // Build interpretation.
     let interpretation = build_interpretation(&composite, &red_flags, &green_flags);
 
+    if !missing_eqms.is_empty() {
+        tracing::warn!(
+            target: "hkask.mcp.prediction_markets.eqm",
+            missing = ?missing_eqms,
+            missing_count = missing_eqms.len(),
+            total_eqms = KEY_EQMS.len(),
+            "LLM omitted EQM dimensions — composite score is pulled toward 0 \
+             for these dimensions; treat as incomplete assessment, not low quality"
+        );
+    }
+
     Ok(EqmResult {
         composite_score: composite,
         scores,
@@ -355,6 +386,7 @@ pub async fn score_rationale(
         interpretation,
         model: result.model,
         caveat: "EQMs are a red-flag screen, not a green-flag detector. A low score reliably flags weak reasoning; a high score is a weak endorsement of quality. Results are correlational, not causal. Based on Karvetski et al. (2026), Forecasting Research Institute.".to_string(),
+        missing_eqms,
     })
 }
 

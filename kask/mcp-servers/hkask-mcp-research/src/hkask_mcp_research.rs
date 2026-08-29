@@ -178,7 +178,7 @@ impl ResearchServer {
     // ═══════════════════ Web tools ═══════════════════
 
     #[tool(description = "Liveness and provider health check")]
-    pub async fn web_ping(&self) -> String {
+    pub async fn web_ping(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "web_ping", Self::ontology_anchor("web_ping"), async {
             if let Err(e) = self.rate_limiter.check("web_ping") {
                 tracing::warn!(
@@ -207,7 +207,7 @@ impl ResearchServer {
          to pick deliberately. When `provider` is None, `strategy` selects: \
          quick (best-scored single keyword provider), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction).")]
-    pub async fn web_search(&self, Parameters(req): Parameters<SearchRequest>) -> String {
+    pub async fn web_search(&self, Parameters(req): Parameters<SearchRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_search",
@@ -349,7 +349,7 @@ impl ResearchServer {
     pub async fn web_recommend_provider(
         &self,
         Parameters(req): Parameters<RecommendProviderRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_recommend_provider",
@@ -391,7 +391,7 @@ impl ResearchServer {
     pub async fn web_find_similar(
         &self,
         Parameters(FindSimilarRequest { url, num_results }): Parameters<FindSimilarRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_find_similar",
@@ -456,7 +456,7 @@ impl ResearchServer {
             main_content_only,
             wait_for_ms,
         }): Parameters<ExtractRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_extract",
@@ -556,7 +556,7 @@ impl ResearchServer {
             instruction,
             timeout_secs,
         }): Parameters<BrowseRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_browse",
@@ -616,7 +616,7 @@ impl ResearchServer {
     pub async fn rss_subscribe(
         &self,
         Parameters(SubscribeRequest { url, label, folder }): Parameters<SubscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_subscribe", Self::ontology_anchor("rss_subscribe"), async {
             self.rate_limiter.check("rss_subscribe")?;
             let db = require_rss_db!(self);
@@ -666,7 +666,7 @@ impl ResearchServer {
     pub async fn rss_unsubscribe(
         &self,
         Parameters(UnsubscribeRequest { stream_id }): Parameters<UnsubscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_unsubscribe", Self::ontology_anchor("rss_unsubscribe"), async {
             let db = require_rss_db!(self);
 
@@ -687,7 +687,7 @@ impl ResearchServer {
     pub async fn rss_list_subscriptions(
         &self,
         Parameters(ListSubscriptionsRequest { folder }): Parameters<ListSubscriptionsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_list_subscriptions", Self::ontology_anchor("rss_list_subscriptions"), async {
             let db = require_rss_db!(self);
             let result = spawn_db(db, move |conn| list_subscriptions(conn, folder.as_deref())).await;
@@ -702,7 +702,7 @@ impl ResearchServer {
     pub async fn rss_fetch(
         &self,
         Parameters(FetchRequest { stream_id }): Parameters<FetchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_fetch", Self::ontology_anchor("rss_fetch"), async {
             self.rate_limiter.check("rss_fetch")?;
             let db = require_rss_db!(self);
@@ -793,7 +793,7 @@ impl ResearchServer {
             count,
             continuation_token,
         }): Parameters<GetEntriesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_get_entries", Self::ontology_anchor("rss_get_entries"), async {
             let db = require_rss_db!(self);
             let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
@@ -857,7 +857,7 @@ impl ResearchServer {
     pub async fn rss_mark_all_read(
         &self,
         Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_mark_all_read",
@@ -879,7 +879,7 @@ impl ResearchServer {
     pub async fn rss_get_unread_count(
         &self,
         Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_get_unread_count",
@@ -903,7 +903,7 @@ impl ResearchServer {
         Parameters(crate::research::rss_types::SearchRequest { query, limit }): Parameters<
             crate::research::rss_types::SearchRequest,
         >,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_search", Self::ontology_anchor("rss_search"), async {
             let db = require_rss_db!(self);
             let limit = (limit.unwrap_or(10) as usize).min(MAX_PAGE_SIZE);
@@ -917,7 +917,7 @@ impl ResearchServer {
     }
 
     #[tool(description = "Export subscriptions as OPML 2.0")]
-    pub async fn rss_export_opml(&self) -> String {
+    pub async fn rss_export_opml(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_export_opml",
@@ -935,7 +935,7 @@ impl ResearchServer {
     pub async fn rss_import_opml(
         &self,
         Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_import_opml",
@@ -953,7 +953,7 @@ impl ResearchServer {
     pub async fn rss_discover_feeds(
         &self,
         Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_discover_feeds",
@@ -973,7 +973,7 @@ impl ResearchServer {
     }
 
     #[tool(description = "Edit tags on entries: mark read/unread, star/unstar, add/remove labels")]
-    pub async fn rss_edit_tag(&self, Parameters(req): Parameters<EditTagRequest>) -> String {
+    pub async fn rss_edit_tag(&self, Parameters(req): Parameters<EditTagRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_edit_tag",
@@ -992,7 +992,7 @@ impl ResearchServer {
     #[tool(
         description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
     )]
-    pub async fn rss_synthesize(&self, Parameters(req): Parameters<SynthesizeRequest>) -> String {
+    pub async fn rss_synthesize(&self, Parameters(req): Parameters<SynthesizeRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_synthesize", Self::ontology_anchor("rss_synthesize"), async {
             self.rate_limiter.check("rss_synthesize")?;
             let db = require_rss_db!(self);
@@ -1216,7 +1216,7 @@ impl ResearchServer {
     pub async fn rss_fetch_synthetic(
         &self,
         Parameters(req): Parameters<FetchSyntheticRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_fetch_synthetic",
@@ -1419,7 +1419,7 @@ impl ResearchServer {
     }
 
     #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
-    pub async fn rss_list_synthetic(&self) -> String {
+    pub async fn rss_list_synthetic(&self) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_list_synthetic",
@@ -1442,7 +1442,7 @@ impl ResearchServer {
     pub async fn rss_delete_synthetic(
         &self,
         Parameters(req): Parameters<DeleteSyntheticRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_delete_synthetic",
@@ -1502,7 +1502,7 @@ impl ResearchServer {
             question,
             artifacts,
         }): Parameters<EvaluateEvidenceRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "evaluate_evidence",
@@ -1599,7 +1599,7 @@ impl ResearchServer {
     pub async fn cite_sources(
         &self,
         Parameters(CiteSourcesRequest { sources, style }): Parameters<CiteSourcesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "cite_sources",

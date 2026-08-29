@@ -29,7 +29,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_fund_local(
         &self,
         parameters: Parameters<FundLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_fund_local",
@@ -71,7 +71,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_balance_local(
         &self,
         _parameters: Parameters<BalanceLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_balance_local",
@@ -109,7 +109,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_local_history(
         &self,
         parameters: Parameters<LocalHistoryRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_local_history",

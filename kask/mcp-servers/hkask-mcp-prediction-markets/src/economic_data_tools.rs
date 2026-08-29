@@ -43,7 +43,7 @@ impl PredictionMarketsServer {
     pub async fn fred_search_series(
         &self,
         Parameters(req): Parameters<FredSearchSeriesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "fred_search_series",
@@ -71,7 +71,7 @@ impl PredictionMarketsServer {
     pub async fn fred_get_observations(
         &self,
         Parameters(req): Parameters<FredGetObservationsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "fred_get_observations",
@@ -97,7 +97,7 @@ impl PredictionMarketsServer {
     pub async fn fred_get_series_info(
         &self,
         Parameters(req): Parameters<FredGetSeriesInfoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "fred_get_series_info",
@@ -123,7 +123,7 @@ impl PredictionMarketsServer {
     pub async fn fred_list_categories(
         &self,
         Parameters(req): Parameters<FredListCategoriesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "fred_list_categories",
@@ -149,7 +149,7 @@ impl PredictionMarketsServer {
     pub async fn fred_get_release(
         &self,
         Parameters(req): Parameters<FredGetReleaseRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "fred_get_release",
@@ -180,7 +180,7 @@ impl PredictionMarketsServer {
     pub async fn wb_search_indicators(
         &self,
         Parameters(req): Parameters<WbSearchIndicatorsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_search_indicators",
@@ -203,7 +203,7 @@ impl PredictionMarketsServer {
     pub async fn wb_get_observations(
         &self,
         Parameters(req): Parameters<WbGetObservationsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_get_observations",
@@ -225,7 +225,7 @@ impl PredictionMarketsServer {
     pub async fn wb_list_countries(
         &self,
         Parameters(req): Parameters<WbListCountriesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_list_countries",
@@ -244,7 +244,7 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with wb_search_indicators topic_id filter."
     )]
-    pub async fn wb_list_topics(&self, Parameters(req): Parameters<WbListTopicsRequest>) -> String {
+    pub async fn wb_list_topics(&self, Parameters(req): Parameters<WbListTopicsRequest>) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_list_topics",
@@ -266,7 +266,7 @@ impl PredictionMarketsServer {
     pub async fn wb_get_indicator_info(
         &self,
         Parameters(req): Parameters<WbGetIndicatorInfoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_get_indicator_info",
@@ -293,7 +293,7 @@ impl PredictionMarketsServer {
     pub async fn dbnomics_search(
         &self,
         Parameters(req): Parameters<DbnomicsSearchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "dbnomics_search",
@@ -314,7 +314,7 @@ impl PredictionMarketsServer {
     pub async fn dbnomics_list_providers(
         &self,
         Parameters(req): Parameters<DbnomicsListProvidersRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "dbnomics_list_providers",
@@ -336,7 +336,7 @@ impl PredictionMarketsServer {
     pub async fn dbnomics_get_dataset(
         &self,
         Parameters(req): Parameters<DbnomicsGetDatasetRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "dbnomics_get_dataset",
@@ -358,7 +358,7 @@ impl PredictionMarketsServer {
     pub async fn dbnomics_get_series(
         &self,
         Parameters(req): Parameters<DbnomicsGetSeriesRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "dbnomics_get_series",
@@ -386,7 +386,7 @@ impl PredictionMarketsServer {
     pub async fn market_score_rationale(
         &self,
         Parameters(req): Parameters<ScoreRationaleRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "market_score_rationale",

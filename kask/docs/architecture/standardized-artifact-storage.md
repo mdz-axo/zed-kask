@@ -1,8 +1,8 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-08-24
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "1.2.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -54,7 +54,7 @@ user-facing output visible and intuitive.
 
 This root is injected as `HKASK_DATA_DIR` into every MCP server child process
 by `KaskSettings::mcp_env()`
-(`kask/crates/kask_bridge/src/settings.rs:717-736`) so servers resolve paths
+(`kask/crates/kask_bridge/src/settings.rs:667`) so servers resolve paths
 consistently regardless of launch context.
 
 ## 2. Artifact-class → path mapping
@@ -80,16 +80,16 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
-verified_date: 2026-08-24
-verified_against: kask/crates/hkask-types/src/agent_paths.rs (resolve_data_dir, resolve_under_data_dir, agent_dir, agent_db, sanitize_name), kask/crates/kask_bridge/src/settings.rs:717-736 (mcp_env), kask/crates/kask_bridge/src/mcp_servers.rs:53 (BUILT_IN_MCP_SERVERS)
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-types/src/agent_paths.rs (resolve_data_dir :63, resolve_under_data_dir :99, agent_dir :157, agent_db :198, sanitize_name :209), kask/crates/kask_bridge/src/settings.rs:667 (mcp_env), kask/crates/kask_bridge/src/mcp_servers.rs:55 (BUILT_IN_MCP_SERVERS)
 status: VERIFIED
 -->
 
 | Artifact class | Root | Subdir pattern | Naming rule | Programmatic contract |
 |---|---|---|---|---|
-| MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |
-| User skills | `{data_dir}` | `skills/{skill_name}/` | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
-| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
+| MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:55`); files named `{purpose}.db` | `mcp_server_db(server_id, purpose)` (`agent_paths.rs:167`) or `mcp_server_subdir(server_id, subdir)` (`agent_paths.rs:182`) |
+| User skills | `{data_dir}` | `skills/{skill_name}/` | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:209-241`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
+| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` (`agent_paths.rs:157`) + `agent_db(name)` (`agent_paths.rs:198`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 
 ## 3. Ownership principle
@@ -120,9 +120,11 @@ The system has three agent classes:
    would live under `mcp/corpus/replicas/{replica_name}/` (server-scoped,
    not agent-scoped), since the corpus server owns them.
 
-The `agent_db(name)` function produces `{name}.db` — for the user, that's
+The `agent_db(name)` function (`agent_paths.rs:198`) produces `{name}.db` — for the user, that's
 `{username}.db`; for the curator, that's `curator.db`. The name always
-matches the agent, making the DB identifiable at a glance.
+matches the agent, making the DB identifiable at a glance. The function was
+renamed from `agent_pod_db` in the 2026-08-27 cleanup (the "pod" concept was
+deprecated; the rename is documented in the doc comment at `agent_paths.rs:193-197`).
 
 ### Ownership rules
 
@@ -168,7 +170,7 @@ under `mcp/{server_id}/`.
 ## 4. Naming convention
 
 - **Folders:** human-readable, kebab-case, sanitized via `sanitize_name()`
-  (`agent_paths.rs:157-187`). An operator `ls {data_dir}/` sees the four
+  (`agent_paths.rs:209-241`). An operator `ls {data_dir}/` sees the four
   class names: `agents/`, `mcp/`, `skills/`, `threads/`.
 - **Files:** `{purpose}.db` for databases, `{artifact}.json` for JSON
   artifacts, `SKILL.md` / `*.j2` for skills. The filename
@@ -180,9 +182,9 @@ under `mcp/{server_id}/`.
 
 | Class | Decision | Rationale |
 |---|---|---|
-| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials (`mcp_servers.rs:67-107`); server-ID segment enables browse-by-server. |
-| User skills | Shared (flat `skills/{skill_name}/`) | Skills are consumed across servers and the skill tool (`HKASK_SKILLS_DIR` is shared, `settings.rs:946-952`). |
-| User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:79-81`). |
+| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials — per-entry `credentials`/`config_env` allowlists on `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:55-431`); server-ID segment enables browse-by-server. |
+| User skills | Shared (flat `skills/{skill_name}/`) | Skills are user-owned, not server-scoped. The skill tool resolves them through the D28 `GLOBAL_SKILLS_DIR_OVERRIDE` hook (`crates/agent_skills/agent_skills.rs:962-972`); the swarm server receives its copy via `HKASK_SKILLS_DIR` (`kask/crates/kask_bridge/src/mcp_env.rs:306-307`). |
+| User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:157`). |
 | Archived chat threads | Shared (flat `threads/`) | Threads are user chat history, not server-scoped. |
 
 ## 6. Archived threads path
@@ -203,12 +205,20 @@ format is unchanged; only the path relocates.
 ## 7. D-seam discipline
 
 Every new or moved path in this layout is pinned by a test asserting the
-location is used (per `.rules` zed-kask integration traps). The archived-
+location is used (per `.rules` zed-kask integration traps). The layout
+helpers are pinned in `hkask-types` itself:
+`agent_db_follows_agents_class_layout`,
+`mcp_server_db_follows_mcp_class_layout`,
+`mcp_server_subdir_handles_empty_and_nested`, and
+`all_layout_helpers_resolve_under_one_root`
+(`kask/crates/hkask-types/src/agent_paths.rs:247-313`). The archived-
 threads migration is D-seam D28: an edit to `crates/agent/src/db.rs`
 (upstream file) + `crates/agent/src/agent.rs` (upstream file) +
 `crates/zed/src/main.rs` (upstream file), carrying `// zed-kask: D28`
 comments and pinned by `test_threads_db_override_hook_round_trips`
-in `db.rs`. The `crates/agent` crate does NOT depend on `hkask-types` —
-the path is passed through a global `Mutex<Option<PathBuf>>` hook
-(`set_threads_db_path_override`), preserving the §13.1 invariant that
+(`crates/agent/src/db.rs:1270`), with the override wired at
+`crates/zed/src/main.rs:676-678`. The `crates/agent` crate does NOT depend
+on `hkask-types` — the path is passed through a global
+`Mutex<Option<PathBuf>>` hook (`set_threads_db_path_override`,
+`crates/agent/src/agent.rs:2985`), preserving the §13.1 invariant that
 upstream crates don't depend on kask crates.

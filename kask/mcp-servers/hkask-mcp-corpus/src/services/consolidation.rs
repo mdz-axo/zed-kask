@@ -354,6 +354,7 @@ impl ConsolidationService {
 
         // Phase 4: Re-embed consolidated chunks
         let mut embedded_count = 0usize;
+        let mut embed_failures = 0usize;
         if !reembed_texts.is_empty() {
             let emb_model = hkask_inference::model_constants::embedding_model();
 
@@ -370,6 +371,7 @@ impl ConsolidationService {
                                     error = %e,
                                     "Failed to store consolidated embedding"
                                 );
+                                embed_failures += 1;
                             } else {
                                 embedded_count += 1;
                             }
@@ -380,8 +382,10 @@ impl ConsolidationService {
                             model = %emb_model,
                             batch_len = batch.len(),
                             error = %e,
-                            "Embedding call failed for consolidated chunk batch"
+                            "Embedding call failed for consolidated chunk batch — \
+                             these chunks will not be findable by semantic search"
                         );
+                        embed_failures += batch.len();
                     }
                 }
             }
@@ -404,6 +408,7 @@ impl ConsolidationService {
             "multi_chunk_clusters": multi,
             "absorbed": absorbed,
             "reembedded": embedded_count,
+            "embed_failures": embed_failures,
             "reduction_pct": (1.0 - consolidated.len() as f64 / chunks.len().max(1) as f64) * 100.0,
         });
 

@@ -37,7 +37,7 @@ impl CorpusServer {
             force_ocr,
             target_pages,
         }): Parameters<ConvertRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         if std::path::Path::new(&path).is_dir() {
             return self
                 .convert_directory(&path, output.as_deref(), force_ocr)
@@ -63,7 +63,7 @@ impl CorpusServer {
     pub async fn corpus_ocr(
         &self,
         Parameters(OcrRequest { path, model }): Parameters<OcrRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_ocr",
@@ -120,7 +120,7 @@ impl CorpusServer {
     pub async fn corpus_is_complex(
         &self,
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_is_complex",
@@ -202,7 +202,7 @@ impl CorpusServer {
             index,
             target_pages,
         }): Parameters<ChunkRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         if let Some(input_dir) = input_dir {
             return execute_tool_semantic(
                 self,
@@ -403,15 +403,21 @@ impl CorpusServer {
                     });
 
                     // Auto-index if requested
-                    let indexed = if index {
+                    let (indexed, index_error) = if index {
                         let all: Vec<_> = coarse.into_iter().chain(medium).chain(fine).collect();
-                        service.index_passages(&all, &source_label).await
+                        match service.index_passages(&all, &source_label).await {
+                            Ok(n) => (n, None),
+                            Err(e) => (0, Some(e)),
+                        }
                     } else {
-                        0
+                        (0, None)
                     };
 
                     let mut result = result;
                     result["indexed"] = json!(indexed);
+                    if let Some(ref err) = index_error {
+                        result["index_error"] = json!(err);
+                    }
                     Ok(result)
                 } else {
                     // Single-tier
@@ -441,10 +447,13 @@ impl CorpusServer {
                     let serialized = serialize_passages(&passages);
 
                     // Auto-index if requested
-                    let indexed = if index {
-                        service.index_passages(&passages, &source_label).await
+                    let (indexed, index_error) = if index {
+                        match service.index_passages(&passages, &source_label).await {
+                            Ok(n) => (n, None),
+                            Err(e) => (0, Some(e)),
+                        }
                     } else {
-                        0
+                        (0, None)
                     };
 
                     let result = json!({
@@ -459,6 +468,7 @@ impl CorpusServer {
                         "sentence_boundary": boundary,
                         "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
                         "indexed": indexed,
+                        "index_error": index_error,
                     });
                     Ok(result)
                 }
@@ -475,7 +485,7 @@ impl CorpusServer {
     /// post: each supported source has a non-empty `.txt` output or an entry in `failures`
     /// inv: existing outputs larger than 50 bytes are preserved unchanged
     /// [P3] Constraining: Generative Space — batch progress and failures remain visible in the tool result.
-    async fn convert_directory(&self, path: &str, output: Option<&str>, force_ocr: bool) -> String {
+    async fn convert_directory(&self, path: &str, output: Option<&str>, force_ocr: bool) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_convert", Self::ontology_anchor("corpus_convert"), async {
             hkask_mcp_server::validate_path("path", path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;

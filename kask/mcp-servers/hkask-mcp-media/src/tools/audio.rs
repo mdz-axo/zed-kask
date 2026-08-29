@@ -13,7 +13,7 @@ impl MediaServer {
         Parameters(VoiceDesignRequest {
             character_description,
         }): Parameters<VoiceDesignRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "voice_design",
@@ -64,7 +64,7 @@ impl MediaServer {
     pub async fn generate_speech(
         &self,
         Parameters(GenerateSpeechRequest { text, voice_design }): Parameters<GenerateSpeechRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "generate_speech",
@@ -130,7 +130,7 @@ impl MediaServer {
             audio_url,
             language,
         }): Parameters<TranscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "transcribe",
@@ -161,7 +161,7 @@ impl MediaServer {
             audio_url,
             language,
         }): Parameters<TranscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "transcribe_bundle",
@@ -253,7 +253,7 @@ impl MediaServer {
             duration_secs,
             output_path,
         }): Parameters<AudioCaptureRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "audio_capture",
@@ -305,7 +305,7 @@ impl MediaServer {
             duration_secs,
             language,
         }): Parameters<RecordAndTranscribeRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "record_and_transcribe", Self::ontology_anchor("record_and_transcribe"), async {
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
                 return Err(McpToolError::invalid_argument(
@@ -455,7 +455,7 @@ impl MediaServer {
             start_sec,
             end_sec,
         }): Parameters<AudioTrimRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "audio_trim",
@@ -493,7 +493,7 @@ impl MediaServer {
     pub async fn audio_concat(
         &self,
         Parameters(AudioConcatRequest { audio_urls }): Parameters<AudioConcatRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "audio_concat",

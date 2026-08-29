@@ -243,11 +243,19 @@ impl<'a> ConvertService<'a> {
     /// Index passages into the in-memory vector store for later query.
     ///
     /// Embeds each passage text and stores it with metadata.
-    /// Returns the number of passages indexed (0 if embedding fails).
-    pub async fn index_passages(&self, passages: &[(String, String)], source_label: &str) -> usize {
+    ///
+    /// Returns `Ok(count)` on success (including 0 for empty input).
+    /// Returns `Err(message)` when embedding fails entirely — the caller
+    /// must surface this so the operator can distinguish "document was empty"
+    /// from "embedding provider is down."
+    pub async fn index_passages(
+        &self,
+        passages: &[(String, String)],
+        source_label: &str,
+    ) -> Result<usize, String> {
         let texts: Vec<String> = passages.iter().map(|(_, t)| t.clone()).collect();
         if texts.is_empty() {
-            return 0;
+            return Ok(0);
         }
 
         let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
@@ -256,8 +264,14 @@ impl<'a> ConvertService<'a> {
         let vectors = match self.inference_router.embed(&model_name, &texts).await {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(target: "hkask.mcp.docproc.index", error = %e, "Failed to embed passages for indexing");
-                return 0;
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.index",
+                    error = %e,
+                    passage_count = passages.len(),
+                    "Failed to embed passages for indexing — \
+                     none of these passages will be findable by semantic search"
+                );
+                return Err(e.to_string());
             }
         };
 
@@ -270,7 +284,7 @@ impl<'a> ConvertService<'a> {
                     "Failed to lock index for passage indexing — skipping. \
                      The index mutex may be poisoned from a prior panic."
                 );
-                return 0;
+                return Err(e.to_string());
             }
         };
         for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
@@ -285,7 +299,7 @@ impl<'a> ConvertService<'a> {
                 embedding,
             });
         }
-        passages.len()
+        Ok(passages.len())
     }
 
     /// Convert a single document file to text, with OCR fallback.

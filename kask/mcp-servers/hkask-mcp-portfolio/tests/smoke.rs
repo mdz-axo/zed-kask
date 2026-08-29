@@ -35,7 +35,7 @@ async fn portfolio_list_returns_empty_array_on_fresh_store() {
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
     let server = PortfolioServer::new(WebID::new(), store);
 
-    let output = server.portfolio_list().await;
+    let output = server.portfolio_list().await.expect("tool ok");
     let content = unwrap_content(&output);
     let portfolios = content
         .get("portfolios")
@@ -82,7 +82,8 @@ tx-003,2026-03-10,sell,AAPL,100,175.00,17500.00,USD
             format: ImportFormat::Csv,
             data: csv.into(),
         }))
-        .await;
+        .await
+        .expect("tool ok");
     let import_content = unwrap_content(&import_output);
     assert_eq!(
         import_content["status"], "imported",
@@ -103,7 +104,8 @@ tx-003,2026-03-10,sell,AAPL,100,175.00,17500.00,USD
             from_date: None,
             to_date: None,
         }))
-        .await;
+        .await
+        .expect("tool ok");
     let read_content = unwrap_content(&read_output);
     let count = read_content["count"]
         .as_u64()

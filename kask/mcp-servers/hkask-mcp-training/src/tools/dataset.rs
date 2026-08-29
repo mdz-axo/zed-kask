@@ -24,7 +24,7 @@ impl TrainingServer {
             source,
             dataset,
         }): Parameters<IngestQaRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_ingest_qa", Self::ontology_anchor("training_ingest_qa"), async {
             let Some(store) = &self.store else {
                 return Err(McpToolError::permission_denied(
@@ -85,7 +85,7 @@ impl TrainingServer {
             db_path,
             passphrase,
         }): Parameters<AssembleDatasetRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_assemble_dataset", Self::ontology_anchor("training_assemble_dataset"), async {
             // When db_path is provided, open that DB instead of using the
             // training server's default store. This bridges the corpus→training
@@ -189,7 +189,7 @@ impl TrainingServer {
             dataset_path,
             cache_dir,
         }): Parameters<TrainIngestDatasetRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_ingest_dataset", Self::ontology_anchor("training_ingest_dataset"), async {
             // Contain the caller-supplied dataset read path (CWE-200) and the
             // optional cache_dir write target (CWE-73) before any pipeline op.

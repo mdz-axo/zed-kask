@@ -20,7 +20,7 @@ impl CompaniesServer {
     pub async fn portfolio_attribution(
         &self,
         Parameters(req): Parameters<AttributionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "portfolio_attribution", Self::ontology_anchor("portfolio_attribution"), async {
             // Get transactions and compute positions at start and end
             let portfolio_name = req.portfolio.clone();
@@ -181,7 +181,7 @@ impl CompaniesServer {
     pub async fn portfolio_characteristics(
         &self,
         Parameters(req): Parameters<CharacteristicsRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "portfolio_characteristics",
@@ -403,7 +403,7 @@ impl CompaniesServer {
     pub async fn dcf_valuation(
         &self,
         Parameters(req): Parameters<types::DcfValuationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "dcf_valuation", Self::ontology_anchor("dcf_valuation"), async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
@@ -537,7 +537,7 @@ impl CompaniesServer {
     pub async fn reverse_dcf(
         &self,
         Parameters(req): Parameters<types::ReverseDcfRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "reverse_dcf", Self::ontology_anchor("reverse_dcf"), async {
             validate_symbol(&req.symbol)?;
 
@@ -686,7 +686,7 @@ impl CompaniesServer {
     pub async fn scenario_analysis(
         &self,
         Parameters(req): Parameters<types::ScenarioAnalysisRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_analysis", Self::ontology_anchor("scenario_analysis"), async {
             validate_symbol(&req.symbol)?;
 

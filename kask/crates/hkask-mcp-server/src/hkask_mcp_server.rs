@@ -58,11 +58,11 @@ where
 /// Eliminates the repeated 3-line pattern:
 /// ```ignore
 /// if let Err(e) = validate_identifier("field", &value, 256) {
-///     return span.error(e.kind, e.to_json_string());
+///     return Err(span.error(e));
 /// }
 /// ```
 ///
-/// Usage:
+/// Usage (inside a tool returning `Result<String, McpToolError>`):
 /// ```ignore
 /// validate_field!(span, "session_id", &session_id, 256);
 /// ```
@@ -70,7 +70,7 @@ where
 macro_rules! validate_field {
     ($span:expr, $name:expr, $value:expr, $max_len:expr) => {
         if let Err(e) = $crate::validate_identifier($name, $value, $max_len) {
-            return $span.error(e.kind, e.to_json_string());
+            return Err($span.error(e));
         }
     };
 }

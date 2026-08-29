@@ -300,7 +300,7 @@ impl CuratorServer {
     // ── Liveness ───────────────────────────────────────────────────────
 
     #[tool(description = "Liveness check")]
-    pub async fn curator_ping(&self, Parameters(_req): Parameters<PingRequest>) -> String {
+    pub async fn curator_ping(&self, Parameters(_req): Parameters<PingRequest>) -> Result<String, McpToolError> {
         execute_tool(self, "curator_ping", async {
             let stores = self.db.get();
             Ok(json!({
@@ -320,7 +320,7 @@ impl CuratorServer {
     // ── Escalation Management ──────────────────────────────────────────
 
     #[tool(description = "List all pending escalations requiring review")]
-    pub async fn curator_escalations(&self, Parameters(_req): Parameters<PingRequest>) -> String {
+    pub async fn curator_escalations(&self, Parameters(_req): Parameters<PingRequest>) -> Result<String, McpToolError> {
         execute_tool(self, "curator_escalations", async {
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
@@ -356,7 +356,7 @@ impl CuratorServer {
     pub async fn curator_escalation_resolve(
         &self,
         Parameters(req): Parameters<EscalationResolveRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_escalation_resolve", async {
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
@@ -384,7 +384,7 @@ impl CuratorServer {
     pub async fn curator_escalation_dismiss(
         &self,
         Parameters(req): Parameters<EscalationDismissRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_escalation_dismiss", async {
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
@@ -406,7 +406,7 @@ impl CuratorServer {
     pub async fn curator_escalation_dismiss_by_pattern(
         &self,
         Parameters(req): Parameters<EscalationDismissByPatternRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_escalation_dismiss_by_pattern", async {
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
@@ -485,7 +485,7 @@ impl CuratorServer {
     pub async fn curator_semantic_search(
         &self,
         Parameters(req): Parameters<SemanticSearchRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_semantic_search", async {
             let limit = req.limit.unwrap_or(10).clamp(1, 50);
             let stores = self.db.get();
@@ -560,7 +560,7 @@ impl CuratorServer {
     pub async fn curator_memory_recall(
         &self,
         Parameters(req): Parameters<MemoryRecallRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_recall", async {
             let recall_shape = req.recall_shape.clone();
             let stores = self.db.get();
@@ -692,7 +692,7 @@ impl CuratorServer {
     pub async fn curator_consult(
         &self,
         Parameters(req): Parameters<CuratorConsultRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_consult", async {
             let limit = req.limit.unwrap_or(5).clamp(1, 20);
             let stores = self.db.get();
@@ -851,7 +851,7 @@ impl CuratorServer {
     pub async fn curator_algedonic_log(
         &self,
         Parameters(req): Parameters<AlgedonicLogRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_algedonic_log", async {
             let stores = self.db.get();
             let store = stores.regulation_store()?;
@@ -883,7 +883,7 @@ impl CuratorServer {
     #[tool(
         description = "Query Regulation regulation records by namespace prefix within a time window. Returns structured event data for governance transparency reporting and consent auditing."
     )]
-    pub async fn reg_query(&self, Parameters(req): Parameters<RegQueryRequest>) -> String {
+    pub async fn reg_query(&self, Parameters(req): Parameters<RegQueryRequest>) -> Result<String, McpToolError> {
         execute_tool(self, "reg_query", async {
             let stores = self.db.get();
             let store = stores.regulation_store()?;
@@ -966,7 +966,7 @@ impl CuratorServer {
     pub async fn curator_report_skill_use_issue(
         &self,
         Parameters(req): Parameters<ReportSkillUseIssueRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_report_skill_use_issue", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1034,7 +1034,7 @@ impl CuratorServer {
     #[tool(
         description = "Insert a new memory into the curator's store. Curator-only. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
     )]
-    pub async fn memory_insert(&self, Parameters(req): Parameters<MemoryInsertRequest>) -> String {
+    pub async fn memory_insert(&self, Parameters(req): Parameters<MemoryInsertRequest>) -> Result<String, McpToolError> {
         execute_tool(self, "memory_insert", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1105,7 +1105,7 @@ impl CuratorServer {
     #[tool(
         description = "Update an existing memory's confidence via Bayesian combination. Curator-only. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
     )]
-    pub async fn memory_update(&self, Parameters(req): Parameters<MemoryUpdateRequest>) -> String {
+    pub async fn memory_update(&self, Parameters(req): Parameters<MemoryUpdateRequest>) -> Result<String, McpToolError> {
         execute_tool(self, "memory_update", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1175,7 +1175,7 @@ impl CuratorServer {
     pub async fn memory_resolve_contradiction(
         &self,
         Parameters(req): Parameters<MemoryResolveContradictionRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_resolve_contradiction", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1280,7 +1280,7 @@ impl CuratorServer {
     pub async fn curator_memory_prune(
         &self,
         Parameters(req): Parameters<MemoryPruneRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_prune", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1319,7 +1319,7 @@ impl CuratorServer {
     pub async fn curator_memory_dedup(
         &self,
         Parameters(req): Parameters<MemoryDedupRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_dedup", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1360,7 +1360,7 @@ impl CuratorServer {
     pub async fn curator_memory_extract(
         &self,
         Parameters(req): Parameters<MemoryExtractRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_extract", async {
             let stores = self.db.get();
             let memory = stores.memory()?;

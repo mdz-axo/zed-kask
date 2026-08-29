@@ -23,7 +23,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_search_knowledge_local(
         &self,
         parameters: Parameters<SearchKnowledgeLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_search_knowledge_local",
@@ -73,7 +73,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_recall_local(
         &self,
         parameters: Parameters<RecallLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_recall_local",
@@ -128,7 +128,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_generate_prompt_local(
         &self,
         parameters: Parameters<GeneratePromptLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_generate_prompt_local",
@@ -194,7 +194,7 @@ impl SwarmServer {
     pub(crate) async fn swarm_generate_ontology_local(
         &self,
         parameters: Parameters<GenerateOntologyLocalRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_generate_ontology_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.domain_description.trim().is_empty() {

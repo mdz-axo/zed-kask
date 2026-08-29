@@ -14,7 +14,7 @@ impl CompaniesServer {
     pub async fn ep_valuation(
         &self,
         Parameters(req): Parameters<types::EpValuationRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "ep_valuation", Self::ontology_anchor("ep_valuation"), async {
             validate_symbol(&req.symbol)?;
 

@@ -104,6 +104,66 @@ feed the loop.
 |------|-------------|------------|
 | `market_history` | Fetch a market's price history with `realized_variance` populated (log-odds step variance) plus the volatility regime (smooth vs jump-like). Kalshi: candlesticks; Polymarket: CLOB prices-history. | `market`, `source`, `window_days` |
 
+### Economic data — FRED
+
+Five tools wrapping the FRED (Federal Reserve Economic Data) API, defined in
+`src/economic_data_tools.rs:34-169` and implemented in
+`src/economic_data/fred.rs`. **All five require the `HKASK_FRED_API_KEY`
+credential** — read from `ctx.credentials` at
+`src/hkask_mcp_prediction_markets.rs:1606` and enforced by `require_api_key`
+(`src/economic_data/fred.rs:77-80`), which returns `MissingApiKey` when the
+key is absent or empty (a missing credential is an authorization failure,
+not a silent fallback).
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `fred_search_series` | Search FRED economic data series by text. Returns series IDs with title, units, frequency, and popularity. (`economic_data_tools.rs:40-63`) | `search_text`, `category_id`, `tag_names`, `limit`, `order_by` |
+| `fred_get_observations` | Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency, and units transformations. (`economic_data_tools.rs:68-91`) | `series_id`, `observation_start`, `observation_end`, `frequency`, `units` |
+| `fred_get_series_info` | Get FRED series metadata: title, units, frequency, seasonal adjustment, date range, notes. (`economic_data_tools.rs:94-117`) | `series_id` |
+| `fred_list_categories` | Browse FRED category tree. Returns child categories for a given parent (default: root). Use to discover economic data by domain. (`economic_data_tools.rs:120-143`) | `category_id` |
+| `fred_get_release` | Get FRED release metadata (name, description, last_updated, next_release) and its series list. Use to track data release schedules. (`economic_data_tools.rs:146-169`) | `release_id` |
+
+### Economic data — World Bank
+
+Five tools wrapping the World Bank Indicators API, defined in
+`src/economic_data_tools.rs:171-282` and implemented in
+`src/economic_data/worldbank.rs`. No API key required — the World Bank API
+is keyless and covers ~29,500 indicators across 45+ databases for all
+countries, the global complement to FRED's US-centric data.
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `wb_search_indicators` | Search World Bank indicators by text. Returns indicator IDs with name, unit, source, and topics. Covers ~29,500 indicators (global, no API key needed). (`economic_data_tools.rs:177-196`) | `query`, `topic_id`, `limit` |
+| `wb_get_observations` | Fetch World Bank time series observations by indicator ID and country code. Returns date-value pairs. (`economic_data_tools.rs:200-219`) | `indicator_id`, `country_code`, `date_start`, `date_end`, `limit` |
+| `wb_list_countries` | List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic', 'mic', 'lic'. (`economic_data_tools.rs:222-241`) | `income_group`, `limit` |
+| `wb_list_topics` | Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with `wb_search_indicators` topic_id filter. (`economic_data_tools.rs:244-260`) | — |
+| `wb_get_indicator_info` | Get World Bank indicator metadata: name, unit, source, description, source organization, and topics. (`economic_data_tools.rs:263-282`) | `indicator_id` |
+
+### Economic data — DBnomics
+
+Four tools wrapping the DBnomics API, defined in `src/economic_data_tools.rs:284-373`
+and implemented in `src/economic_data/dbnomics.rs`. No API key required —
+DBnomics aggregates 1.7B+ series from 700+ providers (IMF, OECD, ECB, INSEE,
+World Bank, FRED mirrors, etc.), the global superset of FRED and the World
+Bank Indicators API.
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `dbnomics_search` | Search DBnomics economic time series by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.). 1.7B+ series, no API key needed. (`economic_data_tools.rs:290-308`) | `query`, `limit`, `offset` |
+| `dbnomics_list_providers` | List DBnomics statistical providers (700+ institutions: IMF, OECD, ECB, INSEE, World Bank, etc.). Returns provider code, name, region, and website. (`economic_data_tools.rs:311-330`) | `limit`, `offset` |
+| `dbnomics_get_dataset` | Get DBnomics dataset metadata (name, description, dimensions, last update). Supports the `:latest` release alias (e.g., dataset_code='WEO:latest'). (`economic_data_tools.rs:333-352`) | `provider_code`, `dataset_code` |
+| `dbnomics_get_series` | Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}]. (`economic_data_tools.rs:355-373`) | `provider_code`, `dataset_code`, `series_code`, `observations`, `limit` |
+
+### EQM rationale scoring
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `market_score_rationale` | Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026), Forecasting Research Institute. Cost: ~$0.007 per rationale. (`economic_data_tools.rs:383-405`) | `rationale`, `forecast_probability`, `question` |
+
+Unlike the data wrappers, this tool forwards to the `eqm` module
+(`src/eqm.rs`, `eqm::score_rationale` at `economic_data_tools.rs:396`) and
+uses the server's inference port for LLM scoring, not an external HTTP API.
+
 ### Independent
 
 | Tool | Description | Key params |

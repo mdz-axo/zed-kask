@@ -197,17 +197,10 @@ pub async fn execute_tool<C: ToolContext>(
     ctx: &C,
     tool_name: &str,
     fut: impl std::future::Future<Output = Result<Value, McpToolError>>,
-) -> String {
+) -> Result<String, McpToolError> {
     let span = ToolSpanGuard::new(tool_name, ctx.webid());
     let result = fut.await;
-    // The span layer propagates the typed error; this boundary keeps the
-    // historical `String` tool signature (every server's `#[tool]` method),
-    // mapping an error to the `{"error", "kind"}` envelope the client
-    // already parses (`hkask_types::tool_response::parse_tool_error`).
-    match span.finish(result) {
-        Ok(output) => output,
-        Err(e) => e.to_json_string(),
-    }
+    span.finish(result)
 }
 
 /// Like `execute_tool` but tags the Regulation span with a domain ontology concept
@@ -223,7 +216,7 @@ pub async fn execute_tool_semantic<C: ToolContext>(
     tool_name: &str,
     ontology: Option<&'static str>,
     fut: impl std::future::Future<Output = Result<Value, McpToolError>>,
-) -> String {
+) -> Result<String, McpToolError> {
     let mut span = ToolSpanGuard::new(tool_name, ctx.webid());
     if let Some(concept) = ontology {
         span = span.with_ontology(concept);
@@ -237,8 +230,5 @@ pub async fn execute_tool_semantic<C: ToolContext>(
         );
     }
     let result = fut.await;
-    match span.finish(result) {
-        Ok(output) => output,
-        Err(e) => e.to_json_string(),
-    }
+    span.finish(result)
 }

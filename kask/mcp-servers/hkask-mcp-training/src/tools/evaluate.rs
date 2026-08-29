@@ -21,7 +21,7 @@ impl TrainingServer {
             method,
             max_examples,
         }): Parameters<TrainEvaluateRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "training_evaluate", Self::ontology_anchor("training_evaluate"), async {
             // Contain the LLM-supplied test dataset path before reading
             // (CWE-200): an absolute path like /etc/passwd or ~/.ssh/id_rsa must

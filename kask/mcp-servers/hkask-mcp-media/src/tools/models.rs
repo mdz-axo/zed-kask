@@ -3,8 +3,8 @@
 //! Fills the OMC `Participant` concept: the model/provider is a participant in
 //! the creation task. The model list is constructed from `model_constants`
 //! defaults (resolvable via env vars) and their known `MediaOp` capabilities.
-use crate::*;
 use crate::types::{MediaModelInfo, ModelInfoRequest, ModelListRequest};
+use crate::*;
 
 /// Build the full list of configured media models from `model_constants` defaults.
 ///
@@ -30,10 +30,7 @@ fn build_model_list() -> Vec<MediaModelInfo> {
             name: strip_provider_prefix(&image_model).to_string(),
             provider: parse_provider(&image_model),
             modality: "image".to_string(),
-            capabilities: vec![
-                "generate_image".to_string(),
-                "image_to_image".to_string(),
-            ],
+            capabilities: vec!["generate_image".to_string(), "image_to_image".to_string()],
             is_default: true,
             description: Some("Image generation and transformation".to_string()),
         },
@@ -42,10 +39,7 @@ fn build_model_list() -> Vec<MediaModelInfo> {
             name: strip_provider_prefix(&video_model).to_string(),
             provider: parse_provider(&video_model),
             modality: "video".to_string(),
-            capabilities: vec![
-                "generate_video".to_string(),
-                "image_to_video".to_string(),
-            ],
+            capabilities: vec!["generate_video".to_string(), "image_to_video".to_string()],
             is_default: true,
             description: Some("Text-to-video and image-to-video generation".to_string()),
         },
@@ -115,7 +109,7 @@ impl MediaServer {
     pub async fn model_list(
         &self,
         Parameters(ModelListRequest { provider }): Parameters<ModelListRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "model_list",
@@ -140,7 +134,7 @@ impl MediaServer {
     pub async fn model_info(
         &self,
         Parameters(ModelInfoRequest { model_id }): Parameters<ModelInfoRequest>,
-    ) -> String {
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "model_info",
@@ -169,7 +163,10 @@ mod tests {
 
     #[test]
     fn parse_provider_extracts_lowercase_provider() {
-        assert_eq!(parse_provider("DeepInfra/black-forest-labs/FLUX-2-klein-4b"), "deepinfra");
+        assert_eq!(
+            parse_provider("DeepInfra/black-forest-labs/FLUX-2-klein-4b"),
+            "deepinfra"
+        );
         assert_eq!(parse_provider("OpenRouter/openai/dall-e-3"), "openrouter");
     }
 
@@ -184,7 +181,10 @@ mod tests {
             strip_provider_prefix("DeepInfra/black-forest-labs/FLUX-2-klein-4b"),
             "black-forest-labs/FLUX-2-klein-4b"
         );
-        assert_eq!(strip_provider_prefix("OpenRouter/openai/dall-e-3"), "openai/dall-e-3");
+        assert_eq!(
+            strip_provider_prefix("OpenRouter/openai/dall-e-3"),
+            "openai/dall-e-3"
+        );
     }
 
     #[test]
@@ -195,7 +195,11 @@ mod tests {
     #[test]
     fn build_model_list_returns_at_least_five_models() {
         let models = build_model_list();
-        assert!(models.len() >= 5, "expected ≥5 models, got {}", models.len());
+        assert!(
+            models.len() >= 5,
+            "expected ≥5 models, got {}",
+            models.len()
+        );
     }
 
     #[test]
