@@ -423,6 +423,24 @@ pub(crate) fn kask_string_input(
                                 kask.training.get_or_insert_default().cache_dir =
                                     Some(parsed.clone());
                             }
+                            ("media", "tts_model") => {
+                                kask.media.get_or_insert_default().tts_model = Some(parsed.clone());
+                            }
+                            ("media", "stt_model") => {
+                                kask.media.get_or_insert_default().stt_model = Some(parsed.clone());
+                            }
+                            ("media", "vision_model") => {
+                                kask.media.get_or_insert_default().vision_model =
+                                    Some(parsed.clone());
+                            }
+                            ("media", "image_gen_model") => {
+                                kask.media.get_or_insert_default().image_gen_model =
+                                    Some(parsed.clone());
+                            }
+                            ("media", "video_model") => {
+                                kask.media.get_or_insert_default().video_model =
+                                    Some(parsed.clone());
+                            }
                             ("models", "default_model") => {
                                 kask.models.get_or_insert_default().default_model =
                                     Some(parsed.clone());

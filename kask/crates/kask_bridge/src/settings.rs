@@ -704,6 +704,7 @@ impl KaskSettings {
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
         crate::mcp_env::emit_swarm_env(&data_dir, &self.swarm, &mut env);
         crate::mcp_env::emit_training_env(&self.training, &mut env);
+        crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_email_env(&self.curator.email, &mut env);
         crate::mcp_env::emit_operator_override_env(&mut env);
@@ -937,7 +938,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
-            media: c.media.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
             tool_router: c.tool_router.map(Into::into).unwrap_or_default(),
         }

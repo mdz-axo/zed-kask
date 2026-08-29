@@ -4548,7 +4548,21 @@ impl Thread {
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let request = build_thread_title_request(&self.messages, temperature);
+        let mut request = build_thread_title_request(&self.messages, temperature);
+
+        // zed-kask: D38 — respect reasoning-model requirements for thread
+        // title generation. Upstream's `build_thread_title_request` leaves
+        // `thinking_allowed` at its default (`false`). When the summarization
+        // model is a reasoning-only model (e.g. GLM 5.2, gpt-5, o3), the
+        // provider rejects the request with a 400 `InvalidRequest` because
+        // reasoning cannot be disabled. Mirror the D37 commit-message guard:
+        // allow thinking when the model supports it, with low effort to
+        // minimize tokens. `stream_thread_title` adds a self-healing retry
+        // for models whose `supports_thinking()` returns false but the
+        // endpoint still mandates reasoning.
+        let supports_thinking = model.supports_thinking();
+        request.thinking_allowed = supports_thinking;
+        request.reasoning_effort = supports_thinking.then(|| "low".to_string());
 
         let title_generation = cx.spawn(async move |_this, cx| {
             stream_thread_title(model, request, cx)
@@ -6050,6 +6064,37 @@ pub async fn stream_thread_title(
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> Result<String> {
+    // zed-kask: D38 — self-healing retry for reasoning-mandatory endpoints.
+    // Mirrors the D37 commit-message fix. If the initial request was built
+    // with thinking disabled (because `supports_thinking()` returned false)
+    // and the provider rejects it with a 400 `InvalidRequest`, retry once
+    // with thinking enabled. This catches reasoning-only models (e.g.
+    // GLM 5.2) whose `supports_thinking()` returns false because the
+    // provider doesn't advertise `reasoning_effort` in model metadata, even
+    // though the endpoint mandates reasoning. Bounded to one retry and only
+    // fires on `InvalidRequest` (not rate limits, auth, or transport
+    // errors). Mid-stream errors do not retry (partial text may be buffered).
+    let thinking_was_allowed = request.thinking_allowed;
+    match stream_thread_title_once(model.clone(), request.clone(), cx).await {
+        Ok(title) => Ok(title),
+        Err(error) => {
+            if !thinking_was_allowed && is_reasoning_required_title_error(&error) {
+                let mut retry_request = request;
+                retry_request.thinking_allowed = true;
+                retry_request.reasoning_effort = Some("low".to_string());
+                stream_thread_title_once(model, retry_request, cx).await
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+async fn stream_thread_title_once(
+    model: Arc<dyn LanguageModel>,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> Result<String> {
     let mut title = String::new();
     let mut events = model.stream_completion(request, cx).await?;
     while let Some(event) = events.next().await {
@@ -6063,6 +6108,26 @@ pub async fn stream_thread_title(
         title.push_str(&text);
     }
     Ok(title)
+}
+
+// zed-kask: D38 — classifies whether a title-generation error looks like a
+// reasoning-required rejection, so the self-healing retry knows when to
+// re-attempt with thinking enabled. Mirrors `GitPanel::is_reasoning_required_error`
+// (D37). The error arrives as an `anyhow::Error` because `stream_thread_title`
+// is called through `.context("failed to generate thread title")`, so we
+// downcast to `LanguageModelCompletionError` to inspect the category.
+fn is_reasoning_required_title_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<LanguageModelCompletionError>()
+        .is_some_and(|err| {
+            matches!(
+                err,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::InvalidRequest,
+                    ..
+                }
+            )
+        })
 }
 
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
@@ -8316,6 +8381,49 @@ mod tests {
                 "after assistant".to_string(),
                 SUMMARIZE_THREAD_PROMPT.to_string(),
             ]
+        );
+    }
+
+    // zed-kask: D38 — pins the self-healing error classifier for thread-title
+    // generation. Only `InvalidRequest` (400) rejections trigger the thinking
+    // retry; rate limits, auth failures, and transport errors do not. Mirrors
+    // the D37 `test_is_reasoning_required_error_classifies_invalid_request`.
+    #[test]
+    fn test_is_reasoning_required_title_error_classifies_invalid_request() {
+        use language_model::LanguageModelProviderName;
+        use std::time::Duration;
+
+        let invalid_request = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "Reasoning is mandatory for this endpoint and cannot be disabled"
+                .to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InvalidRequest,
+        };
+        assert!(
+            is_reasoning_required_title_error(&anyhow::anyhow!(invalid_request)),
+            "InvalidRequest rejection should trigger self-healing retry"
+        );
+
+        let rate_limit = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "rate limited".to_string(),
+            retry_after: Some(Duration::from_secs(60)),
+            category: ProviderErrorCategory::RateLimit,
+        };
+        assert!(
+            !is_reasoning_required_title_error(&anyhow::anyhow!(rate_limit)),
+            "RateLimit rejection should not trigger self-healing retry"
+        );
+
+        let other = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
+        assert!(
+            !is_reasoning_required_title_error(&anyhow::anyhow!(other)),
+            "non-rejection errors should not trigger self-healing retry"
         );
     }
 

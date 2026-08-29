@@ -13,8 +13,8 @@
 
 use crate::settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskGeneralSettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskSwarmSettings, KaskTrainingSettings,
+    KaskGeneralSettings, KaskMediaSettings, KaskModelsSettings, KaskPredictionMarketsSettings,
+    KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -345,6 +345,36 @@ pub(crate) fn emit_training_env(
         env.insert(
             "HKASK_TRAINING_CACHE_DIR".to_string(),
             training.cache_dir.clone(),
+        );
+    }
+}
+
+pub(crate) fn emit_media_env(
+    media: &KaskMediaSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if !media.tts_model.is_empty() {
+        env.insert("HKASK_MEDIA_TTS_MODEL".to_string(), media.tts_model.clone());
+    }
+    if !media.stt_model.is_empty() {
+        env.insert("HKASK_MEDIA_STT_MODEL".to_string(), media.stt_model.clone());
+    }
+    if !media.vision_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_VISION_MODEL".to_string(),
+            media.vision_model.clone(),
+        );
+    }
+    if !media.image_gen_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
+            media.image_gen_model.clone(),
+        );
+    }
+    if !media.video_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_VIDEO_MODEL".to_string(),
+            media.video_model.clone(),
         );
     }
 }

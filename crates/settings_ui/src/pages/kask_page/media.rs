@@ -1,11 +1,11 @@
 //! Media sub-page — media server model configuration (TTS, STT, Vision,
-//! Image Gen models) and gallery storage path.
+//! Image Gen, Video models).
 //!
-//! The media server's configuration is env-var-based (not in
-//! `kask.settings.json`). The models are resolved at server startup via
-//! `hkask_mcp_media::models::resolve(env_key, default)`. This page shows
-//! the current resolved values and the env-var names the operator can set
-//! to override them, plus the gallery DB path.
+//! Reads from `kask_bridge::KaskMediaSettings` (the `"kask.media"` section
+//! in settings.json) and writes via `kask_string_input` — the same pattern
+//! as every other kask settings sub-page. The media MCP server reads these
+//! as env vars (`HKASK_MEDIA_TTS_MODEL` etc.) emitted by
+//! `mcp_env::emit_media_env` at server launch.
 
 use super::*;
 
@@ -15,43 +15,51 @@ pub(crate) fn render_media_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    // Resolve the current model values the same way the media server does.
-    let tts_model = hkask_mcp_media::models::tts_model();
-    let stt_model = hkask_mcp_media::models::stt_model();
-    let vision_model = hkask_mcp_media::models::vision_model();
-    let image_gen_model = hkask_mcp_media::models::image_gen_model();
+    let raw = raw_kask_settings(cx);
+    let media: kask_bridge::KaskMediaSettings = raw
+        .and_then(|c| c.media)
+        .map(Into::into)
+        .unwrap_or_default();
 
     let tts_input = kask_string_input(
         "kask-media-tts",
         "TTS Model",
-        hkask_mcp_media::models::TTS_DEFAULT,
-        tts_model,
+        kask_bridge::DEFAULT_TTS_MODEL,
+        media.tts_model,
         "media",
         "tts_model",
     );
     let stt_input = kask_string_input(
         "kask-media-stt",
         "STT Model",
-        hkask_mcp_media::models::STT_DEFAULT,
-        stt_model,
+        kask_bridge::DEFAULT_STT_MODEL,
+        media.stt_model,
         "media",
         "stt_model",
     );
     let vision_input = kask_string_input(
         "kask-media-vision",
         "Vision Model",
-        hkask_mcp_media::models::VISION_DEFAULT,
-        vision_model,
+        kask_bridge::DEFAULT_VISION_MODEL,
+        media.vision_model,
         "media",
         "vision_model",
     );
     let image_gen_input = kask_string_input(
         "kask-media-image-gen",
         "Image Generation Model",
-        hkask_mcp_media::models::IMAGE_GEN_DEFAULT,
-        image_gen_model,
+        kask_bridge::DEFAULT_IMAGE_GEN_MODEL,
+        media.image_gen_model,
         "media",
         "image_gen_model",
+    );
+    let video_input = kask_string_input(
+        "kask-media-video",
+        "Video Generation Model",
+        kask_bridge::DEFAULT_VIDEO_MODEL,
+        media.video_model,
+        "media",
+        "video_model",
     );
 
     v_flex()
@@ -65,9 +73,10 @@ pub(crate) fn render_media_page(
         .child(
             Label::new(
                 "Configure the media MCP server: model overrides for TTS, \
-                 speech-to-text, vision, and image generation. Models are \
-                 resolved at server startup from env vars — set them in your \
-                 environment or via the kask MCP server env configuration.",
+                 speech-to-text, vision, image generation, and video generation. \
+                 When empty, the server falls back to the kask default models. \
+                 The media panel (View > Media or the status bar button) provides \
+                 a Steer-mode conversation scoped to the media MCP server.",
             )
             .color(Color::Muted)
             .size(LabelSize::Small),
@@ -79,21 +88,8 @@ pub(crate) fn render_media_page(
                 .child(tts_input)
                 .child(stt_input)
                 .child(vision_input)
-                .child(image_gen_input),
-        )
-        .child(div().mt_4())
-        .child(
-            Label::new(
-                "Env vars: HKASK_MEDIA_TTS_MODEL, HKASK_MEDIA_STT_MODEL, \
-                 HKASK_MEDIA_VISION_MODEL, HKASK_MEDIA_IMAGE_GEN_MODEL, \
-                 HKASK_MEDIA_VIDEO_MODEL, HKASK_MEDIA_DB. The gallery DB \
-                 lives at mcp/media/gallery.db under the kask data dir. \
-                 The media panel (View > Media or the status bar button) \
-                 provides a Steer-mode conversation scoped to the media \
-                 MCP server.",
-            )
-            .color(Color::Muted)
-            .size(LabelSize::XSmall),
+                .child(image_gen_input)
+                .child(video_input),
         )
         .into_any_element()
 }
