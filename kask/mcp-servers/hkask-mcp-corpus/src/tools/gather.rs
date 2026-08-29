@@ -78,7 +78,10 @@ impl CorpusServer {
     #[tool(
         description = "Discover an academic author's body of work and generate a corpus.yaml for style exemplar construction. Delegates to the corpus-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]
-    pub async fn corpus_discover(&self, Parameters(params): Parameters<DiscoverRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_discover(
+        &self,
+        Parameters(params): Parameters<DiscoverRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_discover", Self::ontology_anchor("corpus_discover"), async {
             let author_name = params.author_name.clone();
 

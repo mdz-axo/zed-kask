@@ -113,7 +113,8 @@ async fn scenario_quantify_resolves_single_independent_event() {
         .scenario_quantify(Parameters(QuantifyRequest {
             events: vec![event],
         }))
-        .await.expect("tool ok");
+        .await
+        .expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -159,7 +160,8 @@ async fn scenario_triage_marks_well_specified_question_clocklike() {
             has_reference_class: Some(true),
             has_resolution_criteria: Some(true),
         }))
-        .await.expect("tool ok");
+        .await
+        .expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -196,7 +198,8 @@ async fn scenario_triage_marks_vague_question_cloudlike() {
             has_reference_class: Some(false),
             has_resolution_criteria: Some(false),
         }))
-        .await.expect("tool ok");
+        .await
+        .expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -225,7 +228,8 @@ async fn scenario_brainstorm_clamps_start_round_into_range() {
             personas: None,
             start_round: Some(5),
         }))
-        .await.expect("tool ok");
+        .await
+        .expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(

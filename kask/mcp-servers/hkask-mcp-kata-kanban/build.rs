@@ -25,8 +25,8 @@ fn main() {
 
     // All tool fns follow `pub async fn kanban_*(`; the one exception is
     // `contract_propose_expect`, which uses the `contract_` prefix.
-    let pattern = regex::Regex::new(r"pub async fn ((?:kanban|contract)_\w+)\s*\(")
-        .expect("valid regex");
+    let pattern =
+        regex::Regex::new(r"pub async fn ((?:kanban|contract)_\w+)\s*\(").expect("valid regex");
 
     let mut names: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&src_dir).expect("src directory exists") {

@@ -149,9 +149,7 @@ impl HMemStore {
     pub fn from_driver(
         driver: Arc<dyn crate::database::driver::DatabaseDriver>,
     ) -> Result<Self, InfrastructureError> {
-        Ok(Self {
-            driver,
-        })
+        Ok(Self { driver })
     }
 
     /// Access the underlying driver for bulk operations.

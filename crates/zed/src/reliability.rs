@@ -188,12 +188,8 @@ fn start_context_server_health_polling(
         async move |cx| {
             while update_receiver.next().await.is_some() {
                 // Read ContextServerStore statuses synchronously on the foreground.
-                let css_statuses = cx.update(|cx| {
-                    read_context_server_statuses(
-                        &workspace_store,
-                        cx,
-                    )
-                });
+                let css_statuses =
+                    cx.update(|cx| read_context_server_statuses(&workspace_store, cx));
                 // Query McpRuntime running servers asynchronously.
                 let mrt_running = mcp_runtime.running_server_ids().await;
                 // Merge and update.
@@ -219,7 +215,6 @@ fn start_context_server_health_polling(
 /// How often to poll context-server health. Matches the cybernetics loop's
 /// tick cadence (10s) so the sensor sees a stuck server within one tick.
 const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
-
 
 /// Compute `(healthy_count, total_count)` across all open projects'
 /// Read ContextServerStore statuses (per-project) as a map of server_id → is_healthy.
@@ -840,9 +835,7 @@ mod tests {
     #[test]
     fn merge_mrt_only_server_is_healthy() {
         // A server only in McpRuntime (not in ContextServerStore) is still healthy.
-        let css = std::collections::HashMap::from([
-            ("curator".to_string(), true),
-        ]);
+        let css = std::collections::HashMap::from([("curator".to_string(), true)]);
         let mrt = vec!["curator".to_string(), "companies".to_string()];
         let (healthy, total) = super::merge_fleet_health(css, mrt);
         assert_eq!(healthy, 2);
@@ -874,9 +867,7 @@ mod tests {
     #[test]
     fn merge_no_double_counting() {
         // Same server in both paths — counted once.
-        let css = std::collections::HashMap::from([
-            ("curator".to_string(), true),
-        ]);
+        let css = std::collections::HashMap::from([("curator".to_string(), true)]);
         let mrt = vec!["curator".to_string()];
         let (healthy, total) = super::merge_fleet_health(css, mrt);
         assert_eq!(healthy, 1);

@@ -19,8 +19,8 @@ fn main() {
     let out_path = Path::new(&out_dir).join("tool_names.gen.rs");
 
     // All tool fns follow `pub async fn portfolio_*(` or `pub async fn ledger_*(`.
-    let pattern = regex::Regex::new(r"pub async fn ((?:portfolio|ledger)_\w+)\s*\(")
-        .expect("valid regex");
+    let pattern =
+        regex::Regex::new(r"pub async fn ((?:portfolio|ledger)_\w+)\s*\(").expect("valid regex");
 
     let mut names: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&src_dir).expect("src directory exists") {

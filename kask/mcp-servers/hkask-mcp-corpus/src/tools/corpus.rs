@@ -163,7 +163,10 @@ impl CorpusServer {
     #[tool(
         description = "Ingest generated QA pairs: parse, quality-filter, exact-match dedup (case-insensitive on instruction), write training JSONL, store QA h_mems with 5W1H dimension + Dublin Core / PKO metadata. Semantic dedup (SemDeDup K-means) was removed — see the inline rationale."
     )]
-    pub async fn corpus_ingest_qa(&self, Parameters(req): Parameters<IngestQaRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_ingest_qa(
+        &self,
+        Parameters(req): Parameters<IngestQaRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_ingest_qa", Self::ontology_anchor("corpus_ingest_qa"), async {
             let content = std::fs::read_to_string(&req.generated_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!("Cannot read generated_jsonl '{}': {e}", req.generated_jsonl))

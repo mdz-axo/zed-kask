@@ -130,7 +130,10 @@ impl crate::CorpusServer {
     #[tool(
         description = "Generate prose in an author's style using exemplar retrieval and centroid validation. When config_path is provided, loads a cognition config YAML (mashup or style synthesizer) for the Jinja2 system prompt and validation thresholds. The db_path and passphrase connect to the corpus memory DB for exemplar retrieval."
     )]
-    pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_compose(
+        &self,
+        Parameters(params): Parameters<ComposeRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_compose",
@@ -170,7 +173,10 @@ impl crate::CorpusServer {
     #[tool(
         description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). When config_path is provided, loads a cognition config YAML for the Jinja2 system prompt and validation thresholds. Delegates to corpus_compose with dimension-specific guidance."
     )]
-    pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_rewrite(
+        &self,
+        Parameters(params): Parameters<RewriteRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "corpus_rewrite",

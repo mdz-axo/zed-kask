@@ -273,7 +273,10 @@ impl ScenariosServer {
     #[tool(
         description = "Return current scenario server state: pipeline overview, calibration curve, and cached event tree."
     )]
-    pub async fn scenario_status(&self, _parameters: Parameters<StatusRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_status(
+        &self,
+        _parameters: Parameters<StatusRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_status", Self::ontology_anchor("scenario_status"), async {
             let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
             let total = store.len();
@@ -375,7 +378,10 @@ impl ScenariosServer {
     /// synthesize_perspectives, assess_project — same functions called by
     /// individual tools. The pipeline assembles their outputs into one envelope.
     #[tool(description = "Run the complete scenario pipeline in a single call.")]
-    pub async fn scenario_full(&self, Parameters(req): Parameters<FullPipelineRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_full(
+        &self,
+        Parameters(req): Parameters<FullPipelineRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_full", Self::ontology_anchor("scenario_full"), async {
             let events = &req.events;
             // The pipeline anchors synthesis on the first event, so an empty
@@ -776,7 +782,10 @@ impl ScenariosServer {
     #[tool(
         description = "Start a conversational framing session for a scenario project. Generates a 7-turn conversational protocol with natural openings (not numbered questions) designed using behavioral psychology and improv coaching postures. Turns: (1) What is on your mind? (foot-in-the-door), (2) What decision hangs on this? (curiosity gap), (3) When do you need to act? (temporal anchoring), (4) What is NOT on the table? (loss aversion — exclusions first), (5) Who would say I told you so? (social proof + contrarian), (6) What does good enough look like? (peak-end begins), (7) What assumptions could break everything? (peak-end closes). Each turn has improv mode guidance (Plussing, Yes And, Yes But, Coaching) and behavioral psychology notes. The agent acts as a coach, not an interviewer. Run this FIRST — before scenario_brainstorm."
     )]
-    pub async fn scenario_frame(&self, Parameters(req): Parameters<FrameRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_frame(
+        &self,
+        Parameters(req): Parameters<FrameRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_frame", Self::ontology_anchor("scenario_frame"), async {
             let protocol = templates::generate_framing_session(&req.subject);
 
@@ -967,7 +976,10 @@ impl ScenariosServer {
     #[tool(
         description = "Build a scenario event tree scaffold from web research. Returns an extraction template (not final events) with: event schema, dependency format, certainty tier definitions, and Tetlock's 10 commandments as methodology. The agent (LLM) fills in the event_extraction_prompt against research_text to produce ScenarioEvent objects. Without research_text, returns a structural template. The ultimate pipeline artifact: events with calibrated probabilities, conditional dependency chains, and connections to driver/decision factors from the framing document. Feeds into scenario_quantify for probability resolution."
     )]
-    pub async fn scenario_build(&self, Parameters(req): Parameters<BuildEventsRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_build(
+        &self,
+        Parameters(req): Parameters<BuildEventsRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_build", Self::ontology_anchor("scenario_build"), async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
             let scenario_type = parse_scenario_type(req.scenario_type.as_deref());
@@ -1081,7 +1093,10 @@ impl ScenariosServer {
     #[tool(
         description = "Extract candidate scenario events from raw web research text. Provide research_text (raw output from web searches about a subject) and this tool returns structured event suggestions with dependency hints. Each candidate event includes: suggested name, yes/no question framing, deadline suggestion, dependency hints, and Fermi sub-question scaffolding. The output is a draft that needs probability assignment and refinement, then feeds into scenario_quantify. Use this after web searching (brave_web_search, firecrawl_search, tavily_search) and before scenario_quantify."
     )]
-    pub async fn scenario_research(&self, Parameters(req): Parameters<ResearchRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_research(
+        &self,
+        Parameters(req): Parameters<ResearchRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_research", Self::ontology_anchor("scenario_research"), async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
             let scenario_type = parse_scenario_type(req.scenario_type.as_deref());
@@ -1198,7 +1213,10 @@ impl ScenariosServer {
     #[tool(
         description = "Quantify a scenario event tree. Takes an array of ScenarioEvent objects with conditional dependencies and computes: (1) topological sort of dependency graph, (2) marginal probabilities for each event via conditional probability propagation, (3) joint probability of the full event chain, (4) variance contribution per event (sensitivity proxy), (5) sensitivity ranking. Detects cycles and missing parent references. Returns the full resolved EventTree. To render this tree inline for the user, emit a fenced `graph` code block whose body is a JSON object: {\"viz\":\"event_tree\", \"subject\":..., \"joint_probability\":..., \"nodes\":[{\"id\",\"name\",\"question\",\"marginal_probability\",\"certainty_tier\",\"depends_on\":[{\"parent_event_ids\":[...],\"conditionals\":[...]}]}]} — the conversation view renders it as an interactive event-tree DAG (pan/zoom; click a node to set evidence and re-propagate). Pass through the fields this tool returns; keep `depends_on[].conditionals` intact so the DAG can re-propagate when evidence is set."
     )]
-    pub async fn scenario_quantify(&self, Parameters(req): Parameters<QuantifyRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_quantify(
+        &self,
+        Parameters(req): Parameters<QuantifyRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_quantify", Self::ontology_anchor("scenario_quantify"), async {
             let tree = superforecast::build_event_tree(&req.events)
                 .map_err(map_scenario_error)?;
@@ -1309,7 +1327,10 @@ impl ScenariosServer {
     #[tool(
         description = "Bayesian update for a scenario event. Apply Bayes' theorem: P(H|E) = P(E|H) × P(H) / P(E). Provide prior probability, evidence likelihood (how likely is the evidence if the hypothesis is true?), and evidence base rate (how common is this evidence in general?). Returns the posterior probability and the magnitude of the update."
     )]
-    pub async fn scenario_update(&self, Parameters(req): Parameters<UpdateRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_update(
+        &self,
+        Parameters(req): Parameters<UpdateRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_update", Self::ontology_anchor("scenario_update"), async {
             if !(0.0..=1.0).contains(&req.prior_probability) {
                 return Err(McpToolError::invalid_argument("prior_probability must be in [0, 1]"));
@@ -1358,7 +1379,10 @@ impl ScenariosServer {
     #[tool(
         description = "Score a scenario forecast against known outcomes using Brier scoring. Takes an array of ScenarioEvent objects and an array of outcomes (each with event_id and occurred boolean). Computes Brier score per event and aggregate. Provides human-readable interpretation: excellent (<0.05), good (<0.10), fair (<0.20), poor (<0.33), worse_than_climatology (≥0.33). Calibration tracking closes the superforecasting loop."
     )]
-    pub async fn scenario_score(&self, Parameters(req): Parameters<ScoreRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_score(
+        &self,
+        Parameters(req): Parameters<ScoreRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_score", Self::ontology_anchor("scenario_score"), async {
             let events = &req.events;
             let outcome_pairs: Vec<(String, bool)> = req.outcomes
@@ -1719,7 +1743,10 @@ impl ScenariosServer {
     #[tool(
         description = "Triage a forecasting question (Tetlock Commandment 1). Evaluates whether a question is worth the full superforecasting pipeline. Scores three dimensions: clarity (specificity + deadline), data availability (reference class exists?), and resolution criteria (will we know the answer?). Classifies into: clocklike (easy, base-rate suffices), goldilocks (worth full pipeline), cloudlike (too vague, refine the question)."
     )]
-    pub async fn scenario_triage(&self, Parameters(req): Parameters<TriageRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_triage(
+        &self,
+        Parameters(req): Parameters<TriageRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_triage", Self::ontology_anchor("scenario_triage"), async {
             let assessment = superforecast::triage_question(
                 &req.question,
@@ -1757,7 +1784,10 @@ impl ScenariosServer {
     #[tool(
         description = "Assess a scenario project's effectiveness (Chermack Phase 5). Evaluates the project across all five phases: Preparation (stakeholder engagement), Exploration (perspective diversity), Development (causal structure), Implementation (strategies applied), and Project Assessment (learning + calibration). Combines quantitative metrics (Brier scores, disagreement, event count, dependency ratio) with qualitative assessment. Answers Chermack's core question: did the scenario project improve decision quality? Returns per-phase scores, gaps, strengths, learning evidence, and actionable recommendations."
     )]
-    pub async fn scenario_assess(&self, Parameters(req): Parameters<AssessRequest>) -> Result<String, McpToolError> {
+    pub async fn scenario_assess(
+        &self,
+        Parameters(req): Parameters<AssessRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "scenario_assess", Self::ontology_anchor("scenario_assess"), async {
             let perspective_count = req.perspective_count.unwrap_or(1);
             let disagreement = req.disagreement_score.unwrap_or(0.0);

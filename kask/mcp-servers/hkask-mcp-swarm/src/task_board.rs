@@ -401,29 +401,68 @@ mod tests {
 
         // First PDCA iteration: two tasks, one pass one fail.
         let mut board = TaskBoard::default();
-        board.record_attempt("task-analyst-aaa", "analyst", "analyze market", Some(true), Some("bullish".into()));
-        board.record_failure("task-researcher-bbb", "researcher", "search news", "timeout");
-        board.save(dir.to_str().unwrap(), swarm_id).expect("save iteration 1");
+        board.record_attempt(
+            "task-analyst-aaa",
+            "analyst",
+            "analyze market",
+            Some(true),
+            Some("bullish".into()),
+        );
+        board.record_failure(
+            "task-researcher-bbb",
+            "researcher",
+            "search news",
+            "timeout",
+        );
+        board
+            .save(dir.to_str().unwrap(), swarm_id)
+            .expect("save iteration 1");
 
         // Second PDCA iteration: reload, retry the failed task, it passes.
         let mut board = TaskBoard::load(dir.to_str().unwrap(), swarm_id).expect("load iteration 2");
         assert_eq!(board.tasks.len(), 2, "both tasks survived the cycle");
-        board.record_attempt("task-researcher-bbb", "researcher", "search news", Some(true), Some("found article".into()));
-        board.save(dir.to_str().unwrap(), swarm_id).expect("save iteration 2");
+        board.record_attempt(
+            "task-researcher-bbb",
+            "researcher",
+            "search news",
+            Some(true),
+            Some("found article".into()),
+        );
+        board
+            .save(dir.to_str().unwrap(), swarm_id)
+            .expect("save iteration 2");
 
         // Third PDCA iteration: reload and verify the accumulated state.
         let loaded = TaskBoard::load(dir.to_str().unwrap(), swarm_id).expect("load iteration 3");
         assert_eq!(loaded.tasks.len(), 2, "no new tasks — same task_id updated");
 
-        let analyst = loaded.tasks.iter().find(|t| t.agent_name == "analyst").expect("analyst task");
+        let analyst = loaded
+            .tasks
+            .iter()
+            .find(|t| t.agent_name == "analyst")
+            .expect("analyst task");
         assert_eq!(analyst.status, TaskStatus::Complete);
         assert_eq!(analyst.attempt_count, 1);
         assert_eq!(analyst.fail_count, 0);
 
-        let researcher = loaded.tasks.iter().find(|t| t.agent_name == "researcher").expect("researcher task");
-        assert_eq!(researcher.status, TaskStatus::Complete, "retried task now passes");
-        assert_eq!(researcher.attempt_count, 2, "two attempts: first failed, second passed");
-        assert_eq!(researcher.fail_count, 1, "one failure from the first attempt");
+        let researcher = loaded
+            .tasks
+            .iter()
+            .find(|t| t.agent_name == "researcher")
+            .expect("researcher task");
+        assert_eq!(
+            researcher.status,
+            TaskStatus::Complete,
+            "retried task now passes"
+        );
+        assert_eq!(
+            researcher.attempt_count, 2,
+            "two attempts: first failed, second passed"
+        );
+        assert_eq!(
+            researcher.fail_count, 1,
+            "one failure from the first attempt"
+        );
 
         // The board reports all tasks terminal — ORIENT can see the swarm
         // has no pending work.

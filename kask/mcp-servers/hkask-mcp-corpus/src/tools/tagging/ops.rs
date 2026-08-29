@@ -218,7 +218,10 @@ impl CorpusServer {
     #[tool(
         description = "Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO process concepts, FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template. Computes graph-centrality salience. Every chunk gets at least one 5W1H dimension — no zero-salience chunks."
     )]
-    pub async fn corpus_tag_chunks(&self, Parameters(req): Parameters<TagChunksRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_tag_chunks(
+        &self,
+        Parameters(req): Parameters<TagChunksRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_tag_chunks", Self::ontology_anchor("corpus_tag_chunks"), async {
             let chunks = read_input_chunks(&req.chunks_jsonl)?;
             if chunks.is_empty() {

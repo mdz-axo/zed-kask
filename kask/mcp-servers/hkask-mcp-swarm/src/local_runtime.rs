@@ -690,8 +690,9 @@ impl LocalSwarmRuntime {
 
         // Phase 2: debit the ledger sequentially (TOCTOU-safe).
         let mut results = Vec::with_capacity(total);
-        for (raw_result, (agent_id, credits_authorized)) in
-            raw_results.into_iter().zip(agent_ids.iter().zip(credits.iter()))
+        for (raw_result, (agent_id, credits_authorized)) in raw_results
+            .into_iter()
+            .zip(agent_ids.iter().zip(credits.iter()))
         {
             let raw = match raw_result {
                 Ok(r) => r,
@@ -700,7 +701,12 @@ impl LocalSwarmRuntime {
                     continue;
                 }
             };
-            results.push(Ok(self.debit_and_build(raw, agent_id, *credits_authorized, 0)));
+            results.push(Ok(self.debit_and_build(
+                raw,
+                agent_id,
+                *credits_authorized,
+                0,
+            )));
         }
         results
     }

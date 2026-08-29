@@ -335,7 +335,11 @@ impl SwarmServer {
                         match self.local_registry.get(&entry.agent_name) {
                             Some(agent) => {
                                 found_context.push((entry, agent.clone()));
-                                delegations.push((agent, entry.task.clone(), entry.credits_authorized));
+                                delegations.push((
+                                    agent,
+                                    entry.task.clone(),
+                                    entry.credits_authorized,
+                                ));
                             }
                             None => {
                                 not_found.push(entry.agent_name.clone());
@@ -355,10 +359,16 @@ impl SwarmServer {
                             &format!("agent '{name}' not found in local registry"),
                         ));
                     }
-                    for (result, (entry, agent)) in raw_results.into_iter().zip(found_context.iter()) {
+                    for (result, (entry, agent)) in
+                        raw_results.into_iter().zip(found_context.iter())
+                    {
                         match result {
                             Ok(r) => {
-                                self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                                self.validate_produces(
+                                    &entry.agent_name,
+                                    &agent.produces,
+                                    &r.response,
+                                );
                                 // Stigmergy (ACO pheromone trail) — mirrors
                                 // swarm_delegate_local so parallel fan-out
                                 // delegations record performance annotations.
@@ -1668,7 +1678,10 @@ impl SwarmServer {
     #[tool(
         description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the inference port directly to generate composition guidance. The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
     )]
-    pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_ai_assist(
+        &self,
+        parameters: Parameters<AiAssistRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_ai_assist", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             match req.action.as_str() {

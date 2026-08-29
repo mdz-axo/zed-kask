@@ -533,7 +533,8 @@ impl SwarmPanel {
                             if let Some(err) = parse_tool_error(&output) {
                                 log::warn!(
                                     "swarm-panel: apps fetch returned a server error: {} ({:?})",
-                                    err.message, err.kind
+                                    err.message,
+                                    err.kind
                                 );
                                 cx.notify();
                                 return;
@@ -562,13 +563,9 @@ impl SwarmPanel {
                         }
                         Err(err) => {
                             if err.is_retryable() {
-                                log::warn!(
-                                    "swarm-panel: apps fetch lost the MCP transport: {err}"
-                                );
+                                log::warn!("swarm-panel: apps fetch lost the MCP transport: {err}");
                             } else {
-                                log::debug!(
-                                    "swarm-panel: apps fetch failed (non-fatal): {err}"
-                                );
+                                log::debug!("swarm-panel: apps fetch failed (non-fatal): {err}");
                             }
                         }
                     }

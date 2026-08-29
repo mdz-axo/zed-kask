@@ -44,8 +44,7 @@ impl Drop for JobPanicGuard {
             && job.status != "cancelled"
         {
             job.status = "failed".to_string();
-            job.error =
-                Some("job task terminated unexpectedly (panic or abort)".to_string());
+            job.error = Some("job task terminated unexpectedly (panic or abort)".to_string());
             job.completed_at = Some(hkask_types::time::now_rfc3339());
         }
     }
@@ -120,8 +119,7 @@ impl MediaServer {
                     // If the generation future panics or the task is aborted,
                     // this guard marks the job failed on drop instead of
                     // leaving it stuck in "running".
-                    let guard =
-                        JobPanicGuard::new(job_store.clone(), job_id_for_task.clone());
+                    let guard = JobPanicGuard::new(job_store.clone(), job_id_for_task.clone());
 
                     let result = vision_port
                         .media_generate(&op_for_task, &media_params)

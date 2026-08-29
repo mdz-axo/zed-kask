@@ -779,8 +779,7 @@ impl super::CyberneticsLoop {
                         // Before-value is the healthy/total ratio at
                         // escalation time. After-value is re-sensed from
                         // the source. Higher ratio = improved.
-                        let before_ratio =
-                            *healthy_count as f64 / (*total_count).max(1) as f64;
+                        let before_ratio = *healthy_count as f64 / (*total_count).max(1) as f64;
                         (before_ratio, SignalMetric::ContextServerHealth)
                     }
                     _ => {

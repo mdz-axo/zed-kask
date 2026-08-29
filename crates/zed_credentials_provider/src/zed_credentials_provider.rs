@@ -71,7 +71,8 @@ impl CredentialsProvider for KeychainCredentialsProvider {
                                 "Keychain platform error reading credential at {}: {} — \
                                  the key may exist but the keychain is inaccessible \
                                  (D-Bus, keyring locked, etc.)",
-                                url, error
+                                url,
+                                error
                             );
                             None
                         }

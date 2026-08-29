@@ -300,7 +300,10 @@ impl CuratorServer {
     // ── Liveness ───────────────────────────────────────────────────────
 
     #[tool(description = "Liveness check")]
-    pub async fn curator_ping(&self, Parameters(_req): Parameters<PingRequest>) -> Result<String, McpToolError> {
+    pub async fn curator_ping(
+        &self,
+        Parameters(_req): Parameters<PingRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_ping", async {
             let stores = self.db.get();
             Ok(json!({
@@ -320,7 +323,10 @@ impl CuratorServer {
     // ── Escalation Management ──────────────────────────────────────────
 
     #[tool(description = "List all pending escalations requiring review")]
-    pub async fn curator_escalations(&self, Parameters(_req): Parameters<PingRequest>) -> Result<String, McpToolError> {
+    pub async fn curator_escalations(
+        &self,
+        Parameters(_req): Parameters<PingRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_escalations", async {
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
@@ -883,7 +889,10 @@ impl CuratorServer {
     #[tool(
         description = "Query Regulation regulation records by namespace prefix within a time window. Returns structured event data for governance transparency reporting and consent auditing."
     )]
-    pub async fn reg_query(&self, Parameters(req): Parameters<RegQueryRequest>) -> Result<String, McpToolError> {
+    pub async fn reg_query(
+        &self,
+        Parameters(req): Parameters<RegQueryRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "reg_query", async {
             let stores = self.db.get();
             let store = stores.regulation_store()?;
@@ -1034,7 +1043,10 @@ impl CuratorServer {
     #[tool(
         description = "Insert a new memory into the curator's store. Curator-only. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
     )]
-    pub async fn memory_insert(&self, Parameters(req): Parameters<MemoryInsertRequest>) -> Result<String, McpToolError> {
+    pub async fn memory_insert(
+        &self,
+        Parameters(req): Parameters<MemoryInsertRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_insert", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
@@ -1105,7 +1117,10 @@ impl CuratorServer {
     #[tool(
         description = "Update an existing memory's confidence via Bayesian combination. Curator-only. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
     )]
-    pub async fn memory_update(&self, Parameters(req): Parameters<MemoryUpdateRequest>) -> Result<String, McpToolError> {
+    pub async fn memory_update(
+        &self,
+        Parameters(req): Parameters<MemoryUpdateRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_update", async {
             let stores = self.db.get();
             let memory = stores.memory()?;

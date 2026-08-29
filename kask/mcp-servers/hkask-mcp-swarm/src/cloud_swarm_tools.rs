@@ -216,7 +216,10 @@ impl SwarmServer {
     #[tool(
         description = "List your Agent Bestiary World workspaces (agent swarms) with budgets and agent counts, or pass workspace_id (UUID or slug) for the full roster of hired agents. Requires API key."
     )]
-    pub(crate) async fn swarm_get_swarm(&self, parameters: Parameters<GetSwarmRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_get_swarm(
+        &self,
+        parameters: Parameters<GetSwarmRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_get_swarm",
@@ -269,7 +272,10 @@ impl SwarmServer {
     #[tool(
         description = "Get the full agent card (capabilities, dependencies, ontology, execution stats, versions) for one Agent Bestiary World agent. Requires API key."
     )]
-    pub(crate) async fn swarm_get_agent(&self, parameters: Parameters<GetAgentRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_get_agent(
+        &self,
+        parameters: Parameters<GetAgentRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_get_agent",
@@ -324,7 +330,10 @@ impl SwarmServer {
     #[tool(
         description = "List published Agent Bestiary World Apps (reusable agent-team manifests composed via Xaman Ek). The sharing/discovery surface. Requires API key."
     )]
-    pub(crate) async fn swarm_list_apps(&self, parameters: Parameters<ListAppsRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_list_apps(
+        &self,
+        parameters: Parameters<ListAppsRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_list_apps",
@@ -453,7 +462,10 @@ impl SwarmServer {
     #[tool(
         description = "Estimate the credit cost of hiring an Agent Bestiary World agent (including its required/optional dependency team). Read-only pre-flight for the cost/consent gate — spends nothing. Requires API key."
     )]
-    pub(crate) async fn swarm_hire_cost(&self, parameters: Parameters<HireCostRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_hire_cost(
+        &self,
+        parameters: Parameters<HireCostRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "swarm_hire_cost", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
@@ -618,7 +630,10 @@ impl SwarmServer {
     #[tool(
         description = "Hire an Agent Bestiary World agent into a workspace (swarm). Spends credits — requires a consent_token from swarm_request_consent (action 'hire', target = agent_name)."
     )]
-    pub(crate) async fn swarm_hire(&self, parameters: Parameters<HireRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_hire(
+        &self,
+        parameters: Parameters<HireRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_hire",
@@ -682,7 +697,10 @@ impl SwarmServer {
     #[tool(
         description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, budget-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
     )]
-    pub(crate) async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_delegate(
+        &self,
+        parameters: Parameters<DelegateRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_delegate",
@@ -868,7 +886,10 @@ impl SwarmServer {
     #[tool(
         description = "Read an Agent Bestiary World workspace's recent run status: the latest chat messages and agent activity. Read-only. Requires API key."
     )]
-    pub(crate) async fn swarm_run_status(&self, parameters: Parameters<SwarmRunRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_run_status(
+        &self,
+        parameters: Parameters<SwarmRunRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_run_status",
@@ -1220,7 +1241,10 @@ impl SwarmServer {
     #[tool(
         description = "Ask Xaman Ek, the Agent Bestiary World curator. Use session_type 'composition_design' to plan a team (agent recommendations + I/O compatibility), 'workspace_help' for workspace questions, or 'free'. Returns the curator's response and, when a composition plan is ready, ready_to_create + in_progress. Requires API key."
     )]
-    pub(crate) async fn swarm_xaman(&self, parameters: Parameters<XamanRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_xaman(
+        &self,
+        parameters: Parameters<XamanRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_xaman",
@@ -1370,7 +1394,10 @@ impl SwarmServer {
     #[tool(
         description = "Parallel multi-agent fan-out to an ABW workspace: post N @mention delegations in one call. Each entry needs its own consent token. ABW is fire-and-forget — responses arrive via swarm_run_status. Capped at 10 agents."
     )]
-    pub(crate) async fn swarm_fanout(&self, parameters: Parameters<FanoutRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_fanout(
+        &self,
+        parameters: Parameters<FanoutRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_fanout",
@@ -1476,7 +1503,10 @@ impl SwarmServer {
     #[tool(
         description = "Fire (un-hire) an agent from an ABW workspace (swarm). Removes the agent from the roster; the agent itself is NOT deleted (use swarm_delete_agent for that). No credit cost. Requires API key."
     )]
-    pub(crate) async fn swarm_fire(&self, parameters: Parameters<FireRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_fire(
+        &self,
+        parameters: Parameters<FireRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_fire",
@@ -1960,7 +1990,10 @@ impl SwarmServer {
     #[tool(
         description = "Get a single Agent Bestiary World App by slug (GET /api/apps/{slug}). Returns the full App manifest including workspace_template, visibility, and schema. Read-only. Requires API key."
     )]
-    pub(crate) async fn swarm_get_app(&self, parameters: Parameters<GetAppRequest>) -> Result<String, McpToolError> {
+    pub(crate) async fn swarm_get_app(
+        &self,
+        parameters: Parameters<GetAppRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "swarm_get_app",

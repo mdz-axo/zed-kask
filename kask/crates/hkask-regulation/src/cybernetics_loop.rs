@@ -194,7 +194,8 @@ pub struct CyberneticsLoop {
     /// The sensor registry still holds a `ContextServerHealthSensor` wrapping
     /// the same source for the sense phase; this field is the verify-phase
     /// re-sense path.
-    context_server_health_source: Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
+    context_server_health_source:
+        Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
 }
 
 impl CyberneticsLoop {

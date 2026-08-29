@@ -244,7 +244,10 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with wb_search_indicators topic_id filter."
     )]
-    pub async fn wb_list_topics(&self, Parameters(req): Parameters<WbListTopicsRequest>) -> Result<String, McpToolError> {
+    pub async fn wb_list_topics(
+        &self,
+        Parameters(req): Parameters<WbListTopicsRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "wb_list_topics",

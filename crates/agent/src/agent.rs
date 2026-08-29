@@ -4380,8 +4380,7 @@ pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
 /// `McpRuntime::invoke` records for the governed dispatch path. The domain
 /// for the reliability sensor is the server name; the tool name is carried
 /// for future per-tool sensing and log attribution.
-pub type McpToolOutcomeRecorder =
-    Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+pub type McpToolOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
 
 /// Global hook for agent-path MCP tool outcome recording. Wired in
 /// `main.rs` to a closure that forwards to the app's `RegulationLedger`.
@@ -4596,15 +4595,12 @@ mod internal_tests {
         let captured = recorded.clone();
         set_mcp_tool_outcome_recorder(std::sync::Arc::new(
             move |server, tool, success, error_kind| {
-                captured
-                    .lock()
-                    .expect("captured lock")
-                    .push((
-                        server.to_string(),
-                        tool.to_string(),
-                        success,
-                        error_kind.map(str::to_string),
-                    ));
+                captured.lock().expect("captured lock").push((
+                    server.to_string(),
+                    tool.to_string(),
+                    success,
+                    error_kind.map(str::to_string),
+                ));
             },
         ));
         record_mcp_tool_outcome("media", "generate_image", true, None);

@@ -3830,15 +3830,18 @@ impl GitPanel {
                                 match message {
                                     Ok(text) => {
                                         this.update(cx, |this, cx| {
-                                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                                let insert_position =
-                                                    buffer.anchor_before(buffer.len());
-                                                buffer.edit(
-                                                    [(insert_position..insert_position, text)],
-                                                    None,
-                                                    cx,
-                                                );
-                                            });
+                                            this.commit_message_buffer(cx).update(
+                                                cx,
+                                                |buffer, cx| {
+                                                    let insert_position =
+                                                        buffer.anchor_before(buffer.len());
+                                                    buffer.edit(
+                                                        [(insert_position..insert_position, text)],
+                                                        None,
+                                                        cx,
+                                                    );
+                                                },
+                                            );
                                         })?;
                                     }
                                     Err(e) => {
@@ -13709,8 +13712,7 @@ mod tests {
     // zed-kask: D37 — pins the commit-message thinking guard.
     #[test]
     fn test_commit_message_guard_enables_thinking_for_reasoning_model() {
-        let (thinking_allowed, reasoning_effort) =
-            GitPanel::commit_message_thinking_settings(true);
+        let (thinking_allowed, reasoning_effort) = GitPanel::commit_message_thinking_settings(true);
         assert!(
             thinking_allowed,
             "guard should enable thinking when the model supports it"

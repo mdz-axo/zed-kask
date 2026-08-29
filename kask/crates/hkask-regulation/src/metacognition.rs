@@ -320,12 +320,7 @@ impl MetacognitionLoop {
             }
         };
 
-        crate::loops::LoopView::new(
-            loop_model,
-            panel_absence,
-            outcome_trust,
-            liveness_trust,
-        )
+        crate::loops::LoopView::new(loop_model, panel_absence, outcome_trust, liveness_trust)
     }
 
     /// Execute one sense→compare→compute→act cycle.
