@@ -54,7 +54,7 @@ pub struct DiscoverRequest {
     pub output_path: Option<String>,
 }
 
-fn default_curated() -> Result<String, McpToolError> {
+fn default_curated() -> String {
     "curated".to_string()
 }
 fn default_max_works() -> u32 {
@@ -500,7 +500,7 @@ pub(crate) struct DiscoverCompanyRequest {
     pub mode: String,
 }
 
-fn default_discovery_mode() -> Result<String, McpToolError> {
+fn default_discovery_mode() -> String {
     "agentic".to_string()
 }
 

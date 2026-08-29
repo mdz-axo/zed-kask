@@ -19,12 +19,12 @@ use crate::inference_svc::InferenceContext;
 use crate::{McpToolError, Parameters, execute_tool_semantic, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
-fn embedding_model() -> Result<String, McpToolError> {
+fn embedding_model() -> String {
     hkask_services_core::settings::HkaskSettings::load().embedding_model()
 }
 
 /// Resolve the generation model from InferenceConfig.
-fn generation_model() -> Result<String, McpToolError> {
+fn generation_model() -> String {
     hkask_inference::InferenceConfig::from_env().default_model
 }
 
@@ -121,7 +121,7 @@ pub(crate) struct RewriteRequest {
     pub config_path: Option<String>,
 }
 
-fn default_composite() -> Result<String, McpToolError> {
+fn default_composite() -> String {
     "composite".to_string()
 }
 

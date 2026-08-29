@@ -138,7 +138,11 @@ impl Default for SwarmConfig {
         // circular dependency — the duplication is the seam between them. If
         // you change a default here, change it there too, and update the
         // `swarm_settings_default_emits_no_env` test in `settings.rs`.
-        // All fields here have a counterpart in `KaskSwarmSettings::default()`.
+        // All fields here have a counterpart in `KaskSwarmSettings::default()`
+        // EXCEPT `memory_passphrase` — there is no bridge-side passphrase
+        // setting; the value arrives via the `HKASK_DB_PASSPHRASE` credential
+        // (resolved in `run()` from ctx.credentials → env → keychain), with
+        // this default as the last-resort fallback.
         // The bridge emits env vars for non-default values; the server reads
         // them in `from_env`. Fields the bridge defaults to empty/false use
         // the server's defaults here as the fallback.

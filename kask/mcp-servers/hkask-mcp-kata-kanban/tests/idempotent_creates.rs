@@ -310,8 +310,8 @@ async fn failed_call_releases_the_key_for_a_clean_retry() {
         .await
         .expect_err("a malformed board id must fail before any write");
     assert!(
-        matches!(failed.kind, McpErrorKind::NotFound),
-        "expected a structured not-found error for a malformed board id, got: {:?}",
+        matches!(failed.kind, McpErrorKind::InvalidArgument),
+        "expected a structured invalid-argument error for a malformed board id, got: {:?}",
         failed
     );
 
@@ -530,7 +530,7 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
         .expect("tool ok");
     let task_id = task["task_id"].as_str().expect("task_id").to_string();
 
-    let out = server
+    let error = server
         .kanban_task_spawn(Parameters(TaskSpawnRequest {
             task_id,
             idempotency_key: Some("spawn-gesture".to_string()),
@@ -540,22 +540,20 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
             rjoule_budget: None,
             swarm_id: None,
         }))
-        .await;
-    let response = parse(&out);
+        .await
+        .expect_err("spawn fails without a wired inference port");
 
-    let error = response
-        .get("error")
-        .and_then(|e| e.as_str())
-        .unwrap_or_default();
     assert!(
-        !error.contains("insufficient local credits"),
+        !error.message.contains("insufficient local credits"),
         "an unfunded ledger must NOT block a local spawn - the kanban board and local \
          agents run on the operator's own substrate, so there is nothing to fund. \
-         Got: {out}"
+         Got: {}",
+        error.message
     );
     assert!(
-        !error.contains("swarm_fund_local"),
+        !error.message.contains("swarm_fund_local"),
         "the spawn path must not tell the operator to fund a ledger that is not a \
-         gate. Got: {out}"
+         gate. Got: {}",
+        error.message
     );
 }

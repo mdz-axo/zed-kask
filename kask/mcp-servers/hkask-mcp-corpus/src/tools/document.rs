@@ -485,7 +485,12 @@ impl CorpusServer {
     /// post: each supported source has a non-empty `.txt` output or an entry in `failures`
     /// inv: existing outputs larger than 50 bytes are preserved unchanged
     /// [P3] Constraining: Generative Space — batch progress and failures remain visible in the tool result.
-    async fn convert_directory(&self, path: &str, output: Option<&str>, force_ocr: bool) -> Result<String, McpToolError> {
+    async fn convert_directory(
+        &self,
+        path: &str,
+        output: Option<&str>,
+        force_ocr: bool,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_convert", Self::ontology_anchor("corpus_convert"), async {
             hkask_mcp_server::validate_path("path", path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
@@ -541,13 +546,23 @@ impl CorpusServer {
                     continue;
                 }
 
-                let response = Box::pin(self.corpus_convert(Parameters(ConvertRequest {
+                let response = match Box::pin(self.corpus_convert(Parameters(ConvertRequest {
                     path: source.to_string_lossy().into_owned(),
                     output: None,
                     force_ocr,
                     target_pages: None,
                 })))
-                .await;
+                .await
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        failures.push(json!({
+                            "path": source,
+                            "error": e.to_json_string(),
+                        }));
+                        continue;
+                    }
+                };
 
                 let content = hkask_types::tool_response::parse_tool_response(&response);
                 let text = content

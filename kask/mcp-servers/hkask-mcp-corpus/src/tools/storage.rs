@@ -732,6 +732,6 @@ pub(crate) struct PurgeQaRequest {
     pub passphrase: String,
 }
 
-fn default_purge_prefix() -> Result<String, McpToolError> {
+fn default_purge_prefix() -> String {
     "corpus:researcher:".to_string()
 }

@@ -8,7 +8,7 @@ Foundation crate for the hKask service layer. Defines shared types, configuratio
 
 | Module          | Purpose                                         |
 | --------------- | ----------------------------------------------- |
-| `config`        | `ServiceConfig` with `DEFAULT_DB_PATH`          |
+| `config`        | `ServiceConfig`                                 |
 | `data_category` | Content classification (`DataCategory` parsing) |
 | `error`         | Canonical `ServiceError` enum                   |
 

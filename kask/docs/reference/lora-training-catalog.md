@@ -1,7 +1,7 @@
 ---
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
-last_updated: 2026-08-04
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Training"
@@ -10,10 +10,38 @@ mds_categories: [domain, trust]
 
 # LoRA Training — Method & Gate Catalog
 
-Reference catalog for the `lora-training` skill. Extracted from
-`.agents/skills/lora-training/SKILL.md` to keep the skill companion lean.
-The registry crate (`registry/templates/lora-training/`) remains
-authoritative (P5.1); this document is a derived reference.
+Reference catalog for the `lora-training` skill
+(`.agents/skills/lora-training/SKILL.md`, 315 lines) and its runtime
+enforcement point, the `hkask-mcp-training` MCP server
+(`kask/mcp-servers/hkask-mcp-training/`). The registry templates
+(`kask/registry/templates/lora-training/`: `select-method.j2`,
+`audit-config.j2`, `preflight-dataset.j2`, `report.j2`) remain authoritative
+(P5.1); this document is a derived reference.
+
+## MCP Server Surface (9 tools)
+
+`hkask-mcp-training` exposes 9 tools, each tagged with an ML-Schema ontology
+concept via `ontology_anchor` (`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:314-326`):
+
+| Tool | Ontology anchor | Role |
+|---|---|---|
+| `training_ingest_dataset` | `mls:Data` | Dataset ingestion |
+| `training_ingest_qa` | `mls:Data` | QA-pair ingestion |
+| `training_assemble_dataset` | `mls:Data` | Dataset assembly |
+| `training_submit` | `mls:Run` | Submit a training job |
+| `training_status` | `mls:Run` | Job status (consumes completion-manifest `runtime_metrics` for G-R1) |
+| `training_cancel` | `mls:Run` | Cancel a job |
+| `training_evaluate` | `mls:Model` | Post-training evaluation |
+| `training_validate_config` | `mls:Model` | Runtime enforcement point for the skill's `audit-config` phase |
+| `training_bridge_rollouts` | `mls:Run` | Rollout-harness bridge (`src/tools/rollout_bridge.rs:54-55`) |
+
+`training_validate_config` is the runtime enforcement point: the skill reasons
+over config files and proposes regressions; the server enforces the static
+subset of gates at submit time and emits the `reg.lora.*` spans the skill's
+convergence-check phase consumes
+(`hkask_mcp_training.rs:53-58`). Host selection: RunPod is the only cloud
+host; the harness default is Axolotl, with per-job harness selection honored
+at submit time (`hkask_mcp_training.rs:42-48`).
 
 ## Method Catalog
 
@@ -59,18 +87,22 @@ Three harnesses are supported. Each has a distinct capability profile.
 
 Harness selection is driven by the G6 gate (harness capability) in the
 `select-method` phase. The operator accepts, overrides, or rejects the
-recommendation. The runtime enforces harness-method compatibility via G-H1.[^trl-catalog][^ludwig-catalog]
+recommendation. The runtime enforces harness-method compatibility via G-H1
+(`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:429-500`).[^trl-catalog][^ludwig-catalog]
 
 ## Gate Catalog
 
-19 phase-aware contract gates enforced across the `select-method` and `audit-config` phases, plus the 8-gate recommendation refinement in `select-method` (G0, G-D0, G1-G6). Each gate is a single assertion with a citation.[^lora-contract-gates]
+19 phase-aware contract gates enforced across the `select-method` and
+`audit-config` phases, plus the 8-gate recommendation refinement in
+`select-method` (G0, G-D0, G1-G6). Each gate is a single assertion with a
+citation.[^lora-contract-gates]
 
 ### Recommendation Gates (select-method phase)
 
 | Gate | ID | Purpose | Source |
 |------|----|---------|--------|
 | Adapter purpose | G0 | Establishes what kind of adapter is being produced (instruction, reasoning, vision, preference, reward_model). Determines baseline rank, target modules, and learning-forgetting posture. Runs first, constrains all subsequent gates. | Biderman et al. arXiv:2405.09673; Raschka 2025 |
-| Dataset analysis | G-D0 | Probes the actual dataset file to derive format, sample count, content length stats, token estimates, role distribution, multi-turn detection, vision data detection, and preference pair balance. Feeds into G0, G3, G6. Best-effort — falls back to declared inputs if unavailable. | QLoRA §5; TRL dataset formats |
+| Dataset analysis | G-D0 | Probes the actual dataset file to derive format, sample count, content length stats, token estimates, role distribution, multi-turn detection, vision data detection, and preference pair balance. Feeds into G0, G3, G6. Best-effort — falls back to declared inputs if unavailable. Runtime-evidence source: `preflight-dataset.j2`. | QLoRA §5; TRL dataset formats |
 | Inference constraint | G1 | Must-merge vs dynamic-switching vs either-ok. Constrains adapter form. | LoRA §4.2 |
 | Memory budget | G2 | Full precision vs quantized 4bit. Model_size_b × 2 as approximate floor only. | QLoRA §3 |
 | Task distance | G3 | Refines rank_range within G0 baseline. Light/moderate/heavy. | LoRA §4.3; Biderman et al. |
@@ -116,44 +148,35 @@ Only apply if QLoRA mode selected (G2).
 | Intruder dimension check | G-F1 | Report intruder dimensions before/after training via `reduce_intruder_dimension`. | Razin et al. arXiv:2410.21228 |
 | Knowledge preservation (CorDA) | G-F2 | If CorDA Knowledge-Preserved mode: assert world-knowledge eval doesn't regress. | CorDA; PEFT `corda_config` docstring |
 
-### Harness Gates (v0.31.0 — three-harness integration)
+### Harness Gates
 
 | Gate | ID | Assertion | Source |
 |------|----|-----------|--------|
-| Harness-method compatibility | G-H1 | Selected harness supports the selected method/trainer. axolotl=SFT/DPO/KTO/ORPO/GRPO/GDPO/RM/FullFT (via rl:); trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO + advanced PEFT initializers (PiSSA, EVA, CorDA, LoftQ). trl_trainer is TRL-specific — warn (not refuse) when set with axolotl or ludwig. | Axolotl — https://docs.axolotl.ai/docs/rlhf.html; TRL — huggingface.co/docs/trl/index; Ludwig — ludwig.ai/latest/configuration/ |
+| Harness-method compatibility | G-H1 | Selected harness supports the selected method/trainer. axolotl=SFT/DPO/KTO/ORPO/GRPO/GDPO/RM/FullFT (via `rl:`); trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO + advanced PEFT initializers. `trl_trainer` is TRL-specific — warn (not refuse) when set with axolotl or ludwig. Runtime enforcement: `validate_harness_compatibility` (`param_gates.rs:444-500`). | Axolotl — https://docs.axolotl.ai/docs/rlhf.html; TRL — huggingface.co/docs/trl/index; Ludwig — ludwig.ai/latest/configuration/ |
 
-### Runtime Gates (v0.32.0 — runtime alert + persistence preflight)
+### Runtime Gates
 
 | Gate | ID | Assertion | Source |
 |------|----|-----------|--------|
 | Runtime alert | G-R1 | Consumes `runtime_metrics` from the completion manifest (loss, grad_norm, alerts) during `training_status`. Flags loss spikes, NaN gradients, vanishing loss. `deferred` when `runtime_metrics` absent; `not_applicable` in preflight. | PEFT training diagnostics; hKask v0.32.0 |
 | Persistence preflight | G-P1 | Verifies HuggingFace artifact persistence is configured before training starts. Checks `HF_TOKEN` presence and write access to the target repo. Refuses if persistence is required but unconfigured. | HuggingFace Hub API; hKask v0.32.0 |
 
-## Convergence Metric Weights
+## Convergence
 
-Computed by the `convergence-check` phase. Metric ∈ [0, 1] where 0 =
-fully converged (training-ready). The convergence threshold is ≤ 0.10 with
-no hard blockers remaining; convergence is detected deterministically via
-the Cauchy criterion (iterates have stopped moving).
+The `select-method` phase is the first turn of a PDCA loop closed by
+re-entering the cycle, which routes `convergence_metric`, `blockers`, and
+`gate_results_summary` back as `prior_iteration`
+(`kask/registry/templates/lora-training/select-method.j2:122`; skill
+SKILL.md:135-140). **The loop converges when the convergence metric is
+≤ 0.10 and no hard blockers remain** (`select-method.j2:195`; skill
+SKILL.md:139-140). The operator may also revise inputs and re-invoke.
 
-| Dimension | Weight | Pass condition |
-|-----------|--------|----------------|
-| Critical + high findings resolved | 0.35 | 0 critical/high = +0.00; 1+ = +0.35 |
-| Math-contract gate coverage | 0.20 | All 5 (G-M1..G-M5) pass = +0.00; scaled by failures |
-| QLoRA gate coverage | 0.15 | All 6 (G-Q1..G-Q6) pass = +0.00; only if QLoRA mode |
-| Data/eval gate coverage | 0.10 | All 3 (G-D1..G-D3) pass = +0.00 |
-| Forgetting gate coverage | 0.10 | G-F1 planned = +0.00; G-F2 if CorDA mode |
-| Harness-method gate coverage | 0.10 | G-H1 pass = +0.00; fail/refuse = +0.10 |
-| Runtime gate coverage | — | G-R1 deferred/not_applicable in preflight; assessed during `training_status` from completion manifest metrics |
-| Persistence gate coverage | — | G-P1 pass = no blocker; fail = hard blocker (refuse training start) |
-
-> **Weight provenance:** the six weighted dimensions (0.35–0.10) are the
-> documented scoring rubric. G-R1 and G-P1 are pass/blocker gates outside
-> the weighted metric — G-R1 is `deferred` until runtime metrics exist, G-P1
-> is a preflight refuse gate. Convergence is Cauchy-detected (iterates stop
-> moving within `cauchy_epsilon: 0.03` over `cauchy_window: 3` iterations).
-
-Converged: metric ≤ 0.10 AND no hard blockers AND Cauchy criterion met.[^cauchy-convergence]
+> **Provenance note:** an earlier revision of this document carried a
+> weighted-dimension rubric (0.35/0.20/0.15/0.10) and Cauchy-criterion
+> parameters (`cauchy_epsilon: 0.03`, `cauchy_window: 3`). Those specifics
+> appear nowhere in the current skill, templates, or server code and have
+> been removed as unanchored. The verified contract is the threshold rule
+> above.
 
 ## Footnotes
 
@@ -168,9 +191,6 @@ Converged: metric ≤ 0.10 AND no hard blockers AND Cauchy criterion met.[^cauch
 
 [^lora-contract-gates]: Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., & Chen, W. (2021). LoRA: Low-Rank Adaptation of Large Language Models. arXiv. https://arxiv.org/abs/2106.09685
     Cited as the primary source the math-contract gates (G-M1 through G-M5) derive their assertions from.
-
-[^cauchy-convergence]: Rudin, W. (1976). *Principles of Mathematical Analysis* (3rd ed.). McGraw-Hill.
-    Cited for the Cauchy convergence criterion the convergence-check phase uses to detect that iterates have stopped moving.
 
 ## Source References
 

@@ -78,8 +78,7 @@ per the D28 Standardized Artifact Storage plan
 
 Only two class-directory constants are public: `MCP_DIR`
 (`agent_paths.rs:35`) and `SKILLS_DIR` (`agent_paths.rs:39`). `AGENTS_DIR`
-is `pub(crate)` (`agent_paths.rs:31`). The primary
-database file `hkask.db` (`agent_paths.rs:44`).
+is `pub(crate)` (`agent_paths.rs:31`).
 
 ## Step 3: Trace a path helper
 

@@ -317,7 +317,7 @@ pub(crate) struct DedupChunksRequest {
     pub dry_run: bool,
 }
 
-fn default_corpus_prefix() -> Result<String, McpToolError> {
+fn default_corpus_prefix() -> String {
     "corpus:researcher:".to_string()
 }
 
@@ -405,7 +405,7 @@ fn default_prompts_per_chunk() -> usize {
     5
 }
 
-fn default_type_distribution() -> Result<String, McpToolError> {
+fn default_type_distribution() -> String {
     "1,1,1,1,1".to_string()
 }
 
@@ -431,7 +431,7 @@ pub struct IngestQaRequest {
     pub owner: String,
 }
 
-fn default_dataset() -> Result<String, McpToolError> {
+fn default_dataset() -> String {
     "capabilities-researcher".to_string()
 }
 

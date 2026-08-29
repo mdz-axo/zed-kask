@@ -915,7 +915,10 @@ impl<'a> ConvertService<'a> {
             // Index if requested
             if index {
                 let source_label = file_name.to_string();
-                indexed += self.index_passages(&passages, &source_label).await;
+                indexed += self
+                    .index_passages(&passages, &source_label)
+                    .await
+                    .map_err(McpToolError::unavailable)?;
             }
 
             use std::io::Write as _;
