@@ -11,7 +11,7 @@
 //! No code reads from or writes to the old namespace — it is dead surface.
 //! There is exactly one copy of each secret, in `kask://credentials/*`.
 
-use crate::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
+use crate::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_types::NotFound;
 use hkask_types::secret::SecretRef;
 use thiserror::Error;

@@ -204,27 +204,42 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         SERVER_VERSION,
         |ctx| {
             let api_key = ctx.credentials.get("HKASK_ABW_API_KEY").cloned();
-            let (config, warning) = SwarmConfig::from_env(api_key);
+            let (mut config, warning) = SwarmConfig::from_env(api_key);
+            // The ONE shared DB passphrase — canonical 2-tier resolution
+            // (ctx.credentials → env → keychain), same as every other kask
+            // SQLCipher DB opener. Overrides the config's default fallback
+            // when the credential is present.
+            match hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials) {
+                Ok(passphrase) => config.memory_passphrase = passphrase,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        error = %e,
+                        "HKASK_DB_PASSPHRASE not resolved — the swarm memory DB \
+                         will open with the default fallback passphrase"
+                    );
+                }
+            }
             // Catalogue-only mode is degraded, not broken — surface it so an
             // operator reading logs can distinguish "not configured" from
             // "configured but broken" (the startup-failure-signal rule).
             if let Some(w) = warning {
                 tracing::warn!(target: "hkask.mcp.swarm", "{w}");
             }
-            // Surface a missing or too-short swarm-memory passphrase so the
-            // operator distinguishes "not configured" from "configured but broken"
+            // Surface a missing or too-short DB passphrase so the operator
+            // distinguishes "not configured" from "configured but broken"
             // (the .rules startup-failure-signal rule). The default is
             // "allostery" (pre-release) so this should not fire on first run.
             if config.memory_passphrase.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
-                    "swarm memory passphrase is empty — local knowledge tools \
-                     will degrade. Set HKASK_SWARM_MEMORY_PASSPHRASE."
+                    "DB passphrase is empty — local knowledge tools \
+                     will degrade. Set HKASK_DB_PASSPHRASE."
                 );
             } else if config.memory_passphrase.len() < 8 {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
-                    "swarm memory passphrase too short ({} chars — need >=8) — \
+                    "DB passphrase too short ({} chars — need >=8) — \
                      local knowledge tools will degrade.",
                     config.memory_passphrase.len()
                 );
@@ -314,10 +329,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             // Local swarm semantic memory — backs `swarm_search_knowledge_local`
             // (and seeds the generate tools). Lazily opened on first use. The
-            // passphrase is resolved from the canonical chain (env → keychain →
-            // `kask://credentials/hkask_swarm_memory_passphrase`) by `SwarmConfig::from_env`.
+            // passphrase is the ONE shared DB passphrase (HKASK_DB_PASSPHRASE,
+            // resolved from ctx.credentials → env → keychain in `run` above).
             // If the store cannot be opened (e.g., an existing DB was created under a
-            // different passphrase), the search tool degrades to an empty result
             // different passphrase), the search tool degrades to an empty result
             // and the generate tools proceed unseeded (memory is an enhancement,
             // not a dependency).

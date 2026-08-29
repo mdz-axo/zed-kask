@@ -10,10 +10,10 @@
 //! Design rationale: `kask/docs/plans/local-swarm-knowledge-tools.md`.
 //!
 //! Graceful degradation: `LazyLocalMemory::get` opens the
-//! `MemoryStore` lazily. The SQLCipher passphrase is resolved from the
-//! canonical chain (env → keychain → `kask://credentials/hkask_swarm_memory_passphrase`)
-//! by `SwarmConfig::from_env`. If the passphrase is empty or too short,
-//! `get` returns an error and the search tool returns an empty
+//! `MemoryStore` lazily. The SQLCipher passphrase is the ONE shared DB
+//! passphrase (`HKASK_DB_PASSPHRASE`, resolved by the server's `run()`
+//! from ctx.credentials → env → keychain). If the passphrase is empty or
+//! too short, `get` returns an error and the search tool returns an empty
 //! result with a `memory_unconfigured` note (never a panic, never a fabricated
 //! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
 //! unseeded (memory is an enhancement, not a dependency).
@@ -80,8 +80,8 @@ impl LazyLocalMemory {
     fn open(&self) -> Result<Arc<MemoryStore>, LocalSwarmError> {
         if self.passphrase.len() < 8 {
             return Err(LocalSwarmError::InvalidInput(format!(
-                "swarm memory passphrase too short ({} chars — need >=8; set \
-                 HKASK_SWARM_MEMORY_PASSPHRASE). Local knowledge tools will degrade.",
+                "DB passphrase too short ({} chars — need >=8; set \
+                 HKASK_DB_PASSPHRASE). Local knowledge tools will degrade.",
                 self.passphrase.len()
             )));
         }
@@ -771,14 +771,7 @@ mod tests {
         let inference: Arc<dyn hkask_types::InferencePort> =
             Arc::new(EmbedStubInference { dim: test_dim() });
 
-        record_delegation(
-            &memory,
-            "test_agent",
-            42,
-            Some(true),
-            "the agent succeeded",
-        )
-        .await;
+        record_delegation(&memory, "test_agent", 42, Some(true), "the agent succeeded").await;
 
         // The stigmergy annotations are stored under the agent's entity prefix.
         // We verify by recalling — the embedding stub returns a unit vector,

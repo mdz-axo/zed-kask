@@ -222,20 +222,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "",
         shows_in_ui: false,
     },
-    // Swarm memory SQLCipher passphrase — read by the swarm server at
-    // hkask-mcp-swarm/src/config.rs via `HKASK_SWARM_MEMORY_PASSPHRASE`.
-    // Registered here so the value is injected from the keychain by
-    // `credential_urls_for_mcp`; without a descriptor the allowlist
-    // entry alone would name a credential that nothing ever sources (RR-0061).
-    // Distinct from HKASK_DB_PASSPHRASE: the swarm memory store is a separate DB
-    // with its own key. No UI toggle — managed via the keystore chain.
-    DataServiceDescriptor {
-        env_var: "HKASK_SWARM_MEMORY_PASSPHRASE",
-        credential_key: "hkask_swarm_memory_passphrase",
-        label: "Swarm Memory Passphrase",
-        dashboard_url: "",
-        shows_in_ui: false,
-    },
     // Curator SMTP password — managed in the Curator Email settings page,
     // not in the Data Services page (avoids duplicate reset surfaces).
     DataServiceDescriptor {

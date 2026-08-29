@@ -1,13 +1,15 @@
 //! Security sub-page — DB passphrase rotation for all kask memory databases.
 //!
 //! Shows the current DB passphrase status (configured/not configured) and
-//! provides an input field to change the passphrase. On confirm, the DB is
-//! re-encrypted with the new passphrase (via `kask_bridge::rotate_curator_db_passphrase`),
-//! the new passphrase is written to the keychain (`kask://credentials/hkask_db_passphrase`),
+//! provides an input field to change the passphrase. On confirm, EVERY
+//! kask SQLCipher database (curator, swarm memory, kata-kanban, research,
+//! training) is re-encrypted with the new passphrase (via
+//! `kask_bridge::rotate_all_kask_db_passphrases`), the new passphrase is
+//! written to the keychain (`kask://credentials/hkask_db_passphrase`),
 //! and MCP servers are nudged to restart with the new passphrase.
 //!
-//! The swarm memory passphrase has its own field on the Swarm page, which
-//! also triggers rotation via `kask_bridge::rotate_swarm_memory_db_passphrase`.
+//! There is ONE passphrase — the swarm memory DB opens with the same
+//! `HKASK_DB_PASSPHRASE` (no separate Swarm-page field).
 
 use super::*;
 
@@ -147,13 +149,15 @@ fn spawn_db_passphrase_rotation(new_passphrase: &str, cx: &mut App) -> Task<()> 
     let new_passphrase = new_passphrase.to_string();
     let credentials_provider = zed_credentials::global(cx);
     cx.spawn(async move |cx| {
-        // 1. Rotate the DB. This runs on the background executor because it
-        //    does file I/O and SQL operations. The rotation resolves the old
-        //    passphrase from the keychain internally.
+        // 1. Rotate EVERY kask DB that uses the shared passphrase (curator,
+        //    swarm memory, kanban, research, training). This runs on the
+        //    background executor because it does file I/O and SQL. The
+        //    rotation resolves the old passphrase from the keychain
+        //    internally and rolls back on failure.
         let passphrase_for_rotation = new_passphrase.clone();
         let rotation_result = cx
             .background_spawn(async move {
-                kask_bridge::rotate_curator_db_passphrase(&passphrase_for_rotation)
+                kask_bridge::rotate_all_kask_db_passphrases(&passphrase_for_rotation)
             })
             .await;
 

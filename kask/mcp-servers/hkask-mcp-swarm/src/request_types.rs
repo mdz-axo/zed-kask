@@ -902,7 +902,7 @@ pub struct A2aBroadcastRequest {
 /// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
 /// (entity-attribute-value triples) from the operator's consolidated
 /// `hkask-memory`. No ABW calls. Degrades to an empty result with a
-/// `memory_unconfigured` note when `HKASK_SWARM_MEMORY_PASSPHRASE` is unset.
+/// `memory_unconfigured` note when `HKASK_DB_PASSPHRASE` is unset.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeLocalRequest {
     /// Agent id whose prefix-scoped memory (`agent:<id>:`) to search.

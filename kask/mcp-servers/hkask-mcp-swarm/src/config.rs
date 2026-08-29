@@ -106,8 +106,9 @@ pub struct SwarmConfig {
     pub allowed_tool_servers: Option<Vec<String>>,
     /// SQLCipher passphrase for the local swarm semantic-memory store (the
     /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
-    /// be >=8 chars. Resolved from the canonical chain (env → keychain →
-    /// `kask://credentials/hkask_swarm_memory_passphrase`) by `from_env`.
+    /// be >=8 chars. This is the ONE shared kask DB passphrase — resolved
+    /// from `HKASK_DB_PASSPHRASE` (delivered as a credential via the
+    /// governed-launch allowlist), same as curator/kanban/research/training.
     /// If empty or too short, `LazyLocalMemory::get_or_init` returns an error
     /// and `swarm_search_knowledge_local` degrades to an empty result with a
     /// `memory_unconfigured` note (the generate tools proceed unseeded — memory
@@ -256,7 +257,7 @@ impl SwarmConfig {
                     .collect::<Vec<_>>()
             });
         let memory_passphrase = non_empty_or_env(
-            std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE").ok(),
+            std::env::var("HKASK_DB_PASSPHRASE").ok(),
             default.memory_passphrase,
         );
         let memory_db_raw = std::env::var("HKASK_SWARM_MEMORY_DB")
