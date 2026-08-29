@@ -6,13 +6,18 @@
 
 ## Media Viewer Backlog (2026-08-29)
 
-- [ ] **V1** Interactive video editing in the viewer
-  - [ ] Mark in/out points on the selected asset's transport (buttons + keyboard)
-  - [ ] Trim dispatches `video_clip` with the marked range; result surfaces via its `display_hint`
-  - [ ] Multi-select in Library/Media → `video_concat`; result surfaces as a new asset
-  - [ ] Optional overflow actions: `video_to_gif`, `video_remix`, `video_info`
+- [ ] **V1** Interactive video editing in the viewer — spec: `tasks/reference-model-video-editor.md`
+  - [x] Mark in/out points on the selected asset's transport (buttons; keyboard shortcuts pending)
+  - [x] Trim dispatches `video_clip` with the marked range; result surfaces via its `display_hint`
+  - [x] Queue → `video_concat`; result surfaces as a new asset
+  - [ ] **Reference-model gaps** (from the benchmark doc):
+    - [ ] Segment list per file (LosslessCut) — one in/out pair is v1; segments are v1.1
+    - [ ] Queue entries as (src, in, out) triples (MLT playlist) — queued trims, not just full clips
+    - [ ] FFmpeg command log per render (LosslessCut) — server returns the invocation in the result
+    - [ ] Keyframe-snap disclosure at the mark ("cuts snap to keyframes") — stream-copy tradeoff
+    - [ ] Concat codec-precondition check surfaced as a named error (LosslessCut precondition)
   - [ ] All dispatches via `shared_tool_invoker` (governed path), errors in the viewer status line
-  - [ ] Manual verification: trim the vonnegut clip to 30s and play the result
+  - [ ] Manual verification: trim the vonnegut clip to 30s and play the result (benchmark checklist §1-3)
 - [ ] **V2** Save / copy stream affordance on the viewer
   - [ ] Copy asset src (path or URL) to clipboard from the viewer header
   - [ ] "Save" on streamed assets dispatches `video_fetch` (persist to artifacts dir) and surfaces the local copy

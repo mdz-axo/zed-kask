@@ -165,13 +165,43 @@ impl TrainingServer {
 
                 match self.adapter_store.get_by_skill_name(&skill) {
                     Ok(Some(prev)) => {
-                        let prev_version = prev.version.as_deref().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                        let prev_version = match prev.version.as_deref().map(|v| v.parse::<u32>()) {
+                            Some(Ok(v)) => v,
+                            Some(Err(_)) => {
+                                // A malformed stored version is corruption —
+                                // warn rather than silently renumbering from 0
+                                // (the new v1 could collide with an existing
+                                // adapter record).
+                                tracing::warn!(
+                                    "previous adapter for skill {skill} has malformed \
+                                     version {:?} — new adapter will be v1 and may collide",
+                                    prev.version
+                                );
+                                0
+                            }
+                            None => 0,
+                        };
                         version = prev_version + 1;
                         previous_adapter_exists = true;
-                        ab_baseline = Self::metrics_from_trained(&prev).map(|m| AbBaseline {
-                            previous_version: prev_version,
-                            previous_loss: m.loss.unwrap_or(0.0),
-                            previous_perplexity: m.perplexity.unwrap_or(0.0),
+                        // A missing metric must not become a fabricated 0.0
+                        // baseline — 0.0 loss reads as a perfect prior run.
+                        // Omit the baseline and say so instead.
+                        ab_baseline = Self::metrics_from_trained(&prev).and_then(|m| {
+                            match (m.loss, m.perplexity) {
+                                (Some(loss), Some(perplexity)) => Some(AbBaseline {
+                                    previous_version: prev_version,
+                                    previous_loss: loss,
+                                    previous_perplexity: perplexity,
+                                }),
+                                _ => {
+                                    tracing::warn!(
+                                        "previous adapter v{prev_version} for skill {skill} \
+                                         has incomplete metrics — A/B baseline omitted \
+                                         rather than fabricated as 0.0"
+                                    );
+                                    None
+                                }
+                            }
                         });
                     }
                     _ => { version = 1; previous_adapter_exists = false; }

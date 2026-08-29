@@ -1600,9 +1600,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         }
     };
 
-    let base_events = std::env::var("HKASK_PREDICTION_MARKETS_BASE_EVENTS")
-        .map(|raw| cmp::parse_base_events(&raw))
-        .unwrap_or_default();
+    let base_events = match std::env::var("HKASK_PREDICTION_MARKETS_BASE_EVENTS") {
+        Ok(raw) => {
+            let parsed = cmp::parse_base_events(&raw);
+            let declared = raw.split(',').filter(|s| !s.trim().is_empty()).count();
+            if parsed.len() < declared {
+                tracing::warn!(
+                    "HKASK_PREDICTION_MARKETS_BASE_EVENTS: {} of {} entries malformed \
+                     (need domain:series pairs, comma-separated) — dropped",
+                    declared - parsed.len(),
+                    declared
+                );
+            }
+            parsed
+        }
+        Err(_) => Vec::new(),
+    };
 
     hkask_mcp_server::run_server(
         "hkask-mcp-prediction-markets",

@@ -47,7 +47,7 @@ impl WebSearchProvider for ArxivProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("arXiv request failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Arxiv body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 429 => WebError::RateLimited(format!("arXiv rate limited: {status}")),

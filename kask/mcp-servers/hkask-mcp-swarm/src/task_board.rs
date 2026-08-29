@@ -76,7 +76,7 @@ impl TaskBoard {
     /// Returns an empty board if the file does not exist (a new swarm has
     /// no tasks yet — absence ≠ error).
     pub fn load(dir: &str, swarm_id: &str) -> Result<Self, LocalSwarmError> {
-        let path = board_path(dir, swarm_id);
+        let path = board_path(dir, swarm_id)?;
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -93,7 +93,7 @@ impl TaskBoard {
 
     /// Write the task board to `<dir>/<swarm_id>/task_board.json`.
     pub fn save(&self, dir: &str, swarm_id: &str) -> Result<(), LocalSwarmError> {
-        let path = board_path(dir, swarm_id);
+        let path = board_path(dir, swarm_id)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 LocalSwarmError::Io(format!(
@@ -226,11 +226,19 @@ pub struct TaskCounts {
 }
 
 /// Compute the file path for a swarm's task board.
-fn board_path(dir: &str, swarm_id: &str) -> std::path::PathBuf {
-    let safe_id = crate::sanitize::sanitize_agent_id(swarm_id).unwrap_or_default();
-    std::path::Path::new(dir)
+///
+/// An unsanitizable swarm_id (empty after filtering) is an error, not an
+/// empty path — silently defaulting would collapse every invalid swarm_id
+/// onto one shared board file.
+fn board_path(dir: &str, swarm_id: &str) -> Result<std::path::PathBuf, LocalSwarmError> {
+    let safe_id = crate::sanitize::sanitize_agent_id(swarm_id).ok_or_else(|| {
+        LocalSwarmError::InvalidInput(format!(
+            "invalid swarm_id {swarm_id:?} — must contain alphanumeric, '-', '_', or '.' characters"
+        ))
+    })?;
+    Ok(std::path::Path::new(dir)
         .join(safe_id)
-        .join("task_board.json")
+        .join("task_board.json"))
 }
 
 /// Derive a stable task_id from an agent name and task text when the caller

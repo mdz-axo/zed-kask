@@ -51,7 +51,7 @@ impl WebSearchProvider for TavilyProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Tavily request failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Tavily body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("Tavily auth error: {status}")),
@@ -160,7 +160,7 @@ impl WebBrowseProvider for TavilyProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Tavily browse failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Tavily body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("Tavily auth error: {status}")),

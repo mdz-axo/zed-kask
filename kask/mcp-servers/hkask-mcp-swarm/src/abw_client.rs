@@ -63,7 +63,13 @@ impl SwarmClient {
             .await
             .map_err(|e| SwarmError::Unavailable(e.to_string()))?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        // A failed body read must not become a fake success — an empty body
+        // on a 200 is treated as a legitimate null result below, so a
+        // network failure mid-body would silently masquerade as one.
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| SwarmError::Unavailable(format!("failed to read response body: {e}")))?;
 
         match status.as_u16() {
             200..=299 => {

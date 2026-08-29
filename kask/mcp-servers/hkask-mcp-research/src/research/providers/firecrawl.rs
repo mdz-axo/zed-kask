@@ -49,7 +49,7 @@ impl WebSearchProvider for FirecrawlProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl request failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => {
@@ -141,7 +141,7 @@ impl WebExtractProvider for FirecrawlProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl extract failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl body read failed: {e}")))?;
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "Firecrawl extract error {status}: {}",
@@ -210,7 +210,7 @@ impl WebBrowseProvider for FirecrawlProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl browse failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl body read failed: {e}")))?;
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "Firecrawl browse error {status}"
