@@ -11,6 +11,9 @@ hkask-types.workspace = true
 hkask-storage.workspace = true
 # Folded from hkask-services-kata-kanban
 hkask-inference.workspace = true
+# Brier scoring of goal intake predictions (goal_score) — the same binary
+# Brier the prediction-markets calibration store uses.
+hkask-forecast.workspace = true
 # Local swarm delegation — kanban_task_spawn delegates to local agents via the
 # shared local-swarm runtime (ledger + inference + guard + agent executor).
 hkask-mcp-swarm.workspace = true

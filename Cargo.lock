@@ -8867,6 +8867,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "hkask-bridge-ontology",
+ "hkask-forecast",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-mcp-swarm",

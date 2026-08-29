@@ -28,6 +28,7 @@ use hkask_types::id::TaskId;
 
 pub(crate) mod comments;
 pub(crate) mod dejam;
+pub(crate) mod goals;
 pub(crate) mod kata;
 pub(crate) mod phases;
 mod service;

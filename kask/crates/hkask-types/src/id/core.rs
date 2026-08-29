@@ -130,11 +130,8 @@ pub enum EventKind {}
 impl private::Sealed for EventKind {}
 impl IdKind for EventKind {}
 
-#[cfg(feature = "sql")]
 pub enum GoalKind {}
-#[cfg(feature = "sql")]
 impl private::Sealed for GoalKind {}
-#[cfg(feature = "sql")]
 impl IdKind for GoalKind {}
 
 pub enum EmbeddingKind {}
@@ -178,7 +175,6 @@ pub type TemplateID = Id<TemplateKind>;
 pub type BotID = Id<BotKind>;
 pub type HMemId = Id<TripleKind>;
 pub type EventID = Id<EventKind>;
-#[cfg(feature = "sql")]
 pub type GoalID = Id<GoalKind>;
 pub type EmbeddingID = Id<EmbeddingKind>;
 #[cfg(feature = "sql")]

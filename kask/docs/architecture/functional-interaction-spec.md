@@ -172,16 +172,27 @@ When a user works with the agent:
 
 ## 6. Implementation direction: A then B
 
-- **Phase A — the conversational loop.** The four moves wired into the
-  agent's turn structure: anchor interpretation at turn start,
-  functional-first reporting, choice surfacing. Felt in the next
-  session. Smaller change; per-conversation.
-- **Phase B — the work-tracking layer.** The four moves anchored in the
-  kata/kanban machinery: functional target conditions, experiments,
-  banked learning, visible on the board. Deeper change; the loop
-  persists and accumulates across sessions.
+- **Phase A — the conversational loop (landed 2026-08-29, D40).** The four
+  moves wired into the agent's turn structure: the `## Division of
+  Responsibilities (kask)` section in `system_prompt.hbs` (intake
+  interpretation, functional-first reporting, choice surfacing), plus the
+  amended autonomy, ambition, and Final Message bullets. Pinned by five
+  template tests.
+- **Phase B — the work-tracking layer (goal slice landed 2026-08-29).** The
+  native goal system in the kata-kanban MCP server: `kanban_goal_create`
+  (functional goal + observable criteria + intake prediction),
+  `kanban_goal_judge` (recorded verdicts with confidence — the history IS
+  the learning), `kanban_goal_score` (resolution + Brier of the intake
+  prediction; `null` surfaced when no prediction was recorded), and
+  `kanban_goal_list` (cross-session recall). Schema lifted from the
+  validated `goal-analysis` skill; Brier via `hkask_forecast::brier_score`.
+  The kanban Steer prompt advertises all four tools (the
+  `server_tools_are_all_advertised` gate).
 - A without B stays per-conversation; B without A changes tracking but
-  not the conversation the user sits in. A first, then B.
+  not the conversation the user sits in. Both are now landed; the
+  remaining Phase B work is wiring the conversational moves (Phase A's
+  prompt text) to *call* the native tools — so the interpretation round
+  records a goal and the report ends with a recorded verdict.
 
 ## 7. Verification
 

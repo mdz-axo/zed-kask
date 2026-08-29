@@ -46,6 +46,10 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         | "kanban_board_export"
         | "kanban_board_import" => Some(PROCEDURE),
         "Task" | "kanban_task_create" | "kanban_task_list" => Some(STEP),
+        "Goal" | "kanban_goal_create" | "kanban_goal_list" => Some(STEP),
+        "kanban_goal_judge" | "kanban_goal_score" | "GoalVerdict" | "GoalResolution" => {
+            Some(STEP_VERIFICATION)
+        }
         "Task.decomposed" | "kanban_task_decompose" => Some(hkask_bridge_ontology::pko::MULTI_STEP),
         "Task.execution" | "Task.in_progress" | "kanban_task_spawn" => Some(STEP_EXECUTION),
         "Board.execution" => Some(PROCEDURE_EXECUTION),

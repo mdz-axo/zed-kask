@@ -20,6 +20,20 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_verify` | Verify a task against its acceptance criteria |
 | `kanban_task_reopen` | Reopen a completed task (Done → InProgress) with optional new budgets |
 
+### Goals (functional target conditions)
+
+Native goal-setting and verification for the four-moves interaction loop
+(`kask/docs/architecture/functional-interaction-spec.md`). A goal is the
+kata target condition: the user's functional requirement in the user's
+words, with observable criteria and a Brier-scored intake prediction.
+
+| Tool | Description |
+|------|-------------|
+| `kanban_goal_create` | Create a functional goal with 1–4 observable criteria and an optional intake prediction |
+| `kanban_goal_judge` | Record a done/continue/blocked verdict with confidence and per-criterion results (history preserved) |
+| `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; `brier: null` + note when no prediction was recorded |
+| `kanban_goal_list` | List the caller's goals with latest verdicts and resolution state, newest first |
+
 ### Budget management
 | Tool | Description |
 |------|-------------|

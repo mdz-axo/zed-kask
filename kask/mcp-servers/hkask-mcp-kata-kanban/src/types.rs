@@ -79,6 +79,129 @@ pub struct BoardInfo {
     pub ontology: Option<String>,
 }
 
+// ── Goal tools ─────────────────────────────────────────────────────────────
+
+/// A goal criterion input — an observable functional condition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalCriterionInput {
+    /// Observable condition phrased functionally ("the user can do X",
+    /// "Y no longer breaks").
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalCreateRequest {
+    /// The functional goal in the user's words — what the user will be able
+    /// to do, or what stops being a problem. The agent interprets this; it
+    /// never revises it.
+    pub goal_text: String,
+    /// 1–4 observable criteria (Fermi-decomposed from the goal).
+    pub criteria: Vec<GoalCriterionInput>,
+    /// The agent's intake prediction: probability (0.0–1.0) the goal will be
+    /// achieved. Brier-scored at `kanban_goal_score`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prediction: Option<f64>,
+    /// Optional link to the kanban task executing this goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// Opaque client-generated key making this create replay-safe. See
+    /// [`BoardCreateRequest::idempotency_key`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalCreateResponse {
+    pub goal_id: String,
+    pub goal_text: String,
+    pub criteria_count: usize,
+    pub prediction: Option<f64>,
+    /// Ontology concept: <https://w3id.org/pko#Goal>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
+/// One criterion judgment input for `kanban_goal_judge`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CriterionJudgmentInput {
+    /// Index into the goal's criteria (0-based).
+    pub index: usize,
+    /// Whether the criterion is satisfied by the observed outcome.
+    pub passed: bool,
+    /// Evidence-grounded note for this criterion.
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalJudgeRequest {
+    pub goal_id: String,
+    /// The verdict: "done" | "continue" | "blocked".
+    pub verdict: String,
+    /// Confidence in the verdict (0.0–1.0).
+    pub confidence: f64,
+    /// Per-criterion results.
+    #[serde(default)]
+    pub criterion_results: Vec<CriterionJudgmentInput>,
+    /// Overall reasoning, grounded in the observed outcome.
+    pub reasoning: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalJudgeResponse {
+    pub goal_id: String,
+    pub verdict: String,
+    pub verdict_count: usize,
+    /// Ontology concept: <https://w3id.org/pko#Step>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalScoreRequest {
+    pub goal_id: String,
+    /// Whether the goal was achieved (the user's ground truth).
+    pub achieved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalScoreResponse {
+    pub goal_id: String,
+    pub achieved: bool,
+    /// Brier score of the intake prediction against the realized outcome.
+    /// `null` when no intake prediction was recorded — surfaced, never faked.
+    pub brier: Option<f64>,
+    /// Names the missing-prediction case so the caller can distinguish
+    /// "not computable" from "perfectly calibrated".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Ontology concept: <https://w3id.org/pko#Step>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalListRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalListResponse {
+    pub goals: Vec<GoalInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalInfo {
+    pub goal_id: String,
+    pub goal_text: String,
+    pub criteria_count: usize,
+    pub prediction: Option<f64>,
+    /// Latest verdict ("done" | "continue" | "blocked"), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_verdict: Option<String>,
+    /// Resolution state: "achieved" | "not-achieved" | null (unresolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    pub created_at: String,
+}
+
 // ── Task tools ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

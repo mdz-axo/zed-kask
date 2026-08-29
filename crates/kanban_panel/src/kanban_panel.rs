@@ -328,6 +328,15 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          **Swarm delegation**: `kanban_task_spawn` (delegates a task to a subagent or swarm agent), \
          `kanban_task_delegate_result` (reads the structured delegation result and verdict).\n\
          **Kata coaching**: `kanban_task_kata_coaching`, `kanban_task_kata_improvement`, `kanban_task_kata_practice`.
+\
+         **Goal tools (functional target conditions)**: `kanban_goal_create` (a functional goal \
+         with observable criteria + intake prediction), `kanban_goal_judge` (record a \
+         done/continue/blocked verdict with confidence), `kanban_goal_score` (resolve: \
+         achieved/not-achieved, Brier-scores the intake prediction), `kanban_goal_list` \
+         (recall goals with latest verdicts — the banked learning). Goals are the kata \
+         target condition: the user's functional requirement in the user's words, judged \
+         against observable criteria, never revised by the agent.
+\
          **Contract grounding**: `contract_propose_expect` (creates tasks for contracts missing expect: annotations).
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \

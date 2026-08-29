@@ -498,6 +498,25 @@ impl InferencePort for Arc<dyn InferencePort> {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
         self.as_ref().list_models()
     }
+    fn rerank<'a>(&'a self, model: &str, query: &str, documents: &[String]) -> RerankFuture<'a> {
+        self.as_ref().rerank(model, query, documents)
+    }
+    fn generate_batch<'a>(
+        &'a self,
+        model: &str,
+        prompts: &[crate::inference_ipc::BatchPromptEntry],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Vec<crate::inference_ipc::BatchResultEntry>, InferenceError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.as_ref()
+            .generate_batch(model, prompts, max_tokens, temperature)
+    }
     fn list_vision_models<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {

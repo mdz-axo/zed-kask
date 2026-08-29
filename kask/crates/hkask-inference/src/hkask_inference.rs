@@ -307,6 +307,31 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
+    fn rerank<'a>(
+        &'a self,
+        model: &str,
+        query: &str,
+        documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        let model = model.to_string();
+        let query = query.to_string();
+        let documents = documents.to_vec();
+        Box::pin(async move {
+            // Rerank requires the IPC bridge — no direct fallback. The
+            // OpenRouter key lives on the zed side by design (the MCP
+            // server never sees it), so a direct HTTP rerank is impossible
+            // from here. Without this override the trait default returns
+            // NotConfigured("rerank not supported") and the research
+            // server's deep-strategy rerank can never reach the bridge.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.rerank_documents(&model, &query, &documents).await;
+            }
+            Err(hkask_types::InferenceError::Connection(format!(
+                "rerank unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
     fn generate_batch<'a>(
         &'a self,
         model: &str,
@@ -836,5 +861,78 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
                 "worktree spawn unavailable: {IPC_BRIDGE_UNAVAILABLE}"
             )))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_types::InferencePort;
+    use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
+
+    /// The research server resolves its inference port via
+    /// `resolve_inference_port()` and routes the deep-strategy rerank through
+    /// it. Two layers once silently dropped the capability, each inheriting
+    /// the trait default (`NotConfigured("rerank not supported by this
+    /// InferencePort")`): `LazyInferencePort` had no `rerank` override, and
+    /// the `Arc<dyn InferencePort>` forwarding impl had no `rerank` forwarder
+    /// — so a `.rerank()` call on the Arc resolved to the wrapper's default
+    /// instead of the inner port. Every `llm_rerank` test passed vacuously
+    /// against stub ports that did override `rerank`. This pin exercises the
+    /// REAL consumer path — `resolve_inference_port()` + `.rerank()` on the
+    /// Arc — and fails on the trait-default error.
+    ///
+    /// Hermetic by construction: the socket env var is pointed at a
+    /// guaranteed-nonexistent path for the duration, so the bridge-down
+    /// branch runs deterministically regardless of whether a live zed
+    /// process (possibly a stale build) is on the other end of the ambient
+    /// socket. No other test in this binary reads this env var.
+    #[tokio::test]
+    async fn lazy_inference_port_overrides_rerank() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let dead_socket = temp_dir.path().join("nonexistent.sock");
+        let prior = std::env::var(INFERENCE_SOCKET_ENV).ok();
+        // Edition 2024: env mutation is unsafe; safe here because no other
+        // test in this binary reads INFERENCE_SOCKET_ENV.
+        unsafe {
+            std::env::set_var(INFERENCE_SOCKET_ENV, &dead_socket);
+        }
+        let outcome = {
+            let port = resolve_inference_port().await;
+            let outcome = port
+                .rerank(
+                    "OpenRouter/qwen/qwen3-reranker-8b",
+                    "test query",
+                    &["test document".to_string()],
+                )
+                .await;
+            // Restore before asserting so a panic cannot leak the dead path.
+            match prior {
+                Some(value) => unsafe { std::env::set_var(INFERENCE_SOCKET_ENV, value) },
+                None => unsafe { std::env::remove_var(INFERENCE_SOCKET_ENV) },
+            }
+            outcome
+        };
+        match outcome {
+            Ok(_) => panic!(
+                "a nonexistent socket must not produce rerank scores — the override \
+                 dispatched somewhere unexpected"
+            ),
+            Err(hkask_types::InferenceError::NotConfigured(message)) => {
+                panic!(
+                    "LazyInferencePort must override rerank — got the trait-default \
+                     NotConfigured error: {message}"
+                );
+            }
+            Err(hkask_types::InferenceError::Connection(message)) => {
+                assert!(
+                    message.contains("HKASK_INFERENCE_SOCKET"),
+                    "a down bridge must name the missing socket, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("unexpected rerank error variant from the lazy port: {other:?}");
+            }
+        }
     }
 }

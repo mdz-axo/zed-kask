@@ -458,6 +458,46 @@ pub fn builtin_mcp_server_ids() -> Vec<&'static str> {
     BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect()
 }
 
+/// IDs of raw `context_servers` entries that shadow a kask built-in server.
+///
+/// `ContextServerStore::maintain_servers` merges registry descriptors with
+/// `or_insert` — a raw settings entry for the same ID silently shadows the
+/// kask-managed registration, which is the only path that composes the
+/// server's env via `build_mcp_server_env` (credentials, inference socket,
+/// data dir). A stale manual entry (e.g. one written by an earlier setup
+/// with `env: {}`) therefore strips every credential from the server the
+/// agent's tools connect to, with no warning — the operator cannot
+/// distinguish "not configured" from "configured but broken." Kask
+/// built-ins are configured through `kask.mcp` (`load_default` /
+/// `overrides`) and the `HKASK_MCP_{ID}_BIN` binary override; raw
+/// `context_servers` entries for their IDs are configuration the kask
+/// system must not silently obey.
+pub fn shadowed_context_server_entry_ids(
+    content: &settings_content::SettingsContent,
+) -> Vec<std::sync::Arc<str>> {
+    let builtin_ids = builtin_mcp_server_ids();
+    content
+        .project
+        .context_servers
+        .keys()
+        .filter(|id| builtin_ids.contains(&id.as_ref()))
+        .cloned()
+        .collect()
+}
+
+/// Remove raw `context_servers` entries that shadow kask built-in servers,
+/// returning the removed IDs so the caller can warn per entry. Pure over
+/// the content — the caller owns the settings write and the logging.
+pub fn remove_shadowing_context_server_entries(
+    content: &mut settings_content::SettingsContent,
+) -> Vec<std::sync::Arc<str>> {
+    let shadowed = shadowed_context_server_entry_ids(content);
+    for id in &shadowed {
+        content.project.context_servers.remove(id);
+    }
+    shadowed
+}
+
 /// The server list as `(id, description)` pairs, derived from
 /// [`BUILT_IN_MCP_SERVERS`]. Convenience for the settings UI which renders
 /// `(id, description)` rows.

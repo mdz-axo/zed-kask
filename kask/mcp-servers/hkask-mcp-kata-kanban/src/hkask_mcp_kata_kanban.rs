@@ -2,7 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 //! hkask-mcp-kata-kanban — Kata-Kanban workflow coordination MCP server.
 //!
-//! Provides 20 MCP tools for kanban board and task management.
+//! Provides 24 MCP tools for kanban board, task, and goal management.
 //! All tools carry the caller's WebID for P12 compliance.
 //!
 //! The KanbanServer struct and tool methods are exported from the library
@@ -19,8 +19,8 @@ pub mod types;
 // testing standard (docs/reference/mcp-servers/README.md §Testing standard) requires this.
 pub use kanban::KanbanService;
 pub(crate) use kanban::{
-    ColumnDef, KanbanError, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
-    VerificationCriterion,
+    ColumnDef, CriterionJudgment, GoalVerdict, GoalVerdictValue, KanbanError, Priority, SpawnSpec,
+    Task, TaskFilter, TaskSpec, TaskStatus, VerificationCriterion,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
@@ -385,6 +385,208 @@ impl KanbanServer {
                     ontology: kanban_type_to_pko("kanban_board_delete").map(|s| s.to_string()),
                 })
                 .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
+        )
+        .await
+    }
+
+    /// Create a functional goal — the kata target condition for a bit of
+    /// work. The goal is the user's functional requirement in the user's
+    /// words, with 1–4 observable criteria and an optional intake
+    /// prediction (Brier-scored at `kanban_goal_score`). Native persistence
+    /// for the four-moves interaction loop
+    /// (`kask/docs/architecture/functional-interaction-spec.md`).
+    #[tool(
+        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction."
+    )]
+    pub async fn kanban_goal_create(
+        &self,
+        Parameters(GoalCreateRequest {
+            goal_text,
+            criteria,
+            prediction,
+            task_id,
+            idempotency_key,
+        }): Parameters<GoalCreateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(
+            self,
+            "kanban_goal_create",
+            kanban_type_to_pko("kanban_goal_create"),
+            with_idempotency(
+                &self.idempotency,
+                "kanban_goal_create",
+                idempotency_key.as_deref(),
+                async {
+                    let tid = match task_id {
+                        Some(t) => Some(parse_task_id(&t)?),
+                        None => None,
+                    };
+                    let criteria = criteria
+                        .into_iter()
+                        .map(|c| VerificationCriterion::new(c.description))
+                        .collect();
+                    match self
+                        .service
+                        .goal_create(goal_text, criteria, prediction, tid, self.webid)
+                    {
+                        Ok(goal) => Ok(serde_json::to_value(GoalCreateResponse {
+                            goal_id: goal.id.to_string(),
+                            goal_text: goal.goal_text,
+                            criteria_count: goal.criteria.len(),
+                            prediction: goal.prediction,
+                            ontology: kanban_type_to_pko("Goal").map(|s| s.to_string()),
+                        })
+                        .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                        Err(e) => Err(map_kanban_error(e)),
+                    }
+                },
+            ),
+        )
+        .await
+    }
+
+    /// Record a judge verdict against a goal's criteria. Verdict semantics
+    /// lifted from the `goal-analysis` skill: `done` (all criteria
+    /// satisfied), `continue` (work continues), `blocked` (unachievable or
+    /// needs user input). Verdicts append to a history — the history IS the
+    /// learning.
+    #[tool(
+        description = "Record a judge verdict (done/continue/blocked) with confidence and per-criterion results against a goal."
+    )]
+    pub async fn kanban_goal_judge(
+        &self,
+        Parameters(GoalJudgeRequest {
+            goal_id,
+            verdict,
+            confidence,
+            criterion_results,
+            reasoning,
+        }): Parameters<GoalJudgeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(
+            self,
+            "kanban_goal_judge",
+            kanban_type_to_pko("kanban_goal_judge"),
+            async {
+                let gid = parse_goal_id(&goal_id)?;
+                let verdict_value = parse_goal_verdict(&verdict)?;
+                let goal_verdict = GoalVerdict {
+                    verdict: verdict_value,
+                    confidence,
+                    criterion_results: criterion_results
+                        .into_iter()
+                        .map(|c| CriterionJudgment {
+                            index: c.index,
+                            passed: c.passed,
+                            note: c.note,
+                        })
+                        .collect(),
+                    reasoning,
+                    judged_at: chrono::Utc::now(),
+                };
+                match self.service.goal_judge(gid, goal_verdict, self.webid) {
+                    Ok(goal) => Ok(serde_json::to_value(GoalJudgeResponse {
+                        goal_id: goal.id.to_string(),
+                        verdict: verdict,
+                        verdict_count: goal.verdicts.len(),
+                        ontology: kanban_type_to_pko("kanban_goal_judge").map(|s| s.to_string()),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                    Err(e) => Err(map_kanban_error(e)),
+                }
+            },
+        )
+        .await
+    }
+
+    /// Resolve a goal: record the realized outcome (the user's ground
+    /// truth) and Brier-score the intake prediction. `brier` is `null`
+    /// with a note when no prediction was recorded — surfaced, never faked.
+    #[tool(
+        description = "Resolve a goal: record achieved/not-achieved and Brier-score the intake prediction."
+    )]
+    pub async fn kanban_goal_score(
+        &self,
+        Parameters(GoalScoreRequest { goal_id, achieved }): Parameters<GoalScoreRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(
+            self,
+            "kanban_goal_score",
+            kanban_type_to_pko("kanban_goal_score"),
+            async {
+                let gid = parse_goal_id(&goal_id)?;
+                match self.service.goal_score(gid, achieved, self.webid) {
+                    Ok(goal) => {
+                        let resolution = goal
+                            .resolution
+                            .as_ref()
+                            .expect("goal_score records a resolution");
+                        let note = if resolution.brier.is_none() {
+                            Some(
+                                "no intake prediction was recorded — Brier not computable \
+                                 (this is not a score of 0)"
+                                    .to_string(),
+                            )
+                        } else {
+                            None
+                        };
+                        Ok(serde_json::to_value(GoalScoreResponse {
+                            goal_id: goal.id.to_string(),
+                            achieved,
+                            brier: resolution.brier,
+                            note,
+                            ontology: kanban_type_to_pko("kanban_goal_score")
+                                .map(|s| s.to_string()),
+                        })
+                        .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+                    }
+                    Err(e) => Err(map_kanban_error(e)),
+                }
+            },
+        )
+        .await
+    }
+
+    /// List the caller's goals, newest first — the cross-session recall
+    /// for Move 4 (bank the learning): the next bit of work starts from
+    /// these.
+    #[tool(
+        description = "List the caller's functional goals with latest verdicts and resolution state, newest first."
+    )]
+    pub async fn kanban_goal_list(
+        &self,
+        Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(
+            self,
+            "kanban_goal_list",
+            kanban_type_to_pko("kanban_goal_list"),
+            async {
+                match self.service.goal_list(&self.webid) {
+                    Ok(goals) => Ok(serde_json::to_value(GoalListResponse {
+                        goals: goals
+                            .into_iter()
+                            .map(|g| GoalInfo {
+                                goal_id: g.id.to_string(),
+                                goal_text: g.goal_text,
+                                criteria_count: g.criteria.len(),
+                                prediction: g.prediction,
+                                latest_verdict: g.verdicts.last().map(|v| v.verdict.to_string()),
+                                resolution: g.resolution.as_ref().map(|r| {
+                                    if r.achieved {
+                                        "achieved".to_string()
+                                    } else {
+                                        "not-achieved".to_string()
+                                    }
+                                }),
+                                created_at: g.created_at.to_rfc3339(),
+                            })
+                            .collect(),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                    Err(e) => Err(map_kanban_error(e)),
+                }
             },
         )
         .await
@@ -1605,6 +1807,27 @@ fn parse_board_id(board_id: &str) -> Result<hkask_types::BoardId, McpToolError> 
     board_id
         .parse::<hkask_types::BoardId>()
         .map_err(|e| McpToolError::invalid_argument(format!("invalid board_id: {e}")))
+}
+
+/// Parse a goal id string or return an `invalid_argument` MCP error.
+fn parse_goal_id(goal_id: &str) -> Result<hkask_types::GoalID, McpToolError> {
+    goal_id
+        .parse::<hkask_types::GoalID>()
+        .map_err(|e| McpToolError::invalid_argument(format!("invalid goal_id: {e}")))
+}
+
+/// Parse a goal verdict string ("done" | "continue" | "blocked") into a
+/// `GoalVerdictValue`. Verdict semantics lifted from the `goal-analysis`
+/// skill's `judge.j2`.
+fn parse_goal_verdict(verdict: &str) -> Result<GoalVerdictValue, McpToolError> {
+    match verdict {
+        "done" => Ok(GoalVerdictValue::Done),
+        "continue" => Ok(GoalVerdictValue::Continue),
+        "blocked" => Ok(GoalVerdictValue::Blocked),
+        other => Err(McpToolError::invalid_argument(format!(
+            "invalid verdict {other:?} — expected \"done\", \"continue\", or \"blocked\""
+        ))),
+    }
 }
 
 /// Map a service-layer `KanbanError` to the correct `McpToolError` variant.

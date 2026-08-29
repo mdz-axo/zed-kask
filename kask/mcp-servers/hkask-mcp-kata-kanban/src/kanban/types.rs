@@ -5,11 +5,12 @@
 //! Verification criteria accept natural-language acceptance specs with optional LLM evaluation prompts.
 
 use chrono::{DateTime, Utc};
-use hkask_types::id::{BoardId, ColumnId, CommentId, PhaseId, TaskId, WebID};
+use hkask_types::id::{BoardId, ColumnId, CommentId, GoalID, PhaseId, TaskId, WebID};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod board;
 pub(crate) mod column;
+pub(crate) mod goal;
 
 pub(crate) mod phase;
 pub(crate) mod priority;
@@ -24,6 +25,7 @@ pub(crate) mod verification;
 // existing `crate::kanban::TaskStatus` paths keep working.
 pub(crate) use board::Board;
 pub(crate) use column::ColumnDef;
+pub(crate) use goal::{CriterionJudgment, Goal, GoalResolution, GoalVerdict, GoalVerdictValue};
 
 pub(crate) use hkask_types::TaskStatus;
 pub(crate) use phase::KanbanPhase;

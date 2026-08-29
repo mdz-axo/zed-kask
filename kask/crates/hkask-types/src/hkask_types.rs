@@ -45,8 +45,8 @@ pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, N
 pub use event::{RegulationRecord, RegulationSink};
 
 pub use id::{
-    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, HMemId, Id, PhaseId,
-    TaskId, TemplateID, WebID,
+    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
+    PhaseId, TaskId, TemplateID, WebID,
 };
 pub use kanban_status::TaskStatus;
 pub use regulation::LedgerHealth;
