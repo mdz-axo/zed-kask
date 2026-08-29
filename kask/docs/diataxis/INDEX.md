@@ -58,6 +58,6 @@ Every artifact cites concrete file:line references in the current tree.
 ## See also
 
 - [`kask/docs/README.md`](../README.md): the kask docs portal.
-- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D32 integration seams (D21 = conversation-injector, D22 = block-reachability pins, D23 = worktree spawn wiring; D24–D32 added 2026-08-05 through 2026-08-20 — see `DIVERGENCE.md` for the authoritative seam list).
-- [`DIVERGENCE.md`](../../../DIVERGENCE.md): the authoritative divergence surface (D1–D32).
+- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D38 integration seams (D17/D19 retired; see `DIVERGENCE.md` for the authoritative seam list).
+- [`DIVERGENCE.md`](../../../DIVERGENCE.md): the authoritative divergence surface (D1–D38).
 - [`kask/docs/DIAGRAMS_INDEX.md`](../DIAGRAMS_INDEX.md): cross-cutting diagram registry.

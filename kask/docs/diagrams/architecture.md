@@ -477,9 +477,9 @@ erDiagram
     KEYCHAIN_RESOLVE ||--|| KEYCHAIN_STRING : "resolve_db_passphrase_string"
 
     CREDENTIALS_PROVIDER ||--o{ KASK_URL : "kask://credentials/hkask_db_passphrase"
-    KASK_URL ||--|| MIRROR_TASK : "mirror_provisioned_db_passphrase writes"
-    MIRROR_TASK ||--|| KEYCHAIN_STRING : "reads provisioned passphrase from"
-    MIRROR_TASK ||--o{ CREDENTIALS_MAP : "populates ctx.credentials tier for MCP servers"
+    KASK_URL ||--|| PROVISION_LAUNCH : "provision_db_passphrase writes at MCP launch"
+    PROVISION_LAUNCH ||--|| KEYCHAIN_STRING : "reads provisioned passphrase from"
+    PROVISION_LAUNCH ||--o{ CREDENTIALS_MAP : "populates ctx.credentials tier for MCP servers"
 
     SETTINGS_UI ||--o{ KASK_URL : "write_credential / delete_credential"
     SETTINGS_UI ||--|| NUDGE : "nudge_mcp_servers(cx) after keychain write"
@@ -513,9 +513,10 @@ erDiagram
     KASK_URL {
         string url "kask://credentials/hkask_db_passphrase"
     }
-    MIRROR_TASK {
-        string fn "mirror_provisioned_db_passphrase"
-        string awaits "must .await to completion before governed MCP launch"
+    PROVISION_LAUNCH {
+        string fn "provision_db_passphrase (identity.rs:145)"
+        string chain "env override → keychain entry → default 'allostery'"
+        string site "called at MCP launch (mcp_servers.rs:677) — no mirror step"
     }
     NUDGE {
         string fn "nudge_mcp_servers(cx)"
@@ -532,14 +533,17 @@ erDiagram
 The 2-tier chain: `hkask_mcp_server::server::resolve_db_passphrase(&credentials)`
 returns `McpToolError::permission_denied` naming the env var and keychain URL
 when both tiers are empty — a missing credential is an authorization failure,
-not a transient unavailability. The mirror task must `.await` to completion
-in the deferred post-login task **before** governed MCP server launch;
-reordering breaks first-run provisioning.
+not a transient unavailability. `provision_db_passphrase`
+(`kask/crates/kask_bridge/src/identity.rs:145`) is idempotent (env override →
+existing keychain entry → default `"allostery"`) and runs at governed MCP
+server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:677`); a failed
+provision logs a `tracing::warn!` naming the env var and the server fails
+with `permission_denied` at tool time.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
 verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (mirror_provisioned_db_passphrase, provision_agent); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:677 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
 status: VERIFIED
 -->
 

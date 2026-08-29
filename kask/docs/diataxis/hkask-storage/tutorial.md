@@ -63,10 +63,7 @@ let pool = db.sqlite_pool()?; // creates the r2d2 pool, loads schema
 
 Production callers should go through `open_database(path, passphrase)`
 (`core/connection.rs:435-446`), which routes file paths through
-`open_or_repair` — a non-destructive open that also triggers the one-time
-legacy-KDF migration (Argon2id + external `.salt` → native KDF) inside
-`file_pool` when a `.salt` file is present
-(`core/connection.rs:305-315`).
+`open_or_repair` — a non-destructive open.
 
 ## Step 2: Acquire a `SqliteDriver`
 

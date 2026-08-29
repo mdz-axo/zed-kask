@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 65 skills ship. 61 template crates remain under
+> plus a markdown body of process instructions. 66 skills ship. 62 template crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -46,8 +46,8 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **65** | Every directory contains a `SKILL.md` |
-| Template crates (`kask/registry/templates/*/`) | **61** | Companion Jinja2 resources for `render_template` |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **66** | Every directory contains a `SKILL.md` |
+| Template crates (`kask/registry/templates/*/`) | **62** | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -108,7 +108,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Meta & Maintenance (7 skills)
+## Meta & Maintenance (8 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -120,6 +120,7 @@ read-only resources the skill body may reference via `render_template`.
 | `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
 | `create-skill` | Convergent kask-native skill creation with ontological grounding |
 | `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and SKILL.md files against their stated goals |
+| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 
 ---
 
@@ -184,8 +185,8 @@ read-only resources the skill body may reference via `render_template`.
 | Specialized | 15 |
 | Research & Corpus | 5 |
 | Cross-Cutting & Audit | 8 |
-| **Total** | **65** |
+| **Total** | **66** |
 
-> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 65 SKILL.md
-> directories. `kask/registry/templates/` contains 61 template crates (companion Jinja2 resources
+> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 66 SKILL.md
+> directories. `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
 > for `render_template`).

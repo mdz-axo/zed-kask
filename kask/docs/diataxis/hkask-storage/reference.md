@@ -56,9 +56,7 @@ their store modules' `init_schema` methods.
 | Storage spans (`reg.storage` tracing) | `kask/crates/hkask-storage/src/database/sqlite.rs:210-232` |
 | `TransactionHandle` (RAII tx) | `kask/crates/hkask-storage/src/database/transaction.rs` |
 | `DbValue` / `DbRow` | `kask/crates/hkask-storage/src/database/value.rs` |
-| `Encryptor` (AES-256-GCM, ENCv1 prefix) | `kask/crates/hkask-storage/src/database/encrypt.rs:15-75` |
 | `rotate_passphrase` (atomic re-encryption) | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
-| `migrate_legacy_kdf` (Argon2id → native KDF) | `kask/crates/hkask-storage/src/rotation.rs:302` |
 | `RotationError` enum | `kask/crates/hkask-storage/src/rotation.rs:66-90` |
 | `HMem` struct | `kask/crates/hkask-storage/src/hmem.rs:41-59` |
 | `HMemStore` | `kask/crates/hkask-storage/src/hmem.rs:135-138` |
@@ -128,7 +126,6 @@ classDiagram
     }
     class HMemStore {
         -driver: Arc~dyn DatabaseDriver~
-        -encryptor: Option~Arc~Encryptor~~
         +from_driver(driver) HMemStore
         +insert(h_mem) void
         +update(id, value, confidence) void
@@ -345,7 +342,7 @@ in-DB metadata mirror, not a path component. See
 [`kask/docs/architecture/standardized-artifact-storage.md`](../../architecture/standardized-artifact-storage.md)
 for the full layout spec.
 
-## Passphrase rotation and legacy KDF migration
+## Passphrase rotation
 
 `rotate_passphrase` (`rotation.rs:122-297`) atomically re-encrypts a
 SQLCipher DB under a new passphrase without data loss. The process:
@@ -371,16 +368,6 @@ succeeds, the code attempts to restore `<db>.old` back to `<db>`
 (`rotation.rs:254-262`). The caller (the settings UI) writes the new
 passphrase to the keychain ONLY after rotation returns `Ok(())` — a failed
 rotation leaves the old passphrase in effect.
-
-**Legacy KDF migration**: `migrate_legacy_kdf` (`rotation.rs:302`)
-re-encrypts a DB created by the pre-native scheme (Argon2id over an
-external `.salt` file + raw-key PRAGMA) under the native passphrase KDF,
-using the same copy + atomic-rename choreography. It is triggered
-automatically by `Database::file_pool` when a `.salt` file is present
-(`core/connection.rs:305-315`), runs at most once per DB, and deletes the
-salt file on success. Pinned by `migrate_legacy_kdf_preserves_data_and_deletes_salt`
-and `migrate_legacy_kdf_wrong_passphrase_preserves_original`
-(`rotation.rs:972,997`).
 
 The bridge layer wraps rotation in `rotate_all_kask_db_passphrases`
 (`kask_bridge/src/identity.rs`), which rotates every kask SQLCipher DB

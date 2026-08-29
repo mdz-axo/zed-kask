@@ -1,8 +1,8 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-08-24
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "1.2.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition]
@@ -24,6 +24,18 @@ upstream's 2022, with only 4 `// zed-kask:` markers for 111 kask call sites).
 Files that auto-merge cleanly with all markers preserved (`markdown.rs`,
 `git_graph.rs`, `agent_panel.rs`, etc.) do not need this process.
 
+**Companion skill:** this process is encoded in the installed
+`upstream-rebase` skill (`.agents/skills/upstream-rebase/SKILL.md`), which adds
+the merge & rebase protocol (fetch/merge strategy, conflict classes, commit
+hygiene, recovery) on top of the 8 steps below. Note: the skill's "Process
+Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
+is this file, `kask/docs/reference/upstream-rebase-process.md`.
+
+**D-seam surface:** the `DIVERGENCE.md` table is the authority and currently
+runs **D1–D38, with D17 and D19 retired**. The file's own section header
+(`DIVERGENCE.md:13`, "D1–D37") and runbook line (`DIVERGENCE.md:111`,
+"D1–D33") lag the table — trust the table, not the range labels.
+
 ---
 
 ## 1. The three strategies and when to use each
@@ -43,7 +55,7 @@ markers (3.6%) → **mapped re-application**.
 
 ---
 
-## 2. The mapped re-application process (7 steps)
+## 2. The mapped re-application process (8 steps)
 
 ### Step 1 — Establish the functional inventory (code-graph extraction)
 
@@ -105,10 +117,11 @@ insertion point, in topological order. For each insertion:
 
 ### Step 6 — Pin every deviation with a test
 
-Per the `.rules` trap "Tests must pin deliberate zed-kask deviations from
-upstream": every `// zed-kask:` marker must have a corresponding test asserting
-the wired behavior. For `main.rs` wirings (which are process-global hooks, not
-unit-testable functions), the pinning test is typically:
+Per the `.rules` trap "Every `// zed-kask:` comment disabling upstream behavior
+needs a test pinning the disabled behavior" (`.rules:69`): every `// zed-kask:`
+marker must have a corresponding test asserting the wired behavior. For
+`main.rs` wirings (which are process-global hooks, not unit-testable functions),
+the pinning test is typically:
 - A test asserting the hook is `Some` after init (e.g.,
   `assert!(agent::memory_port().is_some())`).
 - A test asserting the wired behavior fires (e.g., the cybernetics loop tick
@@ -128,13 +141,23 @@ Update the D-seam row in `DIVERGENCE.md` to reflect the re-applied file:
 
 ### Step 8 — Run post-rebase cleanup
 
-The upstream-rebase skill's step 7 (cleanup) automatically handles this.
- It re-deletes upstream Zed files that git restored from upstream's tree
- (icon files, .desktop templates, flatpak/snap packaging, release workflows)
- and runs the isolation test to verify the collision surface is closed.
- Skipping this step leaves upstream icon files on disk, recreating the
- collision surface that caused zed-kask to hijack Zed's desktop identity
- (commit 853542beab).
+`git merge upstream/main` can restore files zed-kask deliberately deleted under
+D7/D16 (icons, `.desktop` templates, bundle scripts, release workflows).
+`kask/scripts/build/check-zed-isolation.sh` is the enforcement point — it
+enumerates every forbidden path (from `kask/scripts/build/check-zed-isolation.sh:25`)
+and names the offending path on failure. `check-desktop-no-collision.sh` is a
+one-line `exec` alias for the same script (`check-desktop-no-collision.sh:6`) —
+running either is sufficient; do not run both.
+
+1. `bash kask/scripts/build/check-zed-isolation.sh`
+2. If it fails, re-delete every path it names and re-run.
+3. Repeat until it passes.
+
+Run it locally as the fast loop. (The skill references a CI wiring in
+`.github/workflows/kask-ci.yml`; no such workflow currently exists in the
+repository — `.github/workflows/` contains only upstream's
+`community_pr_cleanup.yml` and `maintainer_edits_nudge.yml` — so the local run
+is the gate.)
 
 ---
 
@@ -142,7 +165,8 @@ The upstream-rebase skill's step 7 (cleanup) automatically handles this.
 
 1. `cargo check -p <crate>` — the file compiles.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
-3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
+3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds
+   (`DIVERGENCE.md:100-105`).
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit
    count (every unit is marked).
 5. `git diff upstream/main -- <file>` — the diff is *only* kask additions (no
@@ -151,6 +175,11 @@ The upstream-rebase skill's step 7 (cleanup) automatically handles this.
 ---
 
 ## 4. Functional inventory for `crates/zed/src/main.rs` (2026-08-06)
+
+> **Historical case study.** The inventory below is the dated 2026-08-06
+> snapshot that motivated the process. Line numbers and some units (F1, F11,
+> F12 — since removed) no longer match `main.rs` today; it is retained as the
+> worked example of Steps 1–4, not as a current map.
 
 28 functional units extracted from the fork's `main.rs` (4115 lines) vs
 upstream's (2022 lines). Classified by constraint force; ordering constraints
@@ -263,99 +292,55 @@ F20 (deferred task) → after user resolves, F2
 
 ### 5.1 Prohibition-force units (must re-apply — 20 units)
 
-These are load-bearing: removing any breaks compilation or core kask behavior.
-- F1 (.env), F2 (gpui_tokio), F3 (alert channel), F6 (cybernetics loop + mcp_runtime),
-  F7 (metacognition provider), F8 (global Fs), F9 (kask_settings_for_mcp),
-  F11 (ensure_openai_compatible), F13 (sync_kask_mcp_servers), F14 (embedding creds),
-  F16 (LazyToolRouter), F19 (MCP re-sync inference socket), F20 (deferred task),
-  F21–F25 (fn definitions), F26 (tool_invoker), F27 (tool_invoke IPC), F28 (skill executor resolver).
+F2, F3, F5, F6, F7, F8, F9, F13, F14, F16, F19, F20, F21, F22, F23, F24,
+F25, F26, F27, F28. Removing any of these breaks compilation or silently
+disables a load-bearing kask capability (skill execution, MCP launch,
+cybernetics feedback, tool invocation).
 
 ### 5.2 Guardrail-force units (should re-apply — 4 units)
 
-Removing degrades behavior but doesn't break:
-- F4 (algedonic threshold — setting becomes dead config),
-- F5 (swarm-panel cap — governed dispatch unbounded without it, but only for swarm),
-- F10 (curator.always_on gating — tick cycles always run),
-- F12 (openai_compatible re-sync — provider toggles need restart),
-- F15 (MCP re-sync curator — curator server stale on settings change).
+F4 (algedonic threshold), F10 (`curator.always_on` gating), F15 (curator
+MCP re-sync), F18 (collab dev path). Omitting degrades behavior without
+breaking compilation.
 
 ### 5.3 Guideline-force units (nice-to-have — 2 units)
 
-- F17 (kask extensions panel — marketplace UI),
-- F18 (collab binary path — dev-only convenience).
+F17 (kask extensions panel wiring). Omitting is a UX regression.
 
 ### 5.4 Evidence-force units (observability — distributed across units)
 
-`log::info!` / `log::warn!` calls embedded in F2, F6, F10, F20. Re-apply with
+Log lines inside F6/F20 (e.g., cybernetics tick logging) — re-apply with
 their parent unit.
 
 ### 5.5 Pinning test gaps (the under-marking problem)
 
-The fork's `main.rs` has 111 kask call sites but only 4 `// zed-kask:` markers.
-Of the 28 functional units, **0 have a dedicated pinning test** — the wirings
-are process-global hooks that the fork never tested in isolation. The
-re-application must add pinning tests for at least the 20 Prohibition units.
-Candidate test approach: a `#[test]` in `crates/zed/src/main.rs`'s test module
-that calls a `#[cfg(test)] fn kask_wiring_smoke_check()` asserting every
-`set_*` hook is `Some` after a test init.
+At audit time, only 4 of 111 kask call sites in `main.rs` carried
+`// zed-kask:` markers, and most Prohibition units lacked a pinning test.
+The re-application plan (§6, Task R8) closes this: one pinning test per
+Prohibition unit, one marker per unit.
 
 ---
 
 ## 6. Re-application execution plan for `main.rs`
 
-This is the concrete task list for re-applying `main.rs` onto clean upstream.
-Each task is a vertical slice with acceptance criteria.
+> Historical plan for the 2026-08-06 case study (see §4 caveat).
 
-### Task R1: Branch + clean upstream base
-- Branch from `sync/upstream-2026-08-06` as `sync/mainrs-reapply-2026-08-06`.
-- `git checkout upstream/main -- crates/zed/src/main.rs` to get clean upstream.
-- Acceptance: `git diff upstream/main -- crates/zed/src/main.rs` is empty.
-
-### Task R2: Insert fn definitions (F22, F23, F21, F24, F25) at EOF
-- These are hoisted fn definitions; insert at end of file.
-- Add `// zed-kask: D3/D8` markers.
-- Acceptance: `cargo check -p zed` compiles (fns are unused but defined).
-
-### Task R3: Insert early wirings (F1, F2, F18) before `settings::init`
-- F1 (.env) after `build_application()`, F2 (gpui_tokio) after F1, F18 (collab path) early.
-- Acceptance: `cargo check -p zed` compiles.
-
-### Task R4: Insert F3 (alert channel) + F9 (kask_settings_for_mcp) after F2/settings::init
-- F3 after F2, F9 after `settings::init`. **F9 before F4** (DAG order — fixes bug 1).
-- Acceptance: `cargo check -p zed` compiles; `kask_settings_for_mcp` in scope for F4.
-
-### Task R5: Insert F4, F5, F6, F7 (cybernetics loop stack) in DAG order
-- F4 (algedonic) after F3+F9, F5 (cap) after F4, F6 (loop+mcp_runtime) after F2+F3+F4+F5, F7 after F6.
-- **F6 defines `cybernetics_loop_for_tick` once; F10 reuses it** (fixes bug 2).
-- Acceptance: `cargo check -p zed` compiles.
-
-### Task R6: Insert F8, F10, F11, F12, F13, F17
-- F8 after `fs`, F10 after F6+F9, F11 before `language_models::init`, F12 after F11, F13 after F9+F22+F23, F17 after panel infra.
-- Acceptance: `cargo check -p zed` compiles.
-
-### Task R7: Insert F20 (deferred task) with F14, F15, F16, F19, F26, F27, F28
-- F20 is the deferred task block; insert all sub-units in DAG order inside it.
-- Acceptance: `cargo check -p zed` compiles; `cargo test -p zed -- kask_wiring_smoke_check` passes.
-
-### Task R8: Add pinning tests for all Prohibition units
-- Add a `kask_wiring_smoke_check` test asserting every `set_*` hook is wired.
-- Add per-unit tests where feasible (e.g., cybernetics loop tick populates ledger).
-- Acceptance: `cargo test -p zed -- kask` passes; every `// zed-kask:` marker has a test.
-
-### Task R9: Update DIVERGENCE.md D3/D8 rows
-- Document the re-applied `main.rs` with the full functional unit list + pinning tests.
-- Acceptance: DIVERGENCE.md D-row file lists match the post-re-application tree.
-
-### Task R10: Verify + commit
-- `cargo check -p zed`, `cargo test -p zed`, `bash kask/scripts/check-hkask-no-zed-deps.sh`.
-- `grep -c "// zed-kask:" crates/zed/src/main.rs` ≥ 28 (one per functional unit).
-- Commit on `sync/mainrs-reapply-2026-08-06`.
+- **Task R1:** Branch + clean upstream base — `git restore --source upstream/main -- crates/zed/src/main.rs`.
+- **Task R2:** Insert fn definitions (F22, F23, F21, F24, F25) at EOF.
+- **Task R3:** Insert early wirings (F1, F2, F18) before `settings::init`.
+- **Task R4:** Insert F3 (alert channel) + F9 (kask_settings_for_mcp) after F2/`settings::init`.
+- **Task R5:** Insert F4, F5, F6, F7 (cybernetics loop stack) in DAG order.
+- **Task R6:** Insert F8, F10, F11, F12, F13, F17.
+- **Task R7:** Insert F20 (deferred task) with F14, F15, F16, F19, F26, F27, F28.
+- **Task R8:** Add pinning tests for all Prohibition units.
+- **Task R9:** Update DIVERGENCE.md D3/D8 rows.
+- **Task R10:** Verify (§3 gate) + commit.
 
 ---
 
 ## 7. Generalization: when to invoke this process
 
-Invoke this process (and the future `upstream-rebase` skill) when:
+Invoke this process (via the `upstream-rebase` skill) when:
 1. A git merge of upstream leaves a D-seam file with conflicts that touch
    kask-wiring regions.
 2. A D-seam file's `// zed-kask:` marker density is < 50% of its kask call sites.
@@ -370,21 +355,25 @@ The process is **not** needed for:
 
 ---
 
-## 8. Proposed skill: `upstream-rebase`
+## 8. The `upstream-rebase` skill
 
-A skill that encodes this process for reuse. Sketch:
+The skill exists and is installed at `.agents/skills/upstream-rebase/SKILL.md`.
+It encodes this process plus:
 
-- **Name:** `upstream-rebase`
-- **Purpose:** Manage upstream Zed rebases for zed-kask: decide strategy per
-  D-seam file (merge vs. mapped re-application), execute the chosen strategy,
-  pin every deviation with a test, update DIVERGENCE.md.
-- **Composes:** `essentialist` (deletion test for cruft detection),
-  `coding-guidelines` (surgical re-application), `task-breakdown` (slice the
-  re-application into vertical tasks).
-- **Phases:** Assess (per-file strategy decision) → Map (functional inventory
-  + DAG) → Re-apply (topological insertion) → Pin (tests) → Verify → Document.
-- **Emits:** `reg.upstream_rebase.*` spans.
+- **Deletion D-seam scope note:** Steps 1–7 apply to D-seam *files*; deletion
+  D-seams (file column `—` or struck through, e.g. D4, D10) skip to Step 8.
+- **Merge & rebase protocol:** merge-not-rebase convention
+  (`DIVERGENCE.md:108`, `git fetch upstream && git merge upstream/main`),
+  five conflict classes (D-seam modify/modify, kask-additive no-conflict,
+  workspace `Cargo.toml` arrays, modify/delete both directions), commit
+  hygiene, and recovery procedures.
+- **Merge-level verification gate ordering:** isolation script → §13.1 script →
+  `./script/clippy` → `cargo check -p kask_bridge -p hkask-types -p
+  hkask-mcp-server` (`DIVERGENCE.md:129`) → pinning tests.
+- **Registry templates:** `assess.j2`, `map.j2`, `decide.j2`, `execute.j2`,
+  `document.j2` under `kask/registry/templates/upstream-rebase/`, rendered
+  via the `render_template` tool, with `lisp_eval` verification gates between
+  LLM steps.
 
-This skill would be authored via the `create-skill` skill (which produces the
-skill structure: `SKILL.md` + `.j2` templates).
-The process document above becomes the `SKILL.md` companion content.
+See the skill's SKILL.md for the full protocol; this document remains the
+process + case-study companion.

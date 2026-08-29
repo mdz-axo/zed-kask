@@ -45,24 +45,26 @@
 //! `swarm_workspace_annotate`, `swarm_workspace_list_annotations`,
 //! `swarm_workspace_list_files`, `swarm_workspace_read_file`,
 //! `swarm_workspace_write_file`.
-//! Local tools (26): `swarm_fund_local`, `swarm_balance_local`,
-//! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
-//! `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
-//! `swarm_a2a_card` (A2A Agent Card discovery),
-//! `swarm_list_local_agents`, `swarm_clone_to_local`,
-//! `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
+//! Local substrate tools (35): local execution `swarm_delegate_local`,
+//! `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_execute_plan_local`,
+//! `swarm_evaluate_local`, `swarm_eval_suite_local`, `swarm_eval_agent_local`,
+//! `swarm_task_board`; registry `swarm_list_local_agents`,
+//! `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
 //! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6),
 //! `swarm_create_local_swarm`, `swarm_list_local_swarms`,
 //! `swarm_get_local_swarm`, `swarm_delete_local_swarm`,
-//! `swarm_add_agent_local`, `swarm_remove_agent_local`,
-//! `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
-//! `swarm_generate_ontology_local`, `swarm_ai_assist`,
-//! `swarm_evaluate_local`, `swarm_execute_plan_local`.
+//! `swarm_update_local_swarm`, `swarm_clone_local_swarm`, `swarm_push_local_swarm`,
+//! `swarm_pull_swarm_to_local`, `swarm_add_agent_local`,
+//! `swarm_remove_agent_local`, `swarm_ai_assist`; knowledge
+//! `swarm_search_knowledge_local`, `swarm_recall_local`,
+//! `swarm_generate_prompt_local`, `swarm_generate_ontology_local`; ledger
+//! `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`; A2A
+//! `swarm_a2a_send` (in-process), `swarm_a2a_card` (Agent Card discovery),
+//! `swarm_a2a_broadcast`.
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`,
 //! `swarm_fanout`, `swarm_create_swarm`, `swarm_xaman`) are consent-gated — see
-//! `kask/docs/plans/abw-swarm-intelligence.md`
-//! §3.6. Workspace update has NO ABW endpoint (405, verified live) and must
+//! `kask/docs/diataxis/swarm_system/reference.md`. Workspace update has NO ABW endpoint (405, verified live) and must
 //! not be added. Workspace delete IS implemented as `swarm_delete_swarm` via
 //! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-13);
 //! `DELETE /api/workspaces/{id}` is 405. Workspace create (`POST /api/teams`)
@@ -71,9 +73,9 @@
 //! ## v2 Local mode (§15)
 //! `SwarmConfig.mode` selects between `Abw` (v1, default) and `Local`
 //! (v2). In `Local` mode, the server reads agent cards from a local
-//! directory (`agents/local/curated/`) via `LocalAgentRegistry` and will
-//! (Slice 9) execute them through `hkask-inference` + `hkask-ledger`.
-//! No ABW calls are made in `Local` mode.
+//! directory (`agents/local/curated/`) via `LocalAgentRegistry` and executes
+//! them through the local runtime (`local_runtime.rs`, backed by
+//! `hkask-inference` + `hkask-ledger`). No ABW calls are made in `Local` mode.
 
 use hkask_mcp_server::server::CredentialRequirement;
 
@@ -572,6 +574,36 @@ mod smoke_tests {
         assert!(
             content["agent_cards"].is_array(),
             "agent_cards must be a JSON array"
+        );
+    }
+}
+
+// Pins the registered tool-surface count end-to-end against the live
+// `combined_router()` surface. Catches silent registration drops — a `#[tool]`
+// impl block without `#[tool_router]`, or a sub-router missing from
+// `combined_router()`, silently registers nothing (`cargo check` passes on an
+// unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
+// `pub(crate) async fn swarm_*` signatures): 47 cloud + 25 local + 3 ledger +
+// 4 knowledge + 3 a2a = 82.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::SwarmServer;
+
+    #[test]
+    fn tool_surface_is_exactly_82_registered_tools() {
+        let n = SwarmServer::combined_router().list_all().len();
+        assert_eq!(n, 82, "swarm registered tool surface changed; got {n}");
+    }
+
+    // The generated const and the live router must agree — a `name =` override
+    // or an unrouted `swarm_*` fn makes them diverge.
+    #[test]
+    fn tool_names_const_matches_registered_surface() {
+        let router = SwarmServer::combined_router();
+        assert_eq!(
+            router.list_all().len(),
+            crate::TOOL_NAMES.len(),
+            "TOOL_NAMES const and combined_router() surface diverged"
         );
     }
 }

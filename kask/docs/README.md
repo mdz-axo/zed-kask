@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 11 MCP servers are launched as child processes over stdio by zed's `context_server` host (`BUILT_IN_MCP_SERVERS`, `kask/crates/kask_bridge/src/mcp_servers.rs:55-431`).
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D33 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D38 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 cross-cutting crate sets (36 artifacts).
 

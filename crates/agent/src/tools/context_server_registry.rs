@@ -288,19 +288,21 @@ struct ContextServerTool {
 }
 
 /// Map a completed `ContextServerTool` run to the regulation outcome tuple
-/// `(success, error_kind)`. `error_kind` is the typed kind (e.g.
-/// `"unavailable"`) when the error text carries the `[kind] ` prefix set by
-/// the in-band envelope detection; otherwise the full text is the
-/// classification hint, mirroring the McpRuntime path.
+/// `(success, error_kind)`. The kind is read structurally from the error
+/// output's `raw_output` (the server's `structured_content`, set by the
+/// `is_error` branch in `run_inner`); when absent (non-kask servers, whose
+/// errors are plain text) the full text is the classification hint.
 fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, Option<String>) {
     match result {
         Ok(_) => (true, None),
         Err(output) => {
-            let text = mcp_error_text(output);
-            (
-                false,
-                Some(hkask_types::tool_response::error_kind_from_display(&text)),
-            )
+            let kind = output
+                .raw_output
+                .as_ref()
+                .and_then(hkask_types::tool_response::parse_tool_error_value)
+                .and_then(|envelope| envelope.kind)
+                .map(|kind| kind.to_string());
+            (false, Some(kind.unwrap_or_else(|| mcp_error_text(output))))
         }
     }
 }
@@ -599,7 +601,19 @@ impl ContextServerTool {
             if response.is_error == Some(true) {
                 let error_message: String =
                     response.content.iter().filter_map(|c| c.text()).collect();
-                return Err(anyhow::anyhow!(error_message).into());
+                // zed-kask: D-seam — carry the typed error kind structurally.
+                // kask servers set `is_error` natively (rmcp's Result handling
+                // + `McpToolError: IntoCallToolResult`) with the typed kind in
+                // `structured_content`. Putting that value in the error
+                // output's `raw_output` lets downstream consumers (regulation
+                // outcome recording, retry tracker) classify from the typed
+                // field instead of parsing error text.
+                return Err(AgentToolOutput {
+                    raw_output: response.structured_content.clone(),
+                    llm_output: vec![LanguageModelToolResultContent::Text(
+                        error_message.into(),
+                    )],
+                });
             }
 
             let mut llm_output = Vec::new();
@@ -678,24 +692,6 @@ impl ContextServerTool {
             if !tool_call_content.is_empty() {
                 event_stream
                     .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
-            }
-            // zed-kask: D-seam — in-band error envelope detection. kask MCP
-            // servers return tool errors as a `{"error": ..., "kind": ...}`
-            // content envelope with `is_error` unset (the rmcp String-return
-            // convention), so without this check every tool-logical error
-            // flows downstream as a success — miscounted by the retry tracker
-            // and the regulation ledger, and rendered as a successful tool
-            // card. The detection requires a known `McpErrorKind`, so a data
-            // payload that happens to carry `error`/`kind` keys can't
-            // false-positive. The `[kind] message` text matches
-            // `McpToolError`'s Display so consumers can classify by prefix.
-            if let Some(envelope) =
-                hkask_types::tool_response::parse_tool_error(&concatenated_text)
-                && let Some(kind) = envelope.kind
-            {
-                return Err(
-                    anyhow::anyhow!(format!("[{kind}] {}", envelope.message)).into(),
-                );
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {

@@ -1,0 +1,59 @@
+{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, the lifecycle-ledger entry appended to kask/docs/README.md, and the Phase 6 gate-results table. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the <70-document cap check. #}
+[inference]
+contract:
+  input:
+    date: string
+    count_before: number
+    count_after: number
+    triage_rows: array
+    fold_rows: array
+    ledger_rows: array
+    gate_results: object
+  output:
+    triage_table: string
+    fold_plan: string
+    ledger_entry: string
+    gate_table: string
+visibility: Public
+---
+[inference]
+temperature = 0.1
+work_effort = "medium"
+verbosity = "terse"
+thinking_budget = "minimal"
+
+## Condensation triage — {{ date }}
+
+Tree count before: {{ count_before }} (cap: < 70)
+Tree count after (projected): {{ count_after }}
+
+| Path | Role (CORE / FOLD / DELETE) | Reason | Successor |
+|------|------------------------------|--------|-----------|
+| {{ path }} | {{ role }} | {{ reason }} | {{ successor_or_none }}
+
+## Fold plan (FOLD rows only)
+
+For each FOLD: name the target section in the successor doc, the content
+being carried forward, and the links that must be repointed.
+
+| Source | Successor section | Content carried | Links to repoint |
+|--------|-------------------|-----------------|------------------|
+| {{ source }} | {{ section }} | {{ content }} | {{ links }}
+
+## Lifecycle ledger entry (append to kask/docs/README.md)
+
+### Deleted {{ date }} ({{ reason_category }})
+
+| Artifact | Successor |
+|----------|-----------|
+| {{ artifact }} | {{ successor }} |
+
+## Gate results (fill after Phase 6)
+
+| Gate | Result | Evidence |
+|------|--------|----------|
+| Count (< 70) | {{ pass_fail }} | `find kask/docs -type f | wc -l` → {{ n }} |
+| Links (0 broken) | {{ pass_fail }} | sweep result |
+| Citations (sample ≥ 5/artifact) | {{ pass_fail }} | {{ sampled }} checked, {{ failed }} failed |
+| Frontmatter (all .md) | {{ pass_fail }} | sweep result |
+| No deleted surfaces as current | {{ pass_fail }} | grep result |

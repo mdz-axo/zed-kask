@@ -35,14 +35,12 @@ a provider-agnostic port (`DatabaseDriver`) instead of
 | `define_driver_store!` (store boilerplate) | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
 | `HMemStore::from_driver` (no re-create of core table) | `kask/crates/hkask-storage/src/hmem.rs:140-163` |
 | `RegulationArchive::init_schema` (store-specific table) | `kask/crates/hkask-storage/src/regulation_store.rs:76-104` |
-| `Encryptor` (ENCv1 transparent encryption) | `kask/crates/hkask-storage/src/database/encrypt.rs:15-75` |
-| `migrate_legacy_kdf` (Argon2id → native KDF) | `kask/crates/hkask-storage/src/rotation.rs:302` |
 
 ## The open/connect sequence
 
 `open()` and `sqlite_pool()` are deliberately separate methods. `open()`
 validates the passphrase and creates parent directories; `sqlite_pool()`
-creates the r2d2 pool, migrates legacy-KDF DBs if a `.salt` file is
+creates the r2d2 pool, verifies the passphrase with a standalone probe,
 present, verifies the passphrase with a standalone probe connection, loads
 sqlite-vec, sets PRAGMAs, and initializes the schema. One path for file
 infrastructure, one path for SQLite — no dual-path bugs.
@@ -66,9 +64,6 @@ sequenceDiagram
     Database-->>Caller: Database handle (no SQLite conn)
 
     Caller->>Database: sqlite_pool()
-    alt .salt file exists (legacy Argon2id scheme)
-        Database->>FS: migrate_legacy_kdf (re-encrypt in place, delete .salt)
-    end
     Database->>Probe: open standalone connection
     Probe->>Probe: PRAGMA key = '<passphrase>'
     Probe->>Probe: SELECT count(*) FROM sqlite_master
@@ -113,10 +108,7 @@ to "repair": a wrong passphrase returns `PassphraseMismatch` (the DB is
 preserved for manual recovery — pinned by
 `wrong_passphrase_returns_mismatch_and_preserves_db` at
 `core/connection.rs:494`, in the test module starting at 447) and a corrupt
-file returns `Corrupted`. A DB from the pre-native scheme (marked by a
-`.salt` file) is re-encrypted in place by `rotation::migrate_legacy_kdf`
-during pool creation (`core/connection.rs:305-315`) — data-preserving,
-never destructive.
+file returns `Corrupted`.
 
 ### 2. `Database` is the connection manager; `SqliteDriver` is the store handle
 
@@ -218,19 +210,6 @@ retrieval via the backend-agnostic `DatabaseDriver` query path (`get`,
 retrieval — more complexity for ~4 KB/embedding savings. The redundancy
 earns its keep by preserving the uniform retrieval abstraction
 (`embeddings.rs:1-14`).
-
-## Why `HMemStore` has an optional `Encryptor` — and why it is not yet wired
-
-`HMemStore` holds an `encryptor: Option<Arc<Encryptor>>` field
-(`hmem.rs:137`), and the `Encryptor` (`database/encrypt.rs:15-75`) does
-transparent AES-256-GCM encryption of text values with an `ENCv1:` prefix
-for automatic detection — plaintext passes through on decrypt, so a store
-could migrate from unencrypted to encrypted without a schema change.
-However, `HMemStore::from_driver` currently always sets `encryptor: None`
-(`hmem.rs:155`), and no other constructor sets it: **value-level
-encryption is not yet wired** — the encrypt/decrypt branches exist but are
-unreachable in production. SQLCipher file-level encryption is the enforced
-confidentiality mechanism today.
 
 ## See also
 

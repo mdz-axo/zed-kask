@@ -446,7 +446,7 @@ Where each MDS category's authoritative documents live:
 | 1 | **Domain** | `architecture/` | MDS.md, zed-host-architecture-plan.md |
 | 2 | **Composition** | `architecture/` | MDS.md, zed-host-architecture-plan.md §13 (Composition & Connection Surfaces) |
 | 3 | **Trust** | `architecture/core/` | magna-carta.md, PRINCIPLES.md |
-| 4 | **Lifecycle** | `architecture/` + `plans/` | MDS.md, zed-host-architecture-plan.md |
+| 4 | **Lifecycle** | `architecture/` (lifecycle ledger in `README.md`) | MDS.md, zed-host-architecture-plan.md |
 | 5 | **Curation** | `architecture/` | DOCUMENTATION_STANDARDS.md (includes Writing Excellence protocol in Appendix A) |
 
 **Rule:** New documents go in the directory of their primary MDS category. Cross-cutting documents go in the directory of their dominant category.

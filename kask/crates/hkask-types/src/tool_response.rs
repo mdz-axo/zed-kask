@@ -92,12 +92,11 @@ pub fn parse_tool_error(output: &str) -> Option<ToolErrorEnvelope> {
 
 /// Like [`parse_tool_error`] but operates on an already-parsed `Value`.
 ///
-/// Useful when the caller already parsed the output (e.g. via
-/// `parse_tool_response`) and wants to check whether the *raw* output was an
-/// error envelope without re-parsing. Checks the raw value before `content`
-/// unwrapping, since the error envelope has no `content` wrapper.
+/// Useful when the caller already has the structured value (e.g. an MCP
+/// `structured_content` field carrying `{"error", "kind"}`) and wants the
+/// typed envelope without re-serializing to a string.
 #[must_use]
-pub(crate) fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope> {
+pub fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope> {
     let obj = value.as_object()?;
     let message = obj.get("error")?.as_str()?;
     let kind_str = obj.get("kind")?.as_str()?;

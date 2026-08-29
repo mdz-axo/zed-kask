@@ -466,27 +466,25 @@ mod tool_behavior_tests {
             .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"))
     }
 
-    /// `moat_check` with a traversal symbol must return the structured error
-    /// envelope carrying `invalid_argument` — never panic, never fetch.
+    /// `moat_check` with a traversal symbol must return a typed
+    /// `InvalidArgument` error — never panic, never fetch.
     #[tokio::test]
     async fn moat_check_rejects_invalid_symbol_with_typed_error() {
         let server = make_server();
-        let output = server
+        let error = server
             .moat_check(Parameters(SymbolRequest {
                 symbol: "../etc/passwd".to_string(),
             }))
-            .await;
-
-        let parsed = parse_envelope(&output);
-        let error = parsed
-            .get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or_else(|| {
-                panic!("invalid symbol must yield an error envelope, got: {parsed}")
-            });
+            .await
+            .expect_err("invalid symbol must yield a typed error, not a panic");
         assert!(
-            !error.is_empty(),
-            "error envelope must carry a message, got: {parsed}"
+            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+            "traversal symbol must be rejected as InvalidArgument, got: {:?}",
+            error.kind
+        );
+        assert!(
+            !error.message.is_empty(),
+            "typed error must carry a message, got: {error:?}"
         );
     }
 
@@ -495,20 +493,21 @@ mod tool_behavior_tests {
     async fn moat_check_rejects_over_long_symbol() {
         let server = make_server();
         let long_symbol = "A".repeat(64);
-        let output = server
+        let error = server
             .moat_check(Parameters(SymbolRequest {
                 symbol: long_symbol,
             }))
-            .await;
-        let parsed = parse_envelope(&output);
+            .await
+            .expect_err("over-long symbol must yield a typed error");
         assert!(
-            parsed.get("error").is_some(),
-            "over-long symbol must yield an error envelope, got: {parsed}"
+            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+            "over-long symbol must be rejected as InvalidArgument, got: {:?}",
+            error.kind
         );
     }
 
     /// A valid-shaped symbol passes validation and proceeds to fetch — which,
-    /// against an unreachable endpoint, must surface as a structured error
+    /// against an unreachable endpoint, must surface as a typed error
     /// (not a panic). Uses an unroutable host so the test stays offline.
     #[tokio::test]
     async fn moat_check_valid_symbol_surfaces_structured_error_on_fetch_failure() {
@@ -521,15 +520,28 @@ mod tool_behavior_tests {
         server.fmp_api_key = String::new();
         server.eodhd_api_key = String::new();
 
-        let output = server
+        match server
             .moat_check(Parameters(SymbolRequest {
                 symbol: "AAPL".to_string(),
             }))
-            .await;
-        let parsed = parse_envelope(&output);
-        // Either an error envelope (missing credentials) or a content payload
-        // with degraded data — both are valid contracts. A panic or non-JSON
-        // output is not.
-        assert!(parsed.is_object());
+            .await
+        {
+            // Either a typed error (missing credentials) or a content payload
+            // with degraded data — both are valid contracts. A panic or
+            // non-JSON output is not.
+            Ok(output) => {
+                let parsed = parse_envelope(&output);
+                assert!(
+                    parsed.is_object(),
+                    "content payload must be a JSON object, got: {parsed}"
+                );
+            }
+            Err(error) => {
+                assert!(
+                    !error.message.is_empty(),
+                    "typed error must carry a message, got: {error:?}"
+                );
+            }
+        }
     }
 }

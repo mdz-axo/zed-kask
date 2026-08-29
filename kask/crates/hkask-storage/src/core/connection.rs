@@ -2,11 +2,7 @@
 //!
 //! Uses SQLCipher's native passphrase KDF: `PRAGMA key = '<passphrase>'`
 //! derives the page key via PBKDF2 inside SQLCipher, and the salt lives in
-//! the DB file header — no external key material, no custom KDF. Databases
-//! created by the pre-native scheme (Argon2id + external `.salt` file) are
-//! re-encrypted in place on first open by `rotation::migrate_legacy_kdf`;
-//! once no `.salt` files remain, that migration path is dead code and can
-//! be deleted.
+//! the DB file header — no external key material, no custom KDF.
 //!
 //! # Architecture
 //!
@@ -78,8 +74,6 @@ pub(crate) fn init_sqlite_vec_on(conn: &rusqlite::Connection) -> rusqlite::Resul
     }
     Ok(())
 }
-
-pub(crate) const SQLCIPHER_SALT_SIZE: usize = 16;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -303,18 +297,6 @@ impl Database {
     }
 
     fn file_pool(&self) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
-        // A `.salt` file marks a DB encrypted by the pre-native scheme
-        // (Argon2id over the external salt + raw-key PRAGMA). Re-encrypt it
-        // in place under the native passphrase KDF before opening — the
-        // migration deletes the salt file, so it runs at most once per DB
-        // and is a no-op for every DB created after the switch.
-        let salt_path = format!("{}.salt", self.path);
-        if std::path::Path::new(&salt_path).exists() {
-            crate::rotation::migrate_legacy_kdf(&self.path, &self.passphrase, &salt_path).map_err(
-                |e| DatabaseError::SqlCipher(format!("legacy KDF migration failed: {e}")),
-            )?;
-        }
-
         // SQLCipher native passphrase KDF. The passphrase is passed as a
         // SQL string literal (single quotes doubled) — SQLCipher derives
         // the page key via PBKDF2 internally and stores the salt in the DB
@@ -376,15 +358,14 @@ impl Database {
             .map_err(|e| DatabaseError::SqlCipher(e.to_string()))?;
 
         // Initialize schema on first connection. Also serves as passphrase
-        // verification — a wrong passphrase produces an error here.
+        // verification — a wrong passphrase produces an error here. The
+        // standalone probe above is the authoritative verifier; reaching this
+        // branch with "not a database" maps to PassphraseMismatch (never
+        // destructive — a corrupt file is preserved for manual recovery).
         let conn = pool.get().map_err(|e| {
             let msg = e.to_string().to_lowercase();
             if msg.contains("file is not a database") || msg.contains("not a database") {
-                if std::path::Path::new(&salt_path).exists() {
-                    DatabaseError::PassphraseMismatch(self.path.clone())
-                } else {
-                    DatabaseError::Corrupted(format!("{}: {}", self.path, e))
-                }
+                DatabaseError::PassphraseMismatch(self.path.clone())
             } else {
                 DatabaseError::SqlCipher(e.to_string())
             }
@@ -422,10 +403,7 @@ impl Drop for Database {
 /// With the native SQLCipher KDF there is no external key material to lose,
 /// so there is nothing to "repair": a wrong passphrase returns
 /// `PassphraseMismatch` (the DB is preserved for manual recovery) and a
-/// corrupt file returns `Corrupted`. A DB from the pre-native scheme
-/// (marked by a `.salt` file) is re-encrypted in place by
-/// `rotation::migrate_legacy_kdf` during pool creation — data-preserving,
-/// never destructive.
+/// corrupt file returns `Corrupted`.
 pub fn open_or_repair(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
     let db = Database::open(path, passphrase)?;
     db.sqlite_pool()?;
@@ -437,8 +415,7 @@ pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseE
         Database::in_memory()
     } else {
         // All production file paths go through `open_or_repair` — which, with
-        // the native KDF, is open + pool creation (plus the one-time legacy
-        // KDF migration for pre-native DBs, triggered inside `file_pool`).
+        // the native KDF, is open + pool creation.
         open_or_repair(path, passphrase)
     }
 }
@@ -527,54 +504,6 @@ mod tests {
             std::path::Path::new(&db_path).exists(),
             "a wrong passphrase must never delete the DB"
         );
-
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(format!("{db_path}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path}-shm"));
-    }
-
-    /// A legacy-scheme DB (Argon2id + external salt, created by the
-    /// pre-native code) is migrated in place on first open: data survives,
-    /// the salt file is deleted, and the DB opens natively afterwards.
-    #[test]
-    fn legacy_kdf_db_migrates_in_place_on_open() {
-        let db_path = temp_db_path("legacy-migrate");
-        let salt_path = format!("{db_path}.salt");
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-
-        // Create a legacy-scheme DB with one row of data.
-        crate::rotation::tests::create_legacy_db(&db_path, "test_passphrase");
-        assert!(
-            std::path::Path::new(&salt_path).exists(),
-            "fixture: legacy DB must have a salt file"
-        );
-
-        // First open triggers the migration.
-        {
-            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
-            let pool = db.sqlite_pool().unwrap();
-            let conn = pool.get().unwrap();
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS legacy_probe (id INTEGER PRIMARY KEY, v TEXT);",
-            )
-            .unwrap();
-        }
-        assert!(
-            !std::path::Path::new(&salt_path).exists(),
-            "migration must delete the salt file"
-        );
-
-        // Data written under the legacy scheme must survive the migration.
-        {
-            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
-            let pool = db.sqlite_pool().unwrap();
-            let conn = pool.get().unwrap();
-            let count: i64 = conn
-                .query_row("SELECT count(*) FROM hmems", [], |r| r.get(0))
-                .unwrap();
-            assert_eq!(count, 1, "legacy data must survive the KDF migration");
-        }
 
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(format!("{db_path}-wal"));

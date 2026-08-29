@@ -409,7 +409,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 | Tool | Location | Purpose |
 |------|----------|---------|
 | `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
-| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `crates/zed/src/main.rs:776`. |
+| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `crates/zed/src/main.rs:711`. |
 
 ### PDCA Loops Are Model-Coordinated
 
@@ -690,7 +690,7 @@ Four-phase pipeline: **detect-gap** (classify gaps: coverage, feature, automatio
 
 ## Building MCP Servers
 
-zed-kask hosts 10 MCP servers as child processes over stdio via zed's `context_server` host (companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as built-in context servers inside the editor (D1–D3): the `context_server` host launches them as child processes over stdio, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
+zed-kask hosts 11 MCP servers as child processes over stdio via zed's `context_server` host (companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as built-in context servers inside the editor (D1–D3): the `context_server` host launches them as child processes over stdio, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Prerequisites
 
@@ -807,7 +807,7 @@ async fn main() -> Result<(), hkask_mcp_server::McpError> {
 
 ### Step 6: Register as an In-Process Builtin
 
-Add your server to the canonical registry in `crates/kask_bridge/src/mcp_servers.rs` so zed-kask's in-process transport can discover and load it:
+Add your server to the canonical registry in `kask/crates/kask_bridge/src/mcp_servers.rs` so zed-kask's in-process transport can discover and load it:
 
 ```rust
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
@@ -839,7 +839,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 | Duplicate `ToolContext` impl | `mcp_server!` already calls `impl_tool_context!` — do not duplicate it |
 | No Regulation spans emitted | Always wrap tool logic in `execute_tool(self, "tool_name", async { ... }).await` |
 | Server starts as `"anonymous"` | Set `HKASK_WEBID` before starting (the server reads it at startup and falls back to anonymous if unset) |
-| Server not loaded by zed-kask | Add a `BuiltinMcpServer { id, binary, description }` entry to `BUILT_IN_MCP_SERVERS` in `crates/kask_bridge/src/mcp_servers.rs` |
+| Server not loaded by zed-kask | Add a `BuiltinMcpServer { id, binary, description }` entry to `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs` |
 | Tool name conflicts | Tool names are global across all MCP servers. Use a prefix convention (e.g., `example_ping`) |
 
 ---

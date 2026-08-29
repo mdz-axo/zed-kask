@@ -24,10 +24,6 @@ thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 hex.workspace = true
-# Argon2id — used ONLY by the legacy-KDF migration (rotation.rs), which
-# re-encrypts pre-native databases. Deletable together with that migration
-# once no `.salt` files remain.
-argon2.workspace = true
 sqlite-vec.workspace = true
 
 [dev-dependencies]

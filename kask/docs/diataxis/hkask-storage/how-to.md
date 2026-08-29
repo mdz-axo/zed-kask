@@ -40,8 +40,7 @@ SQLite is the only backend.
 | `regulation_store.rs` `init_schema` (store-specific pattern) | `kask/crates/hkask-storage/src/regulation_store.rs:76-104` |
 | `gallery.rs` `init_schema` (multi-table pattern) | `kask/crates/hkask-storage/src/gallery.rs:193-270` |
 | `rotate_passphrase` | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
-| `migrate_legacy_kdf` | `kask/crates/hkask-storage/src/rotation.rs:302` |
-| Rotation + migration tests | `kask/crates/hkask-storage/src/rotation.rs:800-1020` |
+| Rotation tests | `kask/crates/hkask-storage/src/rotation.rs` |
 
 ## Procedure
 

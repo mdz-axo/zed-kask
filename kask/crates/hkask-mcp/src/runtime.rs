@@ -1511,22 +1511,19 @@ impl McpRuntime {
         };
         let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
-            return Err(DispatchError::Failed(text));
-        }
-        // zed-kask: in-band error envelope detection — kask servers return
-        // tool errors as a `{"error": ..., "kind": ...}` content envelope
-        // with `is_error` unset (the rmcp String-return convention), so
-        // without this check every tool-logical error dispatched through
-        // the governed path recorded as a success in the RegulationLedger.
-        // The `[kind] message` text lets `invoke` extract the typed kind for
-        // the ledger's per-kind breakdown (config-gap classification).
-        if let Some(envelope) = hkask_types::tool_response::parse_tool_error(&text)
-            && let Some(kind) = envelope.kind
-        {
-            return Err(DispatchError::Failed(format!(
-                "[{kind}] {}",
-                envelope.message
-            )));
+            // kask servers set `is_error` natively (rmcp's Result handling +
+            // `McpToolError: IntoCallToolResult`) with the typed kind in
+            // `structured_content`. Format the detail as `[kind] message`
+            // (the `McpToolError` Display convention) so `invoke` can
+            // extract the kind for the ledger's per-kind breakdown.
+            let detail = result
+                .structured_content
+                .as_ref()
+                .and_then(hkask_types::tool_response::parse_tool_error_value)
+                .and_then(|envelope| envelope.kind)
+                .map(|kind| format!("[{kind}] {text}"))
+                .unwrap_or(text);
+            return Err(DispatchError::Failed(detail));
         }
         Ok(parse_call_result(&result))
     }

@@ -27,37 +27,25 @@ use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 
 use crate::AgentToolOutput;
-use language_model::LanguageModelToolResultContent;
 
 /// Whether a failed tool output is a deterministic authorization failure
 /// (missing credential — `permission_denied`) rather than tool-behavior
-/// flakiness. kask MCP tool errors carry a `[kind] ` prefix (the
-/// `McpToolError` Display convention, set by the in-band envelope detection
-/// in `ContextServerTool::run`); a denied call cannot succeed on an
-/// identical retry — the `.rules` credential pattern classifies it as an
-/// authorization failure the operator must fix — so counting it as a
+/// flakiness. The typed kind is read structurally from the error output's
+/// `raw_output` (the server's `structured_content`, set by the `is_error`
+/// branch in `ContextServerTool::run_inner`) — a denied call cannot succeed
+/// on an identical retry (the `.rules` credential pattern classifies it as
+/// an authorization failure the operator must fix), so counting it as a
 /// tracker failure only produces bogus "switch tools" statistics.
-/// `unavailable` is deliberately NOT skipped here: it can be transient
-/// (server restarting), and stopping an agent from hammering an unavailable
-/// tool is the tracker's job.
+/// `unavailable` is deliberately NOT skipped: it can be transient (server
+/// restarting), and stopping an agent from hammering an unavailable tool is
+/// the tracker's job.
 pub fn is_authorization_error(output: &AgentToolOutput) -> bool {
-    let text: String = output
-        .llm_output
-        .iter()
-        .filter_map(|part| match part {
-            LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
-            _ => None,
-        })
-        .collect();
-    if let Some(rest) = text.strip_prefix('[')
-        && let Some((kind, _)) = rest.split_once("] ")
-    {
-        return matches!(
-            hkask_types::McpErrorKind::from_kind_str(kind),
-            Some(hkask_types::McpErrorKind::PermissionDenied)
-        );
-    }
-    false
+    output
+        .raw_output
+        .as_ref()
+        .and_then(hkask_types::tool_response::parse_tool_error_value)
+        .and_then(|envelope| envelope.kind)
+        .is_some_and(|kind| matches!(kind, hkask_types::McpErrorKind::PermissionDenied))
 }
 
 /// Number of failures before the warning escalates to a directive with

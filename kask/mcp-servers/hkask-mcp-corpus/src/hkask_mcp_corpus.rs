@@ -419,7 +419,8 @@ mod smoke {
         let server = make_server();
         let output = server
             .corpus_clear_index(Parameters(crate::tools::storage::ClearIndexRequest {}))
-            .await;
+            .await
+            .expect("corpus_clear_index ok");
         let content = unwrap_content(&output);
         assert!(
             content.get("cleared").is_some(),
@@ -430,7 +431,7 @@ mod smoke {
     #[tokio::test]
     async fn corpus_query_without_inference_surfaces_structured_error() {
         let server = make_server();
-        let output = server
+        let error = server
             .corpus_query(Parameters(crate::tools::storage::QueryRequest {
                 query: "test".into(),
                 top_k: Some(5),
@@ -440,18 +441,18 @@ mod smoke {
                 db_path: None,
                 passphrase: None,
             }))
-            .await;
-        // Without inference, corpus_query must surface a structured error
-        // (not panic). The error envelope has 'error' and 'kind' keys.
-        let parsed: serde_json::Value = serde_json::from_str(&output)
-            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
+            .await
+            .expect_err("corpus_query without inference must fail, not panic");
+        // Without inference, corpus_query must surface a typed error
+        // (not panic). The error carries kind Unavailable on the wire.
         assert!(
-            parsed.get("error").is_some(),
-            "corpus_query without inference must return an error, got: {parsed}"
+            matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
+            "error kind must be Unavailable when inference is not configured, got: {:?}",
+            error.kind
         );
-        assert_eq!(
-            parsed["kind"], "unavailable",
-            "error kind must be 'unavailable' when inference is not configured, got: {parsed}"
+        assert!(
+            !error.message.is_empty(),
+            "typed error must carry a message, got: {error:?}"
         );
     }
 }

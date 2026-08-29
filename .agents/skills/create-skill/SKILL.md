@@ -23,13 +23,22 @@ directed. The agent IS the executor.
 
 ## The skill model
 
-A kask skill has two artifacts:
+A kask skill has two artifacts, in **two different locations**:
 
 ```
 .agents/skills/<name>/
-├── SKILL.md              # Process instructions the agent reads and follows
-├── <phase>.j2            # Jinja2 prompt templates (readable resources)
+└── SKILL.md              # Process instructions the agent reads and follows
+
+kask/registry/templates/<name>/
+└── <phase>.j2            # Jinja2 prompt templates (render_template resources)
 ```
+
+Templates do NOT live next to the SKILL.md. The `render_template` tool
+resolves template refs against the registry base path
+(`kask/registry/templates/`, wired via `agent::set_template_base_path()` in
+`crates/zed/src/main.rs`); a template placed in `.agents/skills/<name>/` is
+unreachable by `render_template`. Every shipped skill follows this split —
+zero `.j2` files exist under `.agents/skills/`.
 
 ### SKILL.md — the process surface
 
@@ -50,14 +59,16 @@ The SKILL.md contains:
 Templates are `.j2` files. There are two ways to use them:
 
 1. **`render_template`** — the built-in rendering tool. Pass the template
-   name (relative to the registry templates base path) and a `variables`
-   map. The tool renders the Jinja2 template with minijinja and returns the
-   rendered string. Use this when the template has Jinja2 variables that
-   should be substituted from prior step results.
+   ref as `<skill-name>/<file>` (e.g. `my-skill/analyze`; the resolver
+   tries the `.j2` extension) and a `variables` map. The tool renders the
+   Jinja2 template with minijinja from `kask/registry/templates/<name>/`
+   and returns the rendered string. Use this when the template has Jinja2
+   variables that should be substituted from prior step results.
 
 2. **`read_file`** — when the template is a *prompt specification* the agent
    reads to understand an expected output shape, not a template to render.
-   The agent reads it, internalizes the structure, and produces output
+   Read it from `kask/registry/templates/<name>/<file>.j2`. The agent reads
+   it, internalizes the structure, and produces output
    following that guidance.
 
 The template defines:
@@ -183,9 +194,11 @@ Generate the skill artifacts:
      - What inputs to provide (form, env, query, template path, etc.)
      - What to do with the result (feed to next step, check convergence)
    - "Constraints" section with guardrails and rules
-   - Template references: "Read `analyze.j2` for the expected output format"
+   - Template references: "Render `my-skill/analyze` (or read
+     `kask/registry/templates/my-skill/analyze.j2`) for the expected output
+     format"
 
-2. **.j2 templates** with:
+2. **.j2 templates** in `kask/registry/templates/<name>/` with:
    - A comment header describing the template's purpose and phase
    - Jinja2 variables for context injection (`{{ task }}`, `{{ step_1_result }}`)
    - The prompt structure (what the agent should analyze/synthesize)
@@ -199,7 +212,7 @@ Each instruction step should be concrete and tool-oriented:
 ### Phase 3 — Analyze
 
 1. Call `render_template` to render the analysis template:
-   template: my-skill/analyze.j2 (the new skill's own template)
+   template: my-skill/analyze (resolves to kask/registry/templates/my-skill/analyze.j2)
    variables: { "target": "{{ target }}", "prior_results": <step 2 output> }
 
 2. Following the template's output schema, analyze the research from
