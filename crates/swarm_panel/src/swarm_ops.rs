@@ -1559,7 +1559,7 @@ impl SwarmPanel {
         if is_editing {
             obj.insert(
                 "slug".into(),
-                serde_json::json!(editing_slug.clone().unwrap_or_default()),
+                serde_json::json!(editing_slug.unwrap_or_default()),
             );
         } else {
             obj.insert("slug".into(), serde_json::json!(slug));

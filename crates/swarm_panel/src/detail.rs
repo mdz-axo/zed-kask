@@ -602,7 +602,7 @@ impl SwarmPanel {
                             let action_loading = pa.loading;
                             let accept_workspace = action_workspace.clone();
                             let accept_action_id = action_id.clone();
-                            let reject_workspace = action_workspace.clone();
+                            let reject_workspace = action_workspace;
                             let reject_action_id = action_id.clone();
                             v_flex()
                                 .gap_1()

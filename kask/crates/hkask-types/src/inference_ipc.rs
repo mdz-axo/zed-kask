@@ -145,7 +145,8 @@ pub enum InferenceMethod {
     /// Generate media (image, video, speech, transcription) via the
     /// MediaRouter. Uses `media_op`, `media_prompt`, `media_image_url`,
     /// `media_text`, `media_size`, `media_count`, `media_strength`,
-    /// `media_duration` from `InferenceParams`. The result is returned as
+    /// `media_duration`, `media_mask`, `media_model` from
+    /// `InferenceParams`. The result is returned as
     /// `InferenceOutcome::Media`.
     MediaGenerate,
 }
@@ -194,6 +195,12 @@ pub struct InferenceParams {
     pub media_duration: Option<f32>,
     /// Language hint for transcription.
     pub media_language: Option<String>,
+    /// Mask image (base64 data URI or URL) for region-selective editing
+    /// (inpainting). White regions are edited; black regions are preserved.
+    pub media_mask: Option<String>,
+    /// Model override for the media op — bypasses the env/default model
+    /// resolution on the provider side.
+    pub media_model: Option<String>,
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
     pub tool_server: Option<String>,
     /// Tool name to invoke.

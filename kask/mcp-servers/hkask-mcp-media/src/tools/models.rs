@@ -128,8 +128,8 @@ impl MediaServer {
                     let filter_lower = filter.to_lowercase();
                     models.retain(|m| m.provider == filter_lower);
                 }
-                Ok(serde_json::to_value(&models)
-                    .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))?)
+                serde_json::to_value(&models)
+                    .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))
             },
         )
         .await
@@ -155,8 +155,8 @@ impl MediaServer {
                             "Model not found: {model_id}. Call model_list to see available models."
                         ))
                     })?;
-                Ok(serde_json::to_value(&model)
-                    .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))?)
+                serde_json::to_value(&model)
+                    .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))
             },
         )
         .await

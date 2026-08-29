@@ -705,7 +705,7 @@ impl FormExt for Form {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_fleet_health, merge_fleet_health};
+    use super::classify_fleet_health;
     use project::context_server_store::ContextServerStatus;
     use std::sync::Arc;
 

@@ -2504,7 +2504,7 @@ fn main() {
             client.clone(),
             app_state.workspace_store.clone(),
             context_server_health_source_for_poller,
-            mcp_runtime_for_startup.clone(),
+            mcp_runtime_for_startup,
             cx,
         );
         extension_host::init(

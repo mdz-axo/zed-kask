@@ -382,7 +382,7 @@ impl SwarmPanel {
                 let spawn_slug = app_slug.clone();
                 let publish_slug = app_slug.clone();
                 let archive_slug = app_slug.clone();
-                let edit_slug = app_slug.clone();
+                let edit_slug = app_slug;
                 let is_archived = app.archived;
                 let is_public = app.visibility == "public";
                 MarketplaceCard::new().child(
@@ -431,9 +431,9 @@ impl SwarmPanel {
                                 )
                                 .child(
                                     Label::new(if app.tagline.is_empty() {
-                                        app.description.clone()
+                                        app.description
                                     } else {
-                                        app.tagline.clone()
+                                        app.tagline
                                     })
                                     .color(Color::Muted)
                                     .size(LabelSize::XSmall)

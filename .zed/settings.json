@@ -37,7 +37,7 @@
       "formatter": {
         "external": {
           "command": "rustfmt",
-          "arguments": ["--edition", "2021", "--emit", "stdout", "--quiet"],
+          "arguments": ["--edition", "2024", "--emit", "stdout", "--quiet"],
         },
       },
       "tasks": {

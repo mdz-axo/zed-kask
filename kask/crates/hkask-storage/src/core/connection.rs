@@ -94,10 +94,7 @@ pub enum DatabaseError {
     /// unopenable without its original salt — no passphrase can recover it.
     /// Remediable: `open_or_repair` deletes the orphaned DB and recreates.
     #[error("DB file exists at {db_path} but salt file is missing at {salt_path}")]
-    SaltMissing {
-        db_path: String,
-        salt_path: String,
-    },
+    SaltMissing { db_path: String, salt_path: String },
 }
 
 /// Database handle — path, passphrase, and whether it's a new file.
@@ -169,7 +166,7 @@ impl Database {
             // delete the orphaned DB to start fresh.
             return Err(DatabaseError::SaltMissing {
                 db_path: path.to_string(),
-                salt_path: salt_path.clone(),
+                salt_path,
             });
         } else {
             let salt = generate_salt();
@@ -549,10 +546,7 @@ mod tests {
     /// and the self-healing loop could never recover.
     #[test]
     fn open_or_repair_self_heals_when_salt_missing_but_db_exists() {
-        let dir = std::env::temp_dir().join(format!(
-            "hkask-storage-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("hkask-storage-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let db_path = dir.join("heal_test.db");
         let db_path_str = db_path.to_string_lossy().to_string();
@@ -606,10 +600,8 @@ mod tests {
     /// path — a `PassphraseMismatch` must preserve the DB for manual recovery.
     #[test]
     fn open_or_repair_wrong_passphrase_does_not_delete_db() {
-        let dir = std::env::temp_dir().join(format!(
-            "hkask-storage-test-wp-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("hkask-storage-test-wp-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let db_path = dir.join("wrong_pass_test.db");
         let db_path_str = db_path.to_string_lossy().to_string();
@@ -654,10 +646,8 @@ mod tests {
     /// directly, bypassing repair.
     #[test]
     fn open_database_self_heals_when_salt_missing() {
-        let dir = std::env::temp_dir().join(format!(
-            "hkask-storage-test-odb-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("hkask-storage-test-odb-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let db_path = dir.join("dispatcher_test.db");
         let db_path_str = db_path.to_string_lossy().to_string();
@@ -681,7 +671,10 @@ mod tests {
         // 3. open_database must self-heal (via open_or_repair routing).
         let db = open_database(&db_path_str, "test_passphrase").unwrap();
         drop(db);
-        assert!(db_path.exists(), "DB file should exist after heal via dispatcher");
+        assert!(
+            db_path.exists(),
+            "DB file should exist after heal via dispatcher"
+        );
         assert!(
             std::path::Path::new(&salt_path).exists(),
             "Salt file should exist after heal via dispatcher"

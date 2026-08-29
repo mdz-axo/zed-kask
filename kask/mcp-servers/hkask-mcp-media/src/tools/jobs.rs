@@ -195,8 +195,8 @@ impl MediaServer {
             jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
             jobs.truncate(max);
 
-            Ok(serde_json::to_value(&jobs)
-                .map_err(|e| McpToolError::internal(format!("encode job list: {e}")))?)
+            serde_json::to_value(&jobs)
+                .map_err(|e| McpToolError::internal(format!("encode job list: {e}")))
         })
         .await
     }
@@ -224,8 +224,8 @@ impl MediaServer {
                          to see known jobs."
                     ))
                 })?;
-                Ok(serde_json::to_value(job)
-                    .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))?)
+                serde_json::to_value(job)
+                    .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))
             },
         )
         .await
@@ -298,7 +298,7 @@ mod tests {
         };
         {
             let mut guard = store.lock().unwrap();
-            guard.insert("test-job-1".to_string(), record.clone());
+            guard.insert("test-job-1".to_string(), record);
         }
         let guard = store.lock().unwrap();
         assert_eq!(guard.len(), 1);

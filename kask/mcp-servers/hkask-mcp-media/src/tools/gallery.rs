@@ -1300,8 +1300,8 @@ impl MediaServer {
                         "video",
                     )
                     .map_err(|e| map_media_error(e.into()))?;
-                Ok(serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?)
+                serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))
             },
         )
         .await
@@ -1359,8 +1359,8 @@ impl MediaServer {
                         "audio",
                     )
                     .map_err(|e| map_media_error(e.into()))?;
-                Ok(serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?)
+                serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))
             },
         )
         .await
@@ -1389,8 +1389,8 @@ impl MediaServer {
                     .gallery_store
                     .create_album(&ga.gallery_id, &name, parent_id.as_deref())
                     .map_err(|e| map_media_error(e.into()))?;
-                Ok(serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))?)
+                serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))
             },
         )
         .await
@@ -1409,8 +1409,8 @@ impl MediaServer {
                     .gallery_store
                     .list_albums(&ga.gallery_id)
                     .map_err(|e| map_media_error(e.into()))?;
-                Ok(serde_json::to_value(&albums)
-                    .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))?)
+                serde_json::to_value(&albums)
+                    .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))
             },
         )
         .await

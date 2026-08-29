@@ -1018,8 +1018,8 @@ impl MediaServer {
                 validate_tool_url_with_dns(&video_url).await?;
                 let ffmpeg = self.require_ffmpeg()?;
                 let info = ffmpeg.probe(&video_url).await.map_err(map_media_error)?;
-                Ok(serde_json::to_value(&info)
-                    .map_err(|e| McpToolError::internal(format!("encode video info: {e}")))?)
+                serde_json::to_value(&info)
+                    .map_err(|e| McpToolError::internal(format!("encode video info: {e}")))
             },
         )
         .await

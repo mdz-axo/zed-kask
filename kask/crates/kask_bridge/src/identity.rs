@@ -392,31 +392,31 @@ pub fn rotate_swarm_memory_db_passphrase(new_passphrase: &str) -> Result<(), Bri
 mod tests {
     use super::*;
 
-    /// The requirement that drives this module:
-    ///
-    /// 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
-    ///    kata-kanban, training) opens with the fixed default `"allostery"`
-    ///    on first run. The default lives in
-    ///    `hkask-keystore::passphrase::DEFAULT_PASSPHRASE`; `identity.rs`
-    ///    MUST resolve via that const, never a string literal.
-    /// 2. **Startup** — at MCP launch time the provisioning chain
-    ///    (env override → keychain → first-run default) resolves the
-    ///    passphrase so stores never start down (see
-    ///    `build_mcp_server_env` → `provision_default_passphrase`).
-    /// 3. **Settings rotation** — once running, the operator changes the
-    ///    passphrase via the settings UI; the DB re-encodes atomically, then
-    ///    the new passphrase is persisted. The two rotate functions below
-    ///    are the bridge callers that the UI hits.
-    ///
-    /// These tests pin the requirement and the helper seams that edge
-    /// cases (empty env var, default const, resolved-from-keychain path)
-    /// must not regress.
+    // The requirement that drives this module:
+    //
+    // 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
+    //    kata-kanban, training) opens with the fixed default `"allostery"`
+    //    on first run. The default lives in
+    //    `hkask-keystore::passphrase::DEFAULT_PASSPHRASE`; `identity.rs`
+    //    MUST resolve via that const, never a string literal.
+    // 2. **Startup** — at MCP launch time the provisioning chain
+    //    (env override → keychain → first-run default) resolves the
+    //    passphrase so stores never start down (see
+    //    `build_mcp_server_env` → `provision_default_passphrase`).
+    // 3. **Settings rotation** — once running, the operator changes the
+    //    passphrase via the settings UI; the DB re-encodes atomically, then
+    //    the new passphrase is persisted. The two rotate functions below
+    //    are the bridge callers that the UI hits.
+    //
+    // These tests pin the requirement and the helper seams that edge
+    // cases (empty env var, default const, resolved-from-keychain path)
+    // must not regress.
 
-    /// The default passphrase MUST be fixed and match the
-    /// `hkask-keystore::passphrase` const — if provisioning fell back to a
-    /// random word (the old behavior) or a raw literal drifted from the
-    /// const, the bug returns. DEFAULT_PASSPHRASE is the single source of
-    /// truth.
+    // The default passphrase MUST be fixed and match the
+    // `hkask-keystore::passphrase` const — if provisioning fell back to a
+    // random word (the old behavior) or a raw literal drifted from the
+    // const, the bug returns. DEFAULT_PASSPHRASE is the single source of
+    // truth.
     #[test]
     fn default_passphrase_matches_hkask_keystore_const() {
         assert_eq!(

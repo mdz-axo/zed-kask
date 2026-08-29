@@ -445,13 +445,15 @@ beyond the inline markdown `MediaWidget`.
    markdown `MediaWidget` (single asset + transport + Explain/Disagree).
    N fenced media blocks render as N stacked widgets — no grid, timeline,
    inspector, queue bar, album tree, or mask canvas exists.
-2. **Agent-path MCP calls have no regulation instrumentation.** `reg.tool.*`
-   spans are emitted to child stderr and discarded at debug level by zed's
-   context-server client (`crates/context_server/src/client.rs:319-327`);
-   outcome recording (`RegulationLedger`) only covers the McpRuntime path
-   (skills/panel/IPC). The doc comment at `tool_span.rs:160-165` overstates
-   coverage. This is the root defect behind loops 1, 4, 5 in the cybernetics
-   report.
+2. **Agent-path MCP calls had no regulation instrumentation** — ✅ fixed
+   by T-V1 (see New tasks): outcomes now record client-side into the
+   `RegulationLedger`. Historically, `reg.tool.*` spans were emitted to
+   child stderr and discarded at debug level by zed's context-server client
+   (`crates/context_server/src/client.rs:319-327`); outcome recording
+   (`RegulationLedger`) only covered the McpRuntime path. The doc comment at
+   `tool_span.rs:160-165` still overstates span coverage (the spans remain
+   unconsumed — the client-side recording is the fix, not span
+   consumption).
 3. **`LazyToolRouter` can prune generically-named media tools**
    (`model_list`, `job_status`, `workflow_list`) on non-media-phrased complex
    requests — description-scored, budget 40 across all servers. Exact-name
@@ -501,13 +503,37 @@ work remains, unrelated to this pass).
    `image_from_row` now hard-reads the column.
 7. **Schema-compliance tests now cover all 25 new request structs**
    (63 total, up from 38).
+8. **IPC wire protocol dropped `mask` / `model` (found 2026-08-28 while
+   completing the media-panel takeover)** — `InferenceParams` had no
+   `media_mask` / `media_model` fields, so in production (media server as
+   a child process) `image_edit_region`'s mask silently degraded to
+   whole-image editing and the per-call model override was dropped at the
+   socket boundary; the in-process `MediaRouter` path was unaffected,
+   which is why per-crate tests passed. Fixed end-to-end:
+   `InferenceParams.media_mask`/`media_model` added, the IPC client maps
+   them from `MediaGenerateParams`, the zed-side dispatch reconstructs
+   them. Pinned by `kask_bridge` `dispatch_media_generate_threads_mask_and_model`.
 
 ### New tasks discovered (not yet done)
 
-- **T-V1 (P1, systemic)**: Wire agent-path MCP tool outcomes into the
-  regulation loop (consume `reg.tool.*` spans or record outcomes in zed's
-  context-server client). Fixes the root defect behind curator blindness to
-  agent-initiated media calls.
+- **T-V1 (P1, systemic)**: ✅ **Done (2026-08-28)** — agent-path MCP tool
+  outcomes now flow into the regulation loop.
+  `ContextServerTool::run` wraps `run_inner` to record every outcome
+  (server name, tool name, success, error text) via a process-global
+  re-settable hook (`agent::set_mcp_tool_outcome_recorder` /
+  `record_mcp_tool_outcome`, Mutex slot), wired in `main.rs` to the shared
+  `RegulationLedger::record_outcome` on the GPUI-global tokio runtime.
+  Domain is the MCP server name, matching `McpRuntime::invoke`, so both
+  dispatch paths aggregate into the same reliability domain — the
+  `ToolReliabilitySensor` and curator now see agent-initiated MCP calls.
+  Pinned by `agent::internal_tests::mcp_outcome_recorder_records_and_is_replaceable`
+  + `context_server_registry::tests::{test_mcp_run_outcome_maps_success,
+  test_mcp_run_outcome_maps_error_text,
+  test_mcp_run_outcome_empty_error_text_falls_back}`. D-seam documented in
+  DIVERGENCE.md (Other zed-kask-modified files). The `reg.tool.*` stderr spans
+  remain unconsumed on this path — the outcome is recorded client-side
+  instead, which is the stronger signal (it observes the actual result, not
+  the server's self-report).
 - **T-V2 (P1)**: Classify `unavailable` (not-configured: yt-dlp/ffmpeg
   missing) distinctly from real failures in `ToolRetryTracker` and
   `ToolReliabilitySensor`, so environment gaps don't pollute reliability
@@ -515,10 +541,17 @@ work remains, unrelated to this pass).
 - **T-V3 (P1)**: Video Explain dispatch mismatch — `omc:Asset → gallery_analyze`
   hands a `.mp4` path as `image_url` (`media_widget.rs:640-655`). Route video
   blocks to a video-appropriate explain path.
-- **T-V4 (P2)**: UI surfaces — all 9 are server-only. Priority order:
-  variant grid (extends existing stacked-widget rendering), asset inspector
-  (extends the affordance bar), queue bar, model browser, album tree,
-  timeline, workflow composer, mask canvas (largest new build).
+- **T-V4 (P2)**: UI surfaces — ⚠️ **partially done (2026-08-28)**: a
+  **Steer-only media panel** landed (`crates/media_panel/`, modeled on the
+  portfolio panel): chat-driven CRUD scoped to the `media` MCP server,
+  status bar button, View menu entry, tool advertisement verified against
+  the generated `TOOL_NAMES` via `ensure_steer`. This is the chat-driven
+  variant, not the 3-zone visual panel — variant grid, asset inspector,
+  queue bar, model browser grid, album tree, timeline, workflow composer,
+  and mask canvas remain unbuilt (the inline `MediaWidget` still renders
+  single assets in stacked fenced blocks). Priority order for the visual
+  surfaces: variant grid, asset inspector, queue bar, model browser, album
+  tree, timeline, workflow composer, mask canvas (largest new build).
 - **T-V5 (P2)**: Skill updates — `media-workflow` should add `generate_variants`,
   `image_edit_region`, `video_fetch`→`video_info`→`video_to_gif`, audio
   pipeline, workflow-composer flow, album outputs, `job_*` async pattern;
@@ -535,9 +568,16 @@ work remains, unrelated to this pass).
 - **T-V9 (P3)**: SVG renders via `img()` not `svg()` (`media_widget.rs:747`),
   contradicting `media_ref.rs:13` doc; duplicate `lang == "media"` in the
   D18 gate (`markdown.rs:2723`).
-- **T-FUTURE-1 remains open** (model resolution still 2-tier env > default;
-  the new `MediaGenerateParams.model` field provides per-call override but
-  not a settings.json default tier).
+- **T-FUTURE-1: ✅ Done (2026-08-28)** — media model resolution now has the
+  settings tier: `KaskMediaSettingsContent` (settings.json `kask.media`)
+  → `KaskMediaSettings` + `From` impl → `emit_media_env()` in `mcp_env()`
+  → `HKASK_MEDIA_{TTS,STT,VISION,IMAGE_GEN,VIDEO}_MODEL` env vars → the
+  server's `models::resolve` / provider `model_constants::resolve`.
+  Effective resolution is 3-tier: settings.json > env var > default. The
+  settings UI page (`settings_ui` `kask_page/media.rs`) reads from
+  `kask_bridge::KaskMediaSettings` per the canonical pattern (no
+  `hkask-mcp-media` dependency in `settings_ui`); model constants are
+  re-exported from `kask_bridge`.
 
 ---
 

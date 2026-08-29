@@ -550,6 +550,8 @@ impl InferenceIpcClient {
             media_scale: params.scale,
             media_duration: params.duration,
             media_language: params.language.clone(),
+            media_mask: params.mask.clone(),
+            media_model: params.model.clone(),
             ..Default::default()
         };
         let response = self.ipc_roundtrip(&method, ipc_params).await?;

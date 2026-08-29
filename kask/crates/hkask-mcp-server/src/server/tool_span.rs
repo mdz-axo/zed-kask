@@ -157,12 +157,18 @@ fn emit_tool_span(
 /// Implement this on your server struct to enable `execute_tool()`, which
 /// handles Regulation span emission and error serialization automatically.
 ///
-/// The `reg.tool` span (emitted by `ToolSpanGuard`) is the production
-/// recording surface — it carries tool name, outcome, duration, and caller
-/// to the Regulation loop. There is no separate per-tool semantic-memory
-/// recording hook; thread-level memory via `RealMemoryPort` (D6) is the
-/// richer path, and per-tool debug logging is available via `tracing::debug!`
-/// at the call site if a server needs it.
+/// The `reg.tool` span (emitted by `ToolSpanGuard`) is an observability
+/// signal — it is written to the server process's stderr via `tracing`
+/// (target `reg.tool`, message "REG"). It is NOT consumed by the Regulation
+/// loop: zed's context-server client logs child stderr at debug level and
+/// discards it. Production outcome recording happens client-side — the
+/// McpRuntime dispatch path records via `CyberneticsLoop::record_outcome`
+/// (`McpRuntime::invoke`), and the agent path records via
+/// `agent::record_mcp_tool_outcome` (`ContextServerTool::run`, wired in
+/// `main.rs`). There is no separate per-tool semantic-memory recording
+/// hook; thread-level memory via `RealMemoryPort` (D6) is the richer path,
+/// and per-tool debug logging is available via `tracing::debug!` at the
+/// call site if a server needs it.
 pub trait ToolContext {
     /// The WebID of the caller serving this tool (for Regulation span attribution).
     fn webid(&self) -> &hkask_types::WebID;
