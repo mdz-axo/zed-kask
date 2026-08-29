@@ -14,10 +14,10 @@ use super::error::McpToolError;
 /// `CredentialsProvider` or `oo7`. One keychain namespace (zed's), one read
 /// path (`build_mcp_server_env`), one delivery mechanism (env vars).
 ///
-/// `HKASK_DB_PASSPHRASE` and `HKASK_SWARM_MEMORY_PASSPHRASE` have dedicated
-/// keystore resolvers (env → `hkask-keystore` keychain) because they predate
-/// the zed CredentialsProvider integration and are read by `hkask-keystore`
-/// directly.
+/// `HKASK_DB_PASSPHRASE` has a dedicated keystore resolver (env →
+/// `hkask-keystore` keychain) because it predates the zed CredentialsProvider
+/// integration and is read by `hkask-keystore` directly. It is the ONE
+/// passphrase for all SQLCipher databases — the swarm memory DB included.
 ///
 /// pre:  env_var is non-empty
 /// post: returns credential value from env var
@@ -26,10 +26,6 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
     match env_var {
         "HKASK_DB_PASSPHRASE" => {
             let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
-            Ok(passphrase.to_string())
-        }
-        "HKASK_SWARM_MEMORY_PASSPHRASE" => {
-            let passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()?;
             Ok(passphrase.to_string())
         }
 

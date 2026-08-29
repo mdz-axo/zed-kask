@@ -219,7 +219,7 @@ in the keychain is the toggle.
 Add `parse_from_model` / `as_str` / `from_prefix_segment` /
 `parse_provider_code` assertions for the new variant, and a
 `DIRECT_EMBEDDING_PROVIDERS` prefix-matching test mirroring the
-`try_new` contract (`hkask_inference.rs:377`). The IPC client's test
+`try_new` contract (`hkask_inference.rs:387`). The IPC client's test
 module (`inference_ipc_client.rs:946-1121`) pins the transport contract
 (id mismatch, malformed JSON, dead socket) — extend it only if the wire
 protocol changes.

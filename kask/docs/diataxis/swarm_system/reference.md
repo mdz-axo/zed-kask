@@ -36,7 +36,7 @@ that DOES exist is panel-side: `panel_tool_names_match_server`
 (`swarm_panel.rs:3801-3830`) asserts `parse::SWARM_TOOLS` is a re-export
 of `hkask_mcp_swarm::TOOL_NAMES` (pointer equality, so no drift is
 possible), that every name starts with `swarm_`, and that there are no
-duplicates; `steer_prompt_mentions_only_known_tools` (`swarm_panel.rs:4304+`)
+`steer_prompt_mentions_only_known_tools` (`swarm_panel.rs:4312`)
 catches any `swarm_*` name the Steer prompt advertises that is not in the
 const. A server-side count-pinning test is **not yet enforced**.
 
@@ -173,7 +173,7 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | Tool                       | Purpose                                              | Definition |
 | -------------------------- | ---------------------------------------------------- | ---------- |
 | `swarm_hire_cost`          | pre-hire cost check (`within_budget`)                | `:456` |
-| `swarm_request_consent`    | mint single-use consent token (auth required so an agent cannot self-authorize, `:536-539`) | `:529` |
+| `swarm_request_consent`    | mint single-use consent token (auth required so an agent cannot self-authorize, `:538-542`) | `:529` |
 | `swarm_authorize_session`  | pre-authorize session budget (headless) — the one cloud tool with no `require_auth` call | `:583` |
 | `swarm_hire`               | hire (consent/session + ceiling via `authorize_hire`/`complete_hire`, `spend_gate.rs:169`/`:317`) | `:621` |
 | `swarm_delegate`           | delegate (consent/session via `authorize_delegate`/`complete_delegate`, `spend_gate.rs:377`/`:452`) | `:685` |

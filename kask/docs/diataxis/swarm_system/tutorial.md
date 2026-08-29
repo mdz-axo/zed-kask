@@ -109,7 +109,7 @@ error (`hkask_mcp_swarm.rs:232-235`).
 
 ## Step 3: Author or hire an agent
 
-In `Author` mode (`PanelMode::Author`, `swarm_panel.rs:495`) the panel
+In `Author` mode (`PanelMode::Author`, `swarm_panel.rs:496`) the panel
 calls `create_agent` (`swarm_panel.rs:1398`), which writes a new
 `agent_card.json` to the local registry. The card carries
 `capabilities.mcp_tools` (qualified `server/tool` names — the allowlist for
@@ -127,7 +127,7 @@ the consent-gated hire).
 
 ## Step 4: Compose a swarm
 
-Switch to `Compose` mode (`PanelMode::Compose`, `swarm_panel.rs:496`). The
+Switch to `Compose` mode (`PanelMode::Compose`, `swarm_panel.rs:497`). The
 panel calls `create_swarm` (`swarm_panel.rs:1596`), which writes a
 `swarm.json` to the swarms directory. A local swarm is a named grouping of
 local agent ids — `members` are `LocalAgentCard::agent_id` values, each
@@ -136,7 +136,7 @@ resolution to a card happens at delegation time.
 
 ## Step 5: Steer toward a target
 
-Switch to `Steer` mode (`PanelMode::Steer`, `swarm_panel.rs:504`). The
+Switch to `Steer` mode (`PanelMode::Steer`, `swarm_panel.rs:505`). The
 panel calls `ensure_steer_conversation` (`swarm_panel.rs:1303`), which
 delegates to `hkask_steer::ensure_steer` (`swarm_panel.rs:1305`) — the
 shared Steer-surface helper that verifies the prompt's tool advertisement

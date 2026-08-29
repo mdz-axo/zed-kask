@@ -167,7 +167,7 @@ The condenser's line-level elision (joining non-consecutive selected
 lines with `...`) is destructive for source code, so these tools' output
 passes through verbatim even when a condenser is wired.
 
-Note: `KaskCondenserSettings.persona_keywords` (`settings.rs:266`)
+Note: `KaskCondenserSettings.persona_keywords` (`settings.rs:268`)
 exists and is emitted to MCP servers as `HKASK_CONDENSER_PERSONA_KEYWORDS`
 (`kask/crates/kask_bridge/src/mcp_env.rs:76-85`), but the condenser
 domain crate does not read it — no persona-scoring function exists in

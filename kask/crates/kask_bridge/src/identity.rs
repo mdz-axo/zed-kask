@@ -23,7 +23,7 @@
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
 use hkask_keystore::Keychain;
-use hkask_keystore::keychain_keys::{KEY_DB_PASSPHRASE, KEY_SWARM_MEMORY_PASSPHRASE};
+use hkask_keystore::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_keystore::passphrase::DEFAULT_PASSPHRASE;
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
@@ -181,65 +181,9 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
     }
 }
 
-/// Provision the swarm memory SQLCipher passphrase.
-///
-/// Mirrors the resolve-or-create half of [`provision_agent`] but for the
-/// swarm memory store (`swarm_memory.db`), which is a separate SQLCipher DB
-/// shared across all swarms and agents. Without this, the swarm server falls
-/// back to an empty string (`SwarmConfig::default().memory_passphrase`)
-/// the source tree, which the `mcp_servers.rs` RR-0061 comment explicitly
-/// flags as the bug the allowlist was supposed to fix. The allowlist fix let
-/// the operator override it, but nothing generated an override on first
-/// run, so `build_mcp_server_env` warned on every launch.
-///
-/// Resolution order:
-/// 1. `HKASK_SWARM_MEMORY_PASSPHRASE` env var (user override).
-/// 2. Existing keychain entry `kask://credentials/hkask_swarm_memory_passphrase` (returning user).
-/// 3. Use the default `"allostery"` and store it (first run).
-///
-/// Returns the resolved passphrase. The passphrase is stored directly in
-/// the unified `kask://credentials/*` namespace — no mirror step needed.
-///
-/// # Errors
-///
-/// Returns `ProvisionError::KeychainStore` if the generated passphrase cannot
-/// be stored, or `ProvisionError::KeychainRead` if the keychain read fails
-/// for a reason other than "not found."
-pub fn provision_swarm_memory_passphrase() -> Result<String, ProvisionError> {
-    // 1. Env var override.
-    if let Ok(p) = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE") {
-        if !p.trim().is_empty() {
-            return Ok(p);
-        }
-    }
-
-    // 2. Existing keychain entry.
-    match hkask_keystore::keychain::resolve_swarm_memory_passphrase_string() {
-        Ok(passphrase) => Ok(passphrase.to_string()),
-        Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
-            // 3. First run — use the default passphrase "allostery" so initial
-            //    builds and first user runs don't fail (matching the DB
-            //    passphrase default and `SwarmConfig::default()`). The user
-            //    can change it later via the settings UI (which triggers DB
-            //    rotation) or the HKASK_SWARM_MEMORY_PASSPHRASE env var.
-            //    `DEFAULT_PASSPHRASE` is the single source of truth — the
-            //    swarm and DB provisioning paths share the constant so they
-            //    cannot drift apart.
-            let word = DEFAULT_PASSPHRASE.to_string();
-            let keychain = Keychain;
-            keychain
-                .store_by_key(KEY_SWARM_MEMORY_PASSPHRASE, &word)
-                .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
-            tracing::info!(
-                "Provisioned swarm memory passphrase with default 'allostery' and stored \
-                 in keychain. The user can change it via the settings UI (Swarm page) or \
-                 HKASK_SWARM_MEMORY_PASSPHRASE env var."
-            );
-            Ok(word)
-        }
-        Err(e) => Err(ProvisionError::KeychainRead(e.to_string())),
-    }
-}
+/// Provision the DB passphrase — the ONE passphrase for every SQLCipher
+/// database (curator, corpus, kanban, swarm memory, training, research).
+/// The swarm memory DB has no separate passphrase; it opens with this one.
 
 // ── Passphrase rotation ──────────────────────────────────────────────────────
 
@@ -343,49 +287,127 @@ pub fn rotate_curator_db_passphrase(new_passphrase: &str) -> Result<(), BridgeRo
     Ok(())
 }
 
-/// Rotate the swarm memory DB passphrase.
+/// Rotate the passphrase of EVERY SQLCipher database that uses the shared
+/// `HKASK_DB_PASSPHRASE` — curator, swarm memory, kata-kanban, research,
+/// and training. The security UI calls this; previously it rotated only
+/// `curator.db` while its docs claimed corpus/kanban/swarm coverage, which
+/// left every other DB unopenable after a rotation.
 ///
-/// Resolves the old passphrase from the keychain chain
-/// (`resolve_swarm_memory_passphrase_string`), resolves the swarm memory DB
-/// path, and calls `hkask_storage::rotate_passphrase`. The caller must then
-/// write the new passphrase to the keychain/settings and nudge MCP servers.
-///
-/// # Arguments
-///
-/// - `new_passphrase`: The new passphrase (>=8 chars).
-///
-/// # Errors
-///
-/// Returns `BridgeRotationError` if the old passphrase can't be resolved,
-/// the DB path can't be resolved, or the storage-layer rotation fails.
+/// Only DBs whose files exist are rotated (a fresh install with no kanban
+/// DB simply skips it). Corpus DBs are NOT covered: the corpus server takes
+/// caller-supplied per-workflow DB paths, so there is no fixed path to
+/// rotate — a corpus DB created before a rotation must be re-created or
+/// manually re-encrypted.
 ///
 /// # Failure safety
 ///
-/// If rotation fails, the old DB is untouched — the caller should NOT write
-/// the new passphrase to the keychain/settings.
-pub fn rotate_swarm_memory_db_passphrase(new_passphrase: &str) -> Result<(), BridgeRotationError> {
-    let db_path = resolve_swarm_memory_db_path();
-    let old_passphrase = hkask_keystore::keychain::resolve_swarm_memory_passphrase_string()
+/// Sequential rotation with best-effort rollback: if DB N fails, the DBs
+/// already rotated (1..N) are rotated back to the old passphrase. If a
+/// rollback itself fails, the error names the DB left on the NEW passphrase
+/// — the operator must not write the new passphrase to the keychain until
+/// every DB is consistent. On `Ok(())` the caller writes the keychain and
+/// nudges MCP servers; on `Err` the old passphrase remains in effect.
+pub fn rotate_all_kask_db_passphrases(new_passphrase: &str) -> Result<(), BridgeRotationError> {
+    let old_passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
         .map_err(|e| BridgeRotationError::OldPassphraseResolve {
-            db_path: db_path.clone(),
+            db_path: "<all kask DBs>".to_string(),
             error: e.to_string(),
         })?
         .to_string();
 
-    tracing::info!(
-        target: "hkask.identity",
-        db_path = %db_path,
-        "Rotating swarm memory DB passphrase"
-    );
+    let db_paths = kask_db_paths();
+    let mut rotated: Vec<&str> = Vec::new();
 
-    hkask_storage::rotate_passphrase(&db_path, &old_passphrase, new_passphrase).map_err(|e| {
-        BridgeRotationError::Storage {
-            db_path: db_path.clone(),
-            source: e,
+    for (name, db_path) in &db_paths {
+        if !std::path::Path::new(db_path).exists() {
+            tracing::info!(
+                target: "hkask.identity",
+                db = %name,
+                path = %db_path,
+                "Skipping passphrase rotation — DB file does not exist"
+            );
+            continue;
         }
-    })?;
+        tracing::info!(
+            target: "hkask.identity",
+            db = %name,
+            path = %db_path,
+            "Rotating kask DB passphrase"
+        );
+        match hkask_storage::rotate_passphrase(db_path, &old_passphrase, new_passphrase) {
+            Ok(()) => rotated.push(name),
+            Err(e) => {
+                // Roll back the DBs already moved to the new passphrase so
+                // the system is consistent on the OLD passphrase again.
+                let mut rollback_failures = Vec::new();
+                for rb_name in &rotated {
+                    let rb_path = db_paths
+                        .iter()
+                        .find(|(n, _)| n == rb_name)
+                        .map(|(_, p)| p.clone())
+                        .unwrap_or_default();
+                    if let Err(rb_e) =
+                        hkask_storage::rotate_passphrase(&rb_path, new_passphrase, &old_passphrase)
+                    {
+                        rollback_failures.push(format!("{rb_name}: {rb_e}"));
+                    }
+                }
+                let mut error = format!("rotation of {name} failed: {e}");
+                if !rollback_failures.is_empty() {
+                    error.push_str(&format!(
+                        " — ROLLBACK ALSO FAILED for {} \
+                         (these DBs are on the NEW passphrase; do NOT save it \
+                         until they are manually re-encrypted): {}",
+                        rotated.join(", "),
+                        rollback_failures.join("; ")
+                    ));
+                }
+                return Err(BridgeRotationError::Storage {
+                    db_path: db_path.clone(),
+                    source: hkask_storage::RotationError::InvalidNewPassphrase(error),
+                });
+            }
+        }
+    }
 
     Ok(())
+}
+
+/// The fixed-path SQLCipher databases that share `HKASK_DB_PASSPHRASE`,
+/// each resolved the same way its owning MCP server resolves it (env-var
+/// override, else the Standardized Artifact Storage default under the
+/// hKask data dir).
+fn kask_db_paths() -> Vec<(&'static str, String)> {
+    let resolve = |env_var: &str, default: &str| -> String {
+        let raw = std::env::var(env_var)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| default.to_string());
+        if std::path::Path::new(&raw).is_absolute() {
+            raw
+        } else {
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw))
+                .to_string_lossy()
+                .to_string()
+        }
+    };
+
+    vec![
+        ("curator", resolve_curator_db_path()),
+        ("swarm_memory", resolve_swarm_memory_db_path()),
+        (
+            "kata_kanban",
+            resolve("HKASK_KANBAN_DB", "mcp/kata-kanban/kanban.db"),
+        ),
+        (
+            "research_rss",
+            resolve("HKASK_RSS_DB", "mcp/research/rss.db"),
+        ),
+        (
+            "training",
+            resolve("HKASK_TRAINING_DB", "mcp/training/training.db"),
+        ),
+    ]
 }
 
 #[cfg(test)]
@@ -451,26 +473,6 @@ mod tests {
         );
     }
 
-    /// The same empty-env fall-through must hold for swarm provisioning
-    /// (it reads `HKASK_SWARM_MEMORY_PASSPHRASE`).
-    #[test]
-    fn provision_swarm_treats_empty_env_passphrase_as_unset() {
-        let prev = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE").ok();
-        unsafe { std::env::set_var("HKASK_SWARM_MEMORY_PASSPHRASE", "") };
-        let falls_through = match std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE") {
-            Ok(p) => p.trim().is_empty(),
-            Err(_) => true,
-        };
-        match prev {
-            Some(p) => unsafe { std::env::set_var("HKASK_SWARM_MEMORY_PASSPHRASE", p) },
-            None => unsafe { std::env::remove_var("HKASK_SWARM_MEMORY_PASSPHRASE") },
-        }
-        assert!(
-            falls_through,
-            "empty env var must fall through in swarm provisioning too"
-        );
-    }
-
     /// Rotation resolves the old passphrase via the resolver helper, then
     /// hands both old and new to `hkask_storage::rotate_passphrase`.
     /// This pins the bridge container so the settings UI call (rotate →
@@ -479,7 +481,7 @@ mod tests {
     #[test]
     fn rotation_path_uses_resolver_not_raw_env() {
         // We can't invoke the resolver here without a keychain/mock seam,
-        // but we can pin the call sites: both rotate_* functions MUST
+        // but we can pin the call sites: the rotate_* functions MUST
         // call the shared resolver (the chain env→keychain), not
         // `std::env::var("...")` directly. The container's correctness
         // hinges on this — the UI writes the keychain and expects rotation

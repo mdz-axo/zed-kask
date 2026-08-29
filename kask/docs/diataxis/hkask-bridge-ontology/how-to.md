@@ -1,8 +1,8 @@
 ---
 title: "Tagging Regulation Spans With the Ontology Bridge — How-to Guide"
 audience: [developers, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-28
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, curation]
@@ -15,21 +15,22 @@ with a domain concept URI from the `hkask-bridge-ontology` crate. The
 crate is the single source of truth for ontology vocabulary and the
 dual-axis domain-selection logic in hKask. No ontology vocabulary lives
 inside an MCP server; every server that does tagging depends on this
-crate.
+crate (user directive 2026-08-05, recorded in the crate root doc,
+`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:38-41`).
 
-The crate is organised as eight modules: one universal core (5W1H), two
-universal axes (Dublin Core + BIBO + CiTO for state, PKO for process),
-one upper ontology (SUMO), and four domain supplements (FIBO, ESO,
-GOLEM, ML-Schema) plus SDMX for statistical data exchange. The
-dual-axis invariant — one axis is always Dublin Core or PKO — guarantees
-every artifact has a common mapping in process or state space regardless
-of domain.
+The crate is organised as ten `pub` modules
+(`hkask_bridge_ontology.rs:58-67`): two universal axes (Dublin Core +
+BIBO + CiTO for state, PKO for process), one upper ontology (SUMO), and
+six domain supplements (FIBO, ESO, GOLEM, ML-Schema, SDMX, OMC) plus the
+`axis` domain-selection logic. The dual-axis invariant — one axis is
+always Dublin Core or PKO — guarantees every artifact has a common
+mapping in process or state space regardless of domain.
 
 ```mermaid
 graph TD
     Hint["domain hint<br/>(server-supplied)"]
     Sel["select_ontology_anchor"]
-    Core["OntologyAnchor::Core<br/>(5W1H ground)"]
+    Core["OntologyAnchor::Core<br/>(5W1H ground, empty hint only)"]
     Dual["OntologyAnchor::DualAxis<br/>(PKO or DC+BIBO)"]
     Supp["OntologyAnchor::DomainSupplement<br/>(FIBO/ESO/GOLEM/MLSchema/SDMX/SUMO)"]
     State["State axis<br/>Dublin Core + BIBO + CiTO"]
@@ -40,7 +41,7 @@ graph TD
     Sel -->|"empty"| Core
     Sel -->|"kanban/task/spec/skill/..."| Dual
     Sel -->|"file/web/registry/wallet"| Dual
-    Sel -->|"finance/science/media/..."| Supp
+    Sel -->|"finance/science/narrative/..."| Supp
     Sel -->|"unknown non-empty"| Supp
     Core --> State
     Core --> Proc
@@ -51,7 +52,12 @@ graph TD
     Proc --> Tag
 ```
 
-<!-- DIAGRAM_ALIGNMENT id: DIAG-ONT-001 verified_date: 2026-08-13 verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs:220 status: VERIFIED -->
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ONT-001
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs:210-351 (select_ontology_anchor dispatch); kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:58-67 (module list)
+status: VERIFIED
+-->
 
 ## Add the dependency
 
@@ -62,21 +68,26 @@ In your server's `Cargo.toml`:
 hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
 ```
 
-The crate is `forbid(unsafe_code)` and exposes only `pub` modules — no
-feature flags, no build-time configuration.
+The crate is `forbid(unsafe_code)`
+(`hkask_bridge_ontology.rs:1`) and exposes only `pub` modules plus two
+root re-exports, `DcConcept` and `PkoConcept` (`:71-72`) — no feature
+flags, no build-time configuration.
 
 ## Pick the right entry point
 
-The crate exposes three layers, used in this order:
+The crate exposes two layers, used in this order:
 
 1. **Vocabulary constants** — the canonical concept URI strings, one
    module per ontology. Use these when you already know the concept.
 2. **`select_ontology_anchor`** — the domain-hint dispatcher. Use this
    when you have a tool name or domain string and want the crate to
    pick the anchor.
-3. **`explain_tool_for`** — the widget-side dispatcher. Use this in a
-   widget's "Explain" affordance to map an ontology tag back to the
-   explain tool that should inspect it.
+
+(An earlier revision of this guide described a crate-root
+`explain_tool_for(ontology)` dispatcher and a `five_w_one_h` module.
+Neither exists: `explain_tool_for` lives in `omc.rs` and dispatches OMC
+media concepts only — see Step 6 — and there is no `five_w_one_h`
+module in the current tree.)
 
 ## Step 1 — Use the universal vocabulary directly
 
@@ -88,14 +99,14 @@ supplement when the universal axes aren't specific enough.
 use hkask_bridge_ontology::{dc_bibo, pko};
 
 // State axis — "what is this?"
-let title   = dc_bibo::TITLE;     // "dcterms:title"
-let dataset = dc_bibo::DATASET;   // "dcterms:Dataset"
-let article = dc_bibo::ARTICLE;   // "bibo:Article"
-let cites   = dc_bibo::CITES;     // "cito:cites"
+let title   = dc_bibo::TITLE;     // "dcterms:title"        (dc_bibo.rs:15)
+let dataset = dc_bibo::DATASET;   // "dcterms:Dataset"      (dc_bibo.rs:37)
+let article = dc_bibo::ARTICLE;   // "bibo:Article"         (dc_bibo.rs:44)
+let cites   = dc_bibo::CITES;     // "cito:cites"           (dc_bibo.rs:59)
 
 // Process axis — "how did this come to be?"
-let procedure = pko::PROCEDURE;        // "pko:Procedure"
-let step_exec = pko::STEP_EXECUTION;   // "pko:StepExecution"
+let procedure = pko::PROCEDURE;        // "pko:Procedure"        (pko.rs:21)
+let step_exec = pko::STEP_EXECUTION;   // "pko:StepExecution"    (pko.rs:54)
 ```
 
 Two mapping helpers convert runtime values to state-axis concepts
@@ -104,12 +115,18 @@ without forcing every caller to maintain its own match table:
 ```rust
 use hkask_bridge_ontology::dc_bibo;
 
-// MIME type → Dublin Core type vocabulary
+// MIME type → Dublin Core type vocabulary      (dc_bibo.rs:73)
 let dc_type = dc_bibo::mime_to_dc_type("application/pdf");  // Some("dcterms:Text")
 
-// Resource kind string → BIBO type
+// Resource kind string → BIBO type             (dc_bibo.rs:85)
 let bibo = dc_bibo::kind_to_bibo("arxiv");  // Some("bibo:Preprint")
 ```
+
+PKO also ships stage-mapping helpers for the servers that convert their
+domain stages to process concepts: `kanban_status_to_pko_execution`
+(`pko.rs:102`), `corpus_stage_to_pko_step` (`pko.rs:114`),
+`research_stage_to_pko` (`pko.rs:128`), and `task_breakdown_field_to_pko`
+(`pko.rs:150`).
 
 ## Step 2 — Use a domain supplement when the universal axes are too coarse
 
@@ -118,35 +135,39 @@ domain-specific precision. Each supplement module is a flat list of
 `pub const` URI strings — no trait, no struct, no runtime state.
 
 ```rust
-use hkask_bridge_ontology::{fibo, sdmx, eso, golem, mlschema, sumo};
+use hkask_bridge_ontology::{fibo, sdmx, eso, golem, ml_schema, sumo, omc};
 
 // Financial domain (FIBO)
-let roic = fibo::RETURN_ON_INVESTED_CAPITAL;  // "fibo-fbc-fct-ra:ReturnOnInvestedCapital"
-let dcf  = fibo::DCF_VALUATION;                // "fibo:dcfValuation"
+let roic = fibo::RETURN_ON_INVESTED_CAPITAL;  // "fibo-fbc-fct-ra:ReturnOnInvestedCapital" (fibo.rs:51)
+let dcf  = fibo::DCF_VALUATION;               // "fibo:dcfValuation"                       (fibo.rs:141)
 
 // Statistical data (SDMX)
-let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"
+let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"  (sdmx.rs:30)
 
 // Scientific reasoning (ESO)
-let hyp = eso::HAS_HYPOTHESIS;    // "eso:hasHypothesis"
+let hyp = eso::HAS_HYPOTHESIS;    // "eso:hasHypothesis" (eso.rs:23)
 
 // Narrative (GOLEM)
-let character = golem::CHARACTER; // "golem:G1_Character"
+let character = golem::CHARACTER; // "golem:G1_Character" (golem.rs:23)
 
-// ML experiments (ML-Schema)
-let run = mlschema::RUN;          // "mls:Run"
+// ML experiments (ML-Schema — note the module name is ml_schema, not mlschema)
+let run = ml_schema::RUN;        // "mls:Run"  (ml_schema.rs:23)
 
 // Upper ontology fallback (SUMO)
-let entity = sumo::ENTITY;       // "sumo:Entity"
+let entity = sumo::ENTITY;       // "sumo:Entity" (sumo.rs:32)
+
+// Media production workflows (OMC — MovieLabs Ontology for Media Creation)
+let scene = omc::SCENE;          // "omc:Scene" (omc.rs:32)
 ```
 
 ## Step 3 — Let the crate pick the anchor from a domain hint
 
 When you have a tool name or domain string but not a specific concept,
-call `select_ontology_anchor`. It maps the hint to an `OntologyAnchor`
-using keyword matching that handles both bare domains (`"finance"`) and
-tool-style names (`"company_profile"`, `"stock_screener"`) without
-substring false positives (`"logistics"` does not match `"log"`).
+call `select_ontology_anchor` (`axis.rs:210`). It maps the hint to an
+`OntologyAnchor` using keyword matching that handles both bare domains
+(`"finance"`) and tool-style names (`"company_profile"`,
+`"stock_screener"`) without substring false positives (`"logistics"`
+does not match `"log"`) — the `matches_kw` helper at `axis.rs:216-221`.
 
 ```rust
 use hkask_bridge_ontology::axis::{select_ontology_anchor, OntologyAnchor};
@@ -154,23 +175,32 @@ use hkask_bridge_ontology::axis::{select_ontology_anchor, OntologyAnchor};
 // Tool-style name → FIBO supplement (state axis stays Dublin Core)
 let anchor = select_ontology_anchor("company_profile");
 // → OntologyAnchor::DomainSupplement { namespace: Fibo, concept: "dcterms:Dataset" }
+//   (FIBO arm, axis.rs:243-265)
 
 // Process workflow → PKO dual-axis
 let anchor = select_ontology_anchor("kanban_board");
 // → OntologyAnchor::DualAxis { axis: Pko, concept: "pko:Procedure" }
+//   (PKO arm, axis.rs:310-328)
+
+// Statistical data → SDMX supplement
+let anchor = select_ontology_anchor("fred_indicator");
+// → DomainSupplement { namespace: Sdmx, concept: "sdmx:DataSet" }
+//   (SDMX arm, axis.rs:223-241)
 
 // Unknown non-empty domain → SUMO upper-ontology fallback
 let anchor = select_ontology_anchor("some-unknown-domain");
-// → OntologyAnchor::DomainSupplement { namespace: Sumo, concept: "sumo:Entity" }
+// → DomainSupplement { namespace: Sumo, concept: "sumo:Entity" }
+//   (axis.rs:345-351)
 
 // Empty hint → 5W1H core ground
 let anchor = select_ontology_anchor("");
-// → OntologyAnchor::Core
+// → OntologyAnchor::Core   (axis.rs:345-347)
 ```
 
-The dispatch order is: SDMX → FIBO → ESO → GOLEM → ML-Schema →
-PKO dual-axis → DC+BIBO dual-axis → SUMO fallback → `Core` (only when
-the hint is empty). The first matching keyword set wins.
+The dispatch order is: SDMX (`axis.rs:223`) → FIBO (`:243`) → ESO
+(`:267`) → GOLEM (`:283`) → ML-Schema (`:300`) → PKO dual-axis (`:310`)
+→ DC+BIBO dual-axis (`:330`) → SUMO fallback / `Core` for the empty
+hint (`:345-351`). The first matching keyword set wins.
 
 ### The dual-axis invariant
 
@@ -179,7 +209,10 @@ Dublin Core. The process axis is the domain ontology when one applies,
 PKO otherwise. This guarantees every artifact has a common mapping in
 process or state space regardless of domain — you can always ask "what
 is this?" (DC) and "how did this come to be?" (PKO or the domain
-supplement's process vocabulary).
+supplement's process vocabulary). The invariant is enforced by
+`OntologyNamespace::dc_concept` (`axis.rs:67`, every namespace maps to a
+DC concept) and `pko_concept` (`axis.rs:79`, every namespace maps to a
+PKO concept).
 
 ```rust
 use hkask_bridge_ontology::axis::{
@@ -209,13 +242,14 @@ If a domain mapping fails or the domain ontology can't place the
 concept, fall back to the generalists (DC + PKO) or to SUMO. Never
 force a domain ontology where it doesn't fit — the generalists are
 always valid. An unknown non-empty domain returns SUMO's `sumo:Entity`,
-not an error; an empty hint returns `Core`. Both are correct behavior.
+not an error; an empty hint returns `Core`. Both are correct behavior
+(`axis.rs:339-351`).
 
 ## Step 4 — Read the anchor's tier metadata
 
-The condenser and other regulation-loop consumers read two derived
-fields off the anchor to apply domain-aware saliency weighting. Use
-these instead of re-deriving them per consumer.
+The condenser and other regulation-loop consumers read derived fields
+off the anchor to apply domain-aware saliency weighting. Use these
+instead of re-deriving them per consumer.
 
 ```rust
 use hkask_bridge_ontology::axis::{OntologyAnchor, OntologyNamespace};
@@ -226,44 +260,28 @@ let anchor = OntologyAnchor::DomainSupplement {
 };
 
 // Confidence modifier: FIBO +0.10, SUMO +0.05, others ±0.00
-let conf = anchor.confidence_modifier();  // 0.10
+let conf = anchor.confidence_modifier();  // 0.10   (axis.rs:149)
 
 // Information density expectation: FIBO 1.3, ML-Schema/SDMX 1.1, others 1.0
-let density = anchor.density_factor();    // 1.3
+let density = anchor.density_factor();    // 1.3    (axis.rs:162)
 
 // Human-readable tier label for telemetry
-let tier = anchor.tier_label();           // "domain_supplement"
+let tier = anchor.tier_label();           // "domain_supplement" (axis.rs:190)
 ```
 
-## Step 5 — Emit the unified ontology tag on the span
-
-Every MCP server emits a top-level `"ontology"` key in each tool output
-JSON, carrying a concept URI string. Every widget parses an
-`ontology: Option<String>` field on its block body. This is the unified
-contract — one key name, one value shape, across all servers and
-widgets.
-
-```rust
-use hkask_bridge_ontology::fibo;
-
-let output = serde_json::json!({
-    "status": "ok",
-    // ... tool-specific fields ...
-});
-
-// Inject the "ontology" key if the tool has a concept mapping;
-// return unchanged otherwise.
-let tagged = fibo::enrich_with_ontology(output, "portfolio_list");
-// → {"status": "ok", "ontology": "fibo:Portfolio", ...}
-```
+## Step 5 — Re-export the shared vocabulary in your server
 
 Keep server-specific dispatch — mapping your server's tool names or
 provider field names to the shared vocabulary — in your server. That is
 the server's business, not the ontology's. Re-export the shared
-vocabulary so existing call sites keep working:
+vocabulary so existing call sites keep working; this is the pattern the
+condenser uses (`kask/crates/hkask-condenser/src/types.rs:19-21`
+re-exports `OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`, and
+`select_ontology_anchor` from the bridge crate so its call sites keep
+one import path):
 
 ```rust
-// In your server's ontology module (e.g. companies server's fibo.rs):
+// In your server's ontology module:
 pub use hkask_bridge_ontology::fibo::{
     RETURN_ON_INVESTED_CAPITAL, PRICE_EARNINGS_RATIO, /* ... */
 };
@@ -278,71 +296,71 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<&'static str> {
 }
 ```
 
-## Step 6 — Dispatch the explain tool from the ontology tag
+Note: there is no `enrich_with_ontology` helper in the current tree —
+an earlier revision of this guide showed one; it does not exist. Inject
+whatever tag key your server's contract uses directly from the
+vocabulary constants.
 
-The crate root exports `explain_tool_for(ontology: &str) -> &'static str`
-— the unified dispatch function that maps an ontology concept URI to the
-explain tool a widget should invoke. Widgets call this single function
-instead of reimplementing their own ontology-specific dispatch.
+## Step 6 — Dispatch the gallery explain tool from an OMC tag
+
+The only explain-dispatch function in the crate is
+`omc::explain_tool_for` (`omc.rs:76`). It is OMC-scoped: it maps OMC
+media-production concepts to the gallery tool that should inspect them
+— `omc:Scene` / `omc:Asset` → `"gallery_analyze"`, everything else →
+`"describe_image"`:
 
 ```rust
-use hkask_bridge_ontology::explain_tool_for;
+use hkask_bridge_ontology::omc;
 
-let tool = explain_tool_for("fibo:Corporation"); // → "research_search"
-let tool = explain_tool_for("sdmx:DataSet");      // → "research_search"
-let tool = explain_tool_for("pko:Step");          // → "kanban_task_list"
-let tool = explain_tool_for("dcterms:Dataset");  // → "research_search"
-let tool = explain_tool_for("");                  // → "research_search"
+let tool = omc::explain_tool_for("omc:Scene");   // → "gallery_analyze"
+let tool = omc::explain_tool_for("omc:Asset");   // → "gallery_analyze"
+let tool = omc::explain_tool_for("anything-else"); // → "describe_image"
 ```
 
-The dispatch is driven by the concept URI prefix (the ontology
-namespace). Each ontology contributes its own match arm; the empty and
-unknown cases fall back to `"research_search"`. Widgets that already
-have a domain-specific explain tool (e.g. the scenarios widget's rung
-dispatch) don't call this — they dispatch by pipeline position, not by
-ontology concept. This function is for widgets that dispatch *because*
-of the ontology tag.
+There is no crate-root ontology→explain-tool dispatcher for the other
+namespaces; widgets that dispatch on non-OMC ontology tags implement
+their own mapping today.
 
 ## Source citations
 
 | Symbol / concept | File:line |
 |------------------|-----------|
-| Crate root, module list, `explain_tool_for` | `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:65`, `:101` |
+| Crate root, module list, dual-axis invariant | `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:58-67`, `:38-41` |
+| Root re-exports (`DcConcept`, `PkoConcept`) | `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:71-72` |
 | `OntologyAxis` enum (Pko / DcBibo) | `kask/crates/hkask-bridge-ontology/src/axis.rs:33` |
 | `OntologyNamespace` enum (Fibo/Eso/Golem/MlSchema/Sdmx/Sumo) | `kask/crates/hkask-bridge-ontology/src/axis.rs:47` |
-| `OntologyNamespace::dc_concept` (state-axis mapping) | `kask/crates/hkask-bridge-ontology/src/axis.rs:69` |
-| `OntologyNamespace::pko_concept` (process-axis mapping) | `kask/crates/hkask-bridge-ontology/src/axis.rs:82` |
-| `OntologyNamespace` `FromStr` / `Display` | `kask/crates/hkask-bridge-ontology/src/axis.rs:95`, `:111` |
-| `OntologyAnchor` enum (Core / DualAxis / DomainSupplement) | `kask/crates/hkask-bridge-ontology/src/axis.rs:133` |
-| `OntologyAnchor::confidence_modifier` | `kask/crates/hkask-bridge-ontology/src/axis.rs:156` |
-| `OntologyAnchor::density_factor` | `kask/crates/hkask-bridge-ontology/src/axis.rs:170` |
-| `OntologyAnchor::axis` / `tier_label` | `kask/crates/hkask-bridge-ontology/src/axis.rs:190`, `:199` |
-| `select_ontology_anchor` (domain-hint dispatcher) | `kask/crates/hkask-bridge-ontology/src/axis.rs:220` |
-| SDMX keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:233` |
-| FIBO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:253` |
-| ESO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:277` |
-| GOLEM keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:293` |
-| ML-Schema keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:310` |
-| PKO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:332` |
-| DC+BIBO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:352` |
-| SUMO fallback / empty → Core | `kask/crates/hkask-bridge-ontology/src/axis.rs:361` |
-| `dc_bibo` constants (TITLE/DATASET/ARTICLE/CITES/...) | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:13` |
+| `OntologyNamespace::dc_concept` (state-axis mapping) | `kask/crates/hkask-bridge-ontology/src/axis.rs:67` |
+| `OntologyNamespace::pko_concept` (process-axis mapping) | `kask/crates/hkask-bridge-ontology/src/axis.rs:79` |
+| `OntologyNamespace` `FromStr` / `Display` | `kask/crates/hkask-bridge-ontology/src/axis.rs:91`, `:106` |
+| `OntologyAnchor` enum (Core / DualAxis / DomainSupplement) | `kask/crates/hkask-bridge-ontology/src/axis.rs:126` |
+| `OntologyAnchor::confidence_modifier` | `kask/crates/hkask-bridge-ontology/src/axis.rs:149` |
+| `OntologyAnchor::density_factor` | `kask/crates/hkask-bridge-ontology/src/axis.rs:162` |
+| `OntologyAnchor::axis` / `tier_label` | `kask/crates/hkask-bridge-ontology/src/axis.rs:181`, `:190` |
+| `select_ontology_anchor` (domain-hint dispatcher) | `kask/crates/hkask-bridge-ontology/src/axis.rs:210` |
+| SDMX keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:223` |
+| FIBO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:243` |
+| ESO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:267` |
+| GOLEM keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:283` |
+| ML-Schema keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:300` |
+| PKO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:310` |
+| DC+BIBO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:330` |
+| SUMO fallback / empty → Core | `kask/crates/hkask-bridge-ontology/src/axis.rs:345-351` |
+| `dc_bibo` constants (TITLE/DATASET/ARTICLE/CITES/...) | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:15`, `:37`, `:44`, `:59` |
 | `dc_bibo::mime_to_dc_type` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:73` |
 | `dc_bibo::kind_to_bibo` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:85` |
-| `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:19`, `:50` |
-| `pko::kanban_status_to_pko_execution` | `kask/crates/hkask-bridge-ontology/src/pko.rs:102` |
-| `pko::corpus_stage_to_pko_step` | `kask/crates/hkask-bridge-ontology/src/pko.rs:114` |
-| `pko::research_stage_to_pko` | `kask/crates/hkask-bridge-ontology/src/pko.rs:128` |
-| `pko::task_breakdown_field_to_pko` | `kask/crates/hkask-bridge-ontology/src/pko.rs:150` |
-| `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:26`, `:131`, `:163` |
-| `eso` constants (HAS_HYPOTHESIS/...) | `kask/crates/hkask-bridge-ontology/src/eso.rs:21` |
-| `golem` constants (CHARACTER/CREATIVE_WORK/...) | `kask/crates/hkask-bridge-ontology/src/golem.rs:21`, `:49` |
-| `mlschema` constants (MODEL/RUN/...) | `kask/crates/hkask-bridge-ontology/src/mlschema.rs:19` |
-| `sdmx` constants (DATASET/TIME_SERIES/...) | `kask/crates/hkask-bridge-ontology/src/sdmx.rs:21` |
-| `sumo` constants (ENTITY/OBJECT/PROCESS/AGENT/...) | `kask/crates/hkask-bridge-ontology/src/sumo.rs:30` |
-| `five_w_one_h` constants (WHO/WHAT/WHEN/WHERE/WHY/HOW) | `kask/crates/hkask-bridge-ontology/src/five_w_one_h.rs:26` |
-| `five_w_one_h::axis_for_concept` (5W1H → axis mapping) | `kask/crates/hkask-bridge-ontology/src/five_w_one_h.rs:95` |
+| `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:21`, `:54` |
+| `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:102`, `:114`, `:128`, `:150` |
+| `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/PORTFOLIO/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:32`, `:51`, `:93`, `:141` |
+| `eso` constants (HAS_HYPOTHESIS/...) | `kask/crates/hkask-bridge-ontology/src/eso.rs:23` |
+| `golem` constants (CHARACTER/EVENT/SETTING/CREATIVE_WORK/...) | `kask/crates/hkask-bridge-ontology/src/golem.rs:23`, `:27`, `:30`, `:51` |
+| `ml_schema` constants (MODEL/RUN/...) | `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21`, `:23` |
+| `sdmx` constants (DATASET/TIME_SERIES/...) | `kask/crates/hkask-bridge-ontology/src/sdmx.rs:23`, `:30` |
+| `sumo` constants (ENTITY/OBJECT/PROCESS/AGENT/...) | `kask/crates/hkask-bridge-ontology/src/sumo.rs:32` |
+| `omc` constants (SCENE/ASSET/...) | `kask/crates/hkask-bridge-ontology/src/omc.rs:32`, `:47` |
+| `omc::explain_tool_for` (OMC-scoped explain dispatch) | `kask/crates/hkask-bridge-ontology/src/omc.rs:76` |
+| Condenser re-export pattern | `kask/crates/hkask-condenser/src/types.rs:19-21` |
 
 ## See also
 
-- [Ontology Bridge API Reference](../../reference/ontology-bridge.md) — the full API surface.
+- [hkask-condenser Reference](../hkask-condenser/reference.md) — the
+  anchor-consuming saliency pipeline.

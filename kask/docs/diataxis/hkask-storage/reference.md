@@ -2,7 +2,7 @@
 title: "hkask-storage — Reference"
 audience: [developers, architects]
 last_updated: 2026-08-28
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [domain, trust]
@@ -11,17 +11,18 @@ mds_categories: [domain, trust]
 # hkask-storage — Reference
 
 `hkask-storage` is the consolidated persistence layer for hKask: SQLCipher
-(SQLite with AES-256-CBC encryption, Argon2id key derivation) plus the
-sqlite-vec vector extension. The crate has a `core/` foundation (the
-`Database` connection manager, path sanitization, the `define_driver_store!`
-macro), a `database/` driver layer (the `DatabaseDriver` port, the
-`SqliteDriver` implementation, value encryption), and per-domain store
-modules (`hmem.rs`, `embeddings.rs`, `gallery.rs`, `regulation_store.rs`,
-`escalation.rs`, `rotation.rs`). SQLite is the only backend.
+(SQLite encryption using SQLCipher's native passphrase KDF — PBKDF2 inside
+`PRAGMA key`, salt stored in the DB file header) plus the sqlite-vec vector
+extension. The crate has a `core/` foundation (the `Database` connection
+manager, path sanitization, the `define_driver_store!` macro), a
+`database/` driver layer (the `DatabaseDriver` port, the `SqliteDriver`
+implementation, value encryption), and per-domain store modules (`hmem.rs`,
+`embeddings.rs`, `gallery.rs`, `regulation_store.rs`, `escalation.rs`,
+`rotation.rs`). SQLite is the only backend.
 
 The core schema is `src/core/sql/schema.sql`, loaded by
 `Database::initialize_schema` on every pool creation
-(`core/connection.rs:223-229`). Store-specific tables are defined inline in
+(`core/connection.rs:192-204`). Store-specific tables are defined inline in
 their store modules' `init_schema` methods.
 
 ## Source citations
@@ -29,19 +30,19 @@ their store modules' `init_schema` methods.
 | Symbol | Location |
 |--------|----------|
 | Crate root (re-exports) | `kask/crates/hkask-storage/src/hkask_storage.rs:9-35` |
-| `Database` struct | `kask/crates/hkask-storage/src/core/connection.rs:109-115` |
-| `Database::open` | `kask/crates/hkask-storage/src/core/connection.rs:194-196` |
-| `Database::open_with_extensions` | `kask/crates/hkask-storage/src/core/connection.rs:198-204` |
-| `Database::in_memory` | `kask/crates/hkask-storage/src/core/connection.rs:215-217` |
-| `Database::sqlite_pool` (cached r2d2 pool) | `kask/crates/hkask-storage/src/core/connection.rs:261-283` |
-| `Database::checkpoint` (WAL + vacuum + optimize) | `kask/crates/hkask-storage/src/core/connection.rs:294-309` |
-| `initialize_schema` + `passage_text` migration | `kask/crates/hkask-storage/src/core/connection.rs:223-250` |
-| `DatabaseError` enum (incl. `SaltMissing`) | `kask/crates/hkask-storage/src/core/connection.rs:80-98` |
-| `open_or_repair` (salt-missing self-heal) | `kask/crates/hkask-storage/src/core/connection.rs:466-513` |
-| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:515-526` |
-| `embedding_dim` / `DEFAULT_EMBEDDING_DIM` | `kask/crates/hkask-storage/src/core/connection.rs:20-37` |
-| `init_sqlite_vec_on` (per-connection vec0) | `kask/crates/hkask-storage/src/core/connection.rs:56-76` |
-| `SQLCIPHER_SALT_SIZE` (16) | `kask/crates/hkask-storage/src/core/connection.rs:78` |
+| `Database` struct | `kask/crates/hkask-storage/src/core/connection.rs:108-114` |
+| `Database::open` | `kask/crates/hkask-storage/src/core/connection.rs:163-165` |
+| `Database::open_with_extensions` | `kask/crates/hkask-storage/src/core/connection.rs:167-173` |
+| `Database::in_memory` | `kask/crates/hkask-storage/src/core/connection.rs:184-186` |
+| `Database::sqlite_pool` (cached r2d2 pool) | `kask/crates/hkask-storage/src/core/connection.rs:230-252` |
+| `Database::checkpoint` (WAL + vacuum + optimize) | `kask/crates/hkask-storage/src/core/connection.rs:263-278` |
+| `initialize_schema` + `passage_text` migration | `kask/crates/hkask-storage/src/core/connection.rs:192-219` |
+| `DatabaseError` enum | `kask/crates/hkask-storage/src/core/connection.rs:86-97` |
+| `open_or_repair` (non-destructive open) | `kask/crates/hkask-storage/src/core/connection.rs:429-434` |
+| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:435-446` |
+| `embedding_dim` / `DEFAULT_EMBEDDING_DIM` | `kask/crates/hkask-storage/src/core/connection.rs:24-37` |
+| `init_sqlite_vec_on` (per-connection vec0) | `kask/crates/hkask-storage/src/core/connection.rs:60-76` |
+| `SQLCIPHER_SALT_SIZE` (legacy-scheme marker) | `kask/crates/hkask-storage/src/core/connection.rs:82` |
 | `sanitize_path` (traversal guard) | `kask/crates/hkask-storage/src/core/security.rs:17-54` |
 | `define_driver_store!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
 | `impl_from_db_error!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:79-86` |
@@ -52,12 +53,13 @@ their store modules' `init_schema` methods.
 | `SqliteDriver::in_memory_pool` / `in_memory_driver` | `kask/crates/hkask-storage/src/database/sqlite.rs:86-106` |
 | `SqliteDriver::file_pool` (unencrypted WAL pool) | `kask/crates/hkask-storage/src/database/sqlite.rs:111-117` |
 | `WAL_PRAGMA_BATCH` / `init_wal_pragmas` | `kask/crates/hkask-storage/src/database/sqlite.rs:24-35` |
-| Storage spans (`reg.storage` tracing) | `kask/crates/hkask-storage/src/database/sqlite.rs:203-232` |
+| Storage spans (`reg.storage` tracing) | `kask/crates/hkask-storage/src/database/sqlite.rs:210-232` |
 | `TransactionHandle` (RAII tx) | `kask/crates/hkask-storage/src/database/transaction.rs` |
 | `DbValue` / `DbRow` | `kask/crates/hkask-storage/src/database/value.rs` |
 | `Encryptor` (AES-256-GCM, ENCv1 prefix) | `kask/crates/hkask-storage/src/database/encrypt.rs:15-75` |
-| `rotate_passphrase` (atomic re-encryption) | `kask/crates/hkask-storage/src/rotation.rs:118-347` |
-| `RotationError` enum | `kask/crates/hkask-storage/src/rotation.rs:58-82` |
+| `rotate_passphrase` (atomic re-encryption) | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
+| `migrate_legacy_kdf` (Argon2id → native KDF) | `kask/crates/hkask-storage/src/rotation.rs:302` |
+| `RotationError` enum | `kask/crates/hkask-storage/src/rotation.rs:66-90` |
 | `HMem` struct | `kask/crates/hkask-storage/src/hmem.rs:41-59` |
 | `HMemStore` | `kask/crates/hkask-storage/src/hmem.rs:135-138` |
 | `HMemStore::from_driver` (no schema re-create) | `kask/crates/hkask-storage/src/hmem.rs:150-157` |
@@ -164,7 +166,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
 verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:109-115,194-217,261-309; kask/crates/hkask-storage/src/database/driver.rs:16-58; kask/crates/hkask-storage/src/database/sqlite.rs:42-73; kask/crates/hkask-storage/src/hmem.rs:135-157; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:185; kask/crates/hkask-storage/src/regulation_store.rs:70; kask/crates/hkask-storage/src/escalation.rs:58-82
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:108-114,163-186,230-278; kask/crates/hkask-storage/src/database/driver.rs:16-58; kask/crates/hkask-storage/src/database/sqlite.rs:42-73; kask/crates/hkask-storage/src/hmem.rs:135-157; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:185; kask/crates/hkask-storage/src/regulation_store.rs:70; kask/crates/hkask-storage/src/escalation.rs:58-82
 status: VERIFIED
 -->
 
@@ -285,10 +287,10 @@ The `embeddings` table (`schema.sql:5`) stores vector embeddings keyed by
 `entity_ref`, with a `vector` BLOB (little-endian f32), `dimensions`,
 `model`, and `passage_text` (chunk text stored alongside the vector; the
 column is added to pre-existing DBs by an `ALTER TABLE` migration at
-`core/connection.rs:236-250`). The `vec_embeddings` virtual table
+`core/connection.rs:205-219`). The `vec_embeddings` virtual table
 (`schema.sql:7`) uses the `vec0` extension for cosine-similarity KNN
 search; its `$DIM` placeholder is replaced with `embedding_dim()` at load
-time (`core/connection.rs:225-226`).
+time (`core/connection.rs:193-195`).
 
 The `memory_links` table (`schema.sql:18-27`) tracks co-occurrence: how
 often two entities are recalled together. The link count is the
@@ -343,33 +345,44 @@ in-DB metadata mirror, not a path component. See
 [`kask/docs/architecture/standardized-artifact-storage.md`](../../architecture/standardized-artifact-storage.md)
 for the full layout spec.
 
-## Passphrase rotation
+## Passphrase rotation and legacy KDF migration
 
-`rotate_passphrase` (`rotation.rs:118-347`) atomically re-encrypts a
+`rotate_passphrase` (`rotation.rs:122-297`) atomically re-encrypts a
 SQLCipher DB under a new passphrase without data loss. The process:
 
 1. Validates the new passphrase (non-empty, ≥ 8 chars,
-   `rotation.rs:123-133`); a no-op if old equals new (`rotation.rs:134-142`).
+   `rotation.rs:127-136`); a no-op if old equals new (`rotation.rs:138-146`).
 2. Opens the source DB with the old passphrase (verifies it via the pool's
-   probe connection, `rotation.rs:162-177`).
-3. Creates `<db>.new` encrypted with the new passphrase (new salt file).
-4. Copies all user tables + `sqlite_sequence` via `INSERT INTO ... SELECT`.
-   `vec0` shadow tables are NOT copied — they are rebuilt from
-   `schema.sql` on first open of the new DB (`rotation.rs:44-50`).
+   probe connection, `rotation.rs:163-177`).
+3. Creates `<db>.new` with the new passphrase. Under the native KDF the
+   salt lives in the DB header — there is no salt file to manage
+   (`rotation.rs:186-196`).
+4. Copies all user tables + `sqlite_sequence` via `INSERT INTO ... SELECT`
+   (`copy_all_tables` at `rotation.rs:486`). `vec0` shadow tables are NOT
+   copied — they are rebuilt from `schema.sql` on first open of the new DB.
 5. Drops both pools (releases file locks), then atomically renames:
-   `<db>` → `<db>.old`, `<db>.new` → `<db>`, same for `.salt` files
-   (`rotation.rs:256-311`).
-6. Deletes `.old` and `.salt.old` on success (`rotation.rs:313-335`).
+   `<db>` → `<db>.old`, `<db>.new` → `<db>` (`rotation.rs:247-262`), and
+   deletes `.old` on success (`rotation.rs:266`).
 
 **Failure safety**: if any step before the rename fails, the `.new`
 artifacts are deleted and the original DB is untouched
-(`rotation.rs:212-220`). If the DB rename fails after `<db>` → `<db>.old`
+(`rotation.rs:209-217`). If the DB rename fails after `<db>` → `<db>.old`
 succeeds, the code attempts to restore `<db>.old` back to `<db>`
-(`rotation.rs:263-273`). The caller (the settings UI) writes the new
+(`rotation.rs:254-262`). The caller (the settings UI) writes the new
 passphrase to the keychain ONLY after rotation returns `Ok(())` — a failed
 rotation leaves the old passphrase in effect.
 
-The bridge layer wraps this in `rotate_curator_db_passphrase`
+**Legacy KDF migration**: `migrate_legacy_kdf` (`rotation.rs:302`)
+re-encrypts a DB created by the pre-native scheme (Argon2id over an
+external `.salt` file + raw-key PRAGMA) under the native passphrase KDF,
+using the same copy + atomic-rename choreography. It is triggered
+automatically by `Database::file_pool` when a `.salt` file is present
+(`core/connection.rs:305-315`), runs at most once per DB, and deletes the
+salt file on success. Pinned by `migrate_legacy_kdf_preserves_data_and_deletes_salt`
+and `migrate_legacy_kdf_wrong_passphrase_preserves_original`
+(`rotation.rs:972,997`).
+
+The bridge layer wraps rotation in `rotate_curator_db_passphrase`
 (`kask_bridge/src/identity.rs:321`) and
 `rotate_swarm_memory_db_passphrase` (`kask_bridge/src/identity.rs:366`),
 which resolve the old passphrase from the keychain and the DB path from

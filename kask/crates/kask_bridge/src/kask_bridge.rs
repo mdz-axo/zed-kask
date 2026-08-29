@@ -48,8 +48,7 @@ pub use hkask_types::agent_paths::resolve_data_dir;
 
 pub use identity::{
     BridgeRotationError, ProvisionError, ProvisionedAgent, agent_name_from_username,
-    provision_agent, provision_swarm_memory_passphrase, rotate_curator_db_passphrase,
-    rotate_swarm_memory_db_passphrase,
+    provision_agent, rotate_all_kask_db_passphrases, rotate_curator_db_passphrase,
 };
 pub use inference_chat::{LanguageModelInferencePort, NoModelInferencePort};
 pub use inference_edit_prediction::BridgeEditPredictionPort;

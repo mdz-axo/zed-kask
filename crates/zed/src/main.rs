@@ -1465,22 +1465,11 @@ fn main() {
                     kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 
-                // zed-kask: provision the swarm memory SQLCipher passphrase.
-                // Without this, the swarm server has no passphrase and local
-                // knowledge tools degrade (they require >=8 chars).
-                // `provision_swarm_memory_passphrase` uses the default
-                // "allostery" on first run. Both DB and swarm passphrases are
-                // written directly to the unified `kask://credentials/*`
-                // namespace — no mirror step needed.
-                let swarm_passphrase_provision_task = cx.background_spawn(async move {
-                    kask_bridge::provision_swarm_memory_passphrase()
-                });
-                if let Err(error) = swarm_passphrase_provision_task.await {
-                    log::warn!(
-                        "Failed to provision swarm memory passphrase: {error}. \
-                         The swarm server will have no passphrase — local knowledge tools will degrade."
-                    );
-                }
+                // zed-kask: no separate swarm-memory passphrase provisioning —
+                // there is ONE passphrase (HKASK_DB_PASSPHRASE, provisioned
+                // above via `provision_agent`), and every SQLCipher DB
+                // (curator, swarm memory, kanban, research, training) opens
+                // with it.
 
                 // zed-kask: mirror kask credential store keys to each provider's
                 // `api_url` in the Zed keychain. The kask settings UI writes keys

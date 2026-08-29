@@ -318,12 +318,9 @@ pub(crate) fn emit_swarm_env(
             swarm.a2a_http_enabled.to_string(),
         );
     }
-    if swarm.memory_passphrase != swarm_default.memory_passphrase {
-        env.insert(
-            "HKASK_SWARM_MEMORY_PASSPHRASE".to_string(),
-            swarm.memory_passphrase.clone(),
-        );
-    }
+    // No HKASK_SWARM_MEMORY_PASSPHRASE emission: the swarm memory DB opens
+    // with the ONE shared DB passphrase (HKASK_DB_PASSPHRASE, delivered as a
+    // credential via the allowlist), same as every other kask SQLCipher DB.
     let memory_db_path = swarm_root.join("memory.db").to_string_lossy().to_string();
     env.insert("HKASK_SWARM_MEMORY_DB".to_string(), memory_db_path);
     if swarm.embedding_dim != swarm_default.embedding_dim {
@@ -774,7 +771,6 @@ mod tests {
         assert!(!env.contains_key("HKASK_SKILLS_DIR"));
         assert!(!env.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
         assert!(!env.contains_key("HKASK_A2A_HTTP_ENABLE"));
-        assert!(!env.contains_key("HKASK_SWARM_MEMORY_PASSPHRASE"));
         assert!(!env.contains_key("HKASK_SWARM_EMBEDDING_DIM"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
@@ -815,7 +811,6 @@ mod tests {
         settings.swarm.skills_dir = "/custom/skills/dir".to_string();
         settings.swarm.default_agent_model = "claude-sonnet-4-6".to_string();
         settings.swarm.a2a_http_enabled = true;
-        settings.swarm.memory_passphrase = "real-secret".to_string();
         settings.swarm.embedding_dim = 2048;
         let env = settings.mcp_env();
         assert_eq!(
@@ -856,10 +851,6 @@ mod tests {
         assert_eq!(
             env.get("HKASK_A2A_HTTP_ENABLE").map(String::as_str),
             Some("true")
-        );
-        assert_eq!(
-            env.get("HKASK_SWARM_MEMORY_PASSPHRASE").map(String::as_str),
-            Some("real-secret")
         );
         assert_eq!(
             env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),

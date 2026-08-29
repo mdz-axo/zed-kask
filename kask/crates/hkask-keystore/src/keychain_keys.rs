@@ -10,18 +10,9 @@
 /// Stored at `kask://credentials/hkask_db_passphrase` — the same namespace
 /// zed's `CredentialsProvider` uses. This matches the `credential_key` in
 /// `DATA_SERVICES` so `build_mcp_server_env` injects it as `HKASK_DB_PASSPHRASE`
-/// into MCP server child processes.
+/// into MCP server child processes. There is ONE passphrase for ALL SQLCipher
+/// databases (curator, corpus, kanban, swarm memory) — no per-DB keys.
 pub const KEY_DB_PASSPHRASE: &str = "hkask_db_passphrase";
-
-/// Keychain key for the swarm memory SQLCipher passphrase.
-///
-/// Distinct from `KEY_DB_PASSPHRASE`: the swarm memory store is a separate
-/// SQLCipher DB (`swarm_memory.db`) shared across all swarms and agents, so
-/// it has its own key. Provisioned on first run alongside the DB passphrase
-/// via `provision_swarm_memory_passphrase` (see `kask_bridge::identity`).
-///
-/// Stored at `kask://credentials/hkask_swarm_memory_passphrase`.
-pub const KEY_SWARM_MEMORY_PASSPHRASE: &str = "hkask_swarm_memory_passphrase";
 
 /// Keychain key for the capability probe (internal diagnostics).
 pub const KEY_CAPABILITY_PROBE: &str = "__hkask_capability_probe__";

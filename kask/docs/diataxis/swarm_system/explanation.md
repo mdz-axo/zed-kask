@@ -68,7 +68,7 @@ fidelity) are healthy. The swarm's four loops each have one weak property:
   prompt's tool advertisement is verified against the server's generated
   `TOOL_NAMES` (`hkask_steer::ensure_steer`, called at
   `crates/swarm_panel/src/swarm_panel.rs:1305`; pinned by
-  `steer_prompt_mentions_only_known_tools`, `swarm_panel.rs:4304+`) — the
+  `steer_prompt_mentions_only_known_tools`, `swarm_panel.rs:4312`) — the
   plan can only call tools that exist.
 - **Loop B (actuator → delegation):** weak *delay* — the tool loop runs
   multiple inference rounds (`MAX_TOOL_ROUNDS = 4`,

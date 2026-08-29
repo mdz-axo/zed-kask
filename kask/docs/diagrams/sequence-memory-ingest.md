@@ -1,100 +1,121 @@
 ---
-title: "Memory Ingest — Turn → h_mem + embedding"
+title: "Memory Ingest — Turn → curator h_mems + embedding"
 audience: [developers, architects, agents]
-last_updated: 2026-08-10
-version: "1.0.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition]
 ---
 
-# Memory Ingest — Turn → h_mem + embedding
+# Memory Ingest — Turn → curator h_mems + embedding
 
-Sequence diagram of `RealMemoryPort::ingest_turn` — the path from a completed
-thread turn to stored episodic h_mems + a stored prompt embedding. This is
-the write side of the memory system. The read side is
+Sequence diagram of `RealMemoryPort::ingest_turn`
+(`kask/crates/kask_bridge/src/memory.rs:454-497`) and
+`ingest::write_turn` (`kask/crates/kask_bridge/src/memory/ingest.rs:58-235`)
+— the path from a completed thread turn to stored h_mems + a stored prompt
+embedding in the curator's sovereign `curator.db`. This is the write side
+of the memory system. The read side is
 [Memory Recall Flow](./flowchart-memory-recall.md).
 
-The ingestion is fire-and-forget from the thread's perspective: the turn has
-already completed and the user sees no latency. An ingestion semaphore
-serializes concurrent ingestions so they don't contend with the recall path
-for the SQLite pool.
+The ingestion is fire-and-forget from the thread's perspective: the turn
+has already completed and the user sees no latency. An ingestion semaphore
+(default 1 permit, `HKASK_MEMORY_INGEST_CONCURRENCY`) serializes concurrent
+ingestions so they don't contend with the recall path for the SQLite pool
+(`memory.rs:459-481`).
 
 ```mermaid
 sequenceDiagram
-    participant Thread as Thread<br/>(run_turn)
-    participant Bridge as BridgeMemoryPort
+    participant Thread as Thread turn loop<br/>(crates/agent)
+    participant Bridge as BridgeMemoryPort<br/>(agent::ThreadMemoryPort)
     participant Real as RealMemoryPort
     participant Sem as ingest_semaphore
-    participant UserStore as user MemoryStore<br/>(memory.db)
-    participant CuratorStore as curator MemoryStore<br/>(curator.db)
+    participant Write as ingest::write_turn
+    participant Curator as CuratorStore<br/>(self-healing, curator.db)
     participant Tokio as tokio runtime
     participant EmbedPort as LanguageModelEmbeddingPort
-    participant EmbedProvider as Embedding API<br/>(ollama/nomic-embed-text)
+    participant EmbedProvider as Embedding API<br/>(DeepInfra/Qwen3-Embedding-0.6B)
 
     Thread->>+Bridge: ingest_turn(TurnRecord)
     Bridge->>+Real: ingest_turn(record)
     Real->>+Sem: acquire permit
     Sem-->>-Real: permit
+    Real->>+Write: write_turn(WriteContext, record)
+
+    Write->>Curator: get() — re-attempt open if down<br/>(rebuild consolidation if healed)
 
     rect rgb(245, 248, 252)
-        Note over Real,CuratorStore: Phase 1 — Episodic h_mems (every turn)
+        Note over Write,Curator: Phase 1 — h_mems (curator.db)
 
-        Real->>Real: entity = "chat:thread:{thread_id}"
-        Real->>+UserStore: store(episodic_h_mem)<br/>Private, user_webid
-        UserStore-->>-Real: Ok
-
-        alt is_curator_turn
-            Real->>+CuratorStore: store(episodic_h_mem)<br/>Private, curator_webid
-            CuratorStore-->>-Real: Ok
+        alt is_curator_turn (agent_id == "Curator")
+            Write->>Curator: store(curator h_mem)<br/>chat:thread:{id}, "chatted", Private,<br/>curator_webid, PKO process ontology
+            Curator-->>-Write: Ok
         end
 
-        Real->>+CuratorStore: store(semantic_h_mem)<br/>Shared, curator:thread:{id}
-        CuratorStore-->>-Real: Ok
+        Write->>Curator: store(shared copy)<br/>curator:thread:{id}, "turn", Shared,<br/>DC state ontology
+        Curator-->>-Write: Ok
     end
 
     rect rgb(252, 245, 245)
-        Note over Real,EmbedProvider: Phase 2 — Prompt embedding (every turn)
+        Note over Write,EmbedProvider: Phase 2 — Prompt embedding (every turn, non-fatal)
 
-        Real->>Real: embedding_entity = entity.clone()<br/>"chat:thread:{thread_id}"
-        Real->>+Tokio: spawn(embed(model, [user_input]))
+        Write->>Write: embedding_entity = curator_entity.clone()<br/>"curator:thread:{thread_id}"
+        Write->>+Tokio: spawn(embed(model, [user_input]))
         Tokio->>+EmbedPort: embed(model, [user_input])
         EmbedPort->>+EmbedProvider: POST /embeddings
-        EmbedProvider-->>-EmbedPort: Vec<f32> (1024-dim)
+        EmbedProvider-->>-EmbedPort: Vec<f32> (1024-dim default)
         EmbedPort-->>-Tokio: Ok(vector)
-        Tokio-->>-Real: Ok(Ok(vector))
+        Tokio-->>-Write: Ok(Ok(vector))
 
         alt embedding succeeded
-            Real->>+UserStore: store_embedding(entity, vector, model)
-            UserStore-->>-Real: Ok(embedding_id)
-            alt is_curator_turn
-                Real->>+CuratorStore: store_embedding(entity, vector, model)
-                CuratorStore-->>-Real: Ok
-            end
-        else embedding failed
-            Real-->>Real: tracing::warn (non-fatal)<br/>keyword recall still works
+            Write->>Curator: store_embedding(curator:thread:{id},<br/>vector, model)
+            Curator-->>-Write: Ok
+        else embedding failed / no port
+            Write-->>Write: tracing::warn (non-fatal)<br/>keyword recall still works
         end
     end
 
+    Write-->>-Real: Ok
     Real-->>-Bridge: Ok
     Bridge-->>-Thread: Ok
     Note over Thread: Turn already completed<br/>user sees no latency
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PL-MEMORY-INGEST
+verified_date: 2026-08-28
+verified_against: kask/crates/kask_bridge/src/memory.rs:454-497 (trait impl + semaphore), kask/crates/kask_bridge/src/memory/ingest.rs:58-235 (write_turn: heal 79-95, curator h_mem 100-130, shared copy 132-154, embedding 156-225, entity clone at 168), kask/crates/kask_bridge/src/memory/curator_stores.rs:104-160 (CuratorStore self-heal), kask/crates/hkask-inference/src/model_constants.rs:35 (embedding model)
+status: VERIFIED
+-->
+
 ## Key invariants
 
-1. **The embedding's `entity_ref` equals the h_mem's `entity`**
-   (`chat:thread:{thread_id}`). This is the join key for recall. See
-   [Memory Store ERD](./erd-memory-store.md).
+1. **The embedding's `entity_ref` equals the shared copy's `entity`**
+   (`curator:thread:{thread_id}`) — the shared copy is written for every
+   turn, so the join key always resolves. An embedding under
+   `chat:thread:{id}` would orphan every zed-agent turn's embedding
+   (`ingest.rs:160-168`). See [Memory Store ERD](./erd-memory-store.md).
 
-2. **Both user and curator stores receive the embedding** for curator turns,
-   so the curator can recall its own turns by similarity.
+2. **All writes go to the curator's `curator.db`.** There is no user
+   memory store — `RealMemoryPort` holds only the `CuratorStore`
+   (`memory.rs:74-119`). Zed-agent turns get the shared copy only; the
+   curator-perspective h_mem is curator turns only (`ingest.rs:68`,
+   `:100-130`).
 
-3. **Embedding failure is non-fatal.** The episodic h_mem is still stored;
-   recall degrades to keyword-only for that turn.
+3. **Embedding failure is non-fatal.** The h_mems are pure SQL and don't
+   need embeddings; recall degrades to keyword-only for that turn with a
+   `tracing::warn!` (`ingest.rs:156-159`, `:202-217`).
 
-4. **Consolidation is decoupled.** It runs on a background timer, not in the
-   ingestion path. See `start_consolidation_timer` in `RealMemoryPort`.
+4. **Curator-store failures are non-fatal and self-healing.** A failed
+   initial open leaves the store `None`; every `get()` re-attempts the
+   open, and a successful re-open rebuilds the consolidation service
+   (`curator_stores.rs:104-160`, `ingest.rs:79-95`). Persistent failure
+   warns once per healing attempt — never silently
+   (`curator_stores.rs:148-158`).
+
+5. **Consolidation is decoupled.** It runs on the background timer
+   (`start_consolidation_timer`, `memory.rs:236-287`), never in the
+   ingestion path.
 
 ## Related
 
@@ -102,10 +123,3 @@ sequenceDiagram
 - [Memory Store ERD](./erd-memory-store.md) — the storage schema
 - [Memory System Specification](../architecture/memory-system-specification.md) — the architecture spec
 - [D6: Thread → memory](../../../DIVERGENCE.md) — the divergence seam
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-PL-MEMORY-INGEST
-verified_date: 2026-08-10
-verified_against: kask/crates/kask_bridge/src/memory.rs:1000
-status: VERIFIED
--->

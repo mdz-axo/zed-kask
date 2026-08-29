@@ -2,7 +2,7 @@
 title: "hkask-storage — How-to: Add a New Store or Rotate a Passphrase"
 audience: [developers]
 last_updated: 2026-08-28
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [composition]
@@ -20,12 +20,12 @@ SQLite is the only backend.
 
 | Symbol | Location |
 |--------|----------|
-| Core schema loader (`initialize_schema`) | `kask/crates/hkask-storage/src/core/connection.rs:223-229` |
-| `Database::open` (file infrastructure) | `kask/crates/hkask-storage/src/core/connection.rs:194-196` |
-| `Database::in_memory` (test pool) | `kask/crates/hkask-storage/src/core/connection.rs:215-217` |
-| `Database::sqlite_pool` (r2d2 pool + schema) | `kask/crates/hkask-storage/src/core/connection.rs:261-283` |
-| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:515-526` |
-| `open_or_repair` (salt-missing self-heal) | `kask/crates/hkask-storage/src/core/connection.rs:466-513` |
+| Core schema loader (`initialize_schema`) | `kask/crates/hkask-storage/src/core/connection.rs:192-204` |
+| `Database::open` (file infrastructure) | `kask/crates/hkask-storage/src/core/connection.rs:163-165` |
+| `Database::in_memory` (test pool) | `kask/crates/hkask-storage/src/core/connection.rs:184-186` |
+| `Database::sqlite_pool` (r2d2 pool + schema) | `kask/crates/hkask-storage/src/core/connection.rs:230-252` |
+| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:435-446` |
+| `open_or_repair` (non-destructive open) | `kask/crates/hkask-storage/src/core/connection.rs:429-434` |
 | `define_driver_store!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
 | `impl_from_db_error!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:79-86` |
 | `DatabaseDriver` trait | `kask/crates/hkask-storage/src/database/driver.rs:16-58` |
@@ -39,8 +39,9 @@ SQLite is the only backend.
 | Core schema (`schema.sql`) | `kask/crates/hkask-storage/src/core/sql/schema.sql:1-27` |
 | `regulation_store.rs` `init_schema` (store-specific pattern) | `kask/crates/hkask-storage/src/regulation_store.rs:76-104` |
 | `gallery.rs` `init_schema` (multi-table pattern) | `kask/crates/hkask-storage/src/gallery.rs:193-270` |
-| `rotate_passphrase` | `kask/crates/hkask-storage/src/rotation.rs:118-347` |
-| Rotation tests | `kask/crates/hkask-storage/src/rotation.rs:673-812` |
+| `rotate_passphrase` | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
+| `migrate_legacy_kdf` | `kask/crates/hkask-storage/src/rotation.rs:302` |
+| Rotation + migration tests | `kask/crates/hkask-storage/src/rotation.rs:800-1020` |
 
 ## Procedure
 
@@ -61,7 +62,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
 verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:223-229,515-526; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/regulation_store.rs:76-104; kask/crates/hkask-storage/src/gallery.rs:193-270
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:192-204,435-446; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/regulation_store.rs:76-104; kask/crates/hkask-storage/src/gallery.rs:193-270
 status: VERIFIED
 -->
 
@@ -71,7 +72,7 @@ Determine which store module owns the new table. If the table is used by
 multiple stores or is foundational (like `hmems`, `embeddings`,
 `agent_registry`, `memory_links`), it belongs in
 `src/core/sql/schema.sql` (loaded by `initialize_schema` in
-`core/connection.rs:223-229`). If the table is specific to one store (like
+`core/connection.rs:192-204`). If the table is specific to one store (like
 `reg_records` for regulation or `escalations` for the escalation queue), it
 belongs in that store's `init_schema` method.
 
@@ -81,10 +82,10 @@ For **core tables**, add the statement to `src/core/sql/schema.sql`. The
 file uses `CREATE TABLE IF NOT EXISTS` statements; the `IF NOT EXISTS`
 clause makes initialization idempotent. The `$DIM` placeholder in
 `vec_embeddings` is replaced with `embedding_dim()` at load time
-(`core/connection.rs:225-226`). Note that `IF NOT EXISTS` cannot add columns
+(`core/connection.rs:193-195`). Note that `IF NOT EXISTS` cannot add columns
 to an existing table — column additions to core tables need a
 `PRAGMA table_info` check + `ALTER TABLE` migration, as
-`migrate_embeddings_passage_text` does (`core/connection.rs:236-250`).
+`migrate_embeddings_passage_text` does (`core/connection.rs:205-219`).
 
 For **store-specific tables**, add the statement inside the store's
 `init_schema` method. The method receives a `&Arc<dyn DatabaseDriver>` and
@@ -137,7 +138,7 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
 - **In-memory pool size**: `SqliteConnectionManager::memory()` creates a
   separate in-memory database per connection. A pool size > 1 scatters
   writes across independent databases, breaking read-your-writes. Use
-  `max_size(1)` for in-memory pools (`core/connection.rs:311-334`).
+  `max_size(1)` for in-memory pools (`core/connection.rs:280-303`).
 - **Path traversal**: any user-supplied path passed to a store MUST go
   through `sanitize_path(base, input)` (`core/security.rs:17-54`), which
   rejects `..` components and verifies the joined path stays within
@@ -145,7 +146,7 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
 - **Per-connection sqlite-vec loading**: `init_sqlite_vec_on` must run
   BEFORE schema init (which creates `vec0` virtual tables) and is scoped
   per connection to avoid the deprecated `sqlite3_auto_extension`
-  teardown segfault (`core/connection.rs:39-76`).
+  teardown segfault (`core/connection.rs:43-76`).
 - **Corrupted rows must propagate**: `HMemStore::query_rows` logs and
   propagates row-decode errors rather than skipping them
   (`hmem.rs:180-189`) — a silently skipped row reads as "no deviation"
@@ -155,7 +156,7 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
 
 To re-encrypt a SQLCipher DB under a new passphrase (e.g., after a key
 compromise or routine rotation), use `rotate_passphrase`
-(`rotation.rs:118`). The bridge layer wraps this in
+(`rotation.rs:122`). The bridge layer wraps this in
 `rotate_curator_db_passphrase` (`kask_bridge/src/identity.rs:321`) and
 `rotate_swarm_memory_db_passphrase` (`kask_bridge/src/identity.rs:366`),
 which resolve the old passphrase from the keychain and the DB path from
@@ -164,17 +165,20 @@ env/data-dir.
 The rotation is atomic and fail-safe:
 
 1. Validates the new passphrase (≥ 8 chars, different from old).
-2. Opens the source DB with the old passphrase (verifies it).
+2. Opens the source DB with the old passphrase (verifies it via the probe
+   connection in `file_pool`).
 3. Creates `<db>.new` with the new passphrase; copies all user tables +
-   `sqlite_sequence`. `vec0` shadow tables are rebuilt from `schema.sql` on
-   first open of the new DB.
-4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`, same for
-   `.salt` files.
-5. Deletes `.old` and `.salt.old` on success.
+   `sqlite_sequence`. Under the native KDF the salt lives in the DB
+   header — there is no salt file to manage. `vec0` shadow tables are
+   rebuilt from `schema.sql` on first open of the new DB.
+4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`, then
+   deletes `.old`.
+5. On any pre-rename failure, the `.new` artifacts are deleted and the
+   original DB is untouched; if the rename fails after `<db>` → `<db>.old`,
+   the code attempts to restore the backup.
 
-If any step fails, the original DB is untouched. The caller (settings UI)
-writes the new passphrase to the keychain ONLY after `Ok(())` — a failed
-rotation leaves the old passphrase in effect.
+The caller (settings UI) writes the new passphrase to the keychain ONLY
+after `Ok(())` — a failed rotation leaves the old passphrase in effect.
 
 **From the settings UI**: use the Security sub-page (for the curator DB
 passphrase) or the Swarm page (for the swarm memory DB passphrase). Both
@@ -193,9 +197,10 @@ rotate_curator_db_passphrase("new-passphrase")?;
 // and nudge MCP servers to restart.
 ```
 
-Run the rotation tests with `cargo test -p hkask-storage rotation` (six
-tests at `rotation.rs:673-812`, including wrong-old-passphrase failure
-safety and artifact cleanup).
+Run the rotation tests with `cargo test -p hkask-storage rotation` (the
+test module at `rotation.rs:800` covers data preservation, wrong-old-
+passphrase failure safety, short-passphrase rejection, no-op rotation,
+artifact cleanup, and the legacy-KDF migration at `rotation.rs:972,997`).
 
 ## See also
 

@@ -1793,13 +1793,6 @@ pub struct KaskSwarmSettingsContent {
     /// (opt-in — it opens a loopback port). Security-relevant: only enable
     /// when you need external A2A clients to reach your local agents.
     pub a2a_http_enabled: Option<bool>,
-    /// SQLCipher passphrase for the local swarm semantic-memory store (the
-    /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
-    /// be >=8 chars. Default `"allostery"` (pre-release) so initial builds
-    /// and first user runs don't fail. The user can change it via settings;
-    /// the password-change process re-encrypts the DB with the new passphrase
-    /// and deletes the old DB.
-    pub memory_passphrase: Option<String>,
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Default 1024. Only relevant if the embedding-search path is used.
     pub embedding_dim: Option<usize>,

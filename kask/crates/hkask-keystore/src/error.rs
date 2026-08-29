@@ -9,12 +9,6 @@ pub enum KeystoreError {
 
     #[error("Secret not found: {0}")]
     NotFound(NotFound),
-
-    #[error("Encryption error: {0}")]
-    Encryption(String),
-
-    #[error("Key derivation failed: {0}")]
-    KeyDerivation(String),
 }
 
 impl From<NotFound> for KeystoreError {
@@ -28,21 +22,6 @@ impl From<crate::keychain::KeychainError> for KeystoreError {
         match err {
             crate::keychain::KeychainError::Platform(msg) => KeystoreError::Platform(msg),
             crate::keychain::KeychainError::NotFound(nf) => KeystoreError::NotFound(nf),
-        }
-    }
-}
-
-impl From<crate::encryption::EncryptionError> for KeystoreError {
-    fn from(err: crate::encryption::EncryptionError) -> Self {
-        match err {
-            crate::encryption::EncryptionError::KeyDerivation(msg) => {
-                KeystoreError::KeyDerivation(msg)
-            }
-            crate::encryption::EncryptionError::Encryption(msg) => KeystoreError::Encryption(msg),
-            crate::encryption::EncryptionError::Decryption(msg) => KeystoreError::Encryption(msg),
-            crate::encryption::EncryptionError::InvalidPassphrase => {
-                KeystoreError::Encryption("Invalid passphrase".to_string())
-            }
         }
     }
 }

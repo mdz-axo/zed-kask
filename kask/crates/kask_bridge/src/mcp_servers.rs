@@ -293,16 +293,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "swarm",
         binary: "hkask-mcp-swarm",
         description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
-        // HKASK_SWARM_MEMORY_PASSPHRASE is a SECRET (SQLCipher key for the swarm
-        // memory DB), so it belongs here, not in config_env. Before it was
-        // allowlisted (RR-0061) the read at hkask-mcp-swarm/src/config.rs:252
-        // could never receive a value, so the store always opened under the
-        // hardcoded default "allostery" — encrypted with a constant that ships
-        // in the source. That default has been eliminated; the passphrase is now
-        // resolved from the canonical chain (env → keychain →
-        // kask://credentials/hkask_swarm_memory_passphrase) and the store
-        // degrades gracefully if resolution fails.
-        credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_SWARM_MEMORY_PASSPHRASE"]),
+        // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the swarm
+        // memory DB opens with it, same as curator/kanban/research/training.
+        // (The separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two
+        // passphrases for one system was a setup trap and a rotation
+        // inconsistency — rotating one left the other unopenable.)
+        credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"]),
         config_env: Some(&[
             "HKASK_ABW_API_URL",
             "HKASK_ABW_MAX_CREDITS",
@@ -661,8 +657,7 @@ pub async fn build_mcp_server_env(
 ///
 /// All other credentials have NO default — a miss keeps warning so "not
 /// configured" stays visible to the operator.
-const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 2] =
-    ["HKASK_DB_PASSPHRASE", "HKASK_SWARM_MEMORY_PASSPHRASE"];
+const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 1] = ["HKASK_DB_PASSPHRASE"];
 
 /// Provision the startup-default passphrase for `env_var`, if it has one.
 ///
@@ -679,14 +674,7 @@ async fn provision_default_passphrase(env_var: &str, cx: &gpui::AsyncApp) -> Opt
     let env_var = env_var.to_string();
     let env_var_for_log = env_var.clone();
     let provisioned = cx
-        .background_spawn(async move {
-            match env_var.as_str() {
-                "HKASK_SWARM_MEMORY_PASSPHRASE" => {
-                    crate::identity::provision_swarm_memory_passphrase()
-                }
-                _ => crate::identity::provision_db_passphrase(),
-            }
-        })
+        .background_spawn(async move { crate::identity::provision_db_passphrase() })
         .await;
     match provisioned {
         Ok(passphrase) if !passphrase.is_empty() => Some(passphrase),
@@ -750,13 +738,12 @@ mod tests {
 
     /// The startup-default gate: both passphrase env vars are in
     /// `DEFAULT_PASSPHRASE_ENV_VARS`, so `provide_default_passphrase`
-    /// resolves them (env → keychain → first-run "allostery") at MCP
+    /// resolves it (env → keychain → first-run "allostery") at MCP
     /// launch time. This is what makes "stores never start down" true at
-    /// startup — remove one from the list and the gate regresses.
+    /// startup — remove it from the list and the gate regresses.
     #[test]
-    fn startup_default_passphrase_gate_includes_both_vars() {
+    fn startup_default_passphrase_gate_includes_db_passphrase() {
         assert!(DEFAULT_PASSPHRASE_ENV_VARS.contains(&"HKASK_DB_PASSPHRASE"));
-        assert!(DEFAULT_PASSPHRASE_ENV_VARS.contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"));
     }
 
     /// The derived fns must match the main registry — this pins the single-source
@@ -919,7 +906,7 @@ mod tests {
     fn swarm_credentials_exclude_other_servers_secrets() {
         let all_credentials: Vec<(String, String)> = [
             "HKASK_ABW_API_KEY",
-            "HKASK_SWARM_MEMORY_PASSPHRASE",
+            "HKASK_DB_PASSPHRASE",
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_SMTP_PASSWORD",
@@ -929,14 +916,14 @@ mod tests {
         .map(|env| (env.to_string(), "url".to_string()))
         .collect();
         let filtered = filter_credentials_for_server("swarm", &all_credentials);
-        // Renamed from `swarm_credentials_only_include_abw_key` 2026-08-12: the
-        // swarm legitimately receives TWO secrets now that the memory passphrase
-        // is allowlisted (RR-0061). The invariant that matters is not the count —
-        // it is that no OTHER server's secret reaches this one.
+        // The invariant that matters is not the count — it is that no OTHER
+        // server's secret reaches this one. The swarm receives the ABW key
+        // and the shared DB passphrase (its memory DB is one of the kask
+        // SQLCipher DBs).
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             names,
-            vec!["HKASK_ABW_API_KEY", "HKASK_SWARM_MEMORY_PASSPHRASE"],
+            vec!["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"],
             "swarm should receive exactly its own two declared secrets"
         );
         assert!(
@@ -1196,23 +1183,18 @@ mod tests {
 
     // ── RR-0061: the swarm under-grants that silently disabled real features ──
 
-    /// The sharpest instance: HKASK_SWARM_MEMORY_PASSPHRASE is READ at
-    /// hkask-mcp-swarm/src/config.rs:252 but was not allowlisted, so the override
-    /// could never arrive and the SQLCipher memory DB always opened under the
-    /// hardcoded default "allostery" — encrypted with a constant that ships
-    /// in the source. That default has been eliminated; the passphrase is now
-    /// resolved from the canonical chain.
+    /// The swarm memory DB is one of the kask SQLCipher DBs — the swarm
+    /// server must receive the shared `HKASK_DB_PASSPHRASE` or its memory
+    /// store cannot decrypt (RR-0061's lesson, now unified: one passphrase).
     #[test]
-    fn swarm_credentials_include_memory_passphrase() {
+    fn swarm_credentials_include_db_passphrase() {
         let s = server_by_id("swarm");
         assert!(
-            s.credentials
-                .unwrap()
-                .contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"),
-            "HKASK_SWARM_MEMORY_PASSPHRASE is read by the swarm server but is not \
-             allowlisted — the SQLCipher memory DB would fall back to the \
-             compiled-in default passphrase with no way for an operator to \
-             override it (RR-0061)"
+            s.credentials.unwrap().contains(&"HKASK_DB_PASSPHRASE"),
+            "HKASK_DB_PASSPHRASE is read by the swarm server (its memory DB is \
+             one of the kask SQLCipher DBs) but is not allowlisted — the store \
+             would fall back to the compiled-in default with no way for an \
+             operator to override it"
         );
     }
 
@@ -1461,18 +1443,18 @@ mod tests {
     #[tokio::test]
     async fn build_mcp_server_env_composed_path_credential_survives_config_filter() {
         // The swarm server's `credentials` allowlist includes
-        // `HKASK_SWARM_MEMORY_PASSPHRASE`. We inject a mock keychain secret
+        // `HKASK_DB_PASSPHRASE`. We inject a mock keychain secret
         // for its credential URL and assert it lands in the composed env.
         let settings = crate::KaskSettings::default();
         // Collect the (env_var, url) pairs the swarm server would receive.
         let cred_urls = filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
-        // Find the swarm memory passphrase URL; if absent, the test setup is
+        // Find the DB passphrase URL; if absent, the test setup is
         // stale relative to the registry and we fail loudly.
         let passphrase_url = cred_urls
             .iter()
-            .find(|(env_var, _)| env_var == "HKASK_SWARM_MEMORY_PASSPHRASE")
+            .find(|(env_var, _)| env_var == "HKASK_DB_PASSPHRASE")
             .map(|(_, url)| url.clone())
-            .expect("HKASK_SWARM_MEMORY_PASSPHRASE must be in the swarm credentials allowlist");
+            .expect("HKASK_DB_PASSPHRASE must be in the swarm credentials allowlist");
 
         let mut secrets = std::collections::HashMap::new();
         secrets.insert(
@@ -1483,7 +1465,7 @@ mod tests {
 
         // SAFETY: Ensure no shell env var leaks into the test — the keychain
         // branch must be the one that injects the value. Single-threaded test.
-        unsafe { std::env::remove_var("HKASK_SWARM_MEMORY_PASSPHRASE") };
+        unsafe { std::env::remove_var("HKASK_DB_PASSPHRASE") };
 
         let cx = gpui::TestAppContext::single().to_async();
         let env = build_mcp_server_env(
@@ -1500,7 +1482,7 @@ mod tests {
         // composed env with the keychain value — not be dropped by the config
         // filter running on the credential map (the Path B regression).
         assert_eq!(
-            env.get("HKASK_SWARM_MEMORY_PASSPHRASE").map(|v| v.as_str()),
+            env.get("HKASK_DB_PASSPHRASE").map(|v| v.as_str()),
             Some("keychain-secret-passphrase"),
             "credential must survive the config filter in the composed path — \
              the prior Path B bug dropped every credential because the config \
@@ -1590,10 +1572,12 @@ mod tests {
     fn default_passphrase_env_vars_pin_the_requirement() {
         assert_eq!(
             DEFAULT_PASSPHRASE_ENV_VARS,
-            ["HKASK_DB_PASSPHRASE", "HKASK_SWARM_MEMORY_PASSPHRASE"],
+            ["HKASK_DB_PASSPHRASE"],
             "the startup-default passphrase set is a stated requirement — \
-             DB + swarm memory passphrases default to 'allostery' on first run; \
-             changing this set is a requirements change, not a refactor"
+             the ONE DB passphrase defaults to 'allostery' on first run and \
+             every SQLCipher DB (curator, swarm memory, kanban, research, \
+             training) opens with it; changing this set is a requirements \
+             change, not a refactor"
         );
 
         // Both vars must be in the credential URL list so the loop reaches

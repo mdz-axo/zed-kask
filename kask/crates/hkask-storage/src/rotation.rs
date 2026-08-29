@@ -100,8 +100,7 @@ pub enum RotationError {
 /// 2. Creates `<db_path>.new` encrypted with `new_passphrase`.
 /// 3. Copies all user tables + `sqlite_sequence` via `INSERT INTO ... SELECT`.
 /// 4. Atomically renames: `<db_path>` → `<db_path>.old`,
-///    `<db_path>.new` → `<db_path>`. Same for `.salt` files.
-/// 5. Deletes `<db_path>.old` and `<db_path>.salt.old`.
+///    `<db_path>.new` → `<db_path>`, then deletes `<db_path>.old`.
 ///
 /// # Failure safety
 ///
@@ -231,16 +230,9 @@ pub fn rotate_passphrase(
     drop(new_db);
 
     // 4. Atomically rename. On POSIX, same-directory renames are atomic.
-    //    Order: rename salt first (so if the DB rename fails, the salt
-    //    is already in place for the new DB — but the DB rename is the
-    //    critical step). Actually, rename the DB first, then the salt,
-    //    so if the DB rename succeeds but the salt rename fails, we can
-    //    recover by re-reading the new salt. But the safest order is:
     //    a. Rename old DB → .old
     //    b. Rename new DB → <db_path>
-    //    c. Rename old salt → .salt.old
-    //    d. Rename new salt → <db_path>.salt
-    //    e. Delete .old and .salt.old
+    //    c. Delete .old
     //
     //    If step (b) fails after (a) succeeds, the DB is in a state where
     //    <db_path> doesn't exist but <db_path>.old does. The caller can
@@ -263,52 +255,13 @@ pub fn rotate_passphrase(
         // must manually rename <db_path>.old back to <db_path>.
         let _ = std::fs::rename(&old_backup, db_path);
         let _ = std::fs::remove_file(&new_path);
-        let _ = std::fs::remove_file(&new_salt_path);
         return Err(RotationError::Filesystem {
             path: db_path.to_string(),
             error: e,
         });
     }
 
-    // c. Rename old salt → .salt.old
-    //    If the salt file doesn't exist (shouldn't happen for a valid DB),
-    //    skip — the new salt is already correct.
-    if Path::new(&salt_path).exists() {
-        if let Err(e) = std::fs::rename(&salt_path, &old_salt_backup) {
-            // The DB is already renamed; the new salt is at new_salt_path.
-            // Try to move the new salt into place directly.
-            let _ = std::fs::rename(&new_salt_path, &salt_path);
-            // Log the old salt cleanup failure — not fatal.
-            tracing::warn!(
-                target: "reg.storage",
-                path = %db_path,
-                error = %e,
-                "Could not rename old salt to .salt.old — old salt may linger"
-            );
-        }
-    }
-
-    // d. Rename new salt → <db_path>.salt
-    if Path::new(&new_salt_path).exists() {
-        if let Err(e) = std::fs::rename(&new_salt_path, &salt_path) {
-            // The DB is renamed but the salt is missing. This is fatal —
-            // the new DB cannot be opened without its salt. The operator
-            // must manually copy new_salt_path to salt_path.
-            tracing::error!(
-                target: "reg.storage",
-                path = %db_path,
-                error = %e,
-                "CRITICAL: DB renamed but salt rename failed. \
-                 Manually copy {new_salt_path} to {salt_path}"
-            );
-            return Err(RotationError::Filesystem {
-                path: salt_path,
-                error: e,
-            });
-        }
-    }
-
-    // e. Delete .old and .salt.old
+    // c. Delete .old
     if Path::new(&old_backup).exists() {
         if let Err(e) = std::fs::remove_file(&old_backup) {
             tracing::warn!(
@@ -316,17 +269,6 @@ pub fn rotate_passphrase(
                 path = %db_path,
                 error = %e,
                 "Could not delete old DB backup {old_backup} — \
-                 manual cleanup recommended"
-            );
-        }
-    }
-    if Path::new(&old_salt_backup).exists() {
-        if let Err(e) = std::fs::remove_file(&old_salt_backup) {
-            tracing::warn!(
-                target: "reg.storage",
-                path = %db_path,
-                error = %e,
-                "Could not delete old salt backup {old_salt_backup} — \
                  manual cleanup recommended"
             );
         }
@@ -342,6 +284,193 @@ pub fn rotate_passphrase(
         "Passphrase rotation complete — DB re-encrypted with new passphrase"
     );
     Ok(())
+}
+
+/// Re-encrypt a legacy-scheme DB (Argon2id over an external `.salt` file +
+/// raw-key PRAGMA + plaintext header) in place under the native SQLCipher
+/// passphrase KDF, preserving all data.
+///
+/// Triggered automatically by `Database::file_pool` when `<db>.salt` exists.
+/// Runs at most once per DB: on success the salt file is deleted, so the
+/// trigger never fires again. On failure the original DB and salt are
+/// untouched — the caller surfaces the error rather than silently starting
+/// fresh (the unwrap_or(0) trap: data loss must be loud, never implicit).
+///
+/// This function (and the Argon2 derivation it carries) exists ONLY to read
+/// pre-native databases. Once no `.salt` files remain, it is dead code and
+/// can be deleted together with the `argon2` dependency.
+pub(crate) fn migrate_legacy_kdf(
+    db_path: &str,
+    passphrase: &str,
+    salt_path: &str,
+) -> Result<(), RotationError> {
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        salt_path = %salt_path,
+        "Legacy KDF database detected — migrating to the native SQLCipher passphrase KDF"
+    );
+
+    let new_path = format!("{db_path}.new");
+    let old_backup = format!("{db_path}.old");
+    cleanup_artifact(&new_path, &format!("{new_path}.salt"));
+    cleanup_artifact(&old_backup, &format!("{old_backup}.salt"));
+
+    // 1. Open the source with the legacy scheme (Argon2id over the external
+    //    salt, raw-key PRAGMA, plaintext header). This verifies the
+    //    passphrase against the legacy DB.
+    let source_pool = legacy_open_pool(db_path, passphrase, salt_path)?;
+
+    // 2. Create the replacement DB under the native KDF.
+    let new_db = Database::open(&new_path, passphrase).map_err(|e| RotationError::Filesystem {
+        path: new_path.clone(),
+        error: std::io::Error::other(format!("Failed to create migration target DB: {e}")),
+    })?;
+    let new_pool = new_db.sqlite_pool().map_err(|e| {
+        let _ = std::fs::remove_file(&new_path);
+        RotationError::Filesystem {
+            path: new_path.clone(),
+            error: std::io::Error::other(format!("Failed to open migration target pool: {e}")),
+        }
+    })?;
+
+    // 3. Copy every user table.
+    let copy = copy_all_tables(&source_pool, &new_pool, db_path, &new_path);
+    drop(new_pool);
+    drop(new_db);
+    drop(source_pool);
+    if let Err(e) = copy {
+        let _ = std::fs::remove_file(&new_path);
+        let _ = std::fs::remove_file(format!("{new_path}-wal"));
+        let _ = std::fs::remove_file(format!("{new_path}-shm"));
+        return Err(e);
+    }
+
+    // 4. Atomic swap — same choreography as rotate_passphrase.
+    std::fs::rename(db_path, &old_backup).map_err(|e| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error: e,
+    })?;
+    if let Err(e) = std::fs::rename(&new_path, db_path) {
+        let _ = std::fs::rename(&old_backup, db_path);
+        let _ = std::fs::remove_file(&new_path);
+        return Err(RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: e,
+        });
+    }
+
+    // 5. Delete the old DB backup, the salt file, and stale WAL/SHM files.
+    //    The salt file is what marks the DB as legacy — deleting it is what
+    //    makes this migration run at most once.
+    if let Err(e) = std::fs::remove_file(&old_backup) {
+        tracing::warn!(
+            target: "reg.storage",
+            path = %db_path,
+            error = %e,
+            "Could not delete legacy DB backup {old_backup} — manual cleanup recommended"
+        );
+    }
+    if let Err(e) = std::fs::remove_file(salt_path) {
+        tracing::warn!(
+            target: "reg.storage",
+            path = %db_path,
+            error = %e,
+            "Could not delete legacy salt file {salt_path} — \
+             it will re-trigger migration on next open (harmless, but delete it)"
+        );
+    }
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        "Legacy KDF migration complete — DB re-encrypted under the native passphrase KDF"
+    );
+    Ok(())
+}
+
+/// Open a pool to a legacy-scheme DB: Argon2id key over the external salt
+/// file, passed as a raw-key PRAGMA with a plaintext header. This is the
+/// pre-native open path, preserved ONLY for `migrate_legacy_kdf` (and its
+/// tests) — never use it for new databases.
+fn legacy_open_pool(
+    db_path: &str,
+    passphrase: &str,
+    salt_path: &str,
+) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, RotationError> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+
+    // Argon2id parameters from the pre-native scheme (hkask-keystore
+    // encryption.rs, deleted): 64 MiB, t=3, p=4, 32-byte output.
+    let salt_bytes = std::fs::read(salt_path).map_err(|e| RotationError::Filesystem {
+        path: salt_path.to_string(),
+        error: e,
+    })?;
+    if salt_bytes.len() != crate::core::connection::SQLCIPHER_SALT_SIZE {
+        return Err(RotationError::Filesystem {
+            path: salt_path.to_string(),
+            error: std::io::Error::other(format!(
+                "invalid legacy salt file size: {} bytes",
+                salt_bytes.len()
+            )),
+        });
+    }
+    let params = Params::new(65536, 3, 4, Some(32)).map_err(|e| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error: std::io::Error::other(format!("Argon2 params: {e}")),
+    })?;
+    let mut key = [0u8; 32];
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+        .hash_password_into(passphrase.as_bytes(), &salt_bytes, &mut key)
+        .map_err(|e| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::other(format!("Argon2 key derivation: {e}")),
+        })?;
+    let key_hex = hex::encode(key);
+    let key_pragma = format!("PRAGMA key = 'x\"{key_hex}\"';");
+
+    // Verify with a standalone probe before building the pool — a wrong key
+    // leaves SQLCipher's codec in a corrupted state (SIGSEGV on teardown).
+    {
+        let probe = rusqlite::Connection::open(db_path).map_err(|e| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::other(format!("probe open: {e}")),
+        })?;
+        probe
+            .execute_batch("PRAGMA cipher_plaintext_header_size = 32;")
+            .map_err(|e| RotationError::Filesystem {
+                path: db_path.to_string(),
+                error: std::io::Error::other(format!("probe pragma: {e}")),
+            })?;
+        probe
+            .execute_batch(&key_pragma)
+            .map_err(|e| RotationError::Filesystem {
+                path: db_path.to_string(),
+                error: std::io::Error::other(format!("probe key: {e}")),
+            })?;
+        probe
+            .query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+            .map_err(|_| RotationError::OldPassphraseMismatch {
+                path: db_path.to_string(),
+                source: DatabaseError::PassphraseMismatch(db_path.to_string()),
+            })?;
+    }
+
+    let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path).with_init(move |conn| {
+        conn.execute_batch("PRAGMA cipher_plaintext_header_size = 32;")?;
+        conn.execute_batch(&key_pragma)?;
+        conn.execute_batch(crate::database::WAL_PRAGMA_BATCH)?;
+        Ok(())
+    });
+    r2d2::Pool::builder()
+        .max_size(2)
+        .build(manager)
+        .map_err(|e| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::other(format!("legacy pool: {e}")),
+        })
 }
 
 /// Copy all user tables from the source pool to the new pool.
@@ -668,9 +797,41 @@ fn cleanup_artifact(db_path: &str, salt_path: &str) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::Database;
+
+    /// Create a legacy-scheme DB fixture: Argon2id over an external salt
+    /// file + raw-key PRAGMA + plaintext header (the pre-native open path),
+    /// with one h_mem row. Used by the migration tests here and in
+    /// `connection.rs` to prove the migration preserves data.
+    pub(crate) fn create_legacy_db(db_path: &str, passphrase: &str) {
+        use argon2::{Algorithm, Argon2, Params, Version};
+
+        let salt_path = format!("{db_path}.salt");
+        let salt: [u8; crate::core::connection::SQLCIPHER_SALT_SIZE] = [0x42; 16];
+        std::fs::write(&salt_path, salt).expect("write fixture salt");
+
+        let params = Params::new(65536, 3, 4, Some(32)).expect("argon2 params");
+        let mut key = [0u8; 32];
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+            .hash_password_into(passphrase.as_bytes(), &salt, &mut key)
+            .expect("derive fixture key");
+        let key_hex = hex::encode(key);
+
+        let conn = rusqlite::Connection::open(db_path).expect("open fixture");
+        conn.execute_batch("PRAGMA cipher_plaintext_header_size = 32;")
+            .expect("header pragma");
+        conn.execute_batch(&format!("PRAGMA key = 'x\"{key_hex}\"';"))
+            .expect("key pragma");
+        conn.execute_batch(
+            "CREATE TABLE hmems (id TEXT PRIMARY KEY, entity TEXT, attribute TEXT, value TEXT, \
+             valid_from TEXT, owner_webid TEXT);
+             INSERT INTO hmems (id, entity, attribute, value, valid_from, owner_webid) \
+             VALUES ('legacy-1', 'legacy-entity', 'turn', 'legacy-value', '2026-01-01T00:00:00Z', 'webid:test');",
+        )
+        .expect("seed fixture row");
+    }
 
     fn make_test_db(dir: &Path, name: &str, passphrase: &str) -> String {
         let path = dir.join(name).to_string_lossy().to_string();
@@ -795,9 +956,7 @@ mod tests {
 
         // Simulate leftover artifacts from a prior failed rotation.
         std::fs::write(format!("{path}.new"), b"garbage").expect("write");
-        std::fs::write(format!("{path}.new.salt"), b"garbage-salt").expect("write");
         std::fs::write(format!("{path}.old"), b"garbage-old").expect("write");
-        std::fs::write(format!("{path}.salt.old"), b"garbage-old-salt").expect("write");
 
         // Rotate — should clean up artifacts first.
         rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate");
@@ -805,6 +964,53 @@ mod tests {
         assert_eq!(count_hmems(&path, "new-passphrase"), 1);
         assert!(!Path::new(&format!("{path}.old")).exists());
         assert!(!Path::new(&format!("{path}.new")).exists());
-        assert!(!Path::new(&format!("{path}.salt.old")).exists());
+    }
+
+    /// The legacy KDF migration preserves data, deletes the salt file, and
+    /// leaves the DB openable under the native KDF only.
+    #[test]
+    fn migrate_legacy_kdf_preserves_data_and_deletes_salt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.db").to_string_lossy().to_string();
+        let salt_path = format!("{path}.salt");
+        create_legacy_db(&path, "legacy-passphrase");
+
+        migrate_legacy_kdf(&path, "legacy-passphrase", &salt_path).expect("migrate");
+
+        assert!(!Path::new(&salt_path).exists(), "salt file must be deleted");
+        assert!(!Path::new(&format!("{path}.old")).exists());
+        assert!(!Path::new(&format!("{path}.new")).exists());
+
+        // The migrated DB opens natively and the data survived.
+        let db = Database::open(&path, "legacy-passphrase").expect("native open");
+        let pool = db.sqlite_pool().expect("native pool");
+        let conn = pool.get().expect("conn");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1, "legacy data must survive the migration");
+    }
+
+    /// A wrong passphrase against a legacy DB must fail the migration
+    /// WITHOUT touching the original DB or its salt file.
+    #[test]
+    fn migrate_legacy_kdf_wrong_passphrase_preserves_original() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir
+            .path()
+            .join("legacy-wp.db")
+            .to_string_lossy()
+            .to_string();
+        let salt_path = format!("{path}.salt");
+        create_legacy_db(&path, "correct-passphrase");
+
+        let result = migrate_legacy_kdf(&path, "wrong-passphrase", &salt_path);
+        assert!(result.is_err(), "wrong passphrase must fail the migration");
+        assert!(Path::new(&path).exists(), "original DB must be preserved");
+        assert!(
+            Path::new(&salt_path).exists(),
+            "salt file must be preserved"
+        );
+        assert!(!Path::new(&format!("{path}.new")).exists());
     }
 }

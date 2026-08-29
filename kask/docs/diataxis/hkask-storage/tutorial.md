@@ -2,7 +2,7 @@
 title: "hkask-storage — Tutorial: Build a Store on the DatabaseDriver Port"
 audience: [developers new to hkask-storage]
 last_updated: 2026-08-28
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [lifecycle]
@@ -36,22 +36,24 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-001
 verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/hkask_storage.rs:9-35; kask/crates/hkask-storage/src/core/connection.rs:194-217,261-283; kask/crates/hkask-storage/src/core/store_macros.rs:44-71; kask/crates/hkask-storage/src/database/sqlite.rs:60-106
+verified_against: kask/crates/hkask-storage/src/hkask_storage.rs:9-35; kask/crates/hkask-storage/src/core/connection.rs:163-186,230-252; kask/crates/hkask-storage/src/core/store_macros.rs:44-71; kask/crates/hkask-storage/src/database/sqlite.rs:60-106
 status: VERIFIED
 -->
 
 ## Step 1: Open a `Database` handle
 
 A `Database` is the connection manager. `Database::open(path, passphrase)`
-handles file infrastructure (parent directories, the 16-byte SQLCipher salt
-file at `{path}.salt`) and validates the passphrase length (≥ 8 chars). It
-does **not** open a SQLite connection — that is deferred to `sqlite_pool()`
-(`core/connection.rs:122-192`).
+handles file infrastructure (parent directories) and validates the
+passphrase length (≥ 8 chars). It does **not** open a SQLite connection —
+that is deferred to `sqlite_pool()` (`core/connection.rs:122-165`).
+Encryption uses SQLCipher's native passphrase KDF: the salt lives in the
+DB file header, so there is no external salt file for new databases
+(`core/connection.rs:317-321`).
 
 For tests, `Database::in_memory()` returns a handle whose `sqlite_pool()`
 builds a `max_size(1)` unencrypted pool — `max_size(1)` is mandatory because
 `SqliteConnectionManager::memory()` creates a separate in-memory database
-per connection (`core/connection.rs:215-217, 311-334`).
+per connection (`core/connection.rs:184-186, 280-303`).
 
 ```rust,ignore
 use hkask_storage::Database;
@@ -60,9 +62,11 @@ let pool = db.sqlite_pool()?; // creates the r2d2 pool, loads schema
 ```
 
 Production callers should go through `open_database(path, passphrase)`
-(`core/connection.rs:515-526`), which routes file paths through
-`open_or_repair` so a missing salt file self-heals instead of permanently
-breaking the DB.
+(`core/connection.rs:435-446`), which routes file paths through
+`open_or_repair` — a non-destructive open that also triggers the one-time
+legacy-KDF migration (Argon2id + external `.salt` → native KDF) inside
+`file_pool` when a `.salt` file is present
+(`core/connection.rs:305-315`).
 
 ## Step 2: Acquire a `SqliteDriver`
 
@@ -72,7 +76,7 @@ the `DatabaseDriver` trait — the provider-agnostic port that stores code
 against (`database/driver.rs:16-58`). Each `execute`/`query` call acquires a
 connection from the pool and returns it on completion, enabling concurrent
 read access. Every operation also emits a `reg.storage` tracing span with
-table, duration, and row count (`database/sqlite.rs:203-232`).
+table, duration, and row count (`database/sqlite.rs:210-232`).
 
 ```rust,ignore
 use hkask_storage::SqliteDriver;
@@ -81,7 +85,7 @@ let driver = Arc::new(SqliteDriver::new(pool));
 
 For file-backed production pools, prefer `SqliteDriver::new_labeled(pool, path)`
 so a `SQLITE_BUSY`/lock failure names the offending file in its error prefix
-(`database/sqlite.rs:64-73`). For unencrypted non-SQLCipher DBs (e.g. the
+(`database/sqlite.rs:68-73`). For unencrypted non-SQLCipher DBs (e.g. the
 media gallery metadata DB), use `SqliteDriver::file_pool(path)`
 (`database/sqlite.rs:111-117`).
 
@@ -116,7 +120,7 @@ repeat. Two ownership patterns coexist:
   `memory_links`, `pod_meta`, `agent_registry`, `loop_cursors`,
   `reg_variety_checkpoint`, `reg_alerts`) live in `core/sql/schema.sql` and
   are loaded by `Database::initialize_schema` on every pool creation
-  (`core/connection.rs:223-229`). Stores for these tables do not re-create
+  (`core/connection.rs:192-204`). Stores for these tables do not re-create
   them — `HMemStore::from_driver` documents why
   (`hmem.rs:143-149`): re-creating would duplicate the schema and drift.
 - **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`,
