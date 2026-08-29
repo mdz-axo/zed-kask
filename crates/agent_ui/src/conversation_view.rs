@@ -122,7 +122,9 @@ enum ThreadFeedback {
 
 #[derive(Debug)]
 pub(crate) enum ThreadError {
-    PaymentRequired,
+    PaymentRequired {
+        provider: SharedString,
+    },
     DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
@@ -186,7 +188,9 @@ impl From<anyhow::Error> for ThreadError {
                         provider: provider.to_string().into(),
                     },
                     ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
-                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired,
+                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired {
+                        provider: provider.to_string().into(),
+                    },
                     ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
                         provider: provider.to_string().into(),
                     },

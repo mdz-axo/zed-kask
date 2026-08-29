@@ -1,6 +1,7 @@
 //! FMP earnings-call transcript fetch — `company_transcript` (earnings mode).
 //!
-//! Design: `kask/docs/explanation/earnings-transcript-analysis-design.md` §(a).
+//! Design: the `listening` skill (`.agents/skills/listening/SKILL.md`) §(a)
+//! (original design doc in git history).
 //! Fetches FMP `/stable/earning-call-transcript` for a window of quarters.
 //! Coverage-honest: per-quarter failures collected into `coverage.missing`,
 //! not propagated as whole-tool failure; the tool fails only when zero

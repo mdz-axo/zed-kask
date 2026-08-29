@@ -15,12 +15,12 @@
 //! push-to-cloud, remove-local, fire, delete, and publish (fermi v0.10.15 —
 //! preflight via `swarm_publish_checks`, then `swarm_publish_agent`, with an
 //! audited admin force-publish path). Spend actions are gated behind the
-//! cost/consent gate (see `kask/docs/plans/abw-swarm-intelligence.md` §3.6).
+//! cost/consent gate (see `kask/docs/diataxis/swarm_system/reference.md`).
 //!
 //! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server.
 //! The operator asks the curator to compose/steer a swarm; the curator's
 //! `SkillTool` invokes the `swarm-intelligence` cascade (see
-//! `kask/docs/plans/abw-swarm-intelligence.md` §13). The conversation is
+//! `kask/docs/diataxis/swarm_system/explanation.md`). The conversation is
 //! persisted via the global `ThreadStore` — the curator's live state
 //! (in-flight plans, collected `delegate_results`, prior iterations)
 //! survives panel close and restart, and every turn is ingested into the
@@ -80,7 +80,7 @@ use workspace::{
 // Steer mode: a `ConversationView` scoped to the swarm MCP server. The
 // curator's `SkillTool` invokes the `swarm-intelligence` cascade when the
 // operator asks to compose/steer a swarm. See
-// `kask/docs/plans/abw-swarm-intelligence.md` §13.
+// `kask/docs/diataxis/swarm_system/explanation.md`.
 use gpui::SharedString;
 
 actions!(

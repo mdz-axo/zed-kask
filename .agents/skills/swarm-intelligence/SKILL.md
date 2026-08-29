@@ -283,7 +283,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
     `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
     `swarm_generate_ontology_local` (local knowledge analogs — search/generate
     over the operator's `hkask-memory` + local inference; no ABW; see
-    [Local Knowledge Tools design](../../../kask/docs/plans/local-swarm-knowledge-tools.md)),
+    [Local Knowledge Tools design](../../../kask/docs/diataxis/swarm_system/reference.md),
     `swarm_ai_assist` (authoring aid), `swarm_evaluate_local` (deterministic
     task-success evaluator — stamps a `TaskSuccessVerdict` with
     `provenance: Deterministic`), `swarm_execute_plan_local` (batch plan

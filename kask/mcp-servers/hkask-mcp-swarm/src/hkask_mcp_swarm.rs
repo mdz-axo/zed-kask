@@ -248,7 +248,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             }
             // Load local agent cards (v2 §15). In Abw mode this is a no-op
             // if the directory doesn't exist — the registry stays empty and
-            // local tools (Slice 9) will return zero agents. In Local mode
+            // local tools will return zero agents. In Local mode
             // the startup warning above already covers the missing-dir case.
             let local_registry =
                 std::sync::Arc::new(LocalAgentRegistry::new(config.local_agents_dir.clone()));

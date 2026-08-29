@@ -665,6 +665,6 @@ pub(crate) struct PingOutput {
 // N1 (2026-07-20): CapabilityContext removed. Every tool call in the MCP
 // server passed `None` for `ctx`, making the tool-allowlist check dead code.
 // Tool dispatch is enforced at the membrane (GovernedTool), not at the
-// port — see docs/explanation/architecture-patterns.md. The port-level
+// port — see kask/docs/diataxis/hkask-mcp-server/explanation.md. The port-level
 // check was speculative and never wired. If per-tool capability gating is
 // needed at the port in the future, reintroduce it with a real wiring plan.

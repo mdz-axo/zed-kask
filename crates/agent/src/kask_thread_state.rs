@@ -4,7 +4,8 @@
 //!
 //! Methods on this struct encapsulate the kask-specific turn-loop behaviors
 //! that were previously inline in `Thread`'s methods. See
-//! `kask/docs/plans/thread-hooks-refactor-2026-08-26.md` for the full plan.
+//! git history (`plans/thread-hooks-refactor-2026-08-26.md`, deleted after
+//! implementation) for the full plan.
 //!
 //! ## D-seam mapping
 //!

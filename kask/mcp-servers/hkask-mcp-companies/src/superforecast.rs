@@ -9,7 +9,8 @@
 //! wrappers around it.
 //!
 //! See `registry/templates/superforecasting/README.md` (Deterministic
-//! Primitives contract) and `docs/explanation/forecasting-and-scenarios.md`
+//! Primitives contract) and the forecasting-stack section of
+//! `kask/docs/reference/mcp-servers/README.md`
 //! for the layered architecture.
 
 use crate::scenarios::ScenarioResult;

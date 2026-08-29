@@ -11038,7 +11038,8 @@ mod tests {
     // These tests pin the CURRENT behavior of kask-specific Thread fields
     // and turn-loop branches that were previously untested in thread.rs.
     // They must pass before AND after the KaskThreadState extraction.
-    // See kask/docs/plans/thread-hooks-refactor-2026-08-26.md §2 (gaps).
+    // The refactor plan (deleted after implementation) is in git history:
+    // plans/thread-hooks-refactor-2026-08-26.md §2 (gaps).
 
     /// Pin B6: `is_curator_memory_edit_tool` classifies exactly the three
     /// curator memory-edit tools. Non-curator threads cannot edit curator

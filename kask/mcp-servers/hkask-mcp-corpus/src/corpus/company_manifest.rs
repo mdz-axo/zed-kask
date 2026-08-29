@@ -2,8 +2,9 @@
 //! (`kask/registry/company-sources/*.yaml`).
 //!
 //! The manifest is the approved-source trust policy for
-//! `corpus_discover_company` (design: `kask/docs/explanation/
-//! company-corpus-design.md` §B2). `deny_unknown_fields` makes schema drift
+//! `corpus_discover_company` (documented in
+//! `kask/docs/reference/mcp-servers/corpus.md`; original design doc in git
+//! history). `deny_unknown_fields` makes schema drift
 //! between operator-authored manifests and this struct fail loudly at parse
 //! time, matching the `CorpusConfig` contract (`embed/types.rs`).
 //!

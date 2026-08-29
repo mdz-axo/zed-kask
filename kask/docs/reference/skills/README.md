@@ -10,7 +10,7 @@ mds_categories: [domain, composition]
 
 # Skill Registry
 
-> **Execution model (verified 2026-08-24):** Skills execute via **upstream Zed body injection**.
+> **Execution model (verified 2026-08-28):** Skills execute via **upstream Zed body injection**.
 > `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from disk
 > and injects it into the agent's context via `render_skill_envelope`. The model reads the body
 > and follows the instructions. The agent is the executor.
@@ -42,7 +42,7 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 ---
 
-## Registry counts (verified 2026-08-24)
+## Registry counts (verified 2026-08-28)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
@@ -62,10 +62,11 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Core Development (12 skills)
+## Core Development (13 skills)
 
 | Skill | Purpose |
 |-------|---------|
+| `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
 | `bug-hunt` | Bug hunting expeditions against target crates using Weinberg, Beizer, Bach, Hendrickson methodologies |
 | `tdd` | Test-driven development: RED → GREEN → REFACTOR loop |
 | `diagnose` | Disciplined diagnosis loop: reproduce → anchor → hypothesise → instrument → fix → regression-test |
@@ -108,7 +109,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Meta & Maintenance (8 skills)
+## Meta & Maintenance (10 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -121,13 +122,15 @@ read-only resources the skill body may reference via `render_template`.
 | `create-skill` | Convergent kask-native skill creation with ontological grounding |
 | `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and SKILL.md files against their stated goals |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
+| `therapy` | Memory therapy session — scan a memory DB (curator, replica/corpus, or swarm) for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
 
 ---
 
-## Specialized (15 skills)
+## Specialized (16 skills)
 
 | Skill | Purpose |
 |-------|---------|
+| `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives) chaining media server tools in known-good sequences |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
 | `mcda` | Multi-Criteria Decision Analysis with compensation masking |
 | `scenario-builder` | Schwartz scenario planning with STEEP analysis |

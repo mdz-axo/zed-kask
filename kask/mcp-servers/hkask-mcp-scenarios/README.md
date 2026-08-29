@@ -51,6 +51,6 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 ## Related documentation
 
 - [`docs/architecture/core/PRINCIPLES.md`](../../docs/architecture/core/PRINCIPLES.md) — P2, P4, and P9 constraints
-- [`docs/explanation/forecasting-and-scenarios.md`](../../docs/explanation/forecasting-and-scenarios.md) — Schwartz, Tetlock, and Chermack integration
-- [`docs/architecture/scenarios-companies-bridge.md`](../../docs/architecture/scenarios-companies-bridge.md) — companies-server bridge status
+- Forecasting stack (Schwartz, Tetlock, and Chermack integration) — `kask/docs/reference/mcp-servers/README.md` § The Forecasting Stack
+- Companies-server bridge status — `kask/docs/reference/mcp-servers/companies.md` § Scenarios ↔ Companies Bridge
 - [`docs/reference/mcp-servers/README.md`](../../docs/reference/mcp-servers/README.md) — built-in server registry

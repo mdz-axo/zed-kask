@@ -39,7 +39,7 @@
 //! (`empty_selection_fails_open_instead_of_stripping_all_mcp_tools`).
 //!
 //! Keyword overlap is a floor, not a ceiling — see the embedding-based
-//! successor sketched in `kask/docs/architecture/AGENT_SYSTEM_PROMPT.md`.
+//! successor sketched in `kask/docs/architecture/skills-and-composition.md` Part I.
 //!
 //! When no router is wired (upstream Zed), all tools pass through (I2).
 

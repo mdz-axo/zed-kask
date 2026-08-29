@@ -8,7 +8,8 @@
 //!
 //! Event-tree forecasting with conditional dependencies (MAIA methodology).
 //! The Schwartz 2x2 axis-driven mode lives in `hkask-mcp-companies`
-//! (see `docs/architecture/scenarios-companies-bridge.md` for the connection path).
+//! (see the Scenarios ↔ Companies Bridge section of
+//! `kask/docs/reference/mcp-servers/companies.md` for the connection path).
 //!
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.

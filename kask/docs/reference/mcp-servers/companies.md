@@ -119,7 +119,7 @@ scenario_quantify                      scenario_impact_valuation
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 54 tools: `combined_router` sums eight sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
+The diagram traces the dispatch seam shared by all 49 tools: `combined_router` sums eight sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD

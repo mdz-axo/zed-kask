@@ -145,7 +145,7 @@ The deep-only templates (`company-8part.j2`, `falstaffian-competitive-rotation.j
 
 ## MCP Tool Integration
 
-All MCP tool calls are called directly (deterministic, governed, testable). See `kask/docs/explanation/skill-mcp-integration.md` for the two invocation patterns. Failed MCP tools surface as `data_gaps` entries in the consuming template — never collapse to None (per .rules).
+All MCP tool calls are called directly (deterministic, governed, testable). See `kask/docs/architecture/skills-and-composition.md` Part II for the invocation patterns. Failed MCP tools surface as `data_gaps` entries in the consuming template — never collapse to None (per .rules).
 
 ## Constraints
 

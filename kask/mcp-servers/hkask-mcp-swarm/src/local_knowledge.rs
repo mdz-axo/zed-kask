@@ -7,7 +7,8 @@
 //! triples, scoped per agent by an `agent:<agent_id>:` prefix) and the local
 //! `InferencePort` (Ollama/cloud via the zed IPC bridge). No ABW round-trips.
 //!
-//! Design rationale: `kask/docs/plans/local-swarm-knowledge-tools.md`.
+//! Design rationale: `kask/docs/diataxis/swarm_system/reference.md`
+//! (knowledge tools section).
 //!
 //! Graceful degradation: `LazyLocalMemory::get` opens the
 //! `MemoryStore` lazily. The SQLCipher passphrase is the ONE shared DB

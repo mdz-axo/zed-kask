@@ -38,6 +38,7 @@ use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
@@ -54,6 +55,21 @@ use super::elicitation::{
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+
+/// User-facing message for a `PaymentRequired` rejection. Only Zed's own
+/// backend bills against the user's Zed plan; every other provider returning
+/// 402/billing codes is reporting that its own account is out of credit, so
+/// the message must name that provider instead of offering a Zed upgrade.
+fn payment_required_message(provider: &SharedString) -> String {
+    if provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref() {
+        "You reached your free usage limit. Upgrade to Zed Pro for more prompts.".to_string()
+    } else {
+        format!(
+            "{provider} rejected the request because your {provider} account is out of credit \
+             or over its spend limit. Add credit to your {provider} account to continue."
+        )
+    }
+}
 
 #[derive(Default)]
 struct ThreadFeedbackState {
@@ -1884,11 +1900,10 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::PaymentRequired => (
+                ThreadError::PaymentRequired { provider } => (
                     "payment_required",
                     None,
-                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
-                        .into(),
+                    payment_required_message(provider).into(),
                 ),
                 ThreadError::Refusal => {
                     let model_or_agent_name = self.current_model_name(cx);
@@ -11072,7 +11087,9 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::PaymentRequired { provider } => {
+                self.render_payment_required_error(provider, cx)
+            }
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -11205,20 +11222,33 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
-        const ERROR_MESSAGE: &str =
-            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+    fn render_payment_required_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        // Only Zed's own backend bills against the user's Zed plan. Any other
+        // provider returning 402/billing codes is reporting that *its* account
+        // is out of credit — rendering a Zed Pro upsell there misattributes the
+        // failure (e.g. an exhausted OpenRouter key looks like a Zed free-tier
+        // cap).
+        let is_zed_cloud = provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref();
+        let message: SharedString = payment_required_message(&provider).into();
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
-            .title("Free Usage Exceeded")
-            .description(ERROR_MESSAGE)
+            .title(if is_zed_cloud {
+                "Free Usage Exceeded"
+            } else {
+                "Payment Required"
+            })
+            .description(message.clone())
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(ERROR_MESSAGE)),
+                    .when(is_zed_cloud, |this| this.child(self.upgrade_button(cx)))
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }

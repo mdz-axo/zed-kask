@@ -137,7 +137,8 @@ pub struct ReportSkillUseIssueRequest {
 // These tools give the curator agent write access to its own memory, with
 // evidence-grounding and confidence-floor constraints. User threads cannot
 // write to memory directly — only the curator (the one agent with a feedback
-// loop). See `kask/docs/plans/memory-system-improvements.md` Priority 5.
+// loop). See `kask/docs/architecture/memory-system-specification.md`
+    // (consolidation + hygiene sections).
 //
 // Grounding: Dunning's Cassandra quandary (`138299529:16-17`) — poor
 // performers can't evaluate which memories are worth writing. MemGPT (Packer
