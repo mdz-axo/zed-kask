@@ -130,10 +130,10 @@ impl hkask_types::InferencePort for LazyInferencePort {
 
     fn generate_vision(
         &self,
-        _prompt: &str,
-        _images: &[String],
-        _parameters: &hkask_types::template::LLMParameters,
-        _model_override: Option<&str>,
+        prompt: &str,
+        images: &[String],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -142,10 +142,27 @@ impl hkask_types::InferencePort for LazyInferencePort {
                 + '_,
         >,
     > {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(
-                "vision inference unavailable on lazy inference port".to_string(),
-            ))
+        let prompt = prompt.to_string();
+        let images = images.to_vec();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call. Vision
+            // inference (face detection, object detection, scene captioning,
+            // etc.) routes through zed's LanguageModelRegistry via the bridge,
+            // same as every other inference method on this port.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_vision(&prompt, &images, &params, model_override.as_deref())
+                    .await;
+            }
+            // No direct fallback — vision requires a multimodal model that
+            // `DirectEmbeddingPort` cannot provide. The error names the
+            // missing socket so callers can distinguish "not configured"
+            // from "configured but broken."
+            Err(hkask_types::InferenceError::Connection(format!(
+                "vision inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
         })
     }
 
@@ -290,14 +307,15 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 }
-/// a clear, socket-named error so callers can distinguish "dispatch
-/// unavailable" from "no models" / "backend doesn't implement vision" / other
-/// failures. The trait's default impls are overridden for `generate_vision`,
-/// `embed`, and `list_models` specifically because their defaults are **not**
-/// socket-named: `list_models` defaults to `Ok(Vec::new())` (a broken bridge
-/// read as an empty registry), `generate_vision` to a generic
-/// `VisionUnsupported`, and `embed` to a generic `Connection`. Overriding them
-/// keeps the "every method names the missing socket" contract honest.
+/// `LazyInferencePort` overrides the trait defaults for `generate_vision`,
+/// `embed`, `list_models`, `generate_batch`, and `media_generate` so every
+/// method tries the IPC bridge first and names the missing socket in its
+/// fallback error. The trait defaults are not socket-named: `list_models`
+/// defaults to `Ok(Vec::new())` (a broken bridge read as an empty registry),
+/// `generate_vision` to a generic `VisionUnsupported`, and `embed` to a
+/// generic `Connection`. Overriding them keeps the "every method names the
+/// missing socket" contract honest.
+//
 /// Direct HTTP embedding port for Ollama's OpenAI-compatible endpoint.
 ///
 /// When the IPC bridge is unavailable (e.g. the corpus MCP server runs

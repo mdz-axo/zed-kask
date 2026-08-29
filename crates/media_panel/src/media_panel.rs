@@ -13,6 +13,7 @@
 //! generate, search, organize, or transform media; the curator dispatches via
 //! the media MCP tools and results appear inline.
 
+pub mod media_viewer;
 pub mod panel_button;
 
 use gpui::{
@@ -26,6 +27,7 @@ use workspace::{
     register_serializable_item,
 };
 
+pub use media_viewer::MediaViewer;
 pub use panel_button::MediaPanelButton;
 
 /// The MCP server id this panel's Steer conversation is scoped to.
@@ -89,15 +91,25 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-/// The Media panel. Steer-only: all media operations (generate, search,
-/// organize, transform, transcribe) are reachable through the scoped curator
-/// conversation. Generated media renders inline via the media block renderer.
+/// The Media panel: a Steer director pane plus a tabbed viewing pane.
+///
+/// The director (left) is the scoped curator conversation — all media
+/// operations (generate, search, organize, transform, transcribe) are
+/// driven through chat. The viewing pane (right) surfaces what the tools
+/// actually produced: assets are extracted structurally from tool-result
+/// `display_hint` fields (T-V2), so the viewer updates on every tool
+/// result regardless of whether the model echoes fenced blocks.
 pub struct MediaPanel {
     focus_handle: FocusHandle,
     steer: hkask_steer::SteerSurface,
     project: Entity<project::Project>,
     fs: std::sync::Arc<dyn fs::Fs>,
     workspace_handle: WeakEntity<Workspace>,
+    /// The tabbed viewing pane (Media / Library).
+    viewer: Entity<MediaViewer>,
+    /// The observed conversation thread + the observation subscription.
+    /// Wired lazily in `render` once the Steer conversation exists.
+    thread_observation: Option<gpui::Subscription>,
 }
 
 impl MediaPanel {
@@ -115,6 +127,8 @@ impl MediaPanel {
             project,
             fs,
             workspace_handle: workspace_handle.clone(),
+            viewer: cx.new(|_| MediaViewer::new()),
+            thread_observation: None,
         })
     }
 
@@ -204,10 +218,42 @@ impl gpui::Render for MediaPanel {
         // Lazily ensure the Steer surface the first time the panel draws —
         // `ensure_steer` needs `&mut Window`.
         self.ensure_steer(window, cx);
+
+        // Wire the thread observation as soon as the conversation exists:
+        // every thread update re-ingests tool-result display hints into the
+        // viewer. This is the structural path — the viewer reflects what
+        // the tools produced, not what the model echoed.
+        if self.thread_observation.is_none()
+            && let Some(conversation) = self.steer.conversation()
+            && let Some(thread_view) = conversation.read(cx).active_thread()
+        {
+            let thread = thread_view.read(cx).thread.clone();
+            let viewer = self.viewer.clone();
+            self.thread_observation = Some(cx.observe(&thread, move |_, thread, cx| {
+                viewer.update(cx, |viewer, cx| viewer.ingest_thread(thread.clone(), cx));
+            }));
+            // Ingest whatever the (possibly resumed) thread already holds.
+            let thread_for_ingest = thread.clone();
+            self.viewer
+                .update(cx, |viewer, cx| viewer.ingest_thread(thread_for_ingest, cx));
+        }
+
         let conversation = self.steer.conversation().cloned();
-        div()
+        let director = div()
+            .h_full()
+            .flex_2()
+            .min_w_96()
+            .border_r_1()
+            .border_color(cx.theme().colors().border_variant)
+            .when_some(conversation, |el, conversation| el.child(conversation));
+
+        h_flex()
             .size_full()
-            .when_some(conversation, |div, conversation| div.child(conversation))
+            // The director: the Steer conversation drives all media
+            // operations through the scoped media MCP tools.
+            .child(director)
+            // The viewing pane: what the tools produced, structurally.
+            .child(div().h_full().flex_3().child(self.viewer.clone()))
     }
 }
 

@@ -260,7 +260,6 @@ mod tests {
         assert!(display_hints_from_output_text("{\"content\":{\"ok\":true}}").is_empty());
         assert!(display_hints_from_output_text("not json at all").is_empty());
     }
-}
 
     #[test]
     fn is_config_gap_kind_classifies_environment_signals() {

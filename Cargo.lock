@@ -12164,6 +12164,7 @@ dependencies = [
 name = "media_panel"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
  "agent_ui",
  "anyhow",
@@ -12173,6 +12174,8 @@ dependencies = [
  "hkask-mcp-media",
  "hkask-steer",
  "hkask-tool-invoker",
+ "hkask-types",
+ "hkask-viz-core",
  "marketplace_ui_common",
  "project",
  "remote_connection",

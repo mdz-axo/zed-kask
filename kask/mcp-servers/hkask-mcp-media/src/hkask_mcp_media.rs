@@ -115,7 +115,9 @@ hkask_mcp_server::mcp_server!(
         /// through zed's LanguageModelRegistry via the IPC bridge. The
         /// `InferencePort::media_generate` trait method (overridden by
         /// `InferenceIpcClient`) handles image/video/speech/transcription;
-        /// `embed` and `list_vision_models` handle the gallery embedding path.
+        /// `generate_vision` handles face/object/color/composition/caption
+        /// analysis; `embed` and `list_vision_models` handle the gallery
+        /// embedding and model-resolution paths.
         pub vision_port: Arc<dyn InferencePort>,
         pub gallery_state: Arc<Mutex<Option<GalleryState>>>,
         pub gallery_store: Arc<GalleryStore>,
@@ -460,11 +462,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // design. `run_server` calls `load_dotenv` internally.
 
     // Resolve the inference port — routes through zed's LanguageModelRegistry
-    // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to
-    // a standalone `MediaRouter` with env-var keys otherwise. The same
-    // port handles vision/chat AND media generation (image/video/speech/
-    // transcription) — `InferencePort::media_generate` is overridden by
-    // `InferenceIpcClient` to proxy media calls through the IPC bridge.
+    // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set. The same port
+    // handles chat (`generate_with_model`), vision (`generate_vision`),
+    // embeddings (`embed`), and media generation (`media_generate`).
+    //
+    // Fallback behavior when the IPC bridge is unavailable:
+    // - `generate_with_model` / `embed` → `DirectEmbeddingPort` (Ollama)
+    // - `media_generate` → standalone `MediaRouter` (env-var keys)
+    // - `generate_vision` / `list_models` / `generate_batch` → socket-named
+    //   error (no direct fallback — these require the bridge)
     let vision_port = hkask_inference::resolve_inference_port().await;
 
     // Build the GalleryStore. Durable (file-backed SQLite) at
@@ -557,21 +563,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
 // ── OMC consumer pin ────────────────────────────────────────────────────
 //
-// The MovieLabs OMC bridge was recovered on 2026-08-26 with a consumer: the
-// `media_block::enrich_with_omc_and_provenance` function references
-// `omc::tool_to_omc` to bake OMC concept tags into the `display_hint` block
-// body. This test pins the ENFORCEMENT (the call site), not the absence —
-// per `.rules` "Advertised invariants need enforcement points", a module
+// Pins that the MovieLabs OMC bridge module has a consumer
+// (`media_block::enrich_with_omc_and_provenance` references `omc::tool_to_omc`).
+// Per `.rules` "Advertised invariants need enforcement points", a module
 // with no consumer is dead surface regardless of its doc comments.
 #[cfg(test)]
 mod dead_surface_pins {
-    /// The OMC bridge module was re-added on 2026-08-05 with a consumer: the
-    /// `media_block::enrich_with_omc_and_provenance` function references
-    /// `omc::tool_to_omc` to bake OMC concept tags into the `display_hint`
-    /// block body. This test pins the ENFORCEMENT (the call site), not the
-    /// absence — per `.rules` "Advertised invariants need enforcement points",
-    /// a module with no consumer is dead surface regardless of its doc
-    /// comments.
     #[test]
     fn omc_module_present_with_consumer() {
         // The source file must exist.

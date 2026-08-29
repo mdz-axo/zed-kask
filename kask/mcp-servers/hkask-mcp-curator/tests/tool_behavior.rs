@@ -49,7 +49,11 @@ impl hkask_types::InferencePort for FailingEmbedPort {
 /// Stub inference port whose `embed` returns a constant unit vector for any
 /// input — every query is a KNN match for every stored embedding (cosine
 /// distance 0), isolating the semantic leg from keyword/entity matching.
-const TEST_EMBEDDING_DIM: usize = 8;
+/// The vector length reads the same resolver the `EmbeddingStore` schema
+/// uses, so the stub stays in sync regardless of `HKASK_EMBEDDING_DIM`.
+fn test_dim() -> usize {
+    hkask_storage::embedding_dim()
+}
 
 struct ConstantEmbedPort;
 
@@ -73,10 +77,11 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
         // Capture only the count (owned, `Copy`) so the future borrows
         // nothing — mirrors the swarm-server test stub pattern.
         let count = texts.len();
+        let dim = test_dim();
         Box::pin(async move {
             Ok((0..count)
                 .map(|_| {
-                    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+                    let mut vector = vec![0.0f32; dim];
                     vector[0] = 1.0;
                     vector
                 })
@@ -119,15 +124,15 @@ fn make_server() -> CuratorServer {
 }
 
 /// Build a `CuratorServer` whose memory store carries a live embedding
-/// index (in-memory `EmbeddingStore` at `TEST_EMBEDDING_DIM`) and whose
+/// index (in-memory `EmbeddingStore` at the schema dim) and whose
 /// inference port embeds every input to the same unit vector — the shape
 /// the semantic recall path needs. Returns the server plus its memory
 /// store handle so tests can seed h_mems and embeddings directly.
 fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStore>) {
     let driver = SqliteDriver::in_memory_driver();
     let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
-    let embedding_store = EmbeddingStore::from_driver(driver.clone(), TEST_EMBEDDING_DIM)
-        .expect("embedding store init");
+    let embedding_store =
+        EmbeddingStore::from_driver(driver.clone(), test_dim()).expect("embedding store init");
     let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
     let escalation_queue =
         Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
@@ -565,7 +570,7 @@ async fn semantic_search_matches_question_by_embedding() {
         WebID::new(),
     );
     memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+    let mut vector = vec![0.0f32; test_dim()];
     vector[0] = 1.0;
     memory
         .store_embedding(entity, &vector, "test-model", None)
@@ -654,7 +659,7 @@ async fn consult_returns_semantic_fragments_for_question() {
         WebID::new(),
     );
     memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+    let mut vector = vec![0.0f32; test_dim()];
     vector[0] = 1.0;
     memory
         .store_embedding(entity, &vector, "test-model", None)
