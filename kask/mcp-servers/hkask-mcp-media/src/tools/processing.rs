@@ -61,7 +61,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Apply style transfer to a gallery image. Delegates to fal.ai Flux dev img2img."
+        description = "Apply style transfer to a gallery image via the configured image-to-image provider (DeepInfra or OpenRouter)."
     )]
     pub async fn image_apply_style(
         &self,
@@ -452,7 +452,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Animate a gallery image into a short video clip. Delegates to fal.ai Seedance 2.0."
+        description = "Animate a gallery image into a short video clip via the configured image-to-video provider (DeepInfra or OpenRouter)."
     )]
     pub async fn image_to_video(
         &self,

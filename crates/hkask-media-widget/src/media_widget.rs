@@ -825,6 +825,11 @@ impl gpui::Render for MediaWidget {
                             .overflow_hidden();
 
                         let mut video_area = div()
+                            .id("media-video-area")
+                            // Test-support hook: exposes this element's laid-out
+                            // bounds to layout ground-truth tests (noop in
+                            // release builds).
+                            .debug_selector(|| "media-video-area".into())
                             .flex_1()
                             .min_h(px(120.0))
                             .bg(theme.colors().editor_background);
@@ -1325,5 +1330,93 @@ mod tests {
         // Non-OMC and unknown concepts fall back to the general explain tool.
         assert_eq!(explain_tool_for("fibo:Corporation"), "describe_image");
         assert_eq!(explain_tool_for(""), "describe_image");
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use gpui::{TestAppContext, px, size};
+
+    const FIXTURE: &str =
+        "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+
+    /// Host view: fills the window so the widget under test gets a definite
+    /// size to lay out against (as the viewer pane does in production).
+    struct WidgetHost {
+        widget: Entity<MediaWidget>,
+    }
+
+    impl gpui::Render for WidgetHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.widget.clone())
+        }
+    }
+
+    /// Layout ground truth: the video area's laid-out bounds must respond to
+    /// the window size. This is the property that was FALSE in both shipped
+    /// broken versions (scroll-wrapper collapse: constant ~120px; fraction-
+    /// width img: constant natural 480px) while every unit test passed —
+    /// the assertions here read GPUI's actual laid-out pixel bounds, not the
+    /// element tree I wrote.
+    #[gpui::test]
+    fn video_area_scales_with_window_size(cx: &mut TestAppContext) {
+        if !std::path::Path::new(FIXTURE).exists() {
+            return;
+        }
+        // The widget's render reads the theme global — initialize it the
+        // way markdown's render tests do.
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+        let body = format!(r#"{{"kind":"video","src":"{FIXTURE}"}}"#);
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let widget = crate::create_media_widget(&body, window, cx)
+                .expect("video block renders a widget");
+            WidgetHost { widget }
+        });
+        // add_window_view opens maximized — resize to the measurement size
+        // before reading bounds.
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let short_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out with debug bounds");
+
+        // Simulate the operator resizing the window taller.
+        cx.simulate_resize(size(px(800.), px(900.)));
+        cx.run_until_parked();
+
+        let tall_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out with debug bounds after resize");
+
+        // Width fills the window (minus the container's 1px borders).
+        assert!(
+            short_bounds.size.width > px(700.),
+            "video area must fill the window width, got {:?}",
+            short_bounds.size.width
+        );
+        // The discriminating property: height tracks the window height
+        // exactly — flex_1 absorbs the entire 300px resize delta.
+        assert_eq!(
+            tall_bounds.size.height - short_bounds.size.height,
+            px(300.),
+            "video area height must scale with window height: {:?} at 600px vs {:?} at 900px",
+            short_bounds.size.height,
+            tall_bounds.size.height
+        );
+        assert!(
+            short_bounds.size.height > px(400.),
+            "video area must fill most of a 600px window, got {:?}",
+            short_bounds.size.height
+        );
     }
 }

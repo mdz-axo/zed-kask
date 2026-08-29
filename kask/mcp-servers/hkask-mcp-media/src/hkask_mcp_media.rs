@@ -67,11 +67,11 @@ use video::YtDlpRunner;
 /// The default values are `const` references to the single source of truth in
 /// `hkask_inference::model_constants` — do not duplicate the model ids here.
 pub mod models {
-    /// Default TTS model: Qwen3-TTS (Apache 2.0) via fal.ai
+    /// Default TTS model: Kokoro-82M via DeepInfra
     pub const TTS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_TTS_MODEL;
     pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
 
-    /// Default STT model: fal.ai Wizper (optimized Whisper v3)
+    /// Default STT model: Whisper Large v3 via DeepInfra
     pub const STT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_STT_MODEL;
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
 
@@ -79,7 +79,7 @@ pub mod models {
     pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
 
-    /// Default image generation model: FLUX.2 \[dev\] (open-source) via fal.ai
+    /// Default image generation model: FLUX-2-klein-4B via DeepInfra
     pub const IMAGE_GEN_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL;
     pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
@@ -542,12 +542,18 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-media",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
+            let template_env = templates::create_env().map_err(|e| {
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "media template registration".to_string(),
+                    detail: e.to_string(),
+                }
+            })?;
             Ok(MediaServer::new(
                 ctx.webid,
                 vision_port.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),
-                templates::create_env(),
+                template_env,
                 FfmpegRunner::detect(),
                 YtDlpRunner::detect(),
                 jobs::new_job_store(),
@@ -1037,7 +1043,7 @@ mod tool_behavior_tests {
             Arc::new(NoopInferencePort),
             Arc::new(std::sync::Mutex::new(None)),
             gallery_store,
-            templates::create_env(),
+            templates::create_env().expect("media templates must compile"),
             video::ffmpeg::FfmpegRunner::detect(),
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),

@@ -30,9 +30,14 @@ impl MediaServer {
                     count: num_images,
                     ..Default::default()
                 };
-                if let Some(style_name) = &style
-                    && let Some(preset) = crate::style::get_preset(style_name)
-                {
+                if let Some(style_name) = &style {
+                    let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "unknown style '{}'; available styles: {}",
+                            style_name,
+                            crate::style::available_styles().join(", ")
+                        ))
+                    })?;
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
                 let result = self
@@ -104,9 +109,14 @@ impl MediaServer {
                     strength,
                     ..Default::default()
                 };
-                if let Some(style_name) = &style
-                    && let Some(preset) = crate::style::get_preset(style_name)
-                {
+                if let Some(style_name) = &style {
+                    let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "unknown style '{}'; available styles: {}",
+                            style_name,
+                            crate::style::available_styles().join(", ")
+                        ))
+                    })?;
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
                 let result = self
@@ -213,9 +223,14 @@ impl MediaServer {
                     duration,
                     ..Default::default()
                 };
-                if let Some(style_name) = &style
-                    && let Some(preset) = crate::style::get_preset(style_name)
-                {
+                if let Some(style_name) = &style {
+                    let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "unknown style '{}'; available styles: {}",
+                            style_name,
+                            crate::style::available_styles().join(", ")
+                        ))
+                    })?;
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
                 let result = self
@@ -342,9 +357,14 @@ impl MediaServer {
                     count: Some(count),
                     ..Default::default()
                 };
-                if let Some(style_name) = &style
-                    && let Some(preset) = crate::style::get_preset(style_name)
-                {
+                if let Some(style_name) = &style {
+                    let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "unknown style '{}'; available styles: {}",
+                            style_name,
+                            crate::style::available_styles().join(", ")
+                        ))
+                    })?;
                     crate::style::apply_preset(&mut media_params, &preset);
                 }
                 let result = self

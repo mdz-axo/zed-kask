@@ -7,22 +7,32 @@ use minijinja::Environment;
 use std::collections::HashMap;
 
 /// Initialize the template environment with all media prompt templates.
-pub fn create_env() -> Environment<'static> {
+///
+/// Registration failures are propagated — a template that fails to parse
+/// must not be silently absent from the environment (pipelines would only
+/// discover the gap at render time, far from the cause).
+pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
     let mut env = Environment::new();
-    env.add_template("tag_faces", TAG_FACES).ok();
-    env.add_template("tag_objects", TAG_OBJECTS).ok();
-    env.add_template("tag_colors", TAG_COLORS).ok();
-    env.add_template("tag_composition", TAG_COMPOSITION).ok();
-    env.add_template("describe_scene", DESCRIBE_SCENE).ok();
-    env.add_template("classify_style", CLASSIFY_STYLE).ok();
-    env.add_template("caption", CAPTION).ok();
-    env.add_template("voice_design", VOICE_DESIGN).ok();
-    env.add_template("video_caption", VIDEO_CAPTION).ok();
-    env.add_template("validate_face_ref", VALIDATE_FACE_REF)
-        .ok();
-    env.add_template("match_faces", MATCH_FACES).ok();
-    env.add_template("embed_face", EMBED_FACE).ok();
-    env
+    let templates: &[(&str, &str)] = &[
+        ("tag_faces", TAG_FACES),
+        ("tag_objects", TAG_OBJECTS),
+        ("tag_colors", TAG_COLORS),
+        ("tag_composition", TAG_COMPOSITION),
+        ("describe_scene", DESCRIBE_SCENE),
+        ("classify_style", CLASSIFY_STYLE),
+        ("caption", CAPTION),
+        ("voice_design", VOICE_DESIGN),
+        ("video_caption", VIDEO_CAPTION),
+        ("validate_face_ref", VALIDATE_FACE_REF),
+        ("match_faces", MATCH_FACES),
+        ("embed_face", EMBED_FACE),
+    ];
+    for (name, source) in templates {
+        env.add_template(name, source).map_err(|e| {
+            crate::MediaError::Template(format!("Template '{}' failed to register: {}", name, e))
+        })?;
+    }
+    Ok(env)
 }
 
 /// Render a template with string key-value variables.

@@ -9109,9 +9109,11 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "settings",
  "smallvec",
  "smol",
  "theme",
+ "theme_settings",
  "tracing",
  "ui",
 ]

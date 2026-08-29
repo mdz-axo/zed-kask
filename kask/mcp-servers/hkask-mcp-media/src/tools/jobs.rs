@@ -39,8 +39,15 @@ impl Drop for JobPanicGuard {
         if self.defused {
             return;
         }
-        if let Ok(mut store) = self.job_store.lock()
-            && let Some(job) = store.get_mut(&self.job_id)
+        let Ok(mut store) = self.job_store.lock() else {
+            tracing::warn!(
+                target: "hkask.mcp.media.jobs",
+                job_id = %self.job_id,
+                "Job store lock poisoned — panicked job left in its prior status"
+            );
+            return;
+        };
+        if let Some(job) = store.get_mut(&self.job_id)
             && job.status != "cancelled"
         {
             job.status = "failed".to_string();
@@ -108,11 +115,21 @@ impl MediaServer {
 
                 tokio::spawn(async move {
                     // Update status to "running".
-                    {
-                        if let Ok(mut store) = job_store.lock() {
+                    match job_store.lock() {
+                        Ok(mut store) => {
                             if let Some(job) = store.get_mut(&job_id_for_task) {
                                 job.status = "running".to_string();
                             }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.media.jobs",
+                                job_id = %job_id_for_task,
+                                error = %e,
+                                "Job store lock poisoned — 'running' status update skipped"
+                            );
+                            // Continue anyway: the generation can still run, and
+                            // the final update below retries the lock.
                         }
                     }
 
@@ -127,8 +144,15 @@ impl MediaServer {
 
                     // Update the job record with the result.
                     {
-                        if let Ok(mut store) = job_store.lock() {
-                            if let Some(job) = store.get_mut(&job_id_for_task) {
+                        let Ok(mut store) = job_store.lock() else {
+                            tracing::warn!(
+                                target: "hkask.mcp.media.jobs",
+                                job_id = %job_id_for_task,
+                                "Job store lock poisoned — completed job result could not be recorded"
+                            );
+                            return;
+                        };
+                        if let Some(job) = store.get_mut(&job_id_for_task) {
                                 let now = hkask_types::time::now_rfc3339();
                                 job.completed_at = Some(now);
                                 match result {
@@ -152,7 +176,6 @@ impl MediaServer {
                                 }
                             }
                         }
-                    }
 
                     // Normal completion — disarm the panic guard.
                     guard.defuse();

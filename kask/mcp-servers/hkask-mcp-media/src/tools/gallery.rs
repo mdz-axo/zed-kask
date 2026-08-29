@@ -631,7 +631,12 @@ impl MediaServer {
                                 match self.gallery_store.get_tags(&image_id) {
                                     Ok(tags) if tags.is_empty() => untagged.push(i),
                                     Ok(_) => continue,
-                                    Err(_) => untagged.push(i),
+                                    // A store failure is not "untagged" — surfacing it
+                                    // prevents a DB outage from silently triggering
+                                    // re-analysis of the entire gallery.
+                                    Err(e) => {
+                                        return Err(map_media_error(e.into()));
+                                    }
                                 }
                             }
                         }
@@ -954,7 +959,12 @@ impl MediaServer {
                     };
 
                     if let Some(ref terms) = search_terms {
-                        let tags = self.gallery_store.get_tags(&img.id).unwrap_or_default();
+                        // A store failure must not silently drop images from the
+                        // timeline — propagate so the operator sees the DB error.
+                        let tags = self
+                            .gallery_store
+                            .get_tags(&img.id)
+                            .map_err(|e| map_media_error(e.into()))?;
                         let matches = terms.iter().any(|term| {
                             tags.iter()
                                 .any(|t| t.value.to_lowercase().contains(&term.to_lowercase()))
@@ -1216,11 +1226,18 @@ impl MediaServer {
             // Replay the stored params JSON (a serialized MediaGenerateParams),
             // then apply the stored prompt and — for image-ops — the current
             // image URL as the source (the stored image_url may be stale).
-            let mut media_params: hkask_types::MediaGenerateParams = lineage
-                .params
-                .as_deref()
-                .map(|p| serde_json::from_str(p).unwrap_or_default())
-                .unwrap_or_default();
+            // Corrupt stored params must error, not silently fall back to
+            // defaults — a default-params "reproduction" is a different
+            // generation reported as success.
+            let mut media_params: hkask_types::MediaGenerateParams =
+                match lineage.params.as_deref() {
+                    None => Default::default(),
+                    Some(p) => serde_json::from_str(p).map_err(|e| {
+                        McpToolError::internal(format!(
+                            "Corrupt lineage params for image {image_index}: {e}"
+                        ))
+                    })?,
+                };
             if let Some(prompt) = lineage.prompt {
                 media_params.prompt = Some(prompt);
             }

@@ -474,7 +474,7 @@ pub struct GalleryRecordGenerationRequest {
     pub prompt: Option<String>,
     /// The provider-specific model id used.
     pub model: Option<String>,
-    /// The provider that produced the image ("fal.ai", "openrouter", ...).
+    /// The provider that produced the image ("deepinfra", "openrouter", ...).
     pub provider: Option<String>,
     /// The generation seed, if known.
     pub seed: Option<i64>,

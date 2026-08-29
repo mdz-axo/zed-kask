@@ -233,7 +233,13 @@ impl MediaServer {
     ) -> (u32, Vec<String>) {
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
-            None => return (0, vec!["No vision model available — configure a vision-capable provider (OpenRouter, or fal.ai)".to_string()]),
+            None => return (
+                0,
+                vec![
+                    "No vision model available — configure a vision-capable provider (OpenRouter)"
+                        .to_string(),
+                ],
+            ),
         };
         let mut analyzed = 0u32;
         let mut errors = Vec::new();
@@ -271,8 +277,13 @@ impl MediaServer {
                 {
                     Ok(faces) => {
                         for face in &faces {
-                            let value = serde_json::to_string(face).unwrap_or_default();
-                            self.persist_tag(&image_id, "face", &value, 0.85, vision_label);
+                            match serde_json::to_string(face) {
+                                Ok(value) => {
+                                    self.persist_tag(&image_id, "face", &value, 0.85, vision_label)
+                                }
+                                Err(e) => errors
+                                    .push(format!("image {} face tag serialization: {}", idx, e)),
+                            }
                         }
                     }
                     Err(e) => {
@@ -292,8 +303,17 @@ impl MediaServer {
                 {
                     Ok(objects) => {
                         for obj in &objects {
-                            let value = serde_json::to_string(obj).unwrap_or_default();
-                            self.persist_tag(&image_id, "object", &value, 0.85, vision_label);
+                            match serde_json::to_string(obj) {
+                                Ok(value) => self.persist_tag(
+                                    &image_id,
+                                    "object",
+                                    &value,
+                                    0.85,
+                                    vision_label,
+                                ),
+                                Err(e) => errors
+                                    .push(format!("image {} object tag serialization: {}", idx, e)),
+                            }
                         }
                     }
                     Err(e) => {
@@ -314,8 +334,19 @@ impl MediaServer {
                     Ok(parsed) => {
                         if let Some(colors) = parsed["colors"].as_array() {
                             for color in colors {
-                                let value = serde_json::to_string(color).unwrap_or_default();
-                                self.persist_tag(&image_id, "color", &value, 0.85, vision_label);
+                                match serde_json::to_string(color) {
+                                    Ok(value) => self.persist_tag(
+                                        &image_id,
+                                        "color",
+                                        &value,
+                                        0.85,
+                                        vision_label,
+                                    ),
+                                    Err(e) => errors.push(format!(
+                                        "image {} color tag serialization: {}",
+                                        idx, e
+                                    )),
+                                }
                             }
                         }
                         for field in &["palette_style", "temperature", "saturation"] {

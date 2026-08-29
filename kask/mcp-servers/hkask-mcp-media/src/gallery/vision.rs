@@ -92,13 +92,16 @@ pub async fn detect_faces(
             crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e))
         })?;
 
-    // Try parsing as JSON array first
-    let faces = if let Ok(faces) = serde_json::from_str::<Vec<serde_json::Value>>(&result.text) {
-        faces
-    } else {
-        // Fallback: wrap raw text as a single face entry
-        vec![serde_json::json!({"raw": result.text.trim()})]
-    };
+    // The template demands a JSON array — anything else is a model misbehavior
+    // (refusal, prose preamble, truncation) and must error, not be fabricated
+    // into a face entry that would be persisted as a 0.85-confidence tag.
+    let faces: Vec<serde_json::Value> = serde_json::from_str(&result.text).map_err(|e| {
+        crate::MediaError::VisionParse(format!(
+            "Failed to parse face detection result: {} — raw: {}",
+            e,
+            &result.text[..200.min(result.text.len())]
+        ))
+    })?;
 
     tracing::info!(
         target: "reg.mcp.media.face",
@@ -332,7 +335,8 @@ pub async fn embed_face(
 /// Detect and label all prominent objects in an image.
 ///
 /// Returns a list of object descriptions (JSON objects with name,
-/// location, confidence, description). Falls back to raw text.
+/// location, confidence, description). Unparseable model output is an
+/// error — it is never fabricated into an object entry.
 ///
 pub async fn detect_objects(
     inference: &Arc<dyn InferencePort>,
@@ -352,17 +356,21 @@ pub async fn detect_objects(
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
-    if let Ok(objects) = serde_json::from_str::<Vec<serde_json::Value>>(&result.text) {
-        Ok(objects)
-    } else {
-        Ok(vec![serde_json::json!({"raw": result.text.trim()})])
-    }
+    let objects: Vec<serde_json::Value> = serde_json::from_str(&result.text).map_err(|e| {
+        crate::MediaError::VisionParse(format!(
+            "Failed to parse object detection result: {} — raw: {}",
+            e,
+            &result.text[..200.min(result.text.len())]
+        ))
+    })?;
+    Ok(objects)
 }
 
 /// Analyze the dominant color palette of an image.
 ///
 /// Returns a JSON object with colors array, palette_style, temperature,
-/// and saturation. Falls back to raw text.
+/// and saturation. Unparseable model output is an error — a `raw` wrapper
+/// would silently yield zero color tags while reporting success.
 ///
 pub async fn analyze_colors(
     inference: &Arc<dyn InferencePort>,
@@ -381,18 +389,21 @@ pub async fn analyze_colors(
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result.text) {
-        Ok(parsed)
-    } else {
-        Ok(serde_json::json!({"raw": result.text.trim()}))
-    }
+    let parsed: serde_json::Value = serde_json::from_str(&result.text).map_err(|e| {
+        crate::MediaError::VisionParse(format!(
+            "Failed to parse color analysis result: {} — raw: {}",
+            e,
+            &result.text[..200.min(result.text.len())]
+        ))
+    })?;
+    Ok(parsed)
 }
 
 /// Analyze the photographic composition of an image.
 ///
 /// Returns a JSON object with focal_point, rule_of_thirds, leading_lines,
 /// depth_of_field, perspective, framing, symmetry, negative_space.
-/// Falls back to raw text.
+/// Unparseable model output is an error.
 ///
 pub async fn analyze_composition(
     inference: &Arc<dyn InferencePort>,
@@ -409,11 +420,14 @@ pub async fn analyze_composition(
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result.text) {
-        Ok(parsed)
-    } else {
-        Ok(serde_json::json!({"raw": result.text.trim()}))
-    }
+    let parsed: serde_json::Value = serde_json::from_str(&result.text).map_err(|e| {
+        crate::MediaError::VisionParse(format!(
+            "Failed to parse composition analysis result: {} — raw: {}",
+            e,
+            &result.text[..200.min(result.text.len())]
+        ))
+    })?;
+    Ok(parsed)
 }
 
 /// Generate a descriptive caption for an image.

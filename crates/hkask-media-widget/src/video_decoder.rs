@@ -885,6 +885,9 @@ mod tests {
         // widget loop does. Position must hold >= 1s and advance with wall
         // time, and audio must actually be queued on the output player.
         player.seek(Duration::from_secs(1));
+        // Seek rebases exactly: position is at the seek target (plus only
+        // sub-100ms wall time), never target + pre-seek elapsed.
+        assert!(player.position() < Duration::from_millis(1_100));
         for _ in 0..30 {
             player
                 .advance_and_decode(Duration::from_millis(33))

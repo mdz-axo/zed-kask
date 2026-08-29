@@ -540,11 +540,6 @@ impl MediaViewer {
                 )
                 .into_any_element();
         }
-        let total_label = self
-            .gallery_total
-            .map(|total| format!("Library ({})", total))
-            .unwrap_or_else(|| format!("Library ({})", self.assets.len()));
-        let _ = total_label;
         let rows = self
             .assets
             .iter()

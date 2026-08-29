@@ -1,5 +1,31 @@
 # Media Panel Slice 1: Model Browser — Todo
 
+> Slice 1 (model browser) is complete — `model_list`/`model_info` ship in the
+> server's tool surface. The backlog below is the media viewer/player work
+> scoped during the video-viewer session (2026-08-29).
+
+## Media Viewer Backlog (2026-08-29)
+
+- [ ] **V1** Interactive video editing in the viewer
+  - [ ] Mark in/out points on the selected asset's transport (buttons + keyboard)
+  - [ ] Trim dispatches `video_clip` with the marked range; result surfaces via its `display_hint`
+  - [ ] Multi-select in Library/Media → `video_concat`; result surfaces as a new asset
+  - [ ] Optional overflow actions: `video_to_gif`, `video_remix`, `video_info`
+  - [ ] All dispatches via `shared_tool_invoker` (governed path), errors in the viewer status line
+  - [ ] Manual verification: trim the vonnegut clip to 30s and play the result
+- [ ] **V2** Save / copy stream affordance on the viewer
+  - [ ] Copy asset src (path or URL) to clipboard from the viewer header
+  - [ ] "Save" on streamed assets dispatches `video_fetch` (persist to artifacts dir) and surfaces the local copy
+  - [ ] `video_info` action showing probe metadata (duration, codec, fps) in the Detail tab
+- [ ] **V3** Viewer error recovery / reload
+  - [ ] Per-asset retry button on the error state (not just the global refresh)
+  - [ ] Retry rebuilds the widget for that asset only (targeted viz-cache eviction by body hash)
+  - [ ] Streamed-URL expiry (googlevideo 403) detected and re-resolved on retry
+- [ ] **V4** Dead/redundant code refactor (media stack)
+  - [ ] Extract `import_media_file` helper in `hkask-mcp-media/src/assets.rs` — `video_fetch`, `gallery_add_video`, `gallery_add_audio` duplicate read→hash→`add_media`→display-hint
+  - [ ] Shared yt-dlp binary probing: server `YtDlpRunner::detect` and widget `streaming::newest_yt_dlp_binary` are deliberately duplicated (crates cannot share the dep) — find a shared home (e.g. `hkask-types`) or pin the sync with a cross-reference test
+  - [ ] Audit the media server's 60+ tool surface for dead tools (zero steer-prompt mentions + zero viewer dispatches)
+
 ## Phase 1: Foundation
 
 - [ ] **T1** Add `MediaModelInfo`, `ModelListRequest`, `ModelInfoRequest` to `types.rs`
