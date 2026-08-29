@@ -119,13 +119,37 @@ impl McpToolError {
     pub fn failed_precondition(message: impl Into<String>) -> Self {
         Self::new(McpErrorKind::FailedPrecondition, message)
     }
-    /// Serialize to JSON string for MCP wire format.
-    ///
-    /// expect: "The system reports tool dispatch failures with structured classification"
-    /// post: returns JSON string with "error" object containing message and kind
+    /// Serialize to JSON string — the `structured_content` payload of the
+    /// wire error result (see the `IntoCallToolResult` impl below).
     #[must_use]
     pub fn to_json_string(&self) -> String {
         serde_json::json!({"error": self.message, "kind": self.kind.to_string()}).to_string()
+    }
+}
+
+/// The core wire pattern for tool errors: a tool-logical error is a REAL
+/// error result. rmcp's blanket `IntoCallToolResult for Result<T, E>` marks
+/// the result `is_error: true` when a tool returns `Err`, so servers whose
+/// tools return `Result<String, McpToolError>` get native error semantics
+/// on the wire — the typed kind rides in `structured_content` and the
+/// human-readable message as text content. No in-band envelope sniffing
+/// is needed on the client: `is_error` is set by the protocol, and the
+/// kind is read from `structured_content` (shape: `{"error", "kind"}`,
+/// parseable by `hkask_types::tool_response::parse_tool_error`).
+impl rmcp::handler::server::tool::IntoCallToolResult for McpToolError {
+    fn into_call_tool_result(
+        self,
+    ) -> std::result::Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
+        Ok(rmcp::model::CallToolResult {
+            is_error: Some(true),
+            content: vec![rmcp::model::ContentBlock::text(self.message.clone())],
+            structured_content: Some(serde_json::json!({
+                "error": self.message,
+                "kind": self.kind.to_string(),
+            })),
+            ..Default::default()
+        }
+        .into())
     }
 }
 

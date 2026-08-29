@@ -3,8 +3,8 @@
 //! `RealMemoryPort` — full hKask memory stack. Stores completed turns as
 //! h_mems (Private, perspective = curator WebID, process-axis anchored ontology)
 //! and a shared copy for curator access.
-//! Embeds the user prompt for future retrieval. Used when `HKASK_DB_PATH` +
-//! `HKASK_DB_PASSPHRASE` are configured.
+//! Embeds the user prompt for future retrieval. Used when the curator DB
+//! path + `HKASK_DB_PASSPHRASE` are configured.
 //!
 //! The port is injected via a global hook (`agent::set_memory_port`) so the
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet

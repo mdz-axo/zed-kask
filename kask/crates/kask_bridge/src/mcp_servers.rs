@@ -206,7 +206,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `run()` for the SQLCipher store. `HKASK_KANBAN_DB` is a
             // non-secret DB path — moved to `config_env` and read via
             // `std::env::var` to match every other DB-path env var
-            // (`HKASK_CURATOR_DB`, `HKASK_DB_PATH`, `HKASK_RSS_DB`, etc.).
+            // (`HKASK_CURATOR_DB`, `HKASK_RSS_DB`, etc.).
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[

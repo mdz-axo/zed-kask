@@ -181,9 +181,9 @@ fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
     }
 }
 
-/// Provision the DB passphrase — the ONE passphrase for every SQLCipher
-/// database (curator, corpus, kanban, swarm memory, training, research).
-/// The swarm memory DB has no separate passphrase; it opens with this one.
+// There is ONE DB passphrase (provisioned above) for every SQLCipher database
+// (curator, corpus, kanban, swarm memory, training, research). The swarm
+// memory DB has no separate passphrase; it opens with this one.
 
 // ── Passphrase rotation ──────────────────────────────────────────────────────
 
@@ -239,52 +239,6 @@ fn resolve_swarm_memory_db_path() -> String {
             .to_string_lossy()
             .to_string()
     }
-}
-
-/// Rotate the curator DB passphrase.
-///
-/// Resolves the old passphrase from the keychain chain
-/// (`resolve_db_passphrase_string`), resolves the curator DB path, and calls
-/// `hkask_storage::rotate_passphrase`. The caller must then write the new
-/// passphrase to the keychain and nudge MCP servers to restart.
-///
-/// # Arguments
-///
-/// - `new_passphrase`: The new passphrase (>=8 chars).
-///
-/// # Errors
-///
-/// Returns `BridgeRotationError` if the old passphrase can't be resolved,
-/// the DB path can't be resolved, or the storage-layer rotation fails.
-///
-/// # Failure safety
-///
-/// If rotation fails, the old DB is untouched — the caller should NOT write
-/// the new passphrase to the keychain. The caller should write the new
-/// passphrase ONLY after this function returns `Ok(())`.
-pub fn rotate_curator_db_passphrase(new_passphrase: &str) -> Result<(), BridgeRotationError> {
-    let db_path = resolve_curator_db_path();
-    let old_passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
-        .map_err(|e| BridgeRotationError::OldPassphraseResolve {
-            db_path: db_path.clone(),
-            error: e.to_string(),
-        })?
-        .to_string();
-
-    tracing::info!(
-        target: "hkask.identity",
-        db_path = %db_path,
-        "Rotating curator DB passphrase"
-    );
-
-    hkask_storage::rotate_passphrase(&db_path, &old_passphrase, new_passphrase).map_err(|e| {
-        BridgeRotationError::Storage {
-            db_path: db_path.clone(),
-            source: e,
-        }
-    })?;
-
-    Ok(())
 }
 
 /// Rotate the passphrase of EVERY SQLCipher database that uses the shared

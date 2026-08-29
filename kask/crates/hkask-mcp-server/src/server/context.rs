@@ -94,7 +94,11 @@ impl CapabilityTier {
     ) -> Self {
         let anonymous = hkask_types::WebID::from_persona(b"anonymous");
         let embedded = *webid != anonymous;
-        let persistence_available = resolved_credentials.contains_key("HKASK_DB_PATH");
+        // `HKASK_DB_PASSPHRASE` is the persistence credential — injected by
+        // `build_mcp_server_env` for every DB-backed server. (This previously
+        // checked `HKASK_DB_PATH`, a variable nothing ever injects — the flag
+        // was permanently false, a broken feedback loop.)
+        let persistence_available = resolved_credentials.contains_key("HKASK_DB_PASSPHRASE");
         let keystore_available = Self::probe_keystore();
         Self {
             embedded,

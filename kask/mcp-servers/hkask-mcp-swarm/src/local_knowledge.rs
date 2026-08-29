@@ -768,8 +768,6 @@ mod tests {
     #[tokio::test]
     async fn record_delegation_writes_stigmergy_annotations() {
         let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
 
         record_delegation(&memory, "test_agent", 42, Some(true), "the agent succeeded").await;
 

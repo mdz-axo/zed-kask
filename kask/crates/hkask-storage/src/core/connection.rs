@@ -448,7 +448,11 @@ mod tests {
     use super::*;
 
     fn temp_db_path(name: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("hkask-storage-test-{}-{}", std::process::id(), name));
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-storage-test-{}-{}",
+            std::process::id(),
+            name
+        ));
         let _ = std::fs::create_dir_all(&dir);
         dir.join("test.db").to_string_lossy().to_string()
     }
@@ -472,15 +476,22 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(!std::path::Path::new(&salt_path).exists(),
-            "the native KDF must never create a salt file");
+        assert!(
+            !std::path::Path::new(&salt_path).exists(),
+            "the native KDF must never create a salt file"
+        );
 
         {
             let db = open_or_repair(&db_path, "test_passphrase").unwrap();
             let pool = db.sqlite_pool().unwrap();
             let conn = pool.get().unwrap();
-            let v: String = conn.query_row("SELECT v FROM roundtrip WHERE id = 1", [], |r| r.get(0)).unwrap();
-            assert_eq!(v, "hello", "data must survive close/reopen under the native KDF");
+            let v: String = conn
+                .query_row("SELECT v FROM roundtrip WHERE id = 1", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                v, "hello",
+                "data must survive close/reopen under the native KDF"
+            );
         }
 
         let _ = std::fs::remove_file(&db_path);
@@ -501,11 +512,21 @@ mod tests {
         }
         assert!(std::path::Path::new(&db_path).exists());
 
-        let err = open_or_repair(&db_path, "wrong_passphrase!!").unwrap_err();
-        assert!(matches!(err, DatabaseError::PassphraseMismatch(_)),
-            "wrong passphrase must be PassphraseMismatch, got: {err:?}");
-        assert!(std::path::Path::new(&db_path).exists(),
-            "a wrong passphrase must never delete the DB");
+        let err = match open_or_repair(&db_path, "wrong_passphrase!!") {
+            Err(e) => e,
+            Ok(db) => {
+                drop(db);
+                panic!("wrong passphrase must not open the DB");
+            }
+        };
+        assert!(
+            matches!(err, DatabaseError::PassphraseMismatch(_)),
+            "wrong passphrase must be PassphraseMismatch, got: {err:?}"
+        );
+        assert!(
+            std::path::Path::new(&db_path).exists(),
+            "a wrong passphrase must never delete the DB"
+        );
 
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(format!("{db_path}-wal"));
@@ -524,8 +545,10 @@ mod tests {
 
         // Create a legacy-scheme DB with one row of data.
         crate::rotation::tests::create_legacy_db(&db_path, "test_passphrase");
-        assert!(std::path::Path::new(&salt_path).exists(),
-            "fixture: legacy DB must have a salt file");
+        assert!(
+            std::path::Path::new(&salt_path).exists(),
+            "fixture: legacy DB must have a salt file"
+        );
 
         // First open triggers the migration.
         {
@@ -537,16 +560,19 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(!std::path::Path::new(&salt_path).exists(),
-            "migration must delete the salt file");
+        assert!(
+            !std::path::Path::new(&salt_path).exists(),
+            "migration must delete the salt file"
+        );
 
         // Data written under the legacy scheme must survive the migration.
         {
             let db = open_or_repair(&db_path, "test_passphrase").unwrap();
             let pool = db.sqlite_pool().unwrap();
             let conn = pool.get().unwrap();
-            let count: i64 = conn.query_row(
-                "SELECT count(*) FROM h_mems", [], |r| r.get(0)).unwrap();
+            let count: i64 = conn
+                .query_row("SELECT count(*) FROM hmems", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(count, 1, "legacy data must survive the KDF migration");
         }
 
