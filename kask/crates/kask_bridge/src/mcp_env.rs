@@ -24,27 +24,6 @@ use crate::settings::{
 // MCP servers when `KaskMcpSettings::default()` disagreed with the
 // serde default).
 
-pub(crate) fn emit_data_dir_env(
-    data_dir: &str,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    env.insert("HKASK_DATA_DIR".to_string(), data_dir.to_string());
-}
-
-/// Emit the resolved artifacts dir so content MCP servers (research,
-/// companies, portfolio, corpus) resolve their `{server}-mcp/` routes
-/// under the same root as the parent process. Without this, an operator
-/// `HKASK_ARTIFACTS_DIR` override is silently dropped by
-/// `filter_config_env_for_server` and the child falls back to the
-/// Documents default, diverging from the parent when the override is set.
-pub(crate) fn emit_artifacts_dir_env(env: &mut std::collections::HashMap<String, String>) {
-    let artifacts_dir = hkask_types::agent_paths::resolve_artifacts_dir();
-    env.insert(
-        "HKASK_ARTIFACTS_DIR".to_string(),
-        artifacts_dir.to_string_lossy().to_string(),
-    );
-}
-
 /// Emit general settings that MCP servers consume — the process-wide
 /// concurrency ceiling from `KaskGeneralSettings.max_concurrency`.
 /// MCP servers use this as the default for their own concurrency limits

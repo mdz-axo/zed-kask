@@ -35,6 +35,12 @@ pub enum MediaError {
     #[error("yt-dlp not available")]
     YtDlpUnavailable,
 
+    /// yt-dlp ran but exited non-zero. Carries the exit status and the
+    /// tail of yt-dlp's stderr so the operator sees the actual failure
+    /// (unsupported URL, HTTP 403, stale extractor) instead of a generic hint.
+    #[error("yt-dlp fetch failed: {0}")]
+    YtDlpFailed(String),
+
     /// ffmpeg command execution failures.
     #[error("{0}")]
     FfmpegFailed(String),
@@ -101,6 +107,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         MediaError::FfmpegUnavailable | MediaError::YtDlpUnavailable => {
             McpToolError::unavailable(e.to_string())
         }
+        MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)

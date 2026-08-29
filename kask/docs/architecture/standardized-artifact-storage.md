@@ -117,15 +117,10 @@ corpus cache files) are stored separately in a visible directory via
 | 3 | `$HOME/Documents/zk-data` |
 | 4 | `$HOME/zk-data` (fallback) |
 
-This separation keeps internal app data hidden (XDG convention) while making
-user-facing output visible and intuitive. **The rule is fixed:** the hidden
-internal data dir holds ONLY infrastructure — the databases. Every artifact
-file and output an MCP server produces for the user (reports, screens,
-transaction files, cache files, exports) lives under the visible artifacts
-dir at `{server}-mcp/{artifact-type}/` (e.g. `companies-mcp/reports/`,
-`portfolio-mcp/transactions/`, `corpus-mcp/cache/`), constructed via
-`mcp_artifacts_subdir(server_id, artifact_type)` (`agent_paths.rs`) and
-resolved via `resolve_under_artifacts_dir`.
+The two roots, the classification rule (databases = hidden infrastructure;
+artifact files and outputs = visible `{server}-mcp/` routes), and the
+self-healing/protection posture are specified normatively in §0 — this
+section only defines the resolution precedence.
 
 This root is injected as `HKASK_DATA_DIR` into every MCP server child process
 by `KaskSettings::mcp_env()`

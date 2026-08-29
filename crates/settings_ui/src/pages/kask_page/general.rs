@@ -1,4 +1,4 @@
-//! General sub-page — kask-wide data directory configuration.
+//! General sub-page — kask-wide data and artifacts directory configuration.
 
 use super::*;
 
@@ -9,7 +9,8 @@ pub(crate) fn render_general_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let (data_dir, tool_router, general): (
+    let (data_dir, artifacts_dir, tool_router, general): (
+        String,
         String,
         kask_bridge::KaskToolRouterSettings,
         kask_bridge::KaskGeneralSettings,
@@ -17,6 +18,7 @@ pub(crate) fn render_general_page(
         .map(|c| {
             (
                 c.data_dir.unwrap_or_default(),
+                c.artifacts_dir.unwrap_or_default(),
                 c.tool_router.map(Into::into).unwrap_or_default(),
                 c.general.map(Into::into).unwrap_or_default(),
             )
@@ -26,14 +28,25 @@ pub(crate) fn render_general_page(
     let resolved_default = kask_bridge::resolve_data_dir()
         .to_string_lossy()
         .to_string();
+    let resolved_artifacts_default = kask_bridge::resolve_artifacts_dir()
+        .to_string_lossy()
+        .to_string();
 
     let data_dir_input = kask_string_input(
         "kask-general-data-dir",
-        "Kask Data Directory",
+        "Kask Data Directory (Databases)",
         format!("Default: {resolved_default}"),
         data_dir,
         "kask",
         "data_dir",
+    );
+    let artifacts_dir_input = kask_string_input(
+        "kask-general-artifacts-dir",
+        "Kask Artifacts Directory",
+        format!("Default: {resolved_artifacts_default}"),
+        artifacts_dir,
+        "kask",
+        "artifacts_dir",
     );
     let threshold_input = kask_string_input(
         "kask-tool-router-threshold",
@@ -75,17 +88,16 @@ pub(crate) fn render_general_page(
                 .child(SettingsSectionHeader::new("General"))
                 .child(
                     Label::new(
-                        "The zed-kask data directory is the root for internal \
-                         app data (databases, traces, MCP state). It contains \
-                         four class subdirectories: agents/ (per-agent files), \
-                         mcp/ (MCP server databases), skills/ (user skills), \
-                         and threads/ (archived chat threads). Every MCP server \
-                         receives this path as HKASK_DATA_DIR so they resolve \
-                         databases consistently. When empty, the runtime \
-                         resolves a platform default (HKASK_DATA_DIR env var, \
-                         XDG_DATA_HOME/zed-kask, or ~/.local/share/zed-kask). \
-                         User-facing artifacts (reports, exports) are stored \
-                         separately in ~/Documents/zk-data/.",
+                        "Zed-kask stores persistent state in two rooted trees. \
+                         The data directory (hidden) holds ONLY infrastructure — \
+                         databases and machine state (agents/, mcp/, skills/, \
+                         threads/). The artifacts directory (visible, default \
+                         ~/Documents/zk-data/) holds EVERY artifact file and \
+                         output the MCP servers produce for you — reports, \
+                         screens, transaction files, generated media, corpus \
+                         cache — at {server}-mcp/{artifact-type}/. Every MCP \
+                         server receives both roots (HKASK_DATA_DIR / \
+                         HKASK_ARTIFACTS_DIR) so paths resolve consistently.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -95,16 +107,32 @@ pub(crate) fn render_general_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("Kask Data Directory"))
+                .child(Label::new("Kask Data Directory (Databases)"))
                 .child(
                     Label::new(
-                        "Root directory for all kask databases and agent state. \
-                         Leave empty to use the platform default.",
+                        "Hidden root for all kask databases and agent state \
+                         (infrastructure only). Leave empty to use the platform \
+                         default (~/.local/share/zed-kask on Linux).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
                 .child(data_dir_input),
+        )
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Kask Artifacts Directory"))
+                .child(
+                    Label::new(
+                        "Visible root for ALL artifact files and outputs of the \
+                         MCP servers ({server}-mcp/{artifact-type}/). Leave \
+                         empty to use the platform default (~/Documents/zk-data/).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(artifacts_dir_input),
         )
         .child(Divider::horizontal())
         .child(

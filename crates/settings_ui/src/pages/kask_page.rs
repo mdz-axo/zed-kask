@@ -373,6 +373,9 @@ pub(crate) fn kask_string_input(
                             ("kask", "data_dir") => {
                                 kask.data_dir = Some(parsed.clone());
                             }
+                            ("kask", "artifacts_dir") => {
+                                kask.artifacts_dir = Some(parsed.clone());
+                            }
                             ("research", "rss_db") => {
                                 kask.research.get_or_insert_default().rss_db = Some(parsed.clone());
                             }
@@ -539,15 +542,15 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.data_dir"),
             description: Some(
-                "Configure the zed-kask data directory — the root for internal \
-                 app data (agents/, mcp/, skills/, threads/). Every MCP server \
-                 receives this path as HKASK_DATA_DIR. When empty, the runtime \
-                 resolves a platform default (~/.local/share/zed-kask on Linux). \
-                 User-facing artifacts (reports, exports) are stored separately \
-                 in ~/Documents/zk-data/."
+                "Configure the two kask storage roots: the data directory \
+                 (hidden infrastructure — databases, agents/, mcp/, skills/, \
+                 threads/) and the artifacts directory (visible, default \
+                 ~/Documents/zk-data/ — ALL artifact files and outputs at \
+                 {server}-mcp/{artifact-type}/). Every MCP server receives both \
+                 as HKASK_DATA_DIR / HKASK_ARTIFACTS_DIR."
                     .into(),
             ),
-            search_aliases: &["data dir", "data directory", "zed-kask data", "hkask data", "database path"],
+            search_aliases: &["data dir", "data directory", "artifacts dir", "artifacts directory", "zed-kask data", "hkask data", "database path", "zk-data"],
             in_json: true,
             files: USER,
             render: render_general_page,

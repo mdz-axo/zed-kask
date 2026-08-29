@@ -20,10 +20,13 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` (settings.rs:36-85) has 16 subsections:
+`KaskSettings` (settings.rs:36-85) has 16 subsections plus two top-level
+storage-root fields:
 
 | Field | Type | Default source |
 |-------|------|---------------|
+| `data_dir` | `String` | `""` → runtime resolves `~/.local/share/zed-kask/` (hidden infrastructure tree: databases, agents/, mcp/, skills/, threads/); emitted as `HKASK_DATA_DIR` |
+| `artifacts_dir` | `String` | `""` → runtime resolves `~/Documents/zk-data/` (visible artifacts tree: ALL artifact files and outputs at `{server}-mcp/{artifact-type}/`); emitted as `HKASK_ARTIFACTS_DIR` |
 | `mcp` | `KaskMcpSettings` | `Default` |
 | `curator` | `KaskCuratorSettings` | `Default` |
 | `memory` | `KaskMemorySettings` | `Default` |
@@ -419,7 +422,8 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 | `HKASK_DB_PATH` | SQLite path | |
 | `HKASK_DB_PASSPHRASE` | SQLite passphrase | SQLCipher encryption |
 | `HKASK_EMBEDDING_DIM` | Embedding dimension | Default 1024 (from `KaskCorpusSettings::default()`) |
-| `HKASK_DATA_DIR` | hKask data directory | Passed to all MCP servers for path resolution |
+| `HKASK_DATA_DIR` | hKask data directory | Passed to all MCP servers for path resolution (hidden infrastructure root) |
+| `HKASK_ARTIFACTS_DIR` | hKask artifacts directory | Passed to MCP servers that resolve artifact routes (visible root, default `~/Documents/zk-data/`; from `kask.artifacts_dir` setting → env → platform default) |
 
 ### Data Services
 

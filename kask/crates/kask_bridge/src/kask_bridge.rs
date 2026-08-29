@@ -44,7 +44,7 @@ pub use hkask_inference::model_constants::{
     DEFAULT_IMAGE_GEN_MODEL, DEFAULT_OCR_MODEL, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL,
     DEFAULT_VIDEO_MODEL, DEFAULT_VISION_MODEL,
 };
-pub use hkask_types::agent_paths::resolve_data_dir;
+pub use hkask_types::agent_paths::{resolve_artifacts_dir, resolve_data_dir};
 
 pub use identity::{
     BridgeRotationError, ProvisionError, ProvisionedAgent, agent_name_from_username,

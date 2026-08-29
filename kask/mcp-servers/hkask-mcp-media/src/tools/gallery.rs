@@ -1357,8 +1357,26 @@ impl MediaServer {
                         "video",
                     )
                     .map_err(|e| map_media_error(e.into()))?;
-                serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))
+                let mut value = serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?;
+                // Render the imported video inline in the media widget —
+                // without a display_hint the caller has no way to view it.
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "display_hint".into(),
+                        serde_json::Value::String(crate::media_block::media_block_with_omc(
+                            "video",
+                            &record.absolute_path,
+                            Self::ontology_anchor("gallery_add_video"),
+                            Some(&crate::media_block::Provenance::for_tool(
+                                "gallery_add_video",
+                                serde_json::json!({"path": path}),
+                                None,
+                            )),
+                        )),
+                    );
+                }
+                Ok(value)
             },
         )
         .await
@@ -1416,8 +1434,25 @@ impl MediaServer {
                         "audio",
                     )
                     .map_err(|e| map_media_error(e.into()))?;
-                serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))
+                let mut value = serde_json::to_value(&record)
+                    .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?;
+                // Render the imported audio inline in the media widget.
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "display_hint".into(),
+                        serde_json::Value::String(crate::media_block::media_block_with_omc(
+                            "audio",
+                            &record.absolute_path,
+                            Self::ontology_anchor("gallery_add_audio"),
+                            Some(&crate::media_block::Provenance::for_tool(
+                                "gallery_add_audio",
+                                serde_json::json!({"path": path}),
+                                None,
+                            )),
+                        )),
+                    );
+                }
+                Ok(value)
             },
         )
         .await

@@ -34,15 +34,23 @@ use collections::HashMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
 pub struct KaskSettings {
     /// Kask data directory — the root for all kask databases, agent state,
-    /// and file-based stores. When empty, `mcp_env()` resolves a default
-    /// via `hkask_types::agent_paths::resolve_data_dir()` (HKASK_DATA_DIR
+    /// and file-based stores (the hidden infrastructure tree). When empty,
+    /// `mcp_env()` resolves a default via
+    /// `hkask_types::agent_paths::resolve_data_dir()` (HKASK_DATA_DIR
     /// env var → XDG_DATA_HOME/zed-kask → ~/.local/share/zed-kask) and injects
     /// it as `HKASK_DATA_DIR` for every MCP server. This ensures servers
     /// always receive a consistent data directory without requiring the
     /// operator to set environment variables manually.
-    /// User-facing artifacts (reports, exports) are stored separately in
-    /// ~/Documents/zk-data/ via `resolve_artifacts_dir()`.
     pub data_dir: String,
+
+    /// Kask artifacts directory — the visible root for ALL artifact files
+    /// and outputs of the MCP servers at `{server}-mcp/{artifact-type}/`.
+    /// When empty, `mcp_env()` resolves a default via
+    /// `hkask_types::agent_paths::resolve_artifacts_dir()` (HKASK_ARTIFACTS_DIR
+    /// env var → ~/Documents/zk-data) and injects it for every server that
+    /// resolves artifact routes. Databases are infrastructure and stay in
+    /// `data_dir`.
+    pub artifacts_dir: String,
 
     /// Kask-wide general configuration: global inference concurrency + batching.
     pub general: KaskGeneralSettings,
@@ -624,6 +632,21 @@ impl From<KaskToolRouterSettingsContent> for KaskToolRouterSettings {
     }
 }
 
+/// Resolve a storage-root setting with the single priority chain shared by
+/// both roots (hidden data dir, visible artifacts dir): settings field →
+/// env var → resolved platform default. One chain, not two — the duplicated
+/// inline versions drifted apart historically.
+fn resolve_root_dir(
+    setting: &str,
+    env_var: &str,
+    platform_default: fn() -> std::path::PathBuf,
+) -> String {
+    if !setting.is_empty() {
+        return setting.to_string();
+    }
+    std::env::var(env_var).unwrap_or_else(|_| platform_default().to_string_lossy().to_string())
+}
+
 impl Settings for KaskSettings {
     fn from_settings(s: &settings_content::SettingsContent) -> Self {
         s.kask.clone().map(|c| c.into()).unwrap_or_default()
@@ -667,25 +690,23 @@ impl KaskSettings {
     pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
         let mut env = std::collections::HashMap::new();
 
-        // Always inject HKASK_DATA_DIR so every MCP server can resolve
-        // paths consistently. Priority: settings field → env var → resolved
-        // platform default. Without this, servers that fall back to
-        // `resolve_under_data_dir` may get an empty HKASK_DATA_DIR and resolve
-        // to different paths depending on the launch context.
-        let data_dir = if !self.data_dir.is_empty() {
-            self.data_dir.clone()
-        } else {
-            std::env::var("HKASK_DATA_DIR").unwrap_or_else(|_| {
-                hkask_types::agent_paths::resolve_data_dir()
-                    .to_string_lossy()
-                    .to_string()
-            })
-        };
-        crate::mcp_env::emit_data_dir_env(&data_dir, &mut env);
-        // Always inject the resolved artifacts dir so the content servers
-        // (research, companies, portfolio, corpus) resolve their
-        // `{server}-mcp/` routes under the same visible root as the parent.
-        crate::mcp_env::emit_artifacts_dir_env(&mut env);
+        // Always inject both storage roots so every MCP server resolves
+        // paths consistently, via the single priority chain in
+        // `resolve_root_dir`: settings field → env var → resolved platform
+        // default. Without this, servers fall back to their own resolution
+        // and an operator override is silently dropped.
+        let data_dir = resolve_root_dir(
+            &self.data_dir,
+            "HKASK_DATA_DIR",
+            hkask_types::agent_paths::resolve_data_dir,
+        );
+        env.insert("HKASK_DATA_DIR".to_string(), data_dir.clone());
+        let artifacts_dir = resolve_root_dir(
+            &self.artifacts_dir,
+            "HKASK_ARTIFACTS_DIR",
+            hkask_types::agent_paths::resolve_artifacts_dir,
+        );
+        env.insert("HKASK_ARTIFACTS_DIR".to_string(), artifacts_dir);
         crate::mcp_env::emit_general_env(&self.general, &mut env);
         crate::mcp_env::emit_curator_webid_env(&mut env);
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
@@ -921,6 +942,7 @@ impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
             data_dir: c.data_dir.unwrap_or_default(),
+            artifacts_dir: c.artifacts_dir.unwrap_or_default(),
             general: c.general.map(Into::into).unwrap_or_default(),
             mcp: c.mcp.map(Into::into).unwrap_or_default(),
             media: c.media.map(Into::into).unwrap_or_default(),
@@ -1136,6 +1158,29 @@ mod tests {
         assert!(!settings.condenser.auto_compress_tool_results);
         assert_eq!(settings.condenser.profile, "normal");
         assert_eq!(settings.corpus.embedding_dim, 1024);
+        // Both storage roots default to empty (runtime resolves the platform
+        // default) — the artifacts root is a first-class setting, not a
+        // hard-coded path.
+        assert_eq!(settings.data_dir, "");
+        assert_eq!(settings.artifacts_dir, "");
+    }
+
+    // The artifacts root must flow through mcp_env() with the same priority
+    // chain as the data dir (settings field wins). Without this, an operator
+    // `artifacts_dir` override is silently dropped and every `{server}-mcp/`
+    // artifact route resolves under the Documents default instead.
+    #[test]
+    fn mcp_env_honors_artifacts_dir_setting() {
+        let settings = KaskSettings {
+            artifacts_dir: "/custom/artifacts-root".to_string(),
+            ..Default::default()
+        };
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_ARTIFACTS_DIR").map(String::as_str),
+            Some("/custom/artifacts-root"),
+            "artifacts_dir setting must be emitted as HKASK_ARTIFACTS_DIR"
+        );
     }
 
     // The present-but-null-field path: when a subsection is present but a field

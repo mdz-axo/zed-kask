@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-08-24
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Core"
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 66 skills ship. 62 template crates remain under
+> plus a markdown body of process instructions. 68 skills ship. 62 template crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -46,7 +46,7 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **66** | Every directory contains a `SKILL.md` |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **68** | Every directory contains a `SKILL.md` |
 | Template crates (`kask/registry/templates/*/`) | **62** | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
@@ -126,12 +126,14 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Specialized (16 skills)
+## Specialized (18 skills)
 
 | Skill | Purpose |
 |-------|---------|
 | `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives) chaining media server tools in known-good sequences |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
+| `eqm` | Explanation Quality Markers instrument: scores forecast rationales against 60 EQMs via `market_score_rationale`, aggregates composites, validates against realized outcomes (Brier), emits `overconfidence_bias` |
+| `eqm-improvement` | Improve forecast rationale quality by reverse-engineering the 60 EQMs' reasoning patterns; PDCA score→target→rewrite→re-score loop that preserves the probability and grounds evidence in real sources |
 | `mcda` | Multi-Criteria Decision Analysis with compensation masking |
 | `scenario-builder` | Schwartz scenario planning with STEEP analysis |
 | `hypothesis-framer` | Research question framing via FINER + PICO |
@@ -185,11 +187,11 @@ read-only resources the skill body may reference via `render_template`.
 | Reasoning & Analysis | 10 |
 | Kata & Coaching | 3 |
 | Meta & Maintenance | 10 |
-| Specialized | 16 |
+| Specialized | 18 |
 | Research & Corpus | 5 |
 | Cross-Cutting & Audit | 8 |
-| **Total** | **66** |
+| **Total** | **68** |
 
-> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 66 SKILL.md
-> directories. `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
+> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 68 SKILL.md
+> directories (66 at the prior verification plus `eqm` and `eqm-improvement`, added 2026-08-28). `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
 > for `render_template`).

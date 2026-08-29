@@ -1585,10 +1585,19 @@ impl std::str::FromStr for DelayMs {
 /// The actual settings struct is `kask_bridge::KaskSettings` (D9a).
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskSettingsContent {
-    /// Kask data directory — root for all kask databases and agent state.
-    /// When empty, the runtime resolves a platform default.
+    /// Kask data directory — root for all kask databases and agent state
+    /// (the hidden infrastructure tree). When empty, the runtime resolves a
+    /// platform default (~/.local/share/zed-kask on Linux).
     #[serde(default)]
     pub data_dir: Option<String>,
+
+    /// Kask artifacts directory — the visible root for ALL artifact files
+    /// and outputs of the MCP servers (reports, screens, transactions,
+    /// generated media, corpus cache) at `{server}-mcp/{artifact-type}/`.
+    /// When empty, the runtime resolves a platform default
+    /// (~/Documents/zk-data/).
+    #[serde(default)]
+    pub artifacts_dir: Option<String>,
 
     /// Kask-wide general configuration: global inference concurrency + batching.
     #[serde(default)]

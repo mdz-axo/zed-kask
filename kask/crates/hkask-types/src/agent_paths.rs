@@ -314,7 +314,7 @@ mod tests {
         for relative in [
             agent_db("curator"),
             mcp_server_db("swarm", "ledger"),
-            mcp_server_subdir("portfolio", "transactions"),
+            mcp_server_subdir("companies", "fibo-cache"),
         ] {
             let resolved = resolve_under_data_dir(&relative);
             assert!(resolved.starts_with(resolve_data_dir()));
