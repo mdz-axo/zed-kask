@@ -1715,6 +1715,48 @@ pub(crate) mod tests {
         );
     }
 
+    /// Pin that NON-curator (zed agent) turns are findable by embedding-only
+    /// recall. Before the fix, the turn embedding was stored under
+    /// `chat:thread:{id}` — an entity that only carries an h_mem for CURATOR
+    /// turns. For zed-agent turns the h_mem lives under `curator:thread:{id}`
+    /// (the shared copy), so the KNN neighbor's `entity_ref` joined to no
+    /// h_mem: every non-curator turn was an orphan embedding, invisible to
+    /// semantic recall. The fix stores the embedding under the shared-copy
+    /// entity, which is written for every turn.
+    #[tokio::test]
+    async fn recall_context_finds_zed_agent_turn_by_embedding_only() {
+        // Constant embedding — every query is a KNN match for every stored
+        // embedding, so the only path that can miss is the entity_ref join.
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+
+        // A NON-curator turn — the case whose embedding used to be orphaned.
+        let record = TurnRecord {
+            thread_id: "t-zed-agent-thread-id".to_string(),
+            user_input: "omega psi chi upsilon".to_string(),
+            agent_response: "the join now resolves".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Zed Agent".to_string()),
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        // Zero-overlap query — the only path to the turn is the semantic leg.
+        let snippets = port
+            .recall_context_curator("kookaburra wombat quoll bilby", 10)
+            .await
+            .expect("recall succeeds");
+        assert!(
+            snippets.iter().any(|s| s.text.contains("omega psi chi")),
+            "semantic-only recall should find the zed-agent turn — an orphan \
+             embedding under chat:thread: would make it invisible, got: {snippets:?}"
+        );
+    }
+
     /// Confidence-weighted ranking test (Priority 1): when two memories
     /// have similar embedding relevance but different confidence scores,
     /// the higher-confidence memory should rank first. Before the fix,

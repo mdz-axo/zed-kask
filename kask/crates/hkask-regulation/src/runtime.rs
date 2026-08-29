@@ -230,6 +230,18 @@ pub(crate) struct OutcomeTracker {
 }
 
 impl OutcomeTracker {
+    /// Error kinds that signal a missing configuration or dependency
+    /// (binary not installed, credential not provisioned) rather than tool
+    /// unreliability. Recorded in the per-kind breakdown for diagnosis but
+    /// excluded from the success-rate math: an environment gap the operator
+    /// must fix is not a degrading domain — counting it made a healthy
+    /// server read as failing (a media server without yt-dlp degraded the
+    /// whole media domain) and fired false `ToolReliabilityDegraded`
+    /// alerts. Classification comes from the typed `[kind]` marker the
+    /// dispatch paths extract (`hkask_types::tool_response::
+    /// is_config_gap_kind`).
+    const CONFIG_GAP_KINDS: [&str; 2] = ["unavailable", "permission_denied"];
+
     pub(crate) fn new() -> Self {
         Self {
             total: 0,
@@ -249,8 +261,13 @@ impl OutcomeTracker {
 
     pub(crate) fn record_failure(&mut self, error_kind: &str) {
         self.check_window();
-        self.total += 1;
-        self.failures += 1;
+        // Config-gap kinds don't count toward the success rate — see
+        // CONFIG_GAP_KINDS. They still land in the per-kind breakdown so
+        // `curator_status` diagnosis can see them.
+        if !Self::CONFIG_GAP_KINDS.contains(&error_kind) {
+            self.total += 1;
+            self.failures += 1;
+        }
         *self.error_kinds.entry(error_kind.to_string()).or_insert(0) += 1;
     }
 
@@ -958,3 +975,44 @@ impl RegulationSink for NoopEventSink {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Config-gap failures (missing binary / credential) must not degrade a
+    /// domain's success rate — they are operator-actionable environment
+    /// signals, not tool unreliability. Before this exclusion, a media
+    /// server without yt-dlp read as a failing media domain and fired
+    /// false `ToolReliabilityDegraded` alerts.
+    #[tokio::test]
+    async fn config_gap_failures_do_not_degrade_success_rate() {
+        let ledger = RegulationLedger::default();
+        ledger.record_outcome("media", true, None).await;
+        ledger
+            .record_outcome("media", false, Some("unavailable"))
+            .await;
+        ledger
+            .record_outcome("media", false, Some("permission_denied"))
+            .await;
+        let rate = ledger
+            .outcome_success_rate("media")
+            .await
+            .expect("media domain tracked");
+        assert_eq!(
+            rate, 1.0,
+            "config-gap errors must not read as unreliability — the operator, \
+             not the tool, must act"
+        );
+
+        // A real failure still degrades the rate.
+        ledger
+            .record_outcome("media", false, Some("internal"))
+            .await;
+        let rate = ledger
+            .outcome_success_rate("media")
+            .await
+            .expect("media domain tracked");
+        assert_eq!(rate, 0.5, "one real failure of two counted ops");
+    }
+}

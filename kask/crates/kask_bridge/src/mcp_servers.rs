@@ -185,6 +185,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Data dir — needed so `resolve_under_data_dir` in
             // `open_curator_stores` finds the same root as the agent.
             "HKASK_DATA_DIR",
+            // IPC bridge socket — required for semantic memory recall. The
+            // curator server embeds recall queries through zed's
+            // LanguageModelRegistry (same routing as corpus/media/swarm).
+            // Without it, `curator_semantic_search` / `curator_consult`
+            // degrade to exact-entity lookup, which never matches a
+            // natural-language question.
+            "HKASK_INFERENCE_SOCKET",
+            // IPC bridge establishment timeout (published alongside the
+            // socket path by `build_mcp_server_env`).
+            "HKASK_INFERENCE_TIMEOUT_SECS",
         ]),
     },
     BuiltinMcpServer {

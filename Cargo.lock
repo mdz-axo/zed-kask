@@ -8913,6 +8913,7 @@ name = "hkask-mcp-curator"
 version = "0.39.0"
 dependencies = [
  "chrono",
+ "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-services-core",

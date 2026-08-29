@@ -16,10 +16,78 @@
 use hkask_mcp_curator::types::*;
 use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{EscalationQueue, HMemStore, RegulationArchive};
+use hkask_storage::{EmbeddingStore, EscalationQueue, HMemStore, RegulationArchive};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+/// Stub inference port whose `embed` is left at the trait default (an
+/// error) — pins the degradation path: the semantic tools must fall back
+/// to exact-entity lookup (surfaced in the output) rather than erroring
+/// or silently returning empty.
+struct FailingEmbedPort;
+
+impl hkask_types::InferencePort for FailingEmbedPort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
+    }
+}
+
+/// Stub inference port whose `embed` returns a constant unit vector for any
+/// input — every query is a KNN match for every stored embedding (cosine
+/// distance 0), isolating the semantic leg from keyword/entity matching.
+const TEST_EMBEDDING_DIM: usize = 8;
+
+struct ConstantEmbedPort;
+
+impl hkask_types::InferencePort for ConstantEmbedPort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
+    }
+
+    fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        // Capture only the count (owned, `Copy`) so the future borrows
+        // nothing — mirrors the swarm-server test stub pattern.
+        let count = texts.len();
+        Box::pin(async move {
+            Ok((0..count)
+                .map(|_| {
+                    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+                    vector[0] = 1.0;
+                    vector
+                })
+                .collect())
+        })
+    }
+}
+
+fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
+    Arc::new(FailingEmbedPort)
+}
 
 /// Build a `CuratorServer` backed by a single shared in-memory driver, so all
 /// four stores see the same data (the production shape — one `curator.db`).
@@ -47,7 +115,37 @@ fn make_server() -> CuratorServer {
         memory: Some(memory),
     };
     let database = Arc::new(CuratorDb::from_stores(stores));
-    CuratorServer::new(WebID::new(), database)
+    CuratorServer::new(WebID::new(), database, failing_inference_port())
+}
+
+/// Build a `CuratorServer` whose memory store carries a live embedding
+/// index (in-memory `EmbeddingStore` at `TEST_EMBEDDING_DIM`) and whose
+/// inference port embeds every input to the same unit vector — the shape
+/// the semantic recall path needs. Returns the server plus its memory
+/// store handle so tests can seed h_mems and embeddings directly.
+fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStore>) {
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
+    let embedding_store = EmbeddingStore::from_driver(driver.clone(), TEST_EMBEDDING_DIM)
+        .expect("embedding store init");
+    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+    let escalation_queue =
+        Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
+    let regulation_store =
+        Arc::new(RegulationArchive::from_driver(driver.clone()).expect("regulation archive init"));
+
+    let stores = CuratorStores {
+        escalation_queue: Some(escalation_queue),
+        regulation_store: Some(regulation_store),
+        memory: Some(memory.clone()),
+    };
+    let database = Arc::new(CuratorDb::from_stores(stores));
+    let server = CuratorServer::new(
+        WebID::new(),
+        database,
+        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
+    );
+    (server, memory)
 }
 
 /// Parse a tool output string into JSON, unwrapping the `{"content": ...}`
@@ -226,7 +324,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
         memory: Some(memory),
     };
     let database = Arc::new(CuratorDb::from_stores(stores));
-    let server = CuratorServer::new(WebID::new(), database);
+    let server = CuratorServer::new(WebID::new(), database, failing_inference_port());
 
     let flood_output = "Efferent action Throttle (target: inference) recommended but not wired";
     let other_output = "Variety deficit in domain: reasoning";
@@ -440,6 +538,151 @@ async fn semantic_search_no_matches_returns_zero() {
     assert!(
         response["results"].is_array(),
         "results must be an array — got: {response}",
+    );
+}
+
+// ── Semantic search — semantic leg regression ──────────────────────────────
+
+/// Seed one turn h_mem + embedding under the shared-copy entity, then query
+/// with words that share NO tokens with the stored text and are NOT an entity
+/// name. Before the fix, `curator_semantic_search` did exact-entity lookup on
+/// the raw query — a natural-language question never matched, so every
+/// semantic search returned zero. The semantic leg must find the turn via
+/// KNN (constant embedding → distance 0).
+#[tokio::test]
+async fn semantic_search_matches_question_by_embedding() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "curator:thread:semantic-regression";
+    let turn = serde_json::json!({
+        "user_input": "alpha beta gamma delta epsilon",
+        "agent_response": "zeta eta theta",
+    })
+    .to_string();
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        "turn",
+        serde_json::Value::String(turn),
+        WebID::new(),
+    );
+    memory.store(h_mem).expect("seed h_mem");
+    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(entity, &vector, "test-model", None)
+        .expect("seed embedding");
+
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "kangaroo wallaby emu cassowary".to_string(),
+                limit: None,
+            }))
+            .await,
+    );
+
+    assert!(
+        response.get("error").is_none(),
+        "semantic search must not error — got: {response}",
+    );
+    assert_eq!(
+        response["mode"].as_str(),
+        Some("semantic"),
+        "the semantic leg must serve the query — got: {response}",
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(1),
+        "the KNN leg must find the seeded turn despite zero word overlap — got: {response}",
+    );
+    assert!(
+        response["results"][0]["value"]
+            .as_str()
+            .is_some_and(|v| v.contains("alpha beta gamma")),
+        "the recalled fragment must be the seeded turn — got: {response}",
+    );
+}
+
+/// When the query cannot be embedded (no IPC bridge / embedding provider),
+/// the tool must degrade to exact-entity lookup AND say so — the operator
+/// must be able to tell "no similar memories" from "semantic recall
+/// unavailable" (the unwrap_or(0) trap).
+#[tokio::test]
+async fn semantic_search_degrades_to_entity_exact_with_note() {
+    let server = make_server();
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "no-such-entity".to_string(),
+                limit: None,
+            }))
+            .await,
+    );
+
+    assert_eq!(
+        response["mode"].as_str(),
+        Some("entity_exact"),
+        "a failed embed must fall back to exact-entity lookup — got: {response}",
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(0),
+        "the fallback finds no entity named 'no-such-entity' — got: {response}",
+    );
+    assert!(
+        response["note"].as_str().is_some_and(|n| !n.is_empty()),
+        "the degradation reason must be surfaced, not swallowed — got: {response}",
+    );
+}
+
+/// `curator_consult` with a natural-language question must return semantic
+/// fragments. Before the fix, both consult scopes did exact-entity lookup on
+/// the raw question text — every consult returned zero fragments, which is
+/// why the curator appeared to have no memory at all.
+#[tokio::test]
+async fn consult_returns_semantic_fragments_for_question() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "curator:thread:consult-regression";
+    let turn = serde_json::json!({
+        "user_input": "how do we wire the frobnicator",
+        "agent_response": "via the socket",
+    })
+    .to_string();
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        "turn",
+        serde_json::Value::String(turn),
+        WebID::new(),
+    );
+    memory.store(h_mem).expect("seed h_mem");
+    let mut vector = vec![0.0f32; TEST_EMBEDDING_DIM];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(entity, &vector, "test-model", None)
+        .expect("seed embedding");
+
+    let response = parse(
+        &server
+            .curator_consult(Parameters(CuratorConsultRequest {
+                query: "completely unrelated question words".to_string(),
+                limit: None,
+            }))
+            .await,
+    );
+
+    assert!(
+        response.get("error").is_none(),
+        "consult must not error — got: {response}",
+    );
+    assert_eq!(
+        response["entity_wide_fragments"]["count"].as_u64(),
+        Some(1),
+        "the entity-wide scope must find the seeded turn via KNN — got: {response}",
+    );
+    assert!(
+        response["entity_wide_fragments"]["h_mems"][0]["value"]
+            .as_str()
+            .is_some_and(|v| v.contains("frobnicator")),
+        "the consulted fragment must be the seeded turn — got: {response}",
     );
 }
 

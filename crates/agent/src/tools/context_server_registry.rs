@@ -288,13 +288,20 @@ struct ContextServerTool {
 }
 
 /// Map a completed `ContextServerTool` run to the regulation outcome tuple
-/// `(success, error_kind)`. `error_kind` mirrors the McpRuntime path — the
-/// error's text, not a typed variant (the ledger's `error_kind` is a
-/// free-form classification hint).
+/// `(success, error_kind)`. `error_kind` is the typed kind (e.g.
+/// `"unavailable"`) when the error text carries the `[kind] ` prefix set by
+/// the in-band envelope detection; otherwise the full text is the
+/// classification hint, mirroring the McpRuntime path.
 fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, Option<String>) {
     match result {
         Ok(_) => (true, None),
-        Err(output) => (false, Some(mcp_error_text(output))),
+        Err(output) => {
+            let text = mcp_error_text(output);
+            (
+                false,
+                Some(hkask_types::tool_response::error_kind_from_display(&text)),
+            )
+        }
     }
 }
 
@@ -652,9 +659,43 @@ impl ContextServerTool {
                     }
                 }
             }
+            // zed-kask: D-seam — structural display_hint rendering (T-V2).
+            // Media tool results carry `display_hint` / `display_hints`
+            // (fenced ```media blocks) as JSON fields inside the content
+            // envelope; previously they rendered only if the model
+            // voluntarily copied the fenced block into its reply — the
+            // entire media pipeline depended on model cooperation. Pushing
+            // the fenced blocks as additional text content makes the D18
+            // media_block_renderer render them deterministically in the
+            // tool card, in every conversation surface.
+            for hint in
+                hkask_types::tool_response::display_hints_from_output_text(&concatenated_text)
+            {
+                tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                    acp::ContentBlock::Text(acp::TextContent::new(hint)),
+                )));
+            }
             if !tool_call_content.is_empty() {
                 event_stream
                     .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
+            }
+            // zed-kask: D-seam — in-band error envelope detection. kask MCP
+            // servers return tool errors as a `{"error": ..., "kind": ...}`
+            // content envelope with `is_error` unset (the rmcp String-return
+            // convention), so without this check every tool-logical error
+            // flows downstream as a success — miscounted by the retry tracker
+            // and the regulation ledger, and rendered as a successful tool
+            // card. The detection requires a known `McpErrorKind`, so a data
+            // payload that happens to carry `error`/`kind` keys can't
+            // false-positive. The `[kind] message` text matches
+            // `McpToolError`'s Display so consumers can classify by prefix.
+            if let Some(envelope) =
+                hkask_types::tool_response::parse_tool_error(&concatenated_text)
+                && let Some(kind) = envelope.kind
+            {
+                return Err(
+                    anyhow::anyhow!(format!("[{kind}] {}", envelope.message)).into(),
+                );
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {
@@ -879,5 +920,22 @@ mod tests {
         let (success, error_kind) = mcp_run_outcome(&Err(output));
         assert!(!success);
         assert_eq!(error_kind.as_deref(), Some("unknown error"));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_extracts_typed_kind() {
+        // kask tool errors carry a `[kind] ` prefix (set by the in-band
+        // envelope detection in `run_inner`); the ledger must receive the
+        // typed kind so config-gap classification (unavailable /
+        // permission_denied) works instead of string-matching full messages.
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::String(String::new()),
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "[unavailable] yt-dlp not found on system PATH".into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("unavailable"));
     }
 }

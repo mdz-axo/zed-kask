@@ -1371,7 +1371,14 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 // if the ledger is unavailable the outcome is simply not
                 // recorded, and the sensor stays silent (not 1.0 — the
                 // `.rules` `unwrap_or(0)` trap on sense inputs).
-                let error_kind = result.as_ref().err().map(|e| e.to_string());
+                let error_kind = result.as_ref().err().map(|e| {
+                    // zed-kask: extract the typed kind from the `[kind] `
+                    // prefix (set by dispatch's in-band envelope detection)
+                    // so the ledger's per-kind breakdown classifies config
+                    // gaps (unavailable / permission_denied) instead of
+                    // recording the full message text as a "kind".
+                    hkask_types::tool_response::error_kind_from_display(&e.to_string())
+                });
                 let cyber_lock = cyber.read().await;
                 cyber_lock
                     .record_outcome(server, result.is_ok(), error_kind.as_deref())
@@ -1502,8 +1509,24 @@ impl McpRuntime {
             }
             Err(e) => return Err(DispatchError::Failed(e.to_string())),
         };
+        let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
-            return Err(DispatchError::Failed(extract_text_content(&result)));
+            return Err(DispatchError::Failed(text));
+        }
+        // zed-kask: in-band error envelope detection — kask servers return
+        // tool errors as a `{"error": ..., "kind": ...}` content envelope
+        // with `is_error` unset (the rmcp String-return convention), so
+        // without this check every tool-logical error dispatched through
+        // the governed path recorded as a success in the RegulationLedger.
+        // The `[kind] message` text lets `invoke` extract the typed kind for
+        // the ledger's per-kind breakdown (config-gap classification).
+        if let Some(envelope) = hkask_types::tool_response::parse_tool_error(&text)
+            && let Some(kind) = envelope.kind
+        {
+            return Err(DispatchError::Failed(format!(
+                "[{kind}] {}",
+                envelope.message
+            )));
         }
         Ok(parse_call_result(&result))
     }

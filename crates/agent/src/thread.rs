@@ -4242,9 +4242,16 @@ impl Thread {
                     // Record failure — increments the failure counter for this key.
                     // After 3, the next call will carry a warning. After 5, the
                     // next call will be hard-refused before tool.run() is called.
-                    retry_tracker
-                        .borrow()
-                        .record_failure(&tool_name_for_tracking, &input_for_tracking);
+                    // zed-kask: authorization failures (missing credential,
+                    // `[permission_denied]` prefix) are deterministic — no
+                    // identical retry can fix them, so counting them only
+                    // produces bogus Bayesian "switch tools" statistics while
+                    // the model already sees the named env var to set.
+                    if !crate::tool_retry_tracker::is_authorization_error(&output) {
+                        retry_tracker
+                            .borrow()
+                            .record_failure(&tool_name_for_tracking, &input_for_tracking);
+                    }
                     (true, output)
                 }
             };
@@ -4962,20 +4969,31 @@ impl Thread {
         // called at the start of each turn-loop iteration, so the bypass
         // takes effect on the iteration after the `skill` tool returns.
         if let Some(router) = crate::tool_router() {
-            let skill_active = self.messages.iter().rev().take(20).any(|message| {
-                match &**message {
-                    Message::Agent(agent_message) => {
-                        agent_message
+            let skill_active =
+                self.messages
+                    .iter()
+                    .rev()
+                    .take(20)
+                    .any(|message| match &**message {
+                        Message::Agent(agent_message) => agent_message
                             .tool_results
                             .values()
-                            .any(|result| result.tool_name.as_ref() == "skill")
-                    }
-                    _ => false,
-                }
-            });
+                            .any(|result| result.tool_name.as_ref() == "skill"),
+                        _ => false,
+                    });
             if !skill_active {
-                let built_in_names: &std::collections::HashSet<&'static str> =
-                    &BUILT_IN_TOOL_NAMES;
+                // zed-kask: scope bypass — a Steer-scoped conversation (e.g. the
+                // media panel) has already narrowed its tool surface to one MCP
+                // server via `mcp_server_scope`; the router re-filtering a
+                // deliberately narrowed surface is double-filtering, and its
+                // description scoring prunes generically-named tools
+                // (`model_list`, `job_status`, `workflow_list`) on ordinary
+                // phrasing ("check on my running job") — exactly the requests
+                // the scoped surface exists to serve.
+                if self.kask.mcp_server_scope().is_some() {
+                    return tools;
+                }
+                let built_in_names: &std::collections::HashSet<&'static str> = &BUILT_IN_TOOL_NAMES;
                 let open_file_paths: Vec<String> = self
                     .project
                     .read(cx)
@@ -4988,8 +5006,10 @@ impl Thread {
                         })
                     })
                     .collect();
-                let tool_descriptions: Vec<(SharedString, SharedString)> =
-                    tools.iter().map(|(name, tool)| (name.clone(), tool.description())).collect();
+                let tool_descriptions: Vec<(SharedString, SharedString)> = tools
+                    .iter()
+                    .map(|(name, tool)| (name.clone(), tool.description()))
+                    .collect();
                 let retained = crate::tool_router::apply_router_bypassing_built_ins(
                     router.as_ref(),
                     tool_descriptions.iter().map(|(n, d)| (n, d)),
@@ -8397,8 +8417,7 @@ mod tests {
             provider: LanguageModelProviderName::new("test"),
             status: None,
             code: None,
-            message: "Reasoning is mandatory for this endpoint and cannot be disabled"
-                .to_string(),
+            message: "Reasoning is mandatory for this endpoint and cannot be disabled".to_string(),
             retry_after: None,
             category: ProviderErrorCategory::InvalidRequest,
         };

@@ -157,7 +157,15 @@ pub(crate) async fn write_turn(
     // Skipped when no embedding port is available — h_mem writes (steps 1-2)
     // are pure SQL and don't need embeddings. Semantic recall will degrade to
     // keyword-only, but the curator still has episodic memory of the turn.
-    let embedding_entity = entity.clone();
+    //
+    // The embedding is stored under the SHARED COPY entity
+    // (`curator:thread:{id}`), not `chat:thread:{id}`: the shared copy h_mem
+    // is written for EVERY turn (step 2), while the `chat:thread:` h_mem
+    // only exists for curator turns (step 1). An embedding under
+    // `chat:thread:` for a non-curator turn joined to no h_mem — an orphan
+    // the KNN recall path could never resolve, making every non-curator
+    // turn invisible to semantic recall.
+    let embedding_entity = curator_entity.clone();
     let embedding_model = ctx.embedding_model.to_string();
     let embedding_port = ctx.embedding_port.cloned();
     let user_input_owned = user_input.clone();

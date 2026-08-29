@@ -107,3 +107,167 @@ pub(crate) fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope>
         kind: Some(kind),
     })
 }
+
+/// Extract the typed error kind from a `[kind] message` display string —
+/// the `McpToolError` Display convention, reproduced by the in-band
+/// envelope detection in the MCP dispatch paths (`ContextServerTool::run`,
+/// `McpRuntime::dispatch`) so the typed kind survives to consumers that
+/// only see the error text. The marker is searched anywhere in the text
+/// because error Display impls often prefix their own context (e.g.
+/// `"Invocation failed: [unavailable] …"`). Returns the kind's Display
+/// string (e.g. `"unavailable"`) when a `[kind] ` marker carries a known
+/// kind; otherwise returns the full text unchanged (the ledger treats
+/// `error_kind` as a free-form classification hint).
+#[must_use]
+pub fn error_kind_from_display(text: &str) -> String {
+    let mut search_from = 0;
+    while let Some(open) = text[search_from..].find('[') {
+        let after_open = &text[search_from + open + 1..];
+        if let Some((kind, _)) = after_open.split_once("] ")
+            && McpErrorKind::from_kind_str(kind).is_some()
+        {
+            return kind.to_string();
+        }
+        search_from += open + 1;
+    }
+    text.to_string()
+}
+
+/// Whether an error-kind string signals a missing configuration or
+/// dependency (a binary not installed, a credential not provisioned)
+/// rather than tool unreliability. `permission_denied` is unambiguous —
+/// the `.rules` MCP pattern classifies missing credentials as
+/// authorization failures, and no retry changes authorization.
+/// `unavailable` is included for the *reliability* consumers (the
+/// RegulationLedger's success-rate math): a server whose dependency is
+/// missing is an operator-actionable environment signal, not a degrading
+/// domain. Retry-behavior consumers should use `McpErrorKind::is_retryable`
+/// instead — `unavailable` can be transient (server restarting).
+#[must_use]
+pub fn is_config_gap_kind(kind: &str) -> bool {
+    matches!(
+        McpErrorKind::from_kind_str(kind),
+        Some(McpErrorKind::Unavailable) | Some(McpErrorKind::PermissionDenied)
+    )
+}
+
+/// Extract fenced media-block display hints from a tool output text (the
+/// `{"content": ...}` envelope serialized by `ToolSpanGuard::ok_json`).
+/// `display_hint` is a single fenced ```media block; `display_hints` is an
+/// array (gallery_search, generate_variants). Returns an empty vec for
+/// non-JSON or hint-free outputs — ordinary tool results carry nothing.
+/// Consumers: the agent's structural rendering (T-V2 — the tool card
+/// renders the blocks via the D18 media renderer) and the media panel's
+/// viewing pane (surfaces assets from the conversation's tool results).
+#[must_use]
+pub fn display_hints_from_output_text(text: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let payload = unwrap_tool_envelope(value);
+    let mut hints = Vec::new();
+    if let Some(hint) = payload.get("display_hint").and_then(|h| h.as_str()) {
+        hints.push(hint.to_string());
+    }
+    if let Some(array) = payload.get("display_hints").and_then(|h| h.as_array()) {
+        hints.extend(array.iter().filter_map(|h| h.as_str()).map(str::to_string));
+    }
+    hints
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_kind_from_display_extracts_known_kind() {
+        assert_eq!(
+            error_kind_from_display("[unavailable] yt-dlp not found on system PATH"),
+            "unavailable"
+        );
+        assert_eq!(
+            error_kind_from_display("[permission_denied] OPENROUTER_API_KEY not configured"),
+            "permission_denied"
+        );
+    }
+
+    #[test]
+    fn error_kind_from_display_unknown_kind_returns_full_text() {
+        // An unknown kind string is not a typed prefix — the full text is
+        // the classification hint, not a misclassified kind.
+        let text = "[weird] something";
+        assert_eq!(error_kind_from_display(text), text);
+    }
+
+    #[test]
+    fn error_kind_from_display_no_prefix_returns_full_text() {
+        assert_eq!(
+            error_kind_from_display("plain failure text"),
+            "plain failure text"
+        );
+        // A bracket that isn't a kind prefix must not be stripped.
+        assert_eq!(
+            error_kind_from_display("[not a kind] text"),
+            "[not a kind] text"
+        );
+    }
+
+    #[test]
+    fn error_kind_from_display_finds_marker_behind_display_prefix() {
+        // Error Display impls prefix their own context — the kind marker is
+        // searched anywhere in the text, not only at the start.
+        assert_eq!(
+            error_kind_from_display("Invocation failed: [unavailable] yt-dlp missing"),
+            "unavailable"
+        );
+    }
+
+    #[test]
+    fn display_hints_from_output_text_single_and_array() {
+        // Single display_hint inside the content envelope.
+        let output = serde_json::json!({
+            "content": {
+                "prompt": "a cat",
+                "display_hint": "```media\n{\"kind\":\"image\",\"src\":\"/tmp/a.png\"}\n```"
+            }
+        })
+        .to_string();
+        let hints = display_hints_from_output_text(&output);
+        assert_eq!(hints.len(), 1);
+        assert!(hints[0].starts_with("```media"));
+
+        // display_hints array (gallery_search / generate_variants shape).
+        let output = serde_json::json!({
+            "content": {
+                "results": [],
+                "display_hints": [
+                    "```media\n{\"kind\":\"image\",\"src\":\"/tmp/1.png\"}\n```",
+                    "```media\n{\"kind\":\"image\",\"src\":\"/tmp/2.png\"}\n```"
+                ]
+            }
+        })
+        .to_string();
+        let hints = display_hints_from_output_text(&output);
+        assert_eq!(hints.len(), 2);
+        assert!(hints.iter().all(|h| h.starts_with("```media")));
+    }
+
+    #[test]
+    fn display_hints_from_output_text_no_envelope_or_hints() {
+        // Non-JSON text and hint-free payloads return nothing — the helper
+        // must not push content for ordinary tool results.
+        assert!(display_hints_from_output_text("plain text").is_empty());
+        assert!(display_hints_from_output_text("{\"content\":{\"ok\":true}}").is_empty());
+        assert!(display_hints_from_output_text("not json at all").is_empty());
+    }
+}
+
+    #[test]
+    fn is_config_gap_kind_classifies_environment_signals() {
+        assert!(is_config_gap_kind("unavailable"));
+        assert!(is_config_gap_kind("permission_denied"));
+        assert!(!is_config_gap_kind("internal"));
+        assert!(!is_config_gap_kind("timeout"));
+        assert!(!is_config_gap_kind("unknown-kind"));
+    }
+}

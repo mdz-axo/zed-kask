@@ -286,6 +286,12 @@ hkask_mcp_server::mcp_server!(
         /// four stores are read through `db.get()` on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
+        /// Inference port for semantic memory recall — embeds recall queries
+        /// through the zed IPC bridge (`HKASK_INFERENCE_SOCKET`), the same
+        /// routing every other kask MCP server uses. Without it, the
+        /// "semantic" tools degrade to exact-entity lookup, which never
+        /// matches a natural-language question.
+        inference_port: Arc<dyn hkask_types::InferencePort>,
     }
 );
 
@@ -423,18 +429,105 @@ impl CuratorServer {
 
     // ── Memory & Learning ──────────────────────────────────────────────
 
-    #[tool(description = "Query the Curator's memory by entity name")]
+    /// Embed a recall query and resolve the nearest stored h_mems by cosine
+    /// similarity. Returns `(h_mem, distance)` pairs, most similar first.
+    /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
+    /// embedding provider) or the store has no embedding index — callers fall
+    /// back to exact-entity lookup and surface the reason.
+    async fn semantic_recall_fragments(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(hkask_storage::HMem, f64)>, String> {
+        let stores = self.db.get();
+        let memory = stores
+            .memory()
+            .map_err(|e| format!("curator memory unavailable: {e}"))?;
+        let embedding_model = hkask_inference::model_constants::embedding_model();
+        let vectors = self
+            .inference_port
+            .embed(&embedding_model, &[query.to_string()])
+            .await
+            .map_err(|e| format!("embedding the recall query failed: {e}"))?;
+        let query_vector = vectors
+            .into_iter()
+            .next()
+            .ok_or_else(|| "embedding model returned no vector for the recall query".to_string())?;
+        let results = memory
+            .search_similar(&query_vector, limit)
+            .map_err(|e| format!("semantic search over curator memory failed: {e}"))?;
+        let mut fragments = Vec::with_capacity(results.len());
+        for result in results {
+            let entity_ref = result.embedding.entity_ref.clone();
+            match memory.query_deduped_untouched(&entity_ref) {
+                Ok(h_mems) => {
+                    for h_mem in h_mems {
+                        fragments.push((h_mem, result.distance));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator",
+                        error = %e,
+                        entity_ref = %entity_ref,
+                        "failed to resolve KNN hit to its h_mem — skipping (non-fatal)"
+                    );
+                }
+            }
+        }
+        fragments.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(fragments)
+    }
+
+    #[tool(
+        description = "Query the Curator's memory by semantic similarity to a free-text query (a question or topic). Embeds the query and returns the nearest stored memories by cosine similarity. Falls back to exact-entity-name lookup when embeddings are unavailable (noted in the output)."
+    )]
     pub async fn curator_semantic_search(
         &self,
         Parameters(req): Parameters<SemanticSearchRequest>,
     ) -> String {
         execute_tool(self, "curator_semantic_search", async {
+            let limit = req.limit.unwrap_or(10).clamp(1, 50);
             let stores = self.db.get();
             let memory = stores.memory()?;
-            match memory.query_deduped(&req.query) {
-                Ok(h_mems) => {
-                    let limit = req.limit.unwrap_or(10);
-                    let serialized: Vec<serde_json::Value> = h_mems
+
+            // Semantic leg: embed the query, KNN over stored embeddings,
+            // resolve each hit to its h_mem. This is the path a natural-
+            // language question actually matches — the exact-entity leg
+            // below only matches when the query IS an entity name.
+            match self.semantic_recall_fragments(&req.query, limit).await {
+                Ok(fragments) if !fragments.is_empty() => {
+                    let serialized: Vec<serde_json::Value> = fragments
+                        .iter()
+                        .take(limit)
+                        .map(|(t, distance)| {
+                            json!({
+                                "entity": t.entity, "attribute": t.attribute,
+                                "value": t.value, "confidence": t.confidence,
+                                "distance": distance,
+                            })
+                        })
+                        .collect();
+                    Ok(json!({
+                        "count": serialized.len(),
+                        "mode": "semantic",
+                        "results": serialized,
+                    }))
+                }
+                // Degradation, not a silent fallback: the operator must be
+                // able to tell "no similar memories" from "semantic recall
+                // unavailable" (the unwrap_or(0) trap).
+                Err(reason) => {
+                    let exact = memory.query_deduped(&req.query).map_err(|e| match e {
+                        hkask_memory::MemoryStoreError::HMem(
+                            hkask_storage::HMemError::Infra(ref infra),
+                        )
+                        | hkask_memory::MemoryStoreError::Embedding(
+                            hkask_storage::EmbeddingError::Infrastructure(ref infra),
+                        ) => map_infra_error(infra, "Semantic recall failed"),
+                        other => McpToolError::internal(format!("Semantic recall failed: {other}")), // rr0044-ok: fallback arm of per-variant match
+                    })?;
+                    let serialized: Vec<serde_json::Value> = exact
                         .iter()
                         .take(limit)
                         .map(|t| {
@@ -444,17 +537,18 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    Ok(json!({"count": serialized.len(), "total": h_mems.len(), "results": serialized}))
+                    Ok(json!({
+                        "count": serialized.len(),
+                        "mode": "entity_exact",
+                        "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
+                        "results": serialized,
+                    }))
                 }
-                Err(e) => Err(match e {
-                    hkask_memory::MemoryStoreError::HMem(
-                        hkask_storage::HMemError::Infra(ref infra),
-                    )
-                    | hkask_memory::MemoryStoreError::Embedding(
-                        hkask_storage::EmbeddingError::Infrastructure(ref infra),
-                    ) => map_infra_error(infra, "Semantic recall failed"),
-                    other => McpToolError::internal(format!("Semantic recall failed: {other}")), // rr0044-ok: fallback arm of per-variant match
-                }),
+                Ok(_) => Ok(json!({
+                    "count": 0,
+                    "mode": "semantic",
+                    "results": [],
+                })),
             }
         })
         .await
@@ -581,10 +675,12 @@ impl CuratorServer {
     /// curator's sovereign memory.
     ///
     /// This is a memory-grounded consultation, not a full curator agent
-    /// turn — the curator MCP server has no inference port, so it cannot
-    /// synthesize a response. It returns the raw memory fragments
-    /// matching the query, structured as a consultation. The
-    /// calling agent synthesizes the response from the fragments.
+    /// turn — it returns the raw memory fragments matching the query by
+    /// semantic similarity (the query is embedded through the zed IPC
+    /// bridge, the same inference routing every other kask MCP server
+    /// uses). The calling agent synthesizes the response from the
+    /// fragments. When embeddings are unavailable, both scopes degrade to
+    /// exact-entity lookup with the reason surfaced in the output.
     ///
     /// A full inference-grounded response (where the curator agent itself
     /// synthesizes) requires the in-process `CuratorAgentServer`, which
@@ -592,78 +688,149 @@ impl CuratorServer {
     /// future enhancement (requires a new IPC method + recursion cap +
     /// gas budget).
     #[tool(
-        description = "Consult the curator's memory with a question. Returns perspective-scoped and entity-wide memory fragments matching the query. Memory-grounded consultation, not a full curator agent turn."
+        description = "Consult the curator's memory with a question. Returns perspective-scoped and entity-wide memory fragments matching the query by semantic similarity. Memory-grounded consultation, not a full curator agent turn."
     )]
     pub async fn curator_consult(
         &self,
         Parameters(req): Parameters<CuratorConsultRequest>,
     ) -> String {
         execute_tool(self, "curator_consult", async {
-            let limit = req.limit.unwrap_or(5);
+            let limit = req.limit.unwrap_or(5).clamp(1, 20);
             let stores = self.db.get();
             let mut result = json!({
                 "query": req.query,
                 "note": "Memory-grounded consultation — raw fragments, not a synthesized response. The calling agent synthesizes."
             });
 
-            // Entity-wide search — the curator's consolidated knowledge.
-            match stores.memory() {
-                Ok(sem) => match sem.query_deduped(&req.query) {
-                    Ok(h_mems) => {
-                        let fragments: Vec<serde_json::Value> = h_mems
-                            .iter()
-                            .take(limit)
-                            .map(|t| {
-                                json!({
-                                    "entity": t.entity,
-                                    "attribute": t.attribute,
-                                    "value": t.value,
-                                    "confidence": t.confidence,
-                                })
+            // Semantic leg shared by both scopes: embed the query once, KNN
+            // over stored embeddings, resolve each hit to its h_mem. A
+            // natural-language question matches here — the previous
+            // implementation did exact-entity lookup on the raw question
+            // text, which never matched anything and made every consult
+            // return zero fragments.
+            let semantic = self.semantic_recall_fragments(&req.query, limit).await;
+            match &semantic {
+                Ok(fragments) if !fragments.is_empty() => {
+                    // Entity-wide — the curator's consolidated knowledge:
+                    // every KNN-resolved h_mem regardless of who wrote it.
+                    let entity_wide: Vec<serde_json::Value> = fragments
+                        .iter()
+                        .take(limit)
+                        .map(|(t, distance)| {
+                            json!({
+                                "entity": t.entity,
+                                "attribute": t.attribute,
+                                "value": t.value,
+                                "confidence": t.confidence,
+                                "distance": distance,
                             })
-                            .collect();
-                        result["entity_wide_fragments"] = json!({
-                            "count": fragments.len(),
-                            "h_mems": fragments,
-                        });
-                    }
-                    Err(e) => {
-                        result["entity_wide_fragments"] = json!({"error": format!("{e}")});
-                    }
-                },
-                Err(_) => {
-                    result["entity_wide_fragments"] = json!({"status": "unavailable"});
-                }
-            }
+                        })
+                        .collect();
+                    result["entity_wide_fragments"] = json!({
+                        "count": entity_wide.len(),
+                        "h_mems": entity_wide,
+                    });
 
-            // Perspective-scoped search — the curator's turn history.
-            match stores.memory() {
-                Ok(ep) => match ep.query_for_deduped(&req.query, self.webid) {
-                    Ok(h_mems) => {
-                        let fragments: Vec<serde_json::Value> = h_mems
-                            .iter()
-                            .take(limit)
-                            .map(|t| {
-                                json!({
-                                    "entity": t.entity,
-                                    "attribute": t.attribute,
-                                    "value": t.value,
-                                    "confidence": t.confidence,
-                                    "valid_from": t.observed_at.to_rfc3339(),
-                                })
+                    // Perspective-scoped — the curator's own turns: the same
+                    // semantic hits filtered to h_mems the curator wrote.
+                    let perspective_scoped: Vec<serde_json::Value> = fragments
+                        .iter()
+                        .filter(|(t, _)| t.access.perspective == Some(self.webid))
+                        .take(limit)
+                        .map(|(t, distance)| {
+                            json!({
+                                "entity": t.entity,
+                                "attribute": t.attribute,
+                                "value": t.value,
+                                "confidence": t.confidence,
+                                "distance": distance,
                             })
-                            .collect();
-                        result["perspective_scoped_fragments"] = json!({
-                            "count": fragments.len(),
-                            "h_mems": fragments,
-                        });
+                        })
+                        .collect();
+                    result["perspective_scoped_fragments"] = json!({
+                        "count": perspective_scoped.len(),
+                        "h_mems": perspective_scoped,
+                    });
+                }
+                // Degradation, not a silent fallback — surface why semantic
+                // recall is unavailable, then fall back to the exact-entity
+                // lookup (which only matches when the query IS an entity).
+                Err(reason) => {
+                    result["entity_wide_fragments"] = json!({
+                        "status": "degraded",
+                        "note": format!("semantic recall unavailable — exact-entity fallback: {reason}"),
+                    });
+                    match stores.memory() {
+                        Ok(sem) => match sem.query_deduped(&req.query) {
+                            Ok(h_mems) => {
+                                let fragments: Vec<serde_json::Value> = h_mems
+                                    .iter()
+                                    .take(limit)
+                                    .map(|t| {
+                                        json!({
+                                            "entity": t.entity,
+                                            "attribute": t.attribute,
+                                            "value": t.value,
+                                            "confidence": t.confidence,
+                                        })
+                                    })
+                                    .collect();
+                                result["entity_wide_fragments"] = json!({
+                                    "count": fragments.len(),
+                                    "h_mems": fragments,
+                                });
+                            }
+                            Err(e) => {
+                                result["entity_wide_fragments"] =
+                                    json!({"error": format!("{e}")});
+                            }
+                        },
+                        Err(_) => {
+                            result["entity_wide_fragments"] =
+                                json!({"status": "unavailable"});
+                        }
                     }
-                    Err(e) => {
-                        result["perspective_scoped_fragments"] = json!({"error": format!("{e}")});
+                    match stores.memory() {
+                        Ok(ep) => match ep.query_for_deduped(&req.query, self.webid) {
+                            Ok(h_mems) => {
+                                let fragments: Vec<serde_json::Value> = h_mems
+                                    .iter()
+                                    .take(limit)
+                                    .map(|t| {
+                                        json!({
+                                            "entity": t.entity,
+                                            "attribute": t.attribute,
+                                            "value": t.value,
+                                            "confidence": t.confidence,
+                                            "valid_from": t.observed_at.to_rfc3339(),
+                                        })
+                                    })
+                                    .collect();
+                                result["perspective_scoped_fragments"] = json!({
+                                    "count": fragments.len(),
+                                    "h_mems": fragments,
+                                });
+                            }
+                            Err(e) => {
+                                result["perspective_scoped_fragments"] =
+                                    json!({"error": format!("{e}")});
+                            }
+                        },
+                        Err(_) => {
+                            result["perspective_scoped_fragments"] =
+                                json!({"status": "unavailable"});
+                        }
                     }
-                },
-                Err(_) => {
-                    result["perspective_scoped_fragments"] = json!({"status": "unavailable"});
+                }
+                Ok(_) => {
+                    result["entity_wide_fragments"] = json!({
+                        "count": 0,
+                        "h_mems": [],
+                    });
+                    result["perspective_scoped_fragments"] = json!({
+                        "count": 0,
+                        "h_mems": [],
+                    });
                 }
             }
 
@@ -1247,12 +1414,18 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
 }
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
+    // Resolve the inference port once, before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it connects to
+    // the zed IPC bridge); the closure passed to `run_server` is sync, so the
+    // await must happen here. Used by `curator_semantic_search` and
+    // `curator_consult` to embed recall queries.
+    let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
-        |ctx: hkask_mcp_server::server::ServerContext| {
+        move |ctx: hkask_mcp_server::server::ServerContext| {
             let db = Arc::new(CuratorDb::from_context(&ctx));
-            Ok(CuratorServer::new(ctx.webid, db))
+            Ok(CuratorServer::new(ctx.webid, db, inference_port.clone()))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
             "HKASK_DB_PASSPHRASE",
@@ -1309,13 +1482,14 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
     // below — a memory failure must not take down the escalation queue and
     // regulation archive with it.
     //
-    // An unavailable EmbeddingStore must NOT disable curator memory: every
-    // curator memory tool (`curator_semantic_search`, `curator_memory_recall`,
-    // `curator_consult`) recalls by entity/EAV, never by vector similarity.
-    // Before the store unification the h_mem half survived an embedding
-    // failure because it was a separate handle; falling back to the
-    // embedding-free constructor preserves that degradation boundary instead
-    // of coupling all recall to a capability none of these tools use.
+    // An unavailable EmbeddingStore must NOT disable curator memory: the
+    // semantic tools (`curator_semantic_search`, `curator_consult`) degrade
+    // to exact-entity lookup (surfaced in the tool output), and
+    // `curator_memory_recall` recalls by entity/EAV regardless. Before the
+    // store unification the h_mem half survived an embedding failure because
+    // it was a separate handle; falling back to the embedding-free
+    // constructor preserves that degradation boundary instead of coupling
+    // all recall to the embedding index.
     let memory = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
         Ok(h_mem_store) => match embedding_store {
             Some(embeddings) => Some(Arc::new(hkask_memory::MemoryStore::new(
