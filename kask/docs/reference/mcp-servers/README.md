@@ -28,15 +28,15 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-11 on-disk MCP servers, **362 registered tools** fleet-wide (verified 2026-08-28; methods below).
+11 on-disk MCP servers, **357 registered tools** fleet-wide (verified 2026-08-28; methods below).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 49 |
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server; companies delegates to it) | 43 |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 23 |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 17 |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 24 |
-| [Media](media.md) | `mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery) | 67 |
+| [Media](media.md) | `mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery) | 68 |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 24 |
@@ -46,7 +46,8 @@ mds_categories: [composition, domain]
 
 ### Count verification methods (per row)
 
-- **Media = 67** — pinned end-to-end by `tool_surface_is_exactly_67_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:391`).
+- **Media = 68** — pinned end-to-end by `tool_surface_is_exactly_68_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:391`).
+- **Companies = 43** — pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`). The pin also guards absence: the portfolio ledger tools (portfolio_delete, ledger_import, ledger_export, portfolio_comparison, portfolio_returns, transaction_note_append) were removed from companies when the portfolio server took ownership, and any re-introduction fails this test.
 - **Scenarios = 21** — pinned end-to-end by `tool_surface_is_exactly_21_registered_tools` asserting `ScenariosServer::scenario_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1963`).
 - **Swarm = 82** — the build script generates the canonical tool-name list by scanning `src/*.rs` with the regex `pub\(crate\) async fn (swarm_\w+)\s*\(` (`kask/mcp-servers/hkask-mcp-swarm/build.rs:30-31`); replicating that regex over `src/` yields 82 unique `swarm_*` fns (47 in `cloud_swarm_tools.rs`, 25 in `local_tools.rs`, 3 in `a2a_tools.rs`, 4 in `knowledge_tools.rs`, 3 in `ledger_tools.rs`).
 - **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (verified 2026-08-28). This method reproduces the pinned counts exactly for media (67) and scenarios (21), and matches the swarm build.rs regex count (82), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — only media, scenarios, and swarm have mechanical pins against that failure mode.

@@ -18,11 +18,10 @@ pub(crate) use hkask_bridge_ontology::fibo::{
     GROSS_PROFIT_MARGIN, INDUSTRY_CLASSIFICATION, INDUSTRY_SECTOR, INTERNAL_RATE_OF_RETURN,
     INTRINSIC_VALUE_PER_SHARE, LEGAL_NAME, MARGIN_OF_SAFETY, MARKET_CAPITALIZATION,
     MONTE_CARLO_DCF, NET_DEBT, NET_PROFIT_MARGIN, NET_WORKING_CAPITAL, OPERATING_PROFIT_MARGIN,
-    PORTFOLIO, PRICE_EARNINGS_RATIO, PRICE_TO_BOOK_RATIO, PRICE_TO_SALES_RATIO,
-    PROBABILITY_OF_UNDERVALUATION, RETURN_ON_ASSETS, RETURN_ON_EQUITY, RETURN_ON_INVESTED_CAPITAL,
-    REVENUE_GROWTH_RATE, SCENARIO_PROBABILITY, SENSITIVITY_ANALYSIS, STOCK_SCREENER,
-    TERMINAL_GROWTH_RATE, TICKER_SYMBOL, TIME_WEIGHTED_RETURN, TOTAL_ASSETS, TOTAL_EQUITY,
-    TRANSACTION_LEDGER, TREASURY_STOCK, WEIGHTED_AVERAGE,
+    PRICE_EARNINGS_RATIO, PRICE_TO_BOOK_RATIO, PRICE_TO_SALES_RATIO, PROBABILITY_OF_UNDERVALUATION,
+    RETURN_ON_ASSETS, RETURN_ON_EQUITY, RETURN_ON_INVESTED_CAPITAL, REVENUE_GROWTH_RATE,
+    SCENARIO_PROBABILITY, SENSITIVITY_ANALYSIS, STOCK_SCREENER, TERMINAL_GROWTH_RATE,
+    TICKER_SYMBOL, TOTAL_ASSETS, TOTAL_EQUITY, TREASURY_STOCK, WEIGHTED_AVERAGE,
 };
 
 // Re-export the concept type so call sites that reference `fibo::FiboConcept`
@@ -97,17 +96,13 @@ pub(crate) fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
 /// `ontology: Option<&'static str>` parameter.
 ///
 /// Returns `None` only for tools that produce no artifact worth anchoring
-/// (currently none — all 44 tools are mapped).
+/// (currently none — all 43 tools are mapped).
 pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
     use hkask_bridge_ontology::dc_bibo;
     match tool {
-        // Portfolio tools
-        "portfolio_list" | "portfolio_delete" => Some(PORTFOLIO),
-        "portfolio_comparison" => Some(COMPARABLE_COMPANY_ANALYSIS),
-        "portfolio_returns" => Some(TIME_WEIGHTED_RETURN),
+        // Portfolio analytics (the ledger itself lives in the portfolio server)
         "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
         "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
-        "ledger_import" | "ledger_export" | "transaction_note_append" => Some(TRANSACTION_LEDGER),
         // Valuation tools
         "dcf_valuation" | "reverse_dcf" => Some(DCF_VALUATION),
         "ep_valuation" => Some(ECONOMIC_PROFIT),
@@ -119,12 +114,17 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "equity_duration" => Some(INTERNAL_RATE_OF_RETURN),
         // Forecast tools
         "calibrate_forecast" => Some(BRIER_SCORE),
+        // The driver is user-specified and DuPont-scoped: a growth rate, a
+        // profitability measure (net/gross margin, ROE, ROA, ROIC), a tax rate
+        // change, asset turnover, or financial leverage — every driver is a
+        // component or subcomponent of the DuPont identity, whose apex is ROE.
+        "driver_forecast" => Some(RETURN_ON_EQUITY),
         "forecast_record" | "forecast_get" | "forecast_list" | "forecast_persist" => {
             Some(FORECAST_ID)
         }
         "result_feedback" => Some(BRIER_SCORE),
         // Analysis tools
-        "company_screener" => Some(STOCK_SCREENER),
+        "stock_screener" | "stock_universe" | "company_screener" => Some(STOCK_SCREENER),
         "moat_check" => Some(COMPETITIVE_ADVANTAGE),
         "management_scorecard" => Some(CAPITAL_ALLOCATION),
         "working_capital_cycle" => Some(NET_WORKING_CAPITAL),
@@ -136,7 +136,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "income_statement" => Some(EBIT),
         "balance_sheet" => Some(TOTAL_ASSETS),
         "cash_flow_statement" => Some(FREE_CASH_FLOW),
-        "symbol_search" => Some(TICKER_SYMBOL),
+        "symbol_search" | "resolve_symbol" => Some(TICKER_SYMBOL),
         // Non-financial artifacts — Dublin Core (text/dataset artifacts)
         "company_transcript" | "note_add" | "note_list" | "note_delete" => Some(dc_bibo::TEXT),
         "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::DATASET),

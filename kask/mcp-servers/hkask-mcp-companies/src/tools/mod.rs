@@ -4,7 +4,7 @@ pub(crate) mod analytics;
 pub(crate) mod economic_profit;
 pub(crate) mod expectations;
 pub(crate) mod financial_data;
-pub(crate) mod portfolio;
+pub(crate) mod notes;
 
 pub(crate) mod artifacts;
 pub(crate) mod transcript;

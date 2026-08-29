@@ -1,21 +1,15 @@
-//! hKask MCP Companies — Portfolio tracking (companies-specific layer).
+//! hKask MCP Companies — research store (companies-specific layer).
 //!
-//! The general-purpose transaction ledger, holdings, and returns live in
-//! `hkask-mcp-portfolio`. This module holds the companies-specific layer:
-//! research notes, file attachments, and DCF forecast snapshots — all keyed
-//! by stock symbol. It delegates portfolio CRUD, ledger reads, and returns
-//! computation to [`hkask_mcp_portfolio::PortfolioStore`].
-//!
-//! The `portfolio_returns` tool seeds the store's price cache from FMP/EODHD
-//! before delegating to [`hkask_mcp_portfolio::returns`], keeping the
-//! portfolio crate provider-agnostic.
+//! Research notes, file attachments, and DCF forecast snapshots, keyed by
+//! stock symbol. The general-purpose transaction ledger, holdings, and
+//! returns live in the `hkask-mcp-portfolio` server; this store opens the
+//! same shared DB (`mcp/portfolio/{owner}`) for the ledger context its
+//! artifacts attach to, and owns the companies-specific tables (notes,
+//! files, forecasts) alongside the portfolio crate's schema.
 
-use hkask_mcp_portfolio::{
-    AssetType, CachedPriceResolver, LedgerFilter, PortfolioStore, export_csv, export_json,
-    import_csv, import_json, returns,
-};
-// Re-export the general types the tool layer imports from this module.
-pub(crate) use hkask_mcp_portfolio::{PortfolioError, Transaction, TxType};
+use hkask_mcp_portfolio::{LedgerFilter, PortfolioStore};
+// Re-exported for the tool layer's imports.
+pub(crate) use hkask_mcp_portfolio::{PortfolioError, Transaction};
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -123,20 +117,12 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
     })
 }
 
-// ── Re-exports for tool-layer compatibility ───────────────────────────
-//
-// The companies tool layer (`tools/portfolio.rs`) imports `PortfolioManager`,
-// `PortfolioError`, `Transaction`, `TxType`, and `ValidationReport` from this
-// module. We re-export the general types from the portfolio crate so the tool
-// layer keeps compiling without changes, and provide a thin `PortfolioManager`
-// that delegates the general ops while owning the companies-specific ones.
-
-/// Companies-side portfolio manager. Holds a [`PortfolioStore`] (the
-/// general-purpose ledger/holdings/returns engine from `hkask-mcp-portfolio`)
-/// and adds companies-specific research artifacts: notes, files, and DCF
-/// forecast snapshots.
+/// Companies-side research store. Holds a [`PortfolioStore`] (which owns
+/// the shared SQLite DB and its general schema) and adds the
+/// companies-specific research artifacts: notes, files, and DCF forecast
+/// snapshots.
 #[derive(Clone)]
-pub(crate) struct PortfolioManager {
+pub(crate) struct ResearchStore {
     /// The general-purpose store (owns the SQLite DB + schema).
     store: PortfolioStore,
     /// Path to the same SQLite DB the store uses, for companies-specific
@@ -145,7 +131,7 @@ pub(crate) struct PortfolioManager {
     db_path: PathBuf,
 }
 
-impl PortfolioManager {
+impl ResearchStore {
     /// Creates storage scoped to the authenticated server owner. The
     /// portfolio crate creates the DB and the general schema; this module
     /// adds the companies-specific tables (notes, files, forecasts) on top.
@@ -170,44 +156,7 @@ impl PortfolioManager {
         Ok(())
     }
 
-    // ── General ops (delegated to the portfolio crate) ──────────────
-
-    pub fn create(&self, name: &str) -> Result<(), PortfolioError> {
-        self.store.create(name, AssetType::Stock)
-    }
-
-    pub fn delete(&self, name: &str) -> Result<(), PortfolioError> {
-        self.store.delete(name)
-    }
-
-    pub fn list(&self) -> Result<Vec<String>, PortfolioError> {
-        self.store.list()
-    }
-
-    pub fn append_note(&self, name: &str, tx_id: &str, note: &str) -> Result<(), PortfolioError> {
-        let conn = self.open()?;
-        let existing: String = conn
-            .query_row(
-                "SELECT notes FROM transactions WHERE id = ?1 AND portfolio_name = ?2",
-                params![tx_id, name],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| format!("lookup: {e}"))?
-            .unwrap_or_default();
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let updated = if existing.is_empty() {
-            format!("[{timestamp}] {note}")
-        } else {
-            format!("{existing}\n[{timestamp}] {note}")
-        };
-        conn.execute(
-            "UPDATE transactions SET notes = ?1 WHERE id = ?2 AND portfolio_name = ?3",
-            params![updated, tx_id, name],
-        )
-        .map_err(|e| format!("update: {e}"))?;
-        Ok(())
-    }
+    // ── Ledger context (read-only views over the shared portfolio DB) ──
 
     pub fn get_transactions(
         &self,
@@ -229,115 +178,6 @@ impl PortfolioManager {
         )
     }
 
-    pub fn validate(&self, name: &str) -> Result<ValidationReport, PortfolioError> {
-        let txs = self.store.ledger(name, LedgerFilter::all())?;
-        let mut issues = Vec::new();
-        let mut positions: std::collections::HashMap<String, (f64, f64)> =
-            std::collections::HashMap::new();
-        let mut cash = 0.0f64;
-
-        for tx in &txs {
-            match tx.tx_type {
-                TxType::Buy => {
-                    let qty = tx.quantity.unwrap_or(0.0);
-                    let price = tx.price.unwrap_or(0.0);
-                    let comm = tx.commission.unwrap_or(0.0);
-                    if qty <= 0.0 {
-                        issues.push(format!("{}: buy with non-positive quantity {}", tx.id, qty));
-                    }
-                    if price <= 0.0 {
-                        issues.push(format!("{}: buy with non-positive price {}", tx.id, price));
-                    }
-                    if let Some(ref sym) = tx.symbol {
-                        let entry = positions.entry(sym.clone()).or_insert((0.0, 0.0));
-                        entry.0 += qty;
-                    }
-                    cash -= qty * price + comm;
-                }
-                TxType::Sell => {
-                    let qty = tx.quantity.unwrap_or(0.0);
-                    let price = tx.price.unwrap_or(0.0);
-                    let comm = tx.commission.unwrap_or(0.0);
-                    if qty <= 0.0 {
-                        issues.push(format!(
-                            "{}: sell with non-positive quantity {}",
-                            tx.id, qty
-                        ));
-                    }
-                    if price <= 0.0 {
-                        issues.push(format!("{}: sell with non-positive price {}", tx.id, price));
-                    }
-                    if let Some(ref sym) = tx.symbol {
-                        let entry = positions.entry(sym.clone()).or_insert((0.0, 0.0));
-                        entry.1 += qty;
-                    }
-                    cash += qty * price - comm;
-                }
-                TxType::Dividend => {
-                    cash += tx.amount.unwrap_or(0.0);
-                }
-                TxType::Deposit => {
-                    let amt = tx.amount.unwrap_or(0.0);
-                    if amt <= 0.0 {
-                        issues.push(format!(
-                            "{}: deposit with non-positive amount {}",
-                            tx.id, amt
-                        ));
-                    }
-                    cash += amt;
-                }
-                TxType::Withdrawal => {
-                    let amt = tx.amount.unwrap_or(0.0);
-                    if amt <= 0.0 {
-                        issues.push(format!(
-                            "{}: withdrawal with non-positive amount {}",
-                            tx.id, amt
-                        ));
-                    }
-                    cash -= amt;
-                }
-                // Rolls and weight adjustments are CMP-index operations not
-                // used by stock portfolios; they contribute no cash here.
-                TxType::Roll | TxType::WeightAdjust => {}
-            }
-        }
-
-        let position_summaries: Vec<PositionSummary> = positions
-            .into_iter()
-            .map(|(symbol, (buys, sells))| PositionSummary {
-                symbol,
-                shares: buys - sells,
-                total_buys: buys,
-                total_sells: sells,
-            })
-            .filter(|p| p.shares.abs() > 0.0001 || p.total_buys > 0.0 || p.total_sells > 0.0)
-            .collect();
-
-        Ok(ValidationReport {
-            valid: issues.is_empty(),
-            transaction_count: txs.len(),
-            positions: position_summaries,
-            cash_balance: cash,
-            issues,
-        })
-    }
-
-    pub fn import_json(&self, name: &str, json: &str) -> Result<Vec<String>, PortfolioError> {
-        import_json(&self.store, name, AssetType::Stock, json)
-    }
-
-    pub fn import_csv(&self, name: &str, csv: &str) -> Result<Vec<String>, PortfolioError> {
-        import_csv(&self.store, name, AssetType::Stock, csv)
-    }
-
-    pub fn export_json(&self, name: &str) -> Result<String, PortfolioError> {
-        export_json(&self.store, name)
-    }
-
-    pub fn export_csv(&self, name: &str) -> Result<String, PortfolioError> {
-        export_csv(&self.store, name)
-    }
-
     pub fn get_symbols(&self, name: &str) -> Result<Vec<String>, PortfolioError> {
         let conn = self.open()?;
         let mut stmt = conn
@@ -351,132 +191,6 @@ impl PortfolioManager {
             symbols.push(row.map_err(|e| format!("row: {e}"))?);
         }
         Ok(symbols)
-    }
-
-    pub fn get_prices(
-        &self,
-        name: &str,
-        symbol: &str,
-        from: &str,
-        to: &str,
-    ) -> Result<Vec<(String, f64, String)>, PortfolioError> {
-        let conn = self.open()?;
-        let mut stmt = conn
-            .prepare("SELECT date, close, source FROM price_cache WHERE portfolio_name = ?1 AND symbol = ?2 AND date >= ?3 AND date <= ?4 ORDER BY date")
-            .map_err(|e| format!("query: {e}"))?;
-        let rows = stmt
-            .query_map(params![name, symbol, from, to], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, f64>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(|e| format!("query: {e}"))?;
-        let mut prices = Vec::new();
-        for row in rows {
-            prices.push(row.map_err(|e| format!("row: {e}"))?);
-        }
-        Ok(prices)
-    }
-
-    /// Seed the price cache for a (portfolio, symbol, date) triple. Used by
-    /// the `portfolio_returns` tool after a successful FMP/EODHD fetch so the
-    /// portfolio crate's returns computation reads from the cache.
-    pub fn seed_price_cache(
-        &self,
-        portfolio: &str,
-        symbol: &str,
-        date: &str,
-        close: f64,
-        source: &str,
-    ) -> Result<(), PortfolioError> {
-        let resolver = CachedPriceResolver::new(&self.store, portfolio);
-        resolver.seed_cache(symbol, date, close, source)
-    }
-
-    /// Compute returns by delegating to the portfolio crate. The caller is
-    /// responsible for seeding the price cache first (the companies
-    /// `portfolio_returns` tool does this from FMP/EODHD).
-    pub fn compute_returns(
-        &self,
-        name: &str,
-        from: &str,
-        to: &str,
-    ) -> Result<hkask_mcp_portfolio::ReturnsReport, PortfolioError> {
-        let resolver = CachedPriceResolver::new(&self.store, name);
-        returns(&self.store, name, from, to, &resolver)
-    }
-
-    pub fn compare(&self, name_a: &str, name_b: &str) -> Result<serde_json::Value, PortfolioError> {
-        let report_a = self.validate(name_a)?;
-        let report_b = self.validate(name_b)?;
-
-        let positions_a: std::collections::HashMap<&str, &PositionSummary> = report_a
-            .positions
-            .iter()
-            .map(|p| (p.symbol.as_str(), p))
-            .collect();
-        let positions_b: std::collections::HashMap<&str, &PositionSummary> = report_b
-            .positions
-            .iter()
-            .map(|p| (p.symbol.as_str(), p))
-            .collect();
-
-        let all_symbols: std::collections::BTreeSet<&str> = positions_a
-            .keys()
-            .chain(positions_b.keys())
-            .copied()
-            .collect();
-
-        let mut shared = Vec::new();
-        let mut only_a = Vec::new();
-        let mut only_b = Vec::new();
-
-        for sym in &all_symbols {
-            match (positions_a.get(sym), positions_b.get(sym)) {
-                (Some(pa), Some(pb)) => shared.push(serde_json::json!({
-                    "symbol": sym,
-                    "shares_a": pa.shares,
-                    "shares_b": pb.shares,
-                    "buys_a": pa.total_buys,
-                    "sells_a": pa.total_sells,
-                    "buys_b": pb.total_buys,
-                    "sells_b": pb.total_sells,
-                })),
-                (Some(pa), None) => only_a.push(serde_json::json!({
-                    "symbol": sym,
-                    "shares": pa.shares,
-                    "buys": pa.total_buys,
-                    "sells": pa.total_sells,
-                })),
-                (None, Some(pb)) => only_b.push(serde_json::json!({
-                    "symbol": sym,
-                    "shares": pb.shares,
-                    "buys": pb.total_buys,
-                    "sells": pb.total_sells,
-                })),
-                (None, None) => continue,
-            }
-        }
-
-        Ok(serde_json::json!({
-            "portfolio_a": {
-                "name": name_a,
-                "transactions": report_a.transaction_count,
-                "positions": report_a.positions.len(),
-                "cash": report_a.cash_balance,
-            },
-            "portfolio_b": {
-                "name": name_b,
-                "transactions": report_b.transaction_count,
-                "positions": report_b.positions.len(),
-                "cash": report_b.cash_balance,
-            },
-            "shared_positions": shared,
-            "only_in_a": only_a,
-            "only_in_b": only_b,
-        }))
     }
 
     // ── Companies-specific: forecasts ──────────────────────────────
@@ -781,26 +495,3 @@ impl PortfolioManager {
         Ok(())
     }
 }
-
-// ── Validation report (companies-side view) ───────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ValidationReport {
-    pub valid: bool,
-    pub transaction_count: usize,
-    pub positions: Vec<PositionSummary>,
-    pub cash_balance: f64,
-    pub issues: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct PositionSummary {
-    pub symbol: String,
-    pub shares: f64,
-    pub total_buys: f64,
-    pub total_sells: f64,
-}
-
-// Re-export the portfolio crate's error and transaction types so the tool
-// layer's imports (`use crate::portfolio::{PortfolioError, Transaction, TxType}`)
-// keep resolving. (Declared at the top of this module.)

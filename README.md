@@ -32,15 +32,15 @@ Four native panels extend the steering surface. The **swarm panel** composes and
 
 ### Media generation
 
-The `media` MCP server is the fleet's second largest (67 tools): image and video generation, voice synthesis, transcription, face recognition, and a persistent gallery. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
+The `media` MCP server is the fleet's second largest (68 tools): image and video generation, voice synthesis, transcription, face recognition, and a persistent gallery. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
 
 ### MCP servers
 
-**11 built-in MCP servers** (**362 registered tools** fleet-wide) are launched by zed's `context_server` host as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**11 built-in MCP servers** (**357 registered tools** fleet-wide) are launched by zed's `context_server` host as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
 | Server                 | Surface                                                       |
 | ---------------------- | ------------------------------------------------------------- |
-| `companies`            | FIBO-anchored valuation, forecasting, portfolio ledger         |
+| `companies`            | FIBO-anchored financial data, valuation, forecasting, transcripts, screener |
 | `corpus`               | Gather→process→output document pipeline                        |
 | `curator`              | Curator-scoped memory and regulation surfaces                 |
 | `kata-kanban`          | Kata-driven task kanban with idempotent creates               |

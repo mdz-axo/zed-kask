@@ -1,12 +1,13 @@
 //! Portfolio analytics and DCF valuation tools.
-use super::portfolio::run_portfolio;
+use super::notes::run_store;
 use crate::{
     CompaniesServer, StoredForecast, fibo, financial_model,
-    portfolio::{PersistedForecast, TxType},
+    research_store::PersistedForecast,
     scenarios, superforecast,
     types::{self, AttributionRequest, CharacteristicsRequest},
     validate_symbol,
 };
+use hkask_mcp_portfolio::TxType;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -24,7 +25,7 @@ impl CompaniesServer {
         execute_tool_semantic(self, "portfolio_attribution", Self::ontology_anchor("portfolio_attribution"), async {
             // Get transactions and compute positions at start and end
             let portfolio_name = req.portfolio.clone();
-            let txs = run_portfolio(self.portfolio.clone(), move |portfolio| {
+            let txs = run_store(self.research.clone(), move |portfolio| {
                 portfolio.get_transactions(&portfolio_name, None, None, None, None)
             })
             .await?;
@@ -188,7 +189,7 @@ impl CompaniesServer {
             Self::ontology_anchor("portfolio_characteristics"),
             async {
                 let portfolio_name = req.portfolio.clone();
-                let symbols = run_portfolio(self.portfolio.clone(), move |portfolio| {
+                let symbols = run_store(self.research.clone(), move |portfolio| {
                     portfolio.get_symbols(&portfolio_name)
                 })
                 .await?;
@@ -202,7 +203,7 @@ impl CompaniesServer {
                 // Get positions at the as-of date
                 let portfolio_name = req.portfolio.clone();
                 let as_of = req.date.clone();
-                let txs = run_portfolio(self.portfolio.clone(), move |portfolio| {
+                let txs = run_store(self.research.clone(), move |portfolio| {
                     portfolio.get_transactions(&portfolio_name, None, None, None, Some(&as_of))
                 })
                 .await?;
@@ -409,7 +410,7 @@ impl CompaniesServer {
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
                 let symbol = req.symbol.clone();
-                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                run_store(self.research.clone(), move |portfolio| {
                     portfolio.validate_forecast_revision(&revision_of, &symbol)
                 })
                 .await?;

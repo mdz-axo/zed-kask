@@ -1,10 +1,10 @@
 //! Valuation and forecasting tools.
-use super::portfolio::run_portfolio;
+use super::notes::run_store;
 use crate::{
     CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
-    portfolio::PersistedForecast, projected_terminal_multiple, providers, scenarios, superforecast,
-    types, validate_symbol,
+    projected_terminal_multiple, providers, research_store::PersistedForecast, scenarios,
+    superforecast, types, validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
@@ -822,7 +822,7 @@ impl CompaniesServer {
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
                 let symbol = req.symbol.clone();
-                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                run_store(self.research.clone(), move |portfolio| {
                     portfolio.validate_forecast_revision(&revision_of, &symbol)
                 })
                 .await?;
@@ -1093,7 +1093,7 @@ impl CompaniesServer {
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
                 let symbol = req.symbol.clone();
-                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                run_store(self.research.clone(), move |portfolio| {
                     portfolio.validate_forecast_revision(&revision_of, &symbol)
                 })
                 .await?;
@@ -1182,7 +1182,7 @@ impl CompaniesServer {
             //
             // Fetch the persisted forecast once — reused below for gap
             // decomposition to avoid a redundant DB call.
-            let persisted_forecast: Option<crate::portfolio::PersistedForecast> = if let Some(ref forecast_id) = req.forecast_id {
+            let persisted_forecast: Option<crate::research_store::PersistedForecast> = if let Some(ref forecast_id) = req.forecast_id {
                 Some(
                     self.get_persisted_forecast(forecast_id.clone())
                         .await?
@@ -1637,7 +1637,7 @@ impl CompaniesServer {
                 "intrinsic_per_share": model.intrinsic_per_share,
             });
 
-            self.save_forecast(crate::portfolio::PersistedForecast {
+            self.save_forecast(crate::research_store::PersistedForecast {
                 id: forecast_id.clone(),
                 symbol: req.symbol.clone(),
                 revision_of: None,

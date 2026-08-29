@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (47) — `portfolio_list` moved to portfolio MCP server
+//! ## Tools (43) — portfolio ledger/CRUD/returns live in the portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -16,12 +16,10 @@
 //! - `tools/valuation.rs` — dcf_valuation, reverse_dcf, ep_valuation, comparable_analysis,
 //!   scenario_analysis, sensitivity_analysis, monte_carlo_dcf, scenario_impact_valuation,
 //!   calibrate_forecast, forecast_record, forecast_persist
-//! - `tools/analytics.rs` — portfolio_attribution, portfolio_characteristics,
-//!   portfolio_comparison, portfolio_returns
+//! - `tools/analytics.rs` — portfolio_attribution, portfolio_characteristics
 //! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
 //! - `tools/expectations.rs` — expectations_gap
-//! - `tools/portfolio.rs` — ledger_import, ledger_export,
-//!   portfolio_delete, transaction_note_append, note_add, note_list, note_delete,
+//! - `tools/notes.rs` — note_add, note_list, note_delete,
 //!   file_attach, file_list, file_delete
 //! - `tools/transcript.rs` — earnings-call transcript tools
 //! - `tools/screener.rs` — stock_screener, research_search
@@ -51,8 +49,8 @@ pub(crate) mod economic_profit;
 pub(crate) mod fibo;
 pub(crate) mod fibo_cache;
 mod financial_model;
-pub(crate) mod portfolio;
 mod providers;
+pub(crate) mod research_store;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
@@ -69,7 +67,7 @@ pub(crate) use forecast::{
 
 pub(crate) mod types;
 
-use portfolio::{PersistedForecast, PortfolioManager};
+use research_store::{PersistedForecast, ResearchStore};
 
 pub(crate) mod tools;
 
@@ -111,7 +109,7 @@ hkask_mcp_server::mcp_server!(
         pub tavily_api_key: Option<String>,
         pub brave_api_key: Option<String>,
         pub serpapi_key: Option<String>,
-        pub portfolio: PortfolioManager,
+        pub research: ResearchStore,
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
         pub fibo_cache: Option<fibo_cache::FiboDataCache>,
@@ -231,8 +229,8 @@ impl CompaniesServer {
     }
 
     async fn save_forecast(&self, forecast: PersistedForecast) -> Result<(), McpToolError> {
-        let portfolio = self.portfolio.clone();
-        tokio::task::spawn_blocking(move || portfolio.save_forecast(&forecast))
+        let research = self.research.clone();
+        tokio::task::spawn_blocking(move || research.save_forecast(&forecast))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
@@ -242,8 +240,8 @@ impl CompaniesServer {
         &self,
         forecast_id: String,
     ) -> Result<Option<PersistedForecast>, McpToolError> {
-        let portfolio = self.portfolio.clone();
-        tokio::task::spawn_blocking(move || portfolio.get_forecast(&forecast_id))
+        let research = self.research.clone();
+        tokio::task::spawn_blocking(move || research.get_forecast(&forecast_id))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
@@ -253,8 +251,8 @@ impl CompaniesServer {
         &self,
         symbol: String,
     ) -> Result<Vec<PersistedForecast>, McpToolError> {
-        let portfolio = self.portfolio.clone();
-        tokio::task::spawn_blocking(move || portfolio.list_forecasts(&symbol))
+        let research = self.research.clone();
+        tokio::task::spawn_blocking(move || research.list_forecasts(&symbol))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
@@ -265,13 +263,11 @@ impl CompaniesServer {
         forecast_id: String,
         outcome: serde_json::Value,
     ) -> Result<(), McpToolError> {
-        let portfolio = self.portfolio.clone();
-        tokio::task::spawn_blocking(move || {
-            portfolio.record_forecast_outcome(&forecast_id, outcome)
-        })
-        .await
-        .map_err(|error| map_join_error(error, "forecast task failed"))?
-        .map_err(map_portfolio_error)
+        let research = self.research.clone();
+        tokio::task::spawn_blocking(move || research.record_forecast_outcome(&forecast_id, outcome))
+            .await
+            .map_err(|error| map_join_error(error, "forecast task failed"))?
+            .map_err(map_portfolio_error)
     }
 }
 
@@ -281,7 +277,7 @@ impl CompaniesServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
         Self::financial_data_router()
             + Self::analysis_router()
-            + Self::portfolio_router()
+            + Self::notes_router()
             + Self::analytics_router()
             + Self::valuation_router()
             + Self::economic_profit_router()
@@ -384,7 +380,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 tavily_api_key,
                 brave_api_key,
                 serpapi_key,
-                PortfolioManager::new(ctx.webid)?,
+                ResearchStore::new(ctx.webid)?,
                 std::sync::Arc::new(std::sync::Mutex::new({
                     let days = hkask_mcp_server::parse_env_warn(
                         "HKASK_CHRONIC_STALENESS_DAYS",
@@ -454,7 +450,7 @@ mod tool_behavior_tests {
             None,
             None,
             None,
-            PortfolioManager::new(WebID::new()).expect("portfolio init"),
+            ResearchStore::new(WebID::new()).expect("research store init"),
             std::sync::Arc::new(std::sync::Mutex::new(LearningState::default())),
             superforecast::FermiDefaults::from_env(),
             None,
@@ -464,6 +460,32 @@ mod tool_behavior_tests {
     fn parse_envelope(output: &str) -> serde_json::Value {
         serde_json::from_str(output)
             .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"))
+    }
+
+    // Pins the registered tool-surface count end-to-end. The portfolio ledger
+    // surface (portfolio_delete, ledger_import, ledger_export,
+    // portfolio_comparison, portfolio_returns, transaction_note_append) was
+    // removed from this server when the portfolio MCP server took ownership —
+    // this pin is what makes a re-introduction (or a silent registration drop)
+    // fail CI instead of shipping as an undocumented duplicate.
+    #[test]
+    fn tool_surface_is_exactly_43_registered_tools() {
+        let n = CompaniesServer::combined_router().list_all().len();
+        assert_eq!(n, 43, "companies registered tool surface changed; got {n}");
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CompaniesServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                CompaniesServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm in fibo::tool_to_ontology",
+                tool.name
+            );
+        }
     }
 
     /// `moat_check` with a traversal symbol must return a typed

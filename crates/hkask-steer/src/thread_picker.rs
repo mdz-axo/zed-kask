@@ -32,7 +32,7 @@ pub type ThreadSelectHandler =
 /// sidebar's recency ordering regardless of store iteration order.
 fn sorted_by_recency(threads: Vec<DbThreadMetadata>) -> Vec<DbThreadMetadata> {
     let mut threads = threads;
-    threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
     threads
 }
 

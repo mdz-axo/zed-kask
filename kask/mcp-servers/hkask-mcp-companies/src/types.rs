@@ -33,46 +33,7 @@ pub struct SearchRequest {
     pub limit: Option<u32>,
 }
 
-// ── Portfolio request structs ─────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PortfolioNameRequest {
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct TransactionNoteRequest {
-    pub portfolio: String,
-    pub tx_id: String,
-    pub note: String,
-}
-
-/// Ledger import/export format.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImportFormat {
-    Csv,
-    Json,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LedgerImportRequest {
-    pub portfolio: String,
-    pub format: ImportFormat,
-    pub data: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LedgerExportRequest {
-    pub portfolio: String,
-    pub format: ImportFormat,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PortfolioCompareRequest {
-    pub portfolio_a: String,
-    pub portfolio_b: String,
-}
+// ── Portfolio analytics request structs ──────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AttributionRequest {
@@ -134,13 +95,6 @@ pub(crate) struct ExpectationsGapRequest {
     /// Your estimate of sustainable revenue growth (0.0–1.0).
     /// Compared against market-implied growth and management guidance.
     pub growth_estimate: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PortfolioReturnsRequest {
-    pub portfolio: String,
-    pub from: String,
-    pub to: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
