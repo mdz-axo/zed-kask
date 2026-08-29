@@ -67,7 +67,10 @@ fn independent_event(identifier: &str, name: &str, probability: f64) -> Scenario
 #[tokio::test]
 async fn scenario_status_reports_empty_state() {
     let server = make_server();
-    let output = server.scenario_status(Parameters(StatusRequest {})).await;
+    let output = server
+        .scenario_status(Parameters(StatusRequest {}))
+        .await
+        .expect("tool ok");
     let parsed = parse(&output);
 
     let pipeline = parsed
@@ -110,7 +113,7 @@ async fn scenario_quantify_resolves_single_independent_event() {
         .scenario_quantify(Parameters(QuantifyRequest {
             events: vec![event],
         }))
-        .await;
+        .await.expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -131,7 +134,12 @@ async fn scenario_quantify_resolves_single_independent_event() {
         "the root's marginal equals its prior with no parents, got: {parsed}"
     );
     // Quantifying caches the tree so a subsequent status reflects it.
-    let status = parse(&server.scenario_status(Parameters(StatusRequest {})).await);
+    let status = parse(
+        &server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("tool ok"),
+    );
     assert!(
         status.get("event_tree").is_some_and(|tree| !tree.is_null()),
         "scenario_quantify must populate the tree cache, got: {status}"
@@ -151,7 +159,7 @@ async fn scenario_triage_marks_well_specified_question_clocklike() {
             has_reference_class: Some(true),
             has_resolution_criteria: Some(true),
         }))
-        .await;
+        .await.expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -188,7 +196,7 @@ async fn scenario_triage_marks_vague_question_cloudlike() {
             has_reference_class: Some(false),
             has_resolution_criteria: Some(false),
         }))
-        .await;
+        .await.expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -217,7 +225,7 @@ async fn scenario_brainstorm_clamps_start_round_into_range() {
             personas: None,
             start_round: Some(5),
         }))
-        .await;
+        .await.expect("tool ok");
     let parsed = parse(&output);
 
     assert_eq!(
@@ -240,22 +248,17 @@ async fn scenario_brainstorm_clamps_start_round_into_range() {
 #[tokio::test]
 async fn scenario_quantify_rejects_empty_events_as_invalid_argument() {
     let server = make_server();
-    let output = server
+    let error = server
         .scenario_quantify(Parameters(QuantifyRequest { events: vec![] }))
-        .await;
-    let parsed = parse(&output);
-
-    let message = parsed["error"]
-        .as_str()
-        .unwrap_or_else(|| panic!("empty events must surface an error, got: {parsed}"));
-    assert_eq!(
-        parsed["kind"].as_str(),
-        Some("invalid_argument"),
-        "missing input is a caller defect, not an internal error, got: {parsed}"
+        .await
+        .expect_err("empty events must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "missing input is a caller defect, not an internal error, got: {error:?}"
     );
     assert!(
-        message.contains("no events"),
-        "the error message must name the defect, got: {message}"
+        error.message.contains("no events"),
+        "the error message must name the defect, got: {error:?}"
     );
 }
 
@@ -267,27 +270,22 @@ async fn scenario_quantify_rejects_empty_events_as_invalid_argument() {
 async fn scenario_quantify_rejects_out_of_range_probability_as_invalid_argument() {
     let server = make_server();
     let event = independent_event("evt-bad", "impossible event", 1.5);
-    let output = server
+    let error = server
         .scenario_quantify(Parameters(QuantifyRequest {
             events: vec![event],
         }))
-        .await;
-    let parsed = parse(&output);
-
-    let message = parsed["error"].as_str().unwrap_or_else(|| {
-        panic!("an out-of-range probability must surface an error, got: {parsed}")
-    });
-    assert_eq!(
-        parsed["kind"].as_str(),
-        Some("invalid_argument"),
-        "an invalid probability is a caller-input defect, got: {parsed}"
+        .await
+        .expect_err("an out-of-range probability must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "an invalid probability is a caller-input defect, got: {error:?}"
     );
     assert!(
-        message.contains("impossible event"),
-        "the error must name the offending event, got: {message}"
+        error.message.contains("impossible event"),
+        "the error must name the offending event, got: {error:?}"
     );
     assert!(
-        message.contains("not in [0, 1]"),
-        "the error must state the probability constraint, got: {message}"
+        error.message.contains("not in [0, 1]"),
+        "the error must state the probability constraint, got: {error:?}"
     );
 }

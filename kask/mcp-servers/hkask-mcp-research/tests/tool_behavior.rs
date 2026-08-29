@@ -14,6 +14,10 @@
 //! - RSS tools without a DB → `permission_denied` (the `require_rss_db!` gate).
 //! - RSS tools with an in-memory DB → happy path (empty list, zero unread)
 //!   and invalid-argument (malformed continuation token).
+//!
+//! Tools return `Result<String, McpToolError>`: Ok-path tests unwrap the
+//! envelope string; error-path tests assert on the typed `McpToolError`
+//! (`kind` + `message`) instead of parsing an in-band error envelope.
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +34,8 @@ use hkask_mcp_research::research::types::{
     ExtractedContent, FindSimilarRequest, ProviderHealthEntry, ProviderRecommendation, RateLimiter,
     SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
+use hkask_mcp_server::server::McpToolError;
+use hkask_types::McpErrorKind;
 use hkask_types::WebID;
 use hkask_types::tool_response::parse_tool_response;
 use rmcp::handler::server::wrapper::Parameters;
@@ -156,19 +162,26 @@ fn parse(out: &str) -> serde_json::Value {
     parse_tool_response(out).expect("tool output must be valid JSON")
 }
 
-fn assert_error_kind(json: &serde_json::Value, expected_kind: &str) {
-    let kind = json
-        .get("kind")
-        .and_then(|k| k.as_str())
-        .unwrap_or_else(|| panic!("expected 'kind' field, got: {json}"));
+/// Unwrap a successful tool call: the Ok payload is the `{"content": ...}`
+/// envelope string.
+fn ok(out: Result<String, McpToolError>) -> String {
+    out.expect("tool ok")
+}
+
+/// Unwrap a failed tool call: the typed error carries `kind` + `message`.
+fn err(out: Result<String, McpToolError>) -> McpToolError {
+    out.expect_err("tool should fail")
+}
+
+fn assert_error_kind(error: &McpToolError, expected_kind: McpErrorKind) {
     assert_eq!(
-        kind, expected_kind,
-        "expected kind '{expected_kind}' but got '{kind}'; full response: {json}"
+        error.kind, expected_kind,
+        "expected kind '{expected_kind}' but got '{}'; message: {}",
+        error.kind, error.message
     );
     assert!(
-        json.get("error")
-            .is_some_and(|e| e.as_str().is_some_and(|s| !s.is_empty())),
-        "expected non-empty 'error' field, got: {json}"
+        !error.message.is_empty(),
+        "expected non-empty error message, got: {error:?}"
     );
 }
 
@@ -182,7 +195,7 @@ const LITERAL_IP_URL: &str = "http://1.2.3.4/path";
 #[tokio::test]
 async fn web_ping_returns_ok_with_provider_health() {
     let server = make_server_without_db();
-    let out = server.web_ping().await;
+    let out = ok(server.web_ping().await);
     let json = parse(&out);
     assert_eq!(
         json.get("status").and_then(|status| status.as_str()),
@@ -201,7 +214,7 @@ async fn web_ping_returns_ok_with_provider_health() {
 #[tokio::test]
 async fn web_search_rejects_empty_query() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_search(Parameters(SearchRequest {
             query: String::new(),
             num_results: None,
@@ -211,21 +224,19 @@ async fn web_search_rejects_empty_query() {
             strategy: None,
             provider: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| error
-            .as_str()
-            .is_some_and(|message| message.contains("empty"))),
-        "error should mention empty query; got: {json}"
+        error.message.contains("empty"),
+        "error should mention empty query; got: {}",
+        error.message
     );
 }
 
 #[tokio::test]
 async fn web_search_rejects_oversized_query() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_search(Parameters(SearchRequest {
             query: "x".repeat(500),
             num_results: None,
@@ -235,23 +246,19 @@ async fn web_search_rejects_oversized_query() {
             strategy: None,
             provider: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| {
-            error
-                .as_str()
-                .is_some_and(|message| message.contains("maximum length"))
-        }),
-        "error should mention maximum length; got: {json}"
+        error.message.contains("maximum length"),
+        "error should mention maximum length; got: {}",
+        error.message
     );
 }
 
 #[tokio::test]
 async fn web_search_rejects_unknown_strategy() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_search(Parameters(SearchRequest {
             query: "test".to_string(),
             num_results: None,
@@ -261,15 +268,14 @@ async fn web_search_rejects_unknown_strategy() {
             strategy: Some("bogus".to_string()),
             provider: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
 }
 
 #[tokio::test]
 async fn web_search_rejects_unknown_freshness() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_search(Parameters(SearchRequest {
             query: "test".to_string(),
             num_results: None,
@@ -279,9 +285,8 @@ async fn web_search_rejects_unknown_freshness() {
             strategy: None,
             provider: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
 }
 
 // ── web_search credential-missing path ─────────────────────────────────────
@@ -289,7 +294,7 @@ async fn web_search_rejects_unknown_freshness() {
 #[tokio::test]
 async fn web_search_surfaces_missing_credentials_as_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_search(Parameters(SearchRequest {
             query: "test".to_string(),
             num_results: None,
@@ -299,9 +304,8 @@ async fn web_search_surfaces_missing_credentials_as_permission_denied() {
             strategy: None,
             provider: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── web_extract invalid-argument paths ─────────────────────────────────────
@@ -310,7 +314,7 @@ async fn web_search_surfaces_missing_credentials_as_permission_denied() {
 async fn web_extract_rejects_oversized_url() {
     let server = make_server_without_db();
     let oversized_url = format!("http://1.2.3.4/{}", "x".repeat(2100));
-    let out = server
+    let error = err(server
         .web_extract(Parameters(ExtractRequest {
             url: oversized_url,
             format: None,
@@ -319,21 +323,19 @@ async fn web_extract_rejects_oversized_url() {
             main_content_only: None,
             wait_for_ms: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| error
-            .as_str()
-            .is_some_and(|message| message.contains("url"))),
-        "error should mention url; got: {json}"
+        error.message.contains("url"),
+        "error should mention url; got: {}",
+        error.message
     );
 }
 
 #[tokio::test]
 async fn web_extract_rejects_oversized_json_prompt() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_extract(Parameters(ExtractRequest {
             url: LITERAL_IP_URL.to_string(),
             format: None,
@@ -342,16 +344,12 @@ async fn web_extract_rejects_oversized_json_prompt() {
             main_content_only: None,
             wait_for_ms: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| {
-            error
-                .as_str()
-                .is_some_and(|message| message.contains("json_prompt"))
-        }),
-        "error should mention json_prompt; got: {json}"
+        error.message.contains("json_prompt"),
+        "error should mention json_prompt; got: {}",
+        error.message
     );
 }
 
@@ -360,7 +358,7 @@ async fn web_extract_rejects_oversized_json_prompt() {
 #[tokio::test]
 async fn web_extract_surfaces_missing_credentials_as_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_extract(Parameters(ExtractRequest {
             url: LITERAL_IP_URL.to_string(),
             format: None,
@@ -369,9 +367,8 @@ async fn web_extract_surfaces_missing_credentials_as_permission_denied() {
             main_content_only: None,
             wait_for_ms: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── web_find_similar credential-missing path ───────────────────────────────
@@ -379,14 +376,13 @@ async fn web_extract_surfaces_missing_credentials_as_permission_denied() {
 #[tokio::test]
 async fn web_find_similar_surfaces_missing_credentials_as_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_find_similar(Parameters(FindSimilarRequest {
             url: LITERAL_IP_URL.to_string(),
             num_results: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── web_browse invalid-argument paths ──────────────────────────────────────
@@ -395,36 +391,31 @@ async fn web_find_similar_surfaces_missing_credentials_as_permission_denied() {
 async fn web_browse_rejects_oversized_url() {
     let server = make_server_without_db();
     let oversized_url = format!("http://1.2.3.4/{}", "x".repeat(2100));
-    let out = server
+    let error = err(server
         .web_browse(Parameters(BrowseRequest {
             url: oversized_url,
             instruction: None,
             timeout_secs: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
 }
 
 #[tokio::test]
 async fn web_browse_rejects_oversized_instruction() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_browse(Parameters(BrowseRequest {
             url: LITERAL_IP_URL.to_string(),
             instruction: Some("x".repeat(3000)),
             timeout_secs: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| {
-            error
-                .as_str()
-                .is_some_and(|message| message.contains("instruction"))
-        }),
-        "error should mention instruction; got: {json}"
+        error.message.contains("instruction"),
+        "error should mention instruction; got: {}",
+        error.message
     );
 }
 
@@ -433,15 +424,14 @@ async fn web_browse_rejects_oversized_instruction() {
 #[tokio::test]
 async fn web_browse_surfaces_missing_credentials_as_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .web_browse(Parameters(BrowseRequest {
             url: LITERAL_IP_URL.to_string(),
             instruction: None,
             timeout_secs: None,
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── RSS tools without DB (permission_denied) ───────────────────────────────
@@ -449,55 +439,50 @@ async fn web_browse_surfaces_missing_credentials_as_permission_denied() {
 #[tokio::test]
 async fn rss_list_subscriptions_without_db_returns_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 #[tokio::test]
 async fn rss_get_unread_count_without_db_returns_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .rss_get_unread_count(Parameters(UnreadCountRequest {
             stream_id: "feed/test".to_string(),
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 #[tokio::test]
 async fn rss_export_opml_without_db_returns_permission_denied() {
     let server = make_server_without_db();
-    let out = server.rss_export_opml().await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+    let error = err(server.rss_export_opml().await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 #[tokio::test]
 async fn rss_unsubscribe_without_db_returns_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .rss_unsubscribe(Parameters(UnsubscribeRequest {
             stream_id: "feed/test".to_string(),
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 #[tokio::test]
 async fn rss_mark_all_read_without_db_returns_permission_denied() {
     let server = make_server_without_db();
-    let out = server
+    let error = err(server
         .rss_mark_all_read(Parameters(MarkReadRequest {
             stream_id: "feed/test".to_string(),
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "permission_denied");
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── RSS tools with DB (happy path) ─────────────────────────────────────────
@@ -505,9 +490,9 @@ async fn rss_mark_all_read_without_db_returns_permission_denied() {
 #[tokio::test]
 async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
     let server = make_server_with_rss_db();
-    let out = server
+    let out = ok(server
         .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
-        .await;
+        .await);
     let json = parse(&out);
     assert_eq!(
         json.get("count").and_then(|count| count.as_u64()),
@@ -519,11 +504,11 @@ async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
 #[tokio::test]
 async fn rss_get_unread_count_with_empty_db_returns_zero() {
     let server = make_server_with_rss_db();
-    let out = server
+    let out = ok(server
         .rss_get_unread_count(Parameters(UnreadCountRequest {
             stream_id: "feed/test".to_string(),
         }))
-        .await;
+        .await);
     let json = parse(&out);
     assert_eq!(
         json.get("unread_count").and_then(|count| count.as_u64()),
@@ -537,7 +522,7 @@ async fn rss_get_unread_count_with_empty_db_returns_zero() {
 #[tokio::test]
 async fn rss_get_entries_rejects_non_base64_continuation_token() {
     let server = make_server_with_rss_db();
-    let out = server
+    let error = err(server
         .rss_get_entries(Parameters(GetEntriesRequest {
             stream_id: "feed/test".to_string(),
             unread_only: None,
@@ -545,15 +530,11 @@ async fn rss_get_entries_rejects_non_base64_continuation_token() {
             count: None,
             continuation_token: Some("!!!not-base64!!!".to_string()),
         }))
-        .await;
-    let json = parse(&out);
-    assert_error_kind(&json, "invalid_argument");
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        json.get("error").is_some_and(|error| {
-            error
-                .as_str()
-                .is_some_and(|message| message.contains("base64"))
-        }),
-        "error should mention base64; got: {json}"
+        error.message.contains("base64"),
+        "error should mention base64; got: {}",
+        error.message
     );
 }

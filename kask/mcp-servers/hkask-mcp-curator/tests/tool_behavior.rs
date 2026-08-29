@@ -168,7 +168,7 @@ fn parse(output: &str) -> serde_json::Value {
 #[tokio::test]
 async fn ping_reports_store_health() {
     let server = make_server();
-    let response = parse(&server.curator_ping(Parameters(PingRequest {})).await);
+    let response = parse(&server.curator_ping(Parameters(PingRequest {})).await.expect("tool ok"));
 
     assert_eq!(response["status"].as_str(), Some("ok"), "ping must be ok");
     assert_eq!(
@@ -195,7 +195,7 @@ async fn ping_reports_store_health() {
 #[tokio::test]
 async fn escalations_lists_pending_empty() {
     let server = make_server();
-    let response = parse(&server.curator_escalations(Parameters(PingRequest {})).await);
+    let response = parse(&server.curator_escalations(Parameters(PingRequest {})).await.expect("tool ok"));
 
     assert_eq!(
         response["count"].as_u64(),
@@ -357,7 +357,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
         .unwrap();
 
     // Verify 6 pending before dismissal.
-    let before = parse(&server.curator_escalations(Parameters(PingRequest {})).await);
+    let before = parse(&server.curator_escalations(Parameters(PingRequest {})).await.expect("tool ok"));
     assert_eq!(
         before["count"].as_u64(),
         Some(6),
@@ -371,7 +371,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
                 output: flood_output.to_string(),
                 reason: "runaway flood from unwired Throttle action".to_string(),
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert_eq!(
@@ -386,7 +386,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
     );
 
     // The unrelated escalation must remain pending.
-    let after = parse(&server.curator_escalations(Parameters(PingRequest {})).await);
+    let after = parse(&server.curator_escalations(Parameters(PingRequest {})).await.expect("tool ok"));
     assert_eq!(
         after["count"].as_u64(),
         Some(1),
@@ -410,7 +410,7 @@ async fn dismiss_by_pattern_no_matches_returns_zero() {
                 output: "nothing matches this".to_string(),
                 reason: "testing no-match boundary".to_string(),
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert_eq!(
@@ -494,7 +494,7 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
                 ontology_axis: None,
                 ontology_value: None,
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert!(
@@ -526,7 +526,7 @@ async fn semantic_search_no_matches_returns_zero() {
                 query: "no-such-entity".to_string(),
                 limit: None,
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert!(
@@ -580,7 +580,7 @@ async fn semantic_search_matches_question_by_embedding() {
                 query: "kangaroo wallaby emu cassowary".to_string(),
                 limit: None,
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert!(
@@ -618,7 +618,7 @@ async fn semantic_search_degrades_to_entity_exact_with_note() {
                 query: "no-such-entity".to_string(),
                 limit: None,
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert_eq!(
@@ -669,7 +669,7 @@ async fn consult_returns_semantic_fragments_for_question() {
                 query: "completely unrelated question words".to_string(),
                 limit: None,
             }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert!(
@@ -699,7 +699,7 @@ async fn algedonic_log_empty_returns_window_and_events() {
     let response = parse(
         &server
             .curator_algedonic_log(Parameters(AlgedonicLogRequest { hours: Some(24) }))
-            .await,
+            .await.expect("tool ok")
     );
 
     assert_eq!(

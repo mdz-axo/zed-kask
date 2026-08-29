@@ -678,7 +678,8 @@ mod smoke {
                 dataset_path: None,
                 base_model: None,
             }))
-            .await;
+            .await
+            .expect("tool ok");
         let content = unwrap_content(&output);
 
         let finding_count = content
@@ -707,22 +708,20 @@ mod smoke {
     #[tokio::test]
     async fn cancel_surfaces_structured_error_envelope() {
         let server = make_server();
-        let output = server
+        let error = server
             .training_cancel(Parameters(TrainCancelRequest {
                 job_id: "smoke-nonexistent".into(),
             }))
-            .await;
-        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap_or_else(|error| {
-            panic!("tool output must be valid JSON, got: {output} ({error})")
-        });
+            .await
+            .expect_err("training_cancel against the null host must fail");
         // Null host → Unavailable → McpToolError::unavailable → kind="unavailable".
         assert!(
-            parsed.get("error").is_some(),
-            "training_cancel against the null host must return an error envelope, got: {parsed}"
+            matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
+            "error kind must be 'unavailable' when the host is not configured, got: {error:?}"
         );
-        assert_eq!(
-            parsed["kind"], "unavailable",
-            "error kind must be 'unavailable' when the host is not configured, got: {parsed}"
+        assert!(
+            !error.message.is_empty(),
+            "the error must carry a message naming the unconfigured host, got: {error:?}"
         );
     }
 }

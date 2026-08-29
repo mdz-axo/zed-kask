@@ -22,10 +22,11 @@
 
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
+use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_types::{InferenceError, WebID, WorktreeSpawnPort};
+use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};
 use rmcp::handler::server::wrapper::Parameters;
 use std::future::Future;
 use std::pin::Pin;
@@ -96,7 +97,8 @@ async fn create_board(server: &KanbanServer, name: &str, key: Option<&str>) -> s
             columns: None,
             idempotency_key: key.map(str::to_string),
         }))
-        .await;
+        .await
+        .expect("tool ok");
     parse(&out)
 }
 
@@ -105,7 +107,7 @@ async fn create_task(
     board_id: &str,
     title: &str,
     key: Option<&str>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, McpToolError> {
     let out = server
         .kanban_task_create(Parameters(TaskCreateRequest {
             board_id: board_id.to_string(),
@@ -115,8 +117,8 @@ async fn create_task(
             rjoule_budget: None,
             idempotency_key: key.map(str::to_string),
         }))
-        .await;
-    parse(&out)
+        .await?;
+    Ok(parse(&out))
 }
 
 /// How many tasks the board actually holds. The row count is the oracle: a
@@ -127,7 +129,8 @@ async fn task_count(server: &KanbanServer, board_id: &str) -> usize {
             board_id: board_id.to_string(),
             status: None,
         }))
-        .await;
+        .await
+        .expect("tool ok");
     parse(&out)
         .get("tasks")
         .and_then(|t| t.as_array())
@@ -138,7 +141,8 @@ async fn task_count(server: &KanbanServer, board_id: &str) -> usize {
 async fn board_count(server: &KanbanServer) -> usize {
     let out = server
         .kanban_board_list(Parameters(BoardListRequest {}))
-        .await;
+        .await
+        .expect("tool ok");
     parse(&out)
         .get("boards")
         .and_then(|b| b.as_array())
@@ -159,11 +163,15 @@ async fn replayed_task_create_yields_one_task() {
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    let first = create_task(&server, &board_id, "Write tests", Some("gesture-1")).await;
+    let first = create_task(&server, &board_id, "Write tests", Some("gesture-1"))
+        .await
+        .expect("tool ok");
     let first_id = first["task_id"].as_str().expect("task_id").to_string();
 
     // The retry an interrupted call would issue: same key, same args.
-    let replay = create_task(&server, &board_id, "Write tests", Some("gesture-1")).await;
+    let replay = create_task(&server, &board_id, "Write tests", Some("gesture-1"))
+        .await
+        .expect("tool ok");
 
     assert_eq!(
         replay["task_id"].as_str(),
@@ -209,7 +217,9 @@ async fn repeated_replays_never_duplicate() {
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
     for _ in 0..5 {
-        create_task(&server, &board_id, "Same gesture", Some("k")).await;
+        create_task(&server, &board_id, "Same gesture", Some("k"))
+            .await
+            .expect("tool ok");
     }
     assert_eq!(
         task_count(&server, &board_id).await,
@@ -230,8 +240,12 @@ async fn different_keys_create_different_tasks() {
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    let a = create_task(&server, &board_id, "First", Some("k-a")).await;
-    let b = create_task(&server, &board_id, "Second", Some("k-b")).await;
+    let a = create_task(&server, &board_id, "First", Some("k-a"))
+        .await
+        .expect("tool ok");
+    let b = create_task(&server, &board_id, "Second", Some("k-b"))
+        .await
+        .expect("tool ok");
 
     assert_ne!(
         a["task_id"].as_str(),
@@ -251,8 +265,12 @@ async fn omitted_key_preserves_unprotected_behavior() {
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    create_task(&server, &board_id, "One", None).await;
-    create_task(&server, &board_id, "One", None).await;
+    create_task(&server, &board_id, "One", None)
+        .await
+        .expect("tool ok");
+    create_task(&server, &board_id, "One", None)
+        .await
+        .expect("tool ok");
 
     assert_eq!(
         task_count(&server, &board_id).await,
@@ -268,7 +286,9 @@ async fn keys_do_not_collide_across_tools() {
     let board = create_board(&server, "Board", Some("shared-key")).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    let task = create_task(&server, &board_id, "Task", Some("shared-key")).await;
+    let task = create_task(&server, &board_id, "Task", Some("shared-key"))
+        .await
+        .expect("tool ok");
     assert!(
         task.get("task_id").is_some(),
         "the same key on a different tool must still do its work, got: {task}"
@@ -286,16 +306,21 @@ async fn keys_do_not_collide_across_tools() {
 async fn failed_call_releases_the_key_for_a_clean_retry() {
     let server = make_server();
     // A bad board id fails validation before any write.
-    let failed = create_task(&server, "not-a-board-id", "Task", Some("retry-me")).await;
+    let failed = create_task(&server, "not-a-board-id", "Task", Some("retry-me"))
+        .await
+        .expect_err("a malformed board id must fail before any write");
     assert!(
-        failed.get("error").is_some(),
-        "expected a structured error for a malformed board id, got: {failed}"
+        matches!(failed.kind, McpErrorKind::NotFound),
+        "expected a structured not-found error for a malformed board id, got: {:?}",
+        failed
     );
 
     // Same key, now with a valid board: must run, not report "outcome unknown".
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
-    let retried = create_task(&server, &board_id, "Task", Some("retry-me")).await;
+    let retried = create_task(&server, &board_id, "Task", Some("retry-me"))
+        .await
+        .expect("tool ok");
 
     assert!(
         retried.get("task_id").is_some(),
@@ -313,10 +338,13 @@ async fn empty_key_is_rejected() {
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    let response = create_task(&server, &board_id, "Task", Some("   ")).await;
+    let error = create_task(&server, &board_id, "Task", Some("   "))
+        .await
+        .expect_err("a whitespace-only key must be refused, not silently ignored");
     assert!(
-        response.get("error").is_some(),
-        "a whitespace-only key must be refused, not silently ignored, got: {response}"
+        matches!(error.kind, McpErrorKind::InvalidArgument),
+        "a whitespace-only key must be refused as invalid_argument, got: {:?}",
+        error
     );
     assert_eq!(
         task_count(&server, &board_id).await,
@@ -337,7 +365,9 @@ async fn replay_is_absorbed_across_processes() {
     let board = create_board(&process_a, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
 
-    let first = create_task(&process_a, &board_id, "Cross-process", Some("shared")).await;
+    let first = create_task(&process_a, &board_id, "Cross-process", Some("shared"))
+        .await
+        .expect("tool ok");
     let first_id = first["task_id"].as_str().expect("task_id").to_string();
 
     // A second server over the same database — the two-instance production shape.
@@ -359,7 +389,9 @@ async fn replay_is_absorbed_across_processes() {
         ),
     );
 
-    let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared")).await;
+    let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared"))
+        .await
+        .expect("tool ok");
     assert_eq!(
         replay["task_id"].as_str(),
         Some(first_id.as_str()),
@@ -493,7 +525,9 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
     let server = make_server();
     let board = create_board(&server, "Board", None).await;
     let board_id = board["board_id"].as_str().expect("board_id").to_string();
-    let task = create_task(&server, &board_id, "Spawn me", None).await;
+    let task = create_task(&server, &board_id, "Spawn me", None)
+        .await
+        .expect("tool ok");
     let task_id = task["task_id"].as_str().expect("task_id").to_string();
 
     let out = server

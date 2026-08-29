@@ -1629,7 +1629,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // `resolve_under_data_dir`. Override via `HKASK_KANBAN_DB`.
                 // `HKASK_KANBAN_DB` is a non-secret config path — read via
                 // `std::env::var` (matching every other DB-path env var:
-                // `HKASK_CURATOR_DB`, `HKASK_DB_PATH`, `HKASK_RSS_DB`, etc.)
+                // `HKASK_CURATOR_DB`, `HKASK_RSS_DB`, etc.)
                 // and injected via `config_env`, not `credentials`.
                 let kanban_db_path = std::env::var("HKASK_KANBAN_DB")
                     .unwrap_or_else(|_| {

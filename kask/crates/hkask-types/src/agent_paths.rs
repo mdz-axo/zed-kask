@@ -38,11 +38,6 @@ pub const MCP_DIR: &str = "mcp";
 /// Each skill owns a subtree: `skills/{skill_name}/`.
 pub const SKILLS_DIR: &str = "skills";
 
-/// Default filename for the primary hKask database.
-///
-/// Resolved relative to `resolve_data_dir()` unless overridden via `HKASK_DB_PATH`.
-pub const DEFAULT_DB_PATH: &str = "hkask.db";
-
 /// Resolve the zed-kask data directory (internal app data).
 ///
 /// Order of precedence:
