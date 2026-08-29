@@ -4,7 +4,6 @@
 //! See hkask-storage lib.rs for the merged crate overview.
 
 pub mod driver;
-pub mod encrypt;
 pub mod sqlite;
 pub mod transaction;
 pub mod types;

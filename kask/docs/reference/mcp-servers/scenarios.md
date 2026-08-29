@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-08-05
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -19,7 +19,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 22 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by `check_sequence` (warn-only, non-blocking). Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 21 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by `check_sequence` (warn-only, non-blocking). Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -199,7 +199,7 @@ status: VERIFIED (v4 — tool count updated to 20: deleted scenario_from_compani
 ## Cross-links
 
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets` / `scenario_from_markets_set`
-- [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer model (skill, math, servers)
+- [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — three-layer model (skill, math, servers)
 - Scenarios Adversarial Review — code smell inventory and action items
 - Scenarios Semantic Graph Audit — cross-skill/server dependency graph
 - [MCP Server Registry](README.md) — built-in server index

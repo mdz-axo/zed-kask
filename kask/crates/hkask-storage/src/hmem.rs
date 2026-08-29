@@ -134,7 +134,6 @@ impl HMem {
 #[derive(Clone)]
 pub struct HMemStore {
     driver: Arc<dyn crate::database::driver::DatabaseDriver>,
-    encryptor: Option<Arc<crate::database::encrypt::Encryptor>>,
 }
 
 impl HMemStore {
@@ -152,7 +151,6 @@ impl HMemStore {
     ) -> Result<Self, InfrastructureError> {
         Ok(Self {
             driver,
-            encryptor: None,
         })
     }
 
@@ -191,11 +189,6 @@ impl HMemStore {
 
     fn row_to_h_mem(&self, row: &DbRow) -> Result<HMem, HMemError> {
         let value_text = row.get(3)?.as_text()?.to_string();
-        let value_text = if let Some(ref enc) = self.encryptor {
-            enc.decrypt(&value_text)
-        } else {
-            value_text
-        };
         let hrow =
             HMemRow {
                 id: row
@@ -261,12 +254,7 @@ impl HMemStore {
     /// pre:  h_mem has valid entity, attribute, value
     /// post: h_mem inserted
     pub fn insert(&self, h_mem: &HMem) -> Result<(), HMemError> {
-        let value_json = serde_json::to_string(&h_mem.value)?;
-        let value = if let Some(ref enc) = self.encryptor {
-            enc.encrypt(&value_json)
-        } else {
-            value_json
-        };
+        let value = serde_json::to_string(&h_mem.value)?;
         // Serialize the ontology blob eagerly and propagate failure. A
         // silent `unwrap_or_default()` here would write an empty string into
         // a column the ontology queries feed to `json_extract`, and SQLite

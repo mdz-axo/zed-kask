@@ -1,7 +1,7 @@
 ---
 title: "Prediction Markets MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-06
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -11,12 +11,15 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 39 — `market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, plus `prediction_markets_status`
+**Tools:** 32 — 17 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
-> **Tool count note:** the server registers **39 `#[tool]` methods** in
-> `src/hkask_mcp_prediction_markets.rs` (verified 2026-08-24). The operational
-> surface is the set of market tools; the status tool is listed under
+> **Tool count note:** the server registers **32 `#[tool]` methods** — 17 in
+> `src/hkask_mcp_prediction_markets.rs` + 15 in `src/economic_data_tools.rs`, both
+> merged into `combined_router()` at `src/hkask_mcp_prediction_markets.rs:85-89`
+> (verified 2026-08-28 by `#[tool`-attribute grep excluding `#[cfg(test)]` regions;
+> the method reproduces the pinned counts on media and scenarios exactly). The
+> operational surface is the set of market tools; the status tool is listed under
 > Independent.
 
 The prediction-markets server turns Polymarket and Kalshi market prices into
@@ -143,7 +146,7 @@ triggers — is `07-project-status.md`.
 
 - [Scenarios MCP Server Reference](scenarios.md) — event-tree forecasting that consumes market base rates
 - [Companies MCP Server Reference](companies.md) — equity duration pairing
-- [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
+- [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — how this server feeds the scenarios/companies forecasting layers
 - [MCP Server Registry](README.md) — built-in server index
 
 ## Footnotes

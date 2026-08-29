@@ -1,7 +1,7 @@
 ---
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-05
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -254,6 +254,6 @@ databases.
 
 ## See also
 
-- [Ontology Bridge Architecture](../diagrams/architecture-ontology-bridge.md) — the architecture diagram.
+- [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge architecture and domain-selection flow (consolidated; formerly `architecture-ontology-bridge.md`).
 - [Using the Ontology Bridge](../diataxis/hkask-bridge-ontology/how-to.md) — a how-to guide for servers.
 - [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the dual-axis framework principles.
