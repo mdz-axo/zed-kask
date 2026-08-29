@@ -17,6 +17,7 @@ use acp_thread::AgentThreadEntry;
 use gpui::{App, Context, Entity, Render, SharedString, Window};
 use serde_json::Value;
 use ui::{Icon, IconName, Label, LabelSize, prelude::*};
+use util::ResultExt as _;
 
 /// Server that hosts the media tools — the `BUILT_IN_MCP_SERVERS` id, the
 /// same id the panel's Steer conversation is scoped to.
@@ -143,13 +144,15 @@ impl MediaViewer {
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
                 let payload = hkask_types::tool_response::parse_tool_response(&text);
-                this.update(cx, |this, cx| this.merge_gallery_listing(payload, cx));
+                this.update(cx, |this, cx| this.merge_gallery_listing(payload, cx))
+                    .log_err();
             }
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.status = Some(format!("gallery_list_assets failed: {}", error.message()));
                     cx.notify();
-                });
+                })
+                .log_err();
             }
         })
         .detach();
@@ -250,13 +253,15 @@ impl MediaViewer {
                         })
                         .unwrap_or_default();
                     cx.notify();
-                });
+                })
+                .log_err();
             }
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.status = Some(format!("job_list failed: {}", error.message()));
                     cx.notify();
-                });
+                })
+                .log_err();
             }
         })
         .detach();
@@ -297,14 +302,16 @@ impl MediaViewer {
                 this.update(cx, |this, cx| {
                     this.detail = payload;
                     cx.notify();
-                });
+                })
+                .log_err();
             }
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.detail = None;
                     this.status = Some(format!("gallery_asset_detail failed: {}", error.message()));
                     cx.notify();
-                });
+                })
+                .log_err();
             }
         })
         .detach();
@@ -340,14 +347,16 @@ impl MediaViewer {
                         this.status = Some("Asset removed from the gallery index.".into());
                         // Reload the gallery — the listing is now stale.
                         this.load_gallery(cx);
-                    });
+                    })
+                    .log_err();
                 }
                 Err(error) => {
                     this.update(cx, |this, cx| {
                         this.status =
                             Some(format!("gallery_delete_image failed: {}", error.message()));
                         cx.notify();
-                    });
+                    })
+                    .log_err();
                 }
             }
         })
@@ -368,13 +377,14 @@ impl MediaViewer {
         );
         cx.spawn(async move |this, cx| match task.await {
             Ok(_) => {
-                this.update(cx, |this, cx| this.load_jobs(cx));
+                this.update(cx, |this, cx| this.load_jobs(cx)).log_err();
             }
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.status = Some(format!("job_cancel failed: {}", error.message()));
                     cx.notify();
-                });
+                })
+                .log_err();
             }
         })
         .detach();
@@ -646,6 +656,11 @@ impl MediaViewer {
                             } else {
                                 ui::Color::Muted
                             }),
+                    )
+                    .child(
+                        Label::new(job.created_at.clone())
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Hint),
                     )
                     .when(cancellable, |el| {
                         let job_id = job.id.clone();
