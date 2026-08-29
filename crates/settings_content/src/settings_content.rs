@@ -1870,4 +1870,8 @@ pub struct KaskModelsSettingsContent {
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
     pub ocr_model: Option<String>,
+    /// Rerank model for the research server's deep-search rerank stage
+    /// (provider-prefixed). When empty, falls back to the kask default
+    /// (`DeepInfra/Qwen/Qwen3-Reranker-8B`).
+    pub rerank_model: Option<String>,
 }

@@ -257,7 +257,7 @@ impl ComposeService {
         }
 
         // 4. Filter by prefix, centroid exclusion, rule exclusion, distance threshold
-        let prefix = format!("style:{}", &request.cognition.author);
+        let prefix = format!("style:{}", request.cognition.author);
         let retrieval = &request.cognition.embedding.retrieval;
         let mut matched: Vec<(f64, String, f64)> = Vec::new(); // (distance, entity_ref, salience)
 

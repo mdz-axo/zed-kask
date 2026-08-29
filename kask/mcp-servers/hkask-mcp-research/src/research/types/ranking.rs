@@ -206,6 +206,51 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 }
 
 // ── LLM rerank (deep strategy) ─────────────────────────────────────────────
+//
+// DECISION RECORD — per-candidate (pointwise) scoring, not list-ordering.
+//
+// Requirement: the deep strategy's rerank stage must be a templated LLM call
+// (operator directive), and its output must be trustworthy — a general model
+// asked to reorder a list can commit category errors (well-formed but
+// semantically wrong orderings) that no structural validation catches.
+//
+// Decision: one scoring call per (query, candidate) pair, each returning a
+// strict-JSON relevance score in 0-100; candidates sort by descending score.
+// The default model is a dedicated reranker (`DeepInfra/Qwen/Qwen3-Reranker-8B`,
+// override via `HKASK_RERANK_MODEL` / the kask models settings).
+//
+// Why per-candidate beats list-ordering here:
+// 1. Consistency by construction — every candidate gets the identical prompt
+//    and rubric, so judgments are comparable (the operator's consistency
+//    requirement). A list-ordering prompt makes each item's judgment depend
+//    on its neighbors.
+// 2. Bounded blast radius — a wrong score misorders ONE item; it cannot
+//    cascade. The model's output space is a per-item number, never a
+//    permutation it must track across a long list.
+// 3. Positional robustness — long-list ordering is exactly where LLMs degrade:
+//    performance collapses for items in the middle of the input context
+//    (Liu et al., "Lost in the Middle: How Language Models Use Long Contexts",
+//    TACL 2023, arXiv:2307.03172). Per-candidate prompts have no middle.
+// 4. Dedicated rerankers are trained for exactly this shape — query–document
+//    relevance judgment (Qwen3-Reranker series: Zhang et al., "Qwen3 Embedding:
+//    Advancing Text Embedding and Reranking Through Foundation Models",
+//    arXiv:2506.05176). LLM reranking as a pattern is established by RankGPT
+//    (Sun et al., "Is ChatGPT Good at Search?", EMNLP 2023, arXiv:2304.09542),
+//    which also introduced sliding windows to work around list-length limits —
+//    per-candidate scoring is the same insight taken to its limit.
+//
+// Canonical-pattern interactions:
+// - RRF fusion (providers/mod.rs): heuristic signals remain the base scoring;
+//   this stage reorders on top. On total failure the RRF order is kept.
+// - LazyInferencePort (hkask-inference): scoring calls route through the zed
+//   IPC bridge per call; a socket appearing after server start is picked up.
+// - Degradation surfacing: every degraded outcome (all calls failed, some
+//   failed) is named in the tool output's `rerank` field — never silent.
+// - Model constants (hkask-inference/model_constants.rs):
+//   `DEFAULT_RERANK_MODEL` is the single source of truth; the settings chain
+//   (settings_content → KaskModelsSettings → emit_models_env → this env var)
+//   overrides it, and the research server's config_env allowlist passes it
+//   through under governed launch.
 
 /// Cap on title/description field lengths fed to the rerank prompt, so a
 /// deep search over 50 results with full extracted content cannot blow the

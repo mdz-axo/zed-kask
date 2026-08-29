@@ -567,6 +567,12 @@ pub struct KaskModelsSettings {
     /// (env `HKASK_OCR_MODEL` → `HkaskSettings::ocr_model` →
     /// `DEFAULT_OCR_MODEL` — resolved in hkask-mcp-corpus, not here).
     pub ocr_model: String,
+
+    /// Rerank model for the research server's deep-search rerank stage
+    /// (provider-prefixed). When empty, the research server falls back to
+    /// the kask default (env `HKASK_RERANK_MODEL` → `DEFAULT_RERANK_MODEL` —
+    /// resolved per call in `hkask_inference::model_constants::rerank_model`).
+    pub rerank_model: String,
 }
 
 impl KaskModelsSettings {
@@ -946,6 +952,7 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
             classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
             ocr_model: c.ocr_model.unwrap_or(default.ocr_model),
+            rerank_model: c.rerank_model.unwrap_or(default.rerank_model),
         }
     }
 }

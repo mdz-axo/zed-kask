@@ -418,6 +418,12 @@ pub(crate) fn emit_models_env(
     if !models.ocr_model.is_empty() {
         env.insert("HKASK_OCR_MODEL".to_string(), models.ocr_model.clone());
     }
+    if !models.rerank_model.is_empty() {
+        env.insert(
+            "HKASK_RERANK_MODEL".to_string(),
+            models.rerank_model.clone(),
+        );
+    }
 }
 
 pub(crate) fn emit_curator_email_env(

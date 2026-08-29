@@ -1,5 +1,5 @@
 //! Models sub-page — kask-wide model defaults (default inference model,
-//! embedding model, classifier model, OCR model).
+//! embedding model, classifier model, OCR model, rerank model).
 
 use super::*;
 
@@ -19,6 +19,7 @@ pub(crate) fn render_models_page(
     let embedding_model = models.embedding_model;
     let classifier_model = models.classifier_model;
     let ocr_model = models.ocr_model;
+    let rerank_model = models.rerank_model;
 
     let default_model_input = kask_string_input(
         "kask-models-default",
@@ -52,6 +53,14 @@ pub(crate) fn render_models_page(
         "models",
         "ocr_model",
     );
+    let rerank_model_input = kask_string_input(
+        "kask-models-rerank",
+        "Rerank Model",
+        kask_bridge::DEFAULT_RERANK_MODEL,
+        rerank_model,
+        "models",
+        "rerank_model",
+    );
 
     v_flex()
         .id("kask-models-page")
@@ -70,7 +79,8 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Kask-wide model configuration. These provider-prefixed model \
                          names (e.g. \"openrouter/z-ai/glm-5.2\") override the kask \
-                         defaults for inference, embedding, classification, and OCR.",
+                         defaults for inference, embedding, classification, OCR, and \
+                         rerank.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -137,6 +147,22 @@ pub(crate) fn render_models_page(
                     .color(Color::Muted),
                 )
                 .child(ocr_model_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Rerank Model"))
+                .child(
+                    Label::new(
+                        "Provider-prefixed model for the research server's deep-search \
+                         rerank stage (per-candidate relevance scoring). Leave empty to \
+                         use the kask default (DeepInfra/Qwen/Qwen3-Reranker-8B).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(rerank_model_input),
         )
         .into_any_element()
 }

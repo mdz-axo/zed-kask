@@ -4876,13 +4876,12 @@ async fn test_non_streaming_tool_partial_input_then_retryable_error_flushes_canc
     cx.run_until_parked();
 
     // End the stream with a retryable error (internal server error).
-    fake_model.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
-    );
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        language_model::LanguageModelProviderName::new("test"),
+        http_client::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
 
     // Advance past the retry delay so run_turn_internal retries.

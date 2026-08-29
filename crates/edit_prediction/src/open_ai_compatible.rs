@@ -191,6 +191,7 @@ mod tests {
     use language::language_settings::{
         EditPredictionPromptFormat, OpenAiCompatibleEditPredictionSettings,
     };
+    use settings::DelayMs;
     use std::sync::Arc;
 
     /// A mock `KaskCompletionPort` that returns a canned `(text, request_id)`.
@@ -232,6 +233,7 @@ mod tests {
             max_output_tokens: 64,
             api_url: "".into(),
             prompt_format: EditPredictionPromptFormat::default(),
+            prediction_debounce: DelayMs(0),
         };
         let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::with_404_response();
 
