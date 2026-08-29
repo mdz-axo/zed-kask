@@ -11,9 +11,10 @@
 #![cfg(test)]
 
 use hkask_mcp_scenarios::requests::{
-    BrainstormRequest, QuantifyRequest, StatusRequest, TriageRequest,
+    BrainstormRequest, CalibrateRequest, ContractCoherenceRequest, OutcomeEntry, QuantifyRequest,
+    ScoreRequest, StatusRequest, TriageRequest,
 };
-use hkask_mcp_scenarios::types::{ScenarioEvent, ScenarioType, TimeHorizon};
+use hkask_mcp_scenarios::types::{ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon};
 use hkask_mcp_scenarios::{ForecastStore, ScenariosServer};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
@@ -291,5 +292,241 @@ async fn scenario_quantify_rejects_out_of_range_probability_as_invalid_argument(
     assert!(
         error.message.contains("not in [0, 1]"),
         "the error must state the probability constraint, got: {error:?}"
+    );
+}
+
+// ── contract_price_coherence (R5 / H3 reframed) ───────────────────────────────
+
+/// Happy path: an explicit `tree_implied` within the transaction-cost band is
+/// reported coherent, with the divergence and both inputs echoed back.
+#[tokio::test]
+async fn contract_price_coherence_within_band_is_coherent() {
+    let server = make_server();
+    let output = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.50,
+            cost_band: 0.03,
+            tree_implied: Some(0.52),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["tree_implied"].as_f64(), Some(0.52));
+    assert_eq!(parsed["market_price"].as_f64(), Some(0.50));
+    assert!((parsed["divergence"].as_f64().unwrap_or(f64::NAN) - 0.02).abs() < 1e-9);
+    assert_eq!(parsed["coherent"].as_bool(), Some(true));
+}
+
+/// Happy path: divergence beyond the cost band is the arbitrage signal —
+/// `coherent` is false and the interpretation names the signal.
+#[tokio::test]
+async fn contract_price_coherence_beyond_band_is_divergent() {
+    let server = make_server();
+    let output = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.40,
+            cost_band: 0.03,
+            tree_implied: Some(0.52),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["coherent"].as_bool(), Some(false));
+    assert_eq!(parsed["divergence"].as_f64(), Some(0.12));
+    let interpretation = parsed["interpretation"]
+        .as_str()
+        .expect("interpretation is a string");
+    assert!(
+        interpretation.contains("arbitrage signal"),
+        "a divergent measure must name the signal, got: {interpretation}"
+    );
+}
+
+/// Cached-tree path: after `scenario_quantify` populates the tree cache, the
+/// tool uses the tree's joint probability without an explicit `tree_implied`.
+/// Two independent roots at 0.6 and 0.5 → joint 0.30.
+#[tokio::test]
+async fn contract_price_coherence_defaults_to_cached_tree_joint() {
+    let server = make_server();
+    let events = vec![
+        independent_event("evt-a", "event a", 0.6),
+        independent_event("evt-b", "event b", 0.5),
+    ];
+    server
+        .scenario_quantify(Parameters(QuantifyRequest { events }))
+        .await
+        .expect("quantify ok");
+    let output = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.31,
+            cost_band: 0.05,
+            tree_implied: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["tree_implied"].as_f64(), Some(0.30));
+    assert_eq!(parsed["coherent"].as_bool(), Some(true));
+}
+
+/// No explicit `tree_implied` and no cached tree is a `failed_precondition` —
+/// the error names the tools that populate the cache, not a generic failure.
+#[tokio::test]
+async fn contract_price_coherence_without_tree_is_failed_precondition() {
+    let server = make_server();
+    let error = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.5,
+            cost_band: 0.03,
+            tree_implied: None,
+        }))
+        .await
+        .expect_err("no tree and no explicit input must fail");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+        "a missing cached tree is a precondition failure, got: {error:?}"
+    );
+    assert!(
+        error.message.contains("scenario_quantify"),
+        "the error must name the populating tools, got: {error:?}"
+    );
+}
+
+/// A `market_price` outside [0, 1] is an `invalid_argument` — a coherence
+/// measure over an invalid probability is never fabricated.
+#[tokio::test]
+async fn contract_price_coherence_rejects_invalid_market_price() {
+    let server = make_server();
+    let error = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 1.2,
+            cost_band: 0.03,
+            tree_implied: Some(0.5),
+        }))
+        .await
+        .expect_err("an out-of-range market price must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "an invalid market price is a caller-input defect, got: {error:?}"
+    );
+    assert!(
+        error.message.contains("market_price must be in [0, 1]"),
+        "the error must state the constraint, got: {error:?}"
+    );
+}
+
+// ── scenario_calibrate isotonic channel (arXiv:2604.20421 §6.1) ───────────────
+
+/// Seed the store with resolved forecasts via the real `scenario_score` path
+/// (pending insert + outcome resolution), then run `scenario_calibrate` and
+/// assert the isotonic channel is emitted with an inspectable fit.
+#[tokio::test]
+async fn scenario_calibrate_emits_isotonic_channel_after_resolved_forecasts() {
+    let server = make_server();
+    // Four resolved pairs with a monotone mapping: higher probability →
+    // occurred. The PAVA fit over these is a usable step function.
+    let events = vec![
+        independent_event("iso-a", "low prob event", 0.2),
+        independent_event("iso-b", "mid prob event", 0.5),
+        independent_event("iso-c", "high prob event", 0.8),
+        independent_event("iso-d", "very high prob event", 0.9),
+    ];
+    let outcomes = vec![
+        OutcomeEntry {
+            event_id: "iso-a".into(),
+            occurred: false,
+        },
+        OutcomeEntry {
+            event_id: "iso-b".into(),
+            occurred: false,
+        },
+        OutcomeEntry {
+            event_id: "iso-c".into(),
+            occurred: true,
+        },
+        OutcomeEntry {
+            event_id: "iso-d".into(),
+            occurred: true,
+        },
+    ];
+    server
+        .scenario_score(Parameters(ScoreRequest {
+            forecast_id: "iso-fit-test".into(),
+            events,
+            outcomes,
+        }))
+        .await
+        .expect("score ok");
+
+    let output = server
+        .scenario_calibrate(Parameters(CalibrateRequest {
+            question: "Will the isotonic channel fire?".into(),
+            sub_questions: vec![SubQuestion {
+                question: "Does the fit exist?".into(),
+                estimate: 0.7,
+                confidence: 0.8,
+            }],
+            reference_class: None,
+            base_rate: None,
+            reference_count: None,
+        }))
+        .await
+        .expect("calibrate ok");
+    let parsed = parse(&output);
+
+    let knots = parsed["isotonic_fit_knots"]
+        .as_array()
+        .expect("fit knots must be an array when resolved pairs exist");
+    assert!(
+        !knots.is_empty(),
+        "the PAVA fit over 4 resolved pairs must have at least one knot"
+    );
+    assert_eq!(parsed["isotonic_fit_size"].as_u64(), Some(4));
+    let isotonic_probability = parsed["isotonic_calibrated_probability"]
+        .as_f64()
+        .expect("isotonic probability must be present with a fit");
+    assert!(
+        (0.0..=1.0).contains(&isotonic_probability),
+        "isotonic probability must stay in [0, 1], got {isotonic_probability}"
+    );
+    // The fit is monotone non-decreasing: each knot's calibrated value must
+    // not exceed the next's.
+    for window in knots.windows(2) {
+        let a = window[0]["calibrated_value"].as_f64().unwrap_or(f64::NAN);
+        let b = window[1]["calibrated_value"].as_f64().unwrap_or(f64::NAN);
+        assert!(a <= b + 1e-9, "fit must be non-decreasing: {knots:?}");
+    }
+}
+
+/// With an empty store (no resolved pairs), the isotonic channel is withheld
+/// with a note — never a fabricated fit.
+#[tokio::test]
+async fn scenario_calibrate_withholds_isotonic_without_resolved_pairs() {
+    let server = make_server();
+    let output = server
+        .scenario_calibrate(Parameters(CalibrateRequest {
+            question: "Will the isotonic channel be withheld?".into(),
+            sub_questions: vec![SubQuestion {
+                question: "Is the store empty?".into(),
+                estimate: 0.9,
+                confidence: 0.9,
+            }],
+            reference_class: None,
+            base_rate: None,
+            reference_count: None,
+        }))
+        .await
+        .expect("calibrate ok");
+    let parsed = parse(&output);
+    assert!(
+        parsed["isotonic_calibrated_probability"].is_null(),
+        "no resolved pairs must yield no isotonic probability, got: {parsed}"
+    );
+    let note = parsed["isotonic_note"]
+        .as_str()
+        .expect("isotonic note is a string");
+    assert!(
+        note.contains("fewer than 2 resolved"),
+        "the note must name the reason, got: {note}"
     );
 }

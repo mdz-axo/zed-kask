@@ -480,7 +480,13 @@ pub fn isotonic_fit(pairs: &[(f64, bool)]) -> Option<Vec<(f64, f64)>> {
 /// last value. Empty fit ⇒ returns the input unchanged (identity).
 #[must_use]
 pub fn isotonic_apply(fit: &[(f64, f64)], probability: f64) -> f64 {
-    let mut calibrated = probability;
+    // Below the first knot the step function extends leftward at the first
+    // region's value (documented contract) — not the raw input, which would
+    // leave sub-threshold probabilities uncalibrated.
+    let Some(&(_, first_value)) = fit.first() else {
+        return probability;
+    };
+    let mut calibrated = first_value;
     for (threshold, value) in fit {
         if probability >= *threshold {
             calibrated = *value;
@@ -687,11 +693,15 @@ pub fn fuse_volatility(
 /// A scenario branch whose probability comes from a CMP index.
 ///
 /// `cmp_source` identifies the CMP index that supplied the probability
-/// (e.g. "cmp:policy_interest_rate:3m:increase"). When `None`, the branch
-/// probability is from a raw contract (pre-R4 behavior) — the risk measure
-/// degrades to the uncontrolled form. Owned `String` so dynamically-generated
-/// CMP source identifiers (from `compose_cmp_tree`) can be used without
-/// leaking allocations or forcing `'static`.
+/// (e.g. "cmp:policy_interest_rate:3m:increase"). When a branch probability
+/// derives from more than one CMP index (e.g. a 2×2 quadrant probability from
+/// two CMP-controlled tree roots), the contributing index ids are joined
+/// with `+` — the string names every source, never a fabricated single
+/// source. When `None`, the branch probability is from a raw contract
+/// (pre-R4 behavior) — the risk measure degrades to the uncontrolled form.
+/// Owned `String` so dynamically-generated CMP source identifiers (from
+/// `compose_cmp_tree`) can be used without leaking allocations or forcing
+/// `'static`.
 #[derive(Debug, Clone)]
 pub struct CmpBranchOutcome {
     /// The branch's joint probability (from a CMP index or a raw contract).
@@ -1256,5 +1266,228 @@ mod tests {
     fn duration_vs_cmp_tenors_none_for_non_positive_duration() {
         assert!(duration_vs_cmp_tenors(0.0).is_none());
         assert!(duration_vs_cmp_tenors(-1.0).is_none());
+    }
+
+    // ── Isotonic recalibration (PAVA) ─────────────────────────────
+
+    #[test]
+    fn isotonic_fit_rejects_fewer_than_two_pairs() {
+        assert!(isotonic_fit(&[]).is_none());
+        assert!(isotonic_fit(&[(0.7, true)]).is_none());
+    }
+
+    #[test]
+    fn isotonic_fit_pools_adjacent_violations() {
+        // A non-monotone sequence: higher raw probability with lower outcome
+        // rate must be pooled so the fit is non-decreasing.
+        let pairs = [(0.2, true), (0.4, false), (0.6, true), (0.8, true)];
+        let fit = isotonic_fit(&pairs).expect("two pairs yield a fit");
+        for window in fit.windows(2) {
+            assert!(
+                window[0].1 <= window[1].1 + 1e-9,
+                "fit must be non-decreasing: {fit:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn isotonic_apply_is_piecewise_constant_with_endpoints() {
+        let fit = [(0.3, 0.25), (0.7, 0.75)];
+        // Below the first knot → first value.
+        assert!(close(isotonic_apply(&fit, 0.1), 0.25));
+        // Inside a region → that region's value.
+        assert!(close(isotonic_apply(&fit, 0.5), 0.25));
+        // At a knot threshold → the knot's value (>= comparison).
+        assert!(close(isotonic_apply(&fit, 0.7), 0.75));
+        // Above the last knot → last value.
+        assert!(close(isotonic_apply(&fit, 0.95), 0.75));
+    }
+
+    #[test]
+    fn isotonic_apply_empty_fit_is_identity() {
+        assert!(close(isotonic_apply(&[], 0.42), 0.42));
+    }
+
+    // ── Scenario risk measure (T8a) ─────────────────────────────
+
+    #[test]
+    fn scenario_risk_measure_weighted_mean_and_sigma() {
+        // Two equally-weighted branches: +100% and 0% → mean 0.5, σ = 0.5.
+        let branches = [
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 1.0,
+            },
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 0.0,
+            },
+        ];
+        let rm = scenario_risk_measure(&branches).expect("positive mass");
+        assert!(close(rm.expected_return, 0.5));
+        assert!(close(rm.sigma_scenario, 0.5));
+        assert_eq!(rm.branch_count, 2);
+        assert!(close(rm.probability_mass, 1.0));
+    }
+
+    #[test]
+    fn scenario_risk_measure_incomplete_tree_reports_mass() {
+        // Branches need not sum to 1 — the mass is reported, not renormalized
+        // silently.
+        let branches = [BranchOutcome {
+            probability: 0.25,
+            branch_return: 0.2,
+        }];
+        let rm = scenario_risk_measure(&branches).expect("positive mass");
+        assert!(close(rm.probability_mass, 0.25));
+        assert!(close(rm.expected_return, 0.2));
+        assert!(close(rm.sigma_scenario, 0.0));
+    }
+
+    #[test]
+    fn scenario_risk_measure_none_on_zero_mass() {
+        assert!(scenario_risk_measure(&[]).is_none());
+        assert!(
+            scenario_risk_measure(&[BranchOutcome {
+                probability: 0.0,
+                branch_return: 1.0,
+            }])
+            .is_none()
+        );
+    }
+
+    // ── Scenario factor loading (T8a) ────────────────────────────
+
+    #[test]
+    fn scenario_node_loading_is_conditional_return_difference() {
+        // β = E[r | true] − E[r | false] = 0.8 − 0.2 = 0.6.
+        let branches = [
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 0.8,
+            },
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 0.2,
+            },
+        ];
+        let loading =
+            scenario_node_loading(&branches, &[true, false]).expect("both sets have mass");
+        assert!(close(loading, 0.6));
+    }
+
+    #[test]
+    fn scenario_node_loading_rejects_length_mismatch() {
+        let branches = [BranchOutcome {
+            probability: 1.0,
+            branch_return: 0.5,
+        }];
+        assert!(scenario_node_loading(&branches, &[true, false]).is_none());
+    }
+
+    #[test]
+    fn scenario_node_loading_none_when_one_side_has_no_mass() {
+        // All branches true → the false conditioning set is empty.
+        let branches = [
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 0.8,
+            },
+            BranchOutcome {
+                probability: 0.5,
+                branch_return: 0.2,
+            },
+        ];
+        assert!(scenario_node_loading(&branches, &[true, true]).is_none());
+    }
+
+    // ── Volatility fusion ──────────────────────────────────────
+
+    #[test]
+    fn fuse_volatility_degrades_to_realized_without_scenario() {
+        assert!(close(fuse_volatility(0.3, None, 1.0), 0.3));
+    }
+
+    #[test]
+    fn fuse_volatility_root_sum_square() {
+        // 0.3² + (0.5·0.4)² = 0.09 + 0.04 → √0.13.
+        assert!(close(fuse_volatility(0.3, Some(0.4), 0.5), 0.13_f64.sqrt()));
+    }
+
+    #[test]
+    fn fuse_volatility_clamps_scenario_weight() {
+        // A weight beyond [0,1] clamps to 1, not extrapolates.
+        assert!(close(
+            fuse_volatility(0.3, Some(0.4), 2.0),
+            (0.09f64 + 0.16).sqrt()
+        ));
+    }
+
+    // ── CMP scenario risk measure (R4) ──────────────────────────
+
+    #[test]
+    fn cmp_risk_measure_controlled_only_when_all_branches_are_cmp() {
+        let cmp = [
+            CmpBranchOutcome {
+                probability: 0.5,
+                branch_return: 0.1,
+                cmp_source: Some("cmp:fed:3m:increase".into()),
+            },
+            CmpBranchOutcome {
+                probability: 0.5,
+                branch_return: 0.3,
+                cmp_source: Some("cmp:fed:3m:decrease".into()),
+            },
+        ];
+        let rm = cmp_scenario_risk_measure(&cmp).expect("positive mass");
+        assert!(rm.cmp_controlled);
+        assert_eq!(rm.cmp_branch_count, 2);
+        assert!(close(rm.inner.expected_return, 0.2));
+    }
+
+    #[test]
+    fn cmp_risk_measure_one_raw_branch_contaminates_control() {
+        let mixed = [
+            CmpBranchOutcome {
+                probability: 0.5,
+                branch_return: 0.1,
+                cmp_source: Some("cmp:fed:3m:increase".into()),
+            },
+            CmpBranchOutcome {
+                probability: 0.5,
+                branch_return: 0.3,
+                cmp_source: None,
+            },
+        ];
+        let rm = cmp_scenario_risk_measure(&mixed).expect("positive mass");
+        assert!(!rm.cmp_controlled);
+        assert_eq!(rm.cmp_branch_count, 1);
+    }
+
+    #[test]
+    fn cmp_risk_measure_none_on_zero_mass() {
+        assert!(cmp_scenario_risk_measure(&[]).is_none());
+    }
+
+    // ── Contract-price coherence (R5) ───────────────────────────
+
+    #[test]
+    fn contract_price_coherence_within_cost_band_is_coherent() {
+        let m = contract_price_coherence(0.52, 0.50, 0.03).expect("valid inputs");
+        assert!(close(m.divergence, 0.02));
+        assert!(m.coherent);
+    }
+
+    #[test]
+    fn contract_price_coherence_beyond_cost_band_is_the_signal() {
+        let m = contract_price_coherence(0.52, 0.40, 0.03).expect("valid inputs");
+        assert!(close(m.divergence, 0.12));
+        assert!(!m.coherent);
+    }
+
+    #[test]
+    fn contract_price_coherence_none_for_invalid_probabilities() {
+        assert!(contract_price_coherence(-0.1, 0.5, 0.03).is_none());
+        assert!(contract_price_coherence(0.5, 1.2, 0.03).is_none());
     }
 }

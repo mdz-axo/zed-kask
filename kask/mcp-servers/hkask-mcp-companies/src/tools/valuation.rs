@@ -685,7 +685,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This is the scenario scenario events drive the company's financial forecast, not the other way around."
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), the intrinsic value distribution (percentiles, prob-undervalued), the T8a risk core (probability-weighted expected return and sigma_scenario over the paths, plus per-node beta loadings), and — when realized_volatility is supplied — the fused volatility (root-sum-square of realized and scenario-implied sigma). Max 12 scenario nodes. This is the scenario scenario events drive the company's financial forecast, not the other way around."
     )]
     pub async fn scenario_impact_valuation(
         &self,
@@ -756,6 +756,89 @@ impl CompaniesServer {
             )
             .map_err(map_scenario_impact_error)?;
 
+            // T8a risk core over the enumerated leaf paths. Each path is a
+            // branch: its probability (from the CPTs) and its annualized
+            // return from the current price to the path's intrinsic value
+            // over the DCF horizon. Skipped with a named reason (never
+            // silently) when a return is undefined.
+            let horizon_years = f64::from(assumptions.total_years);
+            let negative_intrinsic =
+                result.paths.iter().any(|p| p.intrinsic_per_share < 0.0);
+            let risk_skip_reason = if current_price <= 0.0 {
+                Some("current price is not positive")
+            } else if negative_intrinsic {
+                Some("a path intrinsic value is negative")
+            } else {
+                None
+            };
+            let branches: Vec<hkask_forecast::BranchOutcome> = result.paths.iter().map(|p| {
+                let branch_return = if p.intrinsic_per_share > 0.0 {
+                    (p.intrinsic_per_share / current_price)
+                        .powf(1.0 / horizon_years)
+                        - 1.0
+                } else {
+                    // Zero intrinsic: total loss of the position.
+                    -1.0
+                };
+                hkask_forecast::BranchOutcome {
+                    probability: p.probability,
+                    branch_return,
+                }
+            }).collect();
+            let risk_measure = if risk_skip_reason.is_none() {
+                hkask_forecast::scenario_risk_measure(&branches)
+            } else {
+                None
+            };
+
+            // T8a factor loadings per scenario node: β(node) =
+            // E[r | node Yes] − E[r | node No], from the path masks (bit i
+            // set = node i Yes). Complements node_sensitivities (which are
+            // unweighted intrinsic spreads); these are probability-weighted
+            // return exposures.
+            let factor_loadings: Vec<serde_json::Value> = if risk_skip_reason.is_none() {
+                tree.nodes.iter().enumerate().map(|(i, node)| {
+                    let node_true: Vec<bool> = result.paths.iter()
+                        .map(|p| (p.path_mask >> i) & 1 == 1)
+                        .collect();
+                    let beta = hkask_forecast::scenario_node_loading(&branches, &node_true);
+                    serde_json::json!({
+                        "node_id": node.id,
+                        "beta": beta,
+                        "beta_note": if beta.is_none() {
+                            Some("one conditioning set has zero probability mass — loading undefined")
+                        } else {
+                            None
+                        },
+                    })
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Volatility fusion: realized (caller-supplied) σ fused with the
+            // scenario-implied σ via root-sum-square. The scenario channel is
+            // weighted by the tree's total probability mass — partial tree
+            // coverage down-weights the scenario channel (a tree covering
+            // half the mass contributes half-weighted scenario risk).
+            let fused_volatility = match (req.realized_volatility, risk_measure) {
+                (Some(realized), Some(rm)) => Some(
+                    hkask_forecast::fuse_volatility(
+                        realized,
+                        Some(rm.sigma_scenario),
+                        result.total_probability,
+                    )
+                ),
+                _ => None,
+            };
+            let fused_volatility_note = if req.realized_volatility.is_some() && fused_volatility.is_none() {
+                Some("realized_volatility supplied but the scenario risk measure is undefined — no fusion emitted (never fabricated)")
+            } else if req.realized_volatility.is_none() {
+                Some("no realized_volatility supplied — fusion not computed; supply it to fuse realized and scenario-implied σ")
+            } else {
+                None
+            };
+
             let node_sensitivities: Vec<serde_json::Value> = result.node_sensitivities.iter()
                 .map(|s| serde_json::json!({
                     "node_id": s.node_id,
@@ -813,6 +896,25 @@ impl CompaniesServer {
                     "prob_undervalued": result.distribution.prob_undervalued,
                 },
                 "node_sensitivities": node_sensitivities,
+                // T8a risk core (hkask_forecast::scenario_risk_measure) over
+                // the leaf paths.
+                "risk_measure": risk_measure.map(|rm| serde_json::json!({
+                    "expected_return": rm.expected_return,
+                    "sigma_scenario": rm.sigma_scenario,
+                    "branch_count": rm.branch_count,
+                    "probability_mass": rm.probability_mass,
+                })),
+                "risk_measure_note": risk_skip_reason.map(|reason| format!(
+                    "{reason} — scenario risk measure undefined (never fabricated)"
+                )),
+                // T8a factor loadings (hkask_forecast::scenario_node_loading):
+                // β(node) = E[r | node Yes] − E[r | node No].
+                "factor_loadings": factor_loadings,
+                // Volatility fusion (hkask_forecast::fuse_volatility): realized
+                // σ (caller-supplied) ⊕ scenario-implied σ, scenario channel
+                // weighted by tree coverage.
+                "fused_volatility": fused_volatility,
+                "fused_volatility_note": fused_volatility_note,
                 "paths": output_paths,
                 "bridge_note": "Scenario scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company financial forecast. Each scenario node Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability.",
                 "pipeline": [

@@ -633,6 +633,14 @@ pub(crate) struct ScenarioImpactValuationRequest {
     pub capex_to_revenue: Option<f64>,
     pub nwc_to_revenue: Option<f64>,
     pub tax_rate: Option<f64>,
+    /// Optional realized (historical) annual volatility of the equity, as a
+    /// decimal (0.35 = 35%). When supplied together with a computable
+    /// scenario risk measure, the tool emits `fused_volatility` — the
+    /// root-sum-square fusion of realized and scenario-implied σ
+    /// (hkask_forecast::fuse_volatility), weighted by the tree's total
+    /// probability mass (partial tree coverage down-weights the scenario
+    /// channel). When omitted, no fusion is emitted (never fabricated).
+    pub realized_volatility: Option<f64>,
 }
 
 // ── Company transcript request (earnings + corpus modes) ──────────────

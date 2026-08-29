@@ -101,6 +101,23 @@ pub(crate) struct PropagateRequest {
     pub new_prior: f64,
 }
 
+/// Request for contract_price_coherence (R5 / H3 reframed).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ContractCoherenceRequest {
+    /// Observed market price of the contract on the same events — a
+    /// parlay/joint contract for a joint comparison, or a single contract's
+    /// price for a marginal comparison. Must be in [0, 1].
+    pub market_price: f64,
+    /// Transaction-cost band: the sum of bid-ask spreads, fees, and slippage
+    /// for both legs of the arbitrage. Divergences within the band are not
+    /// actionable.
+    pub cost_band: f64,
+    /// Tree-implied joint probability in [0, 1]. When omitted, the cached
+    /// tree's joint_probability is used (from scenario_quantify,
+    /// scenario_from_cmp_indices, or scenario_propagate).
+    pub tree_implied: Option<f64>,
+}
+
 /// Request for `scenario_from_markets_set`: compose N market records into a
 /// dependent event tree.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -210,7 +227,7 @@ pub(crate) struct UpdateRequest {
 
 /// One outcome entry for `ScoreRequest`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct OutcomeEntry {
+pub struct OutcomeEntry {
     /// The event ID this outcome refers to.
     pub event_id: String,
     /// Whether the event occurred (true = Yes, false = No).
@@ -218,7 +235,7 @@ pub(crate) struct OutcomeEntry {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ScoreRequest {
+pub struct ScoreRequest {
     /// Forecast record ID
     pub forecast_id: String,
     /// Events to score
@@ -228,7 +245,7 @@ pub(crate) struct ScoreRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CalibrateRequest {
+pub struct CalibrateRequest {
     /// The forecast question
     pub question: String,
     /// Fermi sub-questions

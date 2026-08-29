@@ -14,7 +14,7 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (21) — pinned by `tool_surface_is_exactly_21_registered_tools`
+//! ## Tools (22) — pinned by `tool_surface_is_exactly_22_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument
 //! - `scenario_frame` — 7-turn conversational framing interview
@@ -36,6 +36,7 @@
 //! - `scenario_from_markets` — Bridge from prediction-markets MCP server (single record)
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
 //! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
+//! - `contract_price_coherence` — R5/H3 coherence: tree-implied joint vs contract price
 
 use std::collections::HashSet;
 
@@ -702,6 +703,70 @@ impl ScenariosServer {
                 "ontology": dc_bibo::DATASET
             });
 
+            Ok(output)
+        })
+        .await
+    }
+
+    /// R5 / H3 (reframed): coherence between the tree-implied joint
+    /// probability and an observed contract price. The arbitrage analysis
+    /// lives on the contracts — never on equity returns.
+    #[tool(
+        description = "Measure R5 contract-price coherence: the divergence between a tree-implied joint probability and an observed market price (parlay/joint contract, or a single contract for a marginal comparison). Divergence within the transaction-cost band is coherent (not actionable); beyond it, the gap is the arbitrage signal. tree_implied defaults to the cached tree's joint_probability (from scenario_quantify / scenario_from_cmp_indices / scenario_propagate). Inputs outside [0, 1] are rejected — a coherence measure over an invalid probability is never fabricated."
+    )]
+    pub async fn contract_price_coherence(
+        &self,
+        Parameters(req): Parameters<ContractCoherenceRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(self, "contract_price_coherence", Self::ontology_anchor("contract_price_coherence"), async {
+            if !(0.0..=1.0).contains(&req.market_price) {
+                return Err(McpToolError::invalid_argument("market_price must be in [0, 1]"));
+            }
+            if req.cost_band < 0.0 {
+                return Err(McpToolError::invalid_argument("cost_band must be >= 0"));
+            }
+            let tree_implied = match req.tree_implied {
+                Some(p) => p,
+                None => {
+                    let tree =
+                        self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    match tree {
+                        Some(t) => t.joint_probability,
+                        None => {
+                            return Err(McpToolError::failed_precondition(
+                                "no tree_implied supplied and no cached event tree — run scenario_quantify / scenario_from_cmp_indices / scenario_propagate first",
+                            ));
+                        }
+                    }
+                }
+            };
+            let Some(measure) =
+                hkask_forecast::contract_price_coherence(tree_implied, req.market_price, req.cost_band)
+            else {
+                return Err(McpToolError::invalid_argument(
+                    "tree_implied must be in [0, 1] — a coherence measure over an invalid probability is undefined (never fabricated)",
+                ));
+            };
+            let output = serde_json::json!({
+                "tree_implied": measure.tree_implied,
+                "market_price": measure.market_price,
+                "divergence": measure.divergence,
+                "cost_band": measure.cost_band,
+                "coherent": measure.coherent,
+                "interpretation": if measure.coherent {
+                    format!(
+                        "Coherent — divergence {:.4} is within the transaction-cost band {:.4}: the tree and the market agree beyond what transaction costs explain.",
+                        measure.divergence, measure.cost_band
+                    )
+                } else {
+                    format!(
+                        "Divergent — divergence {:.4} exceeds the transaction-cost band {:.4}: the tree and the market disagree beyond what transaction costs explain; the gap is the arbitrage signal.",
+                        measure.divergence, measure.cost_band
+                    )
+                },
+                "framework": "R5 contract-price coherence (H3 reframed): the arbitrage analysis applies to the contracts — tree-implied joint probability vs observed contract price — never to equity returns. Systematic divergence on CMP-controlled trees refutes the composition algebra's pricing coherence (H3); coherence on CMP trees but divergence on raw-snapshot trees corroborates CMP as the active ingredient (H3b).",
+                "ontology": dc_bibo::DATASET,
+            });
             Ok(output)
         })
         .await
@@ -1490,7 +1555,7 @@ impl ScenariosServer {
 
     /// Calibrate a forecast using Fermi decomposition and outside/inside view.
     #[tool(
-        description = "Calibrate a forecast probability using Tetlock's methodology. Four-stage: (1) Fermi decomposition — confidence-weighted average of sub-question estimates, (2) Outside view — blend with base rate from reference class using shrinkage estimator, (3) Inside view — adjust with case-specific evidence, (4) Calibration feedback — when ≥5 resolved forecasts exist in the store, apply the learned overconfidence bias to adjust the estimate (closes the Brier learning loop). Returns calibrated probability, calibration-adjusted probability, confidence bounds, and certainty tier."
+        description = "Calibrate a forecast probability using Tetlock's methodology. Four-stage: (1) Fermi decomposition — confidence-weighted average of sub-question estimates, (2) Outside view — blend with base rate from reference class using shrinkage estimator, (3) Inside view — adjust with case-specific evidence, (4) Calibration feedback — when ≥5 resolved forecasts exist in the store, apply the learned overconfidence bias to adjust the estimate (closes the Brier learning loop), plus the isotonic baseline (PAVA step function over resolved pairs, arXiv:2604.20421 §6.1) as a non-parametric second channel. Returns calibrated probability, calibration-adjusted probability, isotonic-calibrated probability (with the fit knots), confidence bounds, and certainty tier."
     )]
     pub async fn scenario_calibrate(
         &self,
@@ -1523,15 +1588,38 @@ impl ScenariosServer {
             // Close the Brier feedback loop: if enough historical resolved
             // forecasts exist, apply the learned calibration bias to adjust
             // this estimate (overconfident forecasters regress toward 0.5).
-            let (calibration_adjusted, overconfidence_bias) = {
+            // The isotonic baseline (arXiv:2604.20421 §6.1) fits a PAVA step
+            // function over the resolved (probability, outcome) pairs and
+            // maps the calibrated estimate through it — a second, non-parametric
+            // calibration channel alongside the parametric bias adjustment.
+            let (calibration_adjusted, overconfidence_bias, isotonic) = {
                 let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                match superforecast::compute_calibration_curve(&store) {
+                let (adjusted, bias) = match superforecast::compute_calibration_curve(&store) {
                     Ok(curve) if curve.resolved_forecasts >= 5 => {
                         let bias = curve.overconfidence_score;
                         (hkask_forecast::apply_calibration_adjustment(calibrated, bias), Some(bias))
                     }
                     _ => (calibrated, None),
-                }
+                };
+                let pairs: Vec<(f64, bool)> = store
+                    .resolved()
+                    .into_iter()
+                    .map(|r| (r.probability, r.outcome.unwrap_or(false)))
+                    .collect();
+                let isotonic = hkask_forecast::isotonic_fit(&pairs).map(|fit| {
+                    let calibrated_probability = hkask_forecast::isotonic_apply(&fit, calibrated);
+                    (
+                        calibrated_probability,
+                        fit.iter()
+                            .map(|(threshold, value)| serde_json::json!({
+                                "threshold": threshold,
+                                "calibrated_value": value,
+                            }))
+                            .collect::<Vec<_>>(),
+                        pairs.len(),
+                    )
+                });
+                (adjusted, bias, isotonic)
             };
 
             let output = serde_json::json!({
@@ -1549,6 +1637,18 @@ impl ScenariosServer {
                 "calibration_adjusted_probability": calibration_adjusted,
                 "calibration_adjusted_pct": format!("{:.1}%", calibration_adjusted * 100.0),
                 "overconfidence_bias": overconfidence_bias,
+                // Isotonic baseline (arXiv:2604.20421 §6.1): PAVA step function
+                // over the resolved (probability, outcome) pairs, applied to
+                // the calibrated estimate. Emitted with the fit knots so the
+                // mapping is inspectable, never a black box.
+                "isotonic_calibrated_probability": isotonic.as_ref().map(|(p, _, _)| *p),
+                "isotonic_fit_knots": isotonic.as_ref().map(|(_, knots, _)| knots.clone()),
+                "isotonic_fit_size": isotonic.as_ref().map(|(_, _, n)| *n),
+                "isotonic_note": if isotonic.is_some() {
+                    "Isotonic recalibration available: the PAVA fit over resolved forecasts mapped this estimate to isotonic_calibrated_probability."
+                } else {
+                    "No isotonic fit: fewer than 2 resolved (probability, outcome) pairs — the non-parametric channel is withheld rather than fabricated."
+                },
                 "feedback_loop": if overconfidence_bias.is_some() {
                     "Closed: historical Brier-scored outcomes adjusted this estimate. Positive bias (overconfident) regresses toward 0.5; negative (underconfident) pushes outward."
                 } else {
@@ -1571,7 +1671,7 @@ impl ScenariosServer {
                     "stage_2": "Outside view: blend base rate with shrinkage estimator (regression toward 0.5 based on reference count)",
                     "stage_3": "Inside view: apply case-specific evidence through the forecasting workflow, then use scenario_update for explicit Bayesian revisions",
                     "stage_4": "Bayesian updating: use scenario_update tool to revise with new evidence",
-                    "stage_5": "Calibration feedback: when >=5 resolved forecasts exist, apply the learned overconfidence bias (hkask_forecast::apply_calibration_adjustment) to close the Brier learning loop",
+                    "stage_5": "Calibration feedback: when >=5 resolved forecasts exist, apply the learned overconfidence bias (hkask_forecast::apply_calibration_adjustment) to close the Brier learning loop; the isotonic baseline (hkask_forecast::isotonic_fit/apply, arXiv:2604.20421 §6.1) provides a non-parametric second channel over the same resolved pairs",
                 },
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 4-6"
             });
@@ -1985,13 +2085,13 @@ fn emit_cmp_provenance(
 mod tests {
     use super::*;
 
-    /// The scenarios server registers exactly 21 tools. Adding or removing a
+    /// The scenarios server registers exactly 22 tools. Adding or removing a
     /// tool is an intentional surface change — this pin catches accidental
     /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_42_registered_tools`.
     #[test]
-    fn tool_surface_is_exactly_21_registered_tools() {
+    fn tool_surface_is_exactly_22_registered_tools() {
         let n = ScenariosServer::scenario_router().list_all().len();
-        assert_eq!(n, 21, "scenarios registered tool surface changed; got {n}");
+        assert_eq!(n, 22, "scenarios registered tool surface changed; got {n}");
     }
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per

@@ -682,7 +682,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity."
+        description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity. Detailed mode (event_tree supplied) also emits the T8a risk core: a probability-weighted risk measure (expected return, sigma_scenario), APT-style factor loadings (beta per axis) over the branch revaluations, and — when the tree is CMP-built — the R4 CMP-provenance risk measure (cmp_controlled)."
     )]
     pub async fn scenario_analysis(
         &self,
@@ -769,6 +769,128 @@ impl CompaniesServer {
                                 growth_p, margin_p, &results,
                             );
                             let expected = superforecast::expected_intrinsic(&weighted);
+
+                            // T8a risk core: probability-weighted risk measure
+                            // and APT-style factor loadings over the branch
+                            // revaluations. The branch return is the annualized
+                            // return from the current price to the branch's
+                            // intrinsic value over the DCF horizon. Skipped with
+                            // a named reason (never silently) when a return is
+                            // undefined.
+                            let horizon_years = results
+                                .first()
+                                .map_or(0.0, |r| r.model.periods.len() as f64);
+                            let negative_intrinsic =
+                                weighted.iter().any(|w| w.intrinsic_per_share < 0.0);
+                            let risk_skip_reason = if current_price <= 0.0 {
+                                Some("current price is not positive")
+                            } else if horizon_years <= 0.0 {
+                                Some("DCF horizon is zero")
+                            } else if negative_intrinsic {
+                                Some("a branch intrinsic value is negative")
+                            } else {
+                                None
+                            };
+                            // `weighted` is built from `results` by index
+                            // (distribute_scenario_probabilities), so the
+                            // node-true vectors zip cleanly onto the branches.
+                            let branches: Vec<hkask_forecast::BranchOutcome> =
+                                weighted.iter().map(|w| {
+                                    let branch_return = if w.intrinsic_per_share > 0.0 {
+                                        (w.intrinsic_per_share / current_price)
+                                            .powf(1.0 / horizon_years)
+                                            - 1.0
+                                    } else {
+                                        // Zero intrinsic: total loss of the position.
+                                        -1.0
+                                    };
+                                    hkask_forecast::BranchOutcome {
+                                        probability: w.probability,
+                                        branch_return,
+                                    }
+                                }).collect();
+                            let risk_measure = if risk_skip_reason.is_none() {
+                                hkask_forecast::scenario_risk_measure(&branches)
+                            } else {
+                                None
+                            };
+                            let growth_node_true: Vec<bool> = results
+                                .iter()
+                                .map(|r| r.scenario.axis1_multiplier > 1.0)
+                                .collect();
+                            let margin_node_true: Vec<bool> = results
+                                .iter()
+                                .map(|r| r.scenario.axis2_multiplier > 1.0)
+                                .collect();
+                            let growth_loading = if risk_skip_reason.is_none() {
+                                hkask_forecast::scenario_node_loading(
+                                    &branches, &growth_node_true,
+                                )
+                            } else {
+                                None
+                            };
+                            let margin_loading = if risk_skip_reason.is_none() {
+                                hkask_forecast::scenario_node_loading(
+                                    &branches, &margin_node_true,
+                                )
+                            } else {
+                                None
+                            };
+                            let factor_loading_note =
+                                if risk_skip_reason.is_none()
+                                    && (growth_loading.is_none()
+                                        || margin_loading.is_none())
+                                {
+                                    Some("a conditioning set has zero probability mass — that axis loading is undefined")
+                                } else {
+                                    None
+                                };
+
+                            // R4: the same branches with CMP provenance. A
+                            // quadrant probability derives from both tree
+                            // roots, so the branch is CMP-controlled only when
+                            // BOTH roots are CMP indices (a single raw root
+                            // contaminates every quadrant — the measure's
+                            // cmp_controlled flag then reports the confound).
+                            let roots_cmp_controlled: Vec<bool> = tree
+                                .root_ids
+                                .iter()
+                                .map(|id| {
+                                    tree.cmp_provenance.iter().any(|c| c.id == *id)
+                                })
+                                .collect();
+                            let cmp_source = match (
+                                roots_cmp_controlled.first(),
+                                roots_cmp_controlled.get(1),
+                            ) {
+                                (Some(true), Some(true)) => {
+                                    tree.root_ids
+                                        .first()
+                                        .zip(tree.root_ids.get(1))
+                                        .map(|(a, b)| format!("{a}+{b}"))
+                                }
+                                _ => None,
+                            };
+                            let cmp_branches: Vec<hkask_forecast::CmpBranchOutcome> =
+                                branches.iter().map(|b| {
+                                    hkask_forecast::CmpBranchOutcome {
+                                        probability: b.probability,
+                                        branch_return: b.branch_return,
+                                        cmp_source: cmp_source.clone(),
+                                    }
+                                }).collect();
+                            let cmp_risk_measure = if risk_skip_reason.is_none() {
+                                hkask_forecast::cmp_scenario_risk_measure(&cmp_branches)
+                            } else {
+                                None
+                            };
+                            let cmp_controlled_note = match &cmp_risk_measure {
+                                Some(rm) if !rm.cmp_controlled => Some(
+                                    "at least one tree root is not a CMP index — the risk measure carries the maturity-transformation confound",
+                                ),
+                                _ => None,
+                            };
+
                             weighting_mode = superforecast::WeightingMode::EventTree;
                             let cmp_provenance = if tree.cmp_provenance.is_empty() {
                                 None
@@ -784,6 +906,34 @@ impl CompaniesServer {
                                     "intrinsic_per_share": w.intrinsic_per_share,
                                     "probability": w.probability,
                                 })).collect::<Vec<_>>(),
+                                // T8a risk core (hkask_forecast::scenario_risk_measure).
+                                "risk_measure": risk_measure.map(|rm| serde_json::json!({
+                                    "expected_return": rm.expected_return,
+                                    "sigma_scenario": rm.sigma_scenario,
+                                    "branch_count": rm.branch_count,
+                                    "probability_mass": rm.probability_mass,
+                                })),
+                                "risk_measure_note": risk_skip_reason.map(|reason| format!(
+                                    "{reason} — scenario risk measure undefined (never fabricated)"
+                                )),
+                                // T8a factor exposures (hkask_forecast::scenario_node_loading):
+                                // β(axis) = E[r | axis high] − E[r | axis low].
+                                "factor_loadings": {
+                                    "revenue_growth_beta": growth_loading,
+                                    "gross_margin_beta": margin_loading,
+                                },
+                                "factor_loadings_note": factor_loading_note,
+                                // R4 (hkask_forecast::cmp_scenario_risk_measure): the
+                                // risk measure with CMP provenance.
+                                "cmp_risk_measure": cmp_risk_measure.map(|rm| serde_json::json!({
+                                    "expected_return": rm.inner.expected_return,
+                                    "sigma_scenario": rm.inner.sigma_scenario,
+                                    "branch_count": rm.inner.branch_count,
+                                    "probability_mass": rm.inner.probability_mass,
+                                    "cmp_controlled": rm.cmp_controlled,
+                                    "cmp_branch_count": rm.cmp_branch_count,
+                                })),
+                                "cmp_controlled_note": cmp_controlled_note,
                                 // R3: cite CMP provenance when the tree was built from CMP indices.
                                 "cmp_provenance": cmp_provenance.map(|p| p.iter().map(|c| serde_json::json!({
                                     "id": c.id,
