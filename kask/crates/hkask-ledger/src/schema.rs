@@ -55,13 +55,17 @@ CREATE INDEX IF NOT EXISTS idx_transactions_reference
 pub fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), super::LedgerError> {
     driver.execute_batch(SCHEMA_DDL)?;
 
-    let is_new = driver
-        .query_optional(
-            "SELECT COUNT(*) FROM _ledger_meta WHERE key = 'created_at'",
-            &[],
-        )?
-        .map(|row| row.get_int(0).unwrap_or(0) == 0)
-        .unwrap_or(true);
+    let is_new = match driver.query_optional(
+        "SELECT COUNT(*) FROM _ledger_meta WHERE key = 'created_at'",
+        &[],
+    )? {
+        Some(row) => {
+            // COUNT(*) always returns an integer — a read failure is
+            // corruption and must surface, not read as "new database".
+            row.get_int(0).map_err(super::LedgerError::from)? == 0
+        }
+        None => true,
+    };
 
     if is_new {
         let now = chrono::Utc::now().to_rfc3339();

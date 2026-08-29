@@ -476,7 +476,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Equity duration (Macaulay-style, years) of a company's projected free cash flows: D = Σ t·PV(CF_t) / Σ PV(CF_t) over the projection plus the terminal value timed at the horizon year. Also reports terminal/stage-1/stage-2 PV shares — the maturity profile of the equity claim. Pair with prediction-market time_to_maturity (hkask-mcp-prediction-markets) for duration-matching across horizons."
+        description = "Equity duration (Macaulay-style, years) of a company's projected free cash flows: D = Σ t·PV(CF_t) / Σ PV(CF_t) over the projection plus the terminal value timed at the horizon year. Also reports terminal/stage-1/stage-2 PV shares — the maturity profile of the equity claim — and cmp_tenor_gaps, the R2 maturity-transformation gap of the duration against the fixed CMP tenors (1m/3m/6m). Pair with prediction-market time_to_maturity (hkask-mcp-prediction-markets) for duration-matching across horizons."
     )]
     pub async fn equity_duration(
         &self,
@@ -533,22 +533,44 @@ impl CompaniesServer {
             let duration = financial_model::equity_duration(&model, stage1_years);
 
             let output = match duration {
-                Some(d) => serde_json::json!({
-                    "symbol": req.symbol,
-                    "macaulay_duration_years": d.macaulay_duration_years,
-                    "terminal_pv_share": d.terminal_pv_share,
-                    "stage1_pv_share": d.stage1_pv_share,
-                    "stage2_pv_share": d.stage2_pv_share,
-                    "total_pv": d.total_pv,
-                    "horizon_years": d.horizon_years,
-                    "interpretation": format!(
-                        "Equity duration {:.1}y — {:.0}% of value sits in the terminal value at year {}.",
-                        d.macaulay_duration_years,
-                        d.terminal_pv_share * 100.0,
-                        d.horizon_years
-                    ),
-                    "framework": "Macaulay-style equity duration over projected FCF (terminal value timed at the horizon year). Compare against prediction-market time_to_maturity for maturity-transformation analysis.",
-                }),
+                Some(d) => {
+                    // R2: maturity-transformation gap against the fixed CMP tenors
+                    // (1m/3m/6m). `duration_vs_cmp_tenors` returns None for a
+                    // non-positive duration — surfaced as a note, never silently
+                    // dropped.
+                    let cmp_tenor_gaps =
+                        hkask_forecast::duration_vs_cmp_tenors(d.macaulay_duration_years);
+                    serde_json::json!({
+                        "symbol": req.symbol,
+                        "macaulay_duration_years": d.macaulay_duration_years,
+                        "terminal_pv_share": d.terminal_pv_share,
+                        "stage1_pv_share": d.stage1_pv_share,
+                        "stage2_pv_share": d.stage2_pv_share,
+                        "total_pv": d.total_pv,
+                        "horizon_years": d.horizon_years,
+                        "cmp_tenor_gaps": cmp_tenor_gaps.as_ref().map(|gaps| gaps
+                            .iter()
+                            .map(|g| serde_json::json!({
+                                "tenor": g.tenor_label,
+                                "tenor_years": g.tenor_years,
+                                "gap_years": g.gap_years,
+                                "ratio": g.ratio,
+                            }))
+                            .collect::<Vec<_>>()),
+                        "cmp_tenor_gaps_note": if cmp_tenor_gaps.is_none() {
+                            Some("macaulay duration is not positive — CMP tenor comparison undefined (never fabricated)")
+                        } else {
+                            None
+                        },
+                        "interpretation": format!(
+                            "Equity duration {:.1}y — {:.0}% of value sits in the terminal value at year {}.",
+                            d.macaulay_duration_years,
+                            d.terminal_pv_share * 100.0,
+                            d.horizon_years
+                        ),
+                        "framework": "Macaulay-style equity duration over projected FCF (terminal value timed at the horizon year). cmp_tenor_gaps is the R2 maturity-transformation gap against the fixed CMP tenors (hkask_forecast::duration_vs_cmp_tenors). Compare against prediction-market time_to_maturity for maturity-transformation analysis.",
+                    })
+                }
                 None => serde_json::json!({
                     "symbol": req.symbol,
                     "error": "total PV is zero — equity duration undefined (never fabricated)",

@@ -957,8 +957,8 @@ mod integration_tests {
                 &img.id,
                 "generate_image",
                 Some("a serene mountain landscape"),
-                Some("fal-ai/flux/dev"),
-                Some("fal.ai"),
+                Some("DeepInfra/black-forest-labs/FLUX-2-klein-4b"),
+                Some("deepinfra"),
                 Some(12345),
                 Some(&params_json),
                 Some(&wf.id),
@@ -977,8 +977,11 @@ mod integration_tests {
             lineage.prompt.as_deref(),
             Some("a serene mountain landscape")
         );
-        assert_eq!(lineage.model.as_deref(), Some("fal-ai/flux/dev"));
-        assert_eq!(lineage.provider.as_deref(), Some("fal.ai"));
+        assert_eq!(
+            lineage.model.as_deref(),
+            Some("DeepInfra/black-forest-labs/FLUX-2-klein-4b")
+        );
+        assert_eq!(lineage.provider.as_deref(), Some("deepinfra"));
         assert_eq!(lineage.seed, Some(12345));
         assert_eq!(lineage.workflow_id.as_deref(), Some(wf.id.as_str()));
         // The stored params JSON round-trips — this is what gallery_reproduce

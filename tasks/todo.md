@@ -16,6 +16,11 @@
     - [ ] FFmpeg command log per render (LosslessCut) — server returns the invocation in the result
     - [ ] Keyframe-snap disclosure at the mark ("cuts snap to keyframes") — stream-copy tradeoff
     - [ ] Concat codec-precondition check surfaced as a named error (LosslessCut precondition)
+  - [ ] **Transcript-as-EDL track (Reduct paradigm — see reference model §5):**
+    - [ ] `transcribe` result surfaced alongside the player; word-click → seek
+    - [ ] Text selection → (start, end) → dispatches `video_clip` (text selection = media range)
+    - [ ] Agent operation: "find where X and clip it" — semantic selection over the transcript, then the same renders
+    - [ ] Subtractive editing: "cut the filler" — transcribe → classify unwanted → render complement → concat
   - [ ] All dispatches via `shared_tool_invoker` (governed path), errors in the viewer status line
   - [ ] Manual verification: trim the vonnegut clip to 30s and play the result (benchmark checklist §1-3)
 - [ ] **V2** Save / copy stream affordance on the viewer

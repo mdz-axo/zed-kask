@@ -45,7 +45,7 @@ ocr/ (13 modules)
   config.rs           — ComplexityTier, ThresholdConfig, TriageConfig, default_ocr_max_tokens
   document.rs         — OcrResult, CrossValidation, PipelineOutcome, split_pdftotext_pages
   llm_ocr.rs          — Vision LLM OCR + shared vision_ocr_bytes primitive
-  decimation.rs       — PDF→images via pdftoppm + Otsu binarization + optional fal.ai docres
+  decimation.rs       — PDF→images via pdftoppm + Otsu binarization
   complexity.rs       — Sobel edge detection → page complexity scoring
   routing.rs          — Complexity-driven backend selection with deterministic sampling
   tesseract.rs        — Classical OCR via tesseract CLI (TSV confidence parsing)

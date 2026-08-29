@@ -184,7 +184,12 @@ impl CorpusServer {
                         ));
                     }
                     let store = crate::helpers::open_memory_store(db_path, &passphrase)?;
-                    let total = store.embedding_count().unwrap_or(0);
+                    // A failed count must not read as "zero embeddings" —
+                    // a DB outage would masquerade as an empty corpus and
+                    // return success with no results.
+                    let total = store.embedding_count().map_err(|e| {
+                        McpToolError::internal(format!("embedding count read failed: {e}"))
+                    })?;
                     if total == 0 {
                         return Ok(json!({
                             "query": query,

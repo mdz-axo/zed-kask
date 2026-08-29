@@ -1227,3 +1227,76 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    /// The edit-dispatch ingestion path: a `video_clip` result (the exact
+    /// envelope shape the server emits — content-wrapped, display_hint
+    /// inside) must surface as a new selected asset, the same way thread
+    /// tool results do. Ground truth for the shape: the server's
+    /// `enrich_with_omc_and_provenance` (hkask-mcp-media/src/media_block.rs).
+    #[test]
+    fn merge_tool_result_surfaces_clip_as_new_selected_asset() {
+        let mut viewer = MediaViewer::new();
+        let output = serde_json::json!({
+            "content": {
+                "status": "clipped",
+                "source": "/tmp/source.mp4",
+                "start_sec": 10.0,
+                "end_sec": 40.0,
+                "duration": 30.0,
+                "output": "/tmp/clip.mp4",
+                "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
+            }
+        })
+        .to_string();
+
+        viewer.merge_tool_result(&output, "video_clip");
+
+        assert_eq!(viewer.assets.len(), 1, "the clip must surface as an asset");
+        let selected = viewer
+            .selected
+            .expect("the new asset must be auto-selected");
+        assert_eq!(viewer.assets[selected].src, "/tmp/clip.mp4");
+        assert_eq!(viewer.assets[selected].kind, "video");
+        assert_eq!(viewer.assets[selected].tool, "video_clip");
+    }
+
+    /// Dedup: re-ingesting the same result must not duplicate the asset
+    /// (the same discipline `ingest_thread` applies to thread results).
+    #[test]
+    fn merge_tool_result_deduplicates_by_body() {
+        let mut viewer = MediaViewer::new();
+        let output = serde_json::json!({
+            "content": {
+                "status": "clipped",
+                "output": "/tmp/clip.mp4",
+                "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
+            }
+        })
+        .to_string();
+
+        viewer.merge_tool_result(&output, "video_clip");
+        viewer.merge_tool_result(&output, "video_clip");
+
+        assert_eq!(
+            viewer.assets.len(),
+            1,
+            "identical results must not duplicate"
+        );
+    }
+
+    /// A result without a display_hint (or unparseable output) must not
+    /// crash or add phantom assets — it is a no-op the status line already
+    /// covers by clearing on success.
+    #[test]
+    fn merge_tool_result_ignores_output_without_display_hint() {
+        let mut viewer = MediaViewer::new();
+        viewer.merge_tool_result("{\"content\": {\"status\": \"clipped\"}}", "video_clip");
+        assert!(viewer.assets.is_empty());
+        viewer.merge_tool_result("not json at all", "video_clip");
+        assert!(viewer.assets.is_empty());
+    }
+}

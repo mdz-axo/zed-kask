@@ -81,7 +81,7 @@ impl CompaniesServer {
             // and their economic meaning change.
             let is_financial = crate::financial_model::is_financial_sector(&profile);
 
-            let (valuation, output) = if is_financial {
+            let output = if is_financial {
                 let Some(inputs) = extract_ep_inputs_equity(
                     income_data,
                     balance_data,
@@ -108,7 +108,7 @@ impl CompaniesServer {
                     inputs.roe_variability,
                 );
                 let out = build_ep_response_equity(&v, &req.symbol, profile_data);
-                (v, out)
+                out
             } else {
                 let Some(inputs) = extract_ep_inputs(
                     income_data,
@@ -136,10 +136,9 @@ impl CompaniesServer {
                     inputs.roic_variability,
                 );
                 let out = build_ep_response(&v, &inputs, &req.symbol);
-                (v, out)
+                out
             };
 
-            let _ = valuation;
             Ok(fibo::enrich_with_ontology(output, "ep_valuation"))
         })
         .await

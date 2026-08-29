@@ -76,7 +76,7 @@ impl DeepInfraMediaProvider {
             .map_err(|e| InferenceError::Connection(format!("DeepInfra request failed: {e}")))?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "DeepInfra {status}: {}",
@@ -270,7 +270,7 @@ impl DeepInfraMediaProvider {
             .map_err(|e| InferenceError::Connection(format!("DeepInfra STT failed: {e}")))?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "DeepInfra STT {status}: {}",
@@ -522,7 +522,7 @@ impl OpenRouterMediaProvider {
             .map_err(|e| InferenceError::Connection(format!("OpenRouter image gen failed: {e}")))?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "OpenRouter image gen {status}: {}",
@@ -659,7 +659,7 @@ impl OpenRouterMediaProvider {
             .map_err(|e| InferenceError::Connection(format!("OpenRouter STT failed: {e}")))?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "OpenRouter STT {status}: {}",
@@ -702,7 +702,7 @@ impl OpenRouterMediaProvider {
             })?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "OpenRouter video submit {status}: {}",
@@ -752,7 +752,7 @@ impl OpenRouterMediaProvider {
             })?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "OpenRouter video submit {status}: {}",

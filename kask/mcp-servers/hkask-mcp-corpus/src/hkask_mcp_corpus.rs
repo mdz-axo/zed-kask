@@ -82,10 +82,23 @@ use std::sync::{Arc, Mutex};
 /// (Ashby's Law) and is NOT used here; delimiter wrapping is an allowlist
 /// approach with bounded defender variety.
 pub(crate) fn guard_content(content: &str) -> String {
-    let enabled = std::env::var("HKASK_ENABLE_CONTENT_GUARD")
-        .ok()
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    let enabled = *ENABLED.get_or_init(|| match std::env::var("HKASK_ENABLE_CONTENT_GUARD") {
+        Ok(raw) => match raw.parse::<bool>() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.corpus",
+                    raw = %raw,
+                    error = %e,
+                    "HKASK_ENABLE_CONTENT_GUARD failed to parse — defaulting to enabled"
+                );
+                true
+            }
+        },
+        Err(_) => true,
+    });
     if !enabled {
         return content.to_string();
     }
@@ -165,11 +178,31 @@ const DEFAULT_OWNER: &str = "john-brooks";
 /// consolidation, OCR) read from this single source — no per-tool magic
 /// numbers.
 pub(crate) fn max_concurrency() -> usize {
-    std::env::var("HKASK_MAX_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(96)
+    use std::sync::OnceLock;
+    static CEILING: OnceLock<usize> = OnceLock::new();
+    *CEILING.get_or_init(|| match std::env::var("HKASK_MAX_CONCURRENCY") {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            Ok(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp.corpus",
+                    raw = %raw,
+                    "HKASK_MAX_CONCURRENCY must be > 0 — defaulting to 96"
+                );
+                96
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.corpus",
+                    raw = %raw,
+                    error = %e,
+                    "HKASK_MAX_CONCURRENCY failed to parse — defaulting to 96"
+                );
+                96
+            }
+        },
+        Err(_) => 96,
+    })
 }
 
 /// Default embedding model — env var first, then HkaskSettings from disk.

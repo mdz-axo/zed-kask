@@ -1782,7 +1782,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             &passphrase,
                             db::RSS_SCHEMA_DDL,
                         ) {
-                            Ok(db) => db.sqlite_pool().ok(),
+                            Ok(db) => db
+                                .sqlite_pool()
+                                .map_err(|e| {
+                                    // Opened-but-broken must not read as "not
+                                    // configured" — warn so the operator can
+                                    // distinguish the two.
+                                    tracing::warn!(
+                                        target = "hkask.research.init",
+                                        error = %e,
+                                        path = %rss_db_path,
+                                        "RSS database opened but pool extraction failed — \
+                                         RSS tools will be unavailable"
+                                    );
+                                    e
+                                })
+                                .ok(),
                             Err(e) => {
                                 tracing::warn!(
                                     target = "hkask.research.init",

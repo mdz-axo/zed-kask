@@ -344,14 +344,29 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    let response: Option<_> = retry_with_backoff(
+                    let response: Option<_> = match retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
                         &format!("batch {batch_idx} of {batch_len}"),
                         || router.generate_with_model(&prompt, &params, Some(&model_override), None),
                     )
                     .await
-                    .ok();
+                    {
+                        Ok(resp) => Some(resp),
+                        Err(e) => {
+                            // An inference failure must not silently read as
+                            // "chunks tagged with fallback" — warn so the
+                            // operator can distinguish the two.
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.tag_chunks",
+                                batch = batch_idx,
+                                chunks = batch_len,
+                                error = %e,
+                                "LLM call failed after retries — chunks will get fallback tags"
+                            );
+                            None
+                        }
+                    };
 
                     // Parse the JSON array response.
                     let parsed_tags: Vec<OntologyTags> = response

@@ -82,6 +82,56 @@ The classic two-marker cut: mark A, mark B, delete/save selection. Proof
 that a single in/out pair is a legitimate v1 interaction — but LosslessCut's
 segment list is where every serious tool converges.
 
+### 5. Reduct.video — the transcript-as-EDL paradigm
+https://reduct.video (commercial; researched as interaction model, not code)
+
+Reduct inverts the timeline: **the transcript is the timeline** ("Ctrl+F for
+video"). Its design decisions, from the product site:
+
+- **Interactive transcript**: click a word → playback jumps to that moment.
+  **Selecting text selects video** — a text range IS a media range. The
+  transcript is the primary navigation and selection surface, not a
+  scrubber.
+- **Strikethrough editing**: in a composition (their "Reel"), select text →
+  "cut" → that passage is skipped in playback. Editing = deleting words.
+  Filler and digression removal becomes a text operation.
+- **Highlights → Reels**: highlight transcript passages, label/tag them by
+  theme, assemble highlights into a Reel. The EDL is a sequence of
+  transcript selections, each with word-level timestamps.
+- **Repository-wide semantic search**: fuzzy/NLP search across every
+  transcript — find moments by meaning, not scrubbing. "Find where he
+  talks about Cinderella" is a first-class operation.
+- **Labels/tags** on highlights for thematic organization; **Videoboard**
+  (2D canvas) for arranging highlights into affinity maps/storyboards.
+- **Link to selection**: a shareable URL to the exact transcript moment.
+- **Transcript correction** (select error → fix / replace-all) — the
+  transcript is editable metadata, not immutable output.
+- **Redaction** of PII (names, faces, screen content) — enterprise feature.
+- **Premiere Pro round-trip**: rough-cut in Reduct → Premiere sequence using
+  original source files. Rough cut here, polish there.
+
+**Why this matters for us specifically:** our media server already ships
+`transcribe` / `transcribe_bundle`, and our editing surface is a
+conversation. Reduct's paradigm maps onto our stack almost directly:
+
+```
+transcribe (word timestamps) → search/select text → (start, end) →
+video_clip → concat queue = the Reel
+```
+
+And it inverts our improvement target: where LosslessCut's UI is the only
+entry point, Reduct still requires the human to read and select. **An agent
+that takes "find where he explains the Cinderella curve and clip it to a
+30-second reel with the Hamlet part" and produces the selections + renders
+is Reduct's paradigm with the selection engine replaced by the conversation**
+— transcript search and selection become natural-language operations over
+the same governed tools.
+
+The strikethrough model also names an operation our timeline tools don't:
+**subtractive editing** ("cut all the filler") = transcribe → identify
+unwanted ranges → render the complement → concat. The agent is unusually
+good at exactly this classification step.
+
 ## Extracted interaction patterns (the design vocabulary)
 
 | Pattern | Source | Our status |
@@ -100,6 +150,12 @@ segment list is where every serious tool converges.
 | Timeline thumbnails/waveform | LosslessCut, NLEs | ❌ future |
 | Project/EDL persistence | LosslessCut, MLT XML | ❌ future (workflow_save exists server-side) |
 | Non-destructive: sources never modified | GES, MLT | ✅ by construction (renders write new files) |
+| Transcript as timeline: text selection = media range | Reduct | ❌ gap — `transcribe` exists server-side, unconnected to editing |
+| Subtractive editing (strikethrough: cut the unwanted) | Reduct | ❌ gap — agent-classification + complement render |
+| Semantic search over transcript repository | Reduct | ❌ gap — `transcribe` + search would compose |
+| Word-click → seek | Reduct | ❌ gap — transcript UI absent |
+| Labels/tags on selections | Reduct, LosslessCut | ❌ gap |
+| Shareable link to a moment | Reduct | ❌ out of scope (no sharing surface) |
 
 ## Benchmark checklist (assessable criteria for V1)
 
@@ -125,12 +181,24 @@ segment list is where every serious tool converges.
    composes with the steer conversation — "trim the intro off this and
    concat it with the other clip" dispatches the same governed tools with
    the same provenance. No reference tool has a natural-language EDL.
-2. **Provenance on every artifact.** Trim/concat results carry
+2. **Agent as the selection engine over a transcript EDL (Reduct's paradigm,
+   taken further).** Reduct still requires a human to read the transcript
+   and make selections. Our stack composes `transcribe` + the conversation
+   so the agent performs the search/selection step: "find the part where he
+   graphs Cinderella and make it a clip" — semantic selection, then the
+   same `video_clip`/`video_concat` renders. Reduct's interaction model
+   with the reading automated.
+3. **Subtractive editing as a first-class agent operation.** "Cut all the
+   filler/tangents from this lecture" = transcribe → classify unwanted
+   passages → render the complement → concat. The classification step is
+   what agents are good at and what no reference tool automates.
+4. **Provenance on every artifact.** Trim/concat results carry
    tool+args+span provenance (display_hint) — LosslessCut's command log is
    retroactive; ours is structural.
-3. **Server-side EDL persistence for free.** `workflow_save`/`workflow_load`
-   already exist in the media server — an EDL is a workflow document; the
-   references had to build project files from scratch.
+5. **Server-side EDL persistence for free.** `workflow_save`/`workflow_load`
+   already exist in the media server — an EDL (segment list or transcript
+   selection list) is a workflow document; the references had to build
+   project files from scratch.
 
 ## Deliberately out of scope (with the reference that draws the line)
 
@@ -148,6 +216,8 @@ segment list is where every serious tool converges.
   https://www.mltframework.org/docs/framework/
 - GES index (fetched 2026-08-29):
   https://gstreamer.freedesktop.org/documentation/ges/
+- Reduct.video product site (fetched 2026-08-29):
+  https://reduct.video
 - Avidemux: http://avidemux.sourceforge.net/
 - Our `video_clip` stream-copy implementation:
   `kask/mcp-servers/hkask-mcp-media/src/video/ffmpeg.rs` (`-c copy`,

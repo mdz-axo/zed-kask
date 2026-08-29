@@ -1229,4 +1229,32 @@ mod tests {
         let adjusted = apply_calibration_adjustment(0.9, 50.0);
         assert!((0.01..=0.99).contains(&adjusted));
     }
+
+    // ── Duration vs CMP tenors (R2) ────────────────────────────────
+
+    #[test]
+    fn duration_vs_cmp_tenors_one_entry_per_tenor() {
+        let gaps = duration_vs_cmp_tenors(10.0).expect("positive duration yields gaps");
+        assert_eq!(gaps.len(), 3);
+        assert_eq!(gaps[0].tenor_label, "1m");
+        assert_eq!(gaps[1].tenor_label, "3m");
+        assert_eq!(gaps[2].tenor_label, "6m");
+    }
+
+    #[test]
+    fn duration_vs_cmp_tenors_gap_and_ratio() {
+        // 10y duration vs the 3m tenor (90/365.25 years): gap is the absolute
+        // difference, ratio is how many tenors fit inside the duration.
+        let gaps = duration_vs_cmp_tenors(10.0).expect("positive duration yields gaps");
+        let three_month = &gaps[1];
+        assert!(close(three_month.tenor_years, 90.0 / 365.25));
+        assert!(close(three_month.gap_years, 10.0 - 90.0 / 365.25));
+        assert!(close(three_month.ratio, 10.0 / (90.0 / 365.25)));
+    }
+
+    #[test]
+    fn duration_vs_cmp_tenors_none_for_non_positive_duration() {
+        assert!(duration_vs_cmp_tenors(0.0).is_none());
+        assert!(duration_vs_cmp_tenors(-1.0).is_none());
+    }
 }

@@ -24,12 +24,15 @@ spans four crates: `hkask-forecast` (pure math), `hkask-mcp-prediction-markets`
 (CMP construction), `hkask-mcp-scenarios` (composition), and
 `hkask-mcp-companies` (tree-weighted valuation).
 
-**Corrections (2026-08-28):** the falsification suite
+**Corrections (2026-08-28, updated 2026-08-29):** the falsification suite
 (`falsification_log`, `h2_duration_test`, `h3_coherence_test`, and the
-`falsification.rs` module) has been deleted from `hkask-forecast`;
-`duration_vs_cmp_tenors` and `classify_base_object_from_catalog` are also
-gone. The former Phase 3 (falsification) is dropped; the risk and coherence
-measures remain in `hkask_forecast.rs`.
+`falsification.rs` module) has been deleted from `hkask-forecast`; the former
+Phase 3 (falsification) is dropped. The risk and coherence measures remain in
+`hkask_forecast.rs`, including `duration_vs_cmp_tenors` (R2), which the
+companies server's `equity_duration` tool emits as `cmp_tenor_gaps`.
+`classify_base_object_from_catalog` lives in
+`hkask-mcp-prediction-markets/src/semantic_mapping.rs` and is called by the CMP
+index builder (`build_oriented_constituents`).
 
 ```mermaid
 graph TD

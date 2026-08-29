@@ -242,8 +242,20 @@ pub fn rotate_passphrase(
     // b. Rename new DB → <db_path>
     if let Err(e) = std::fs::rename(&new_path, db_path) {
         // Attempt to restore the old DB. If this also fails, the operator
-        // must manually rename <db_path>.old back to <db_path>.
-        let _ = std::fs::rename(&old_backup, db_path);
+        // must manually rename <db_path>.old back to <db_path> — say so
+        // loudly, or the returned error (which names only the original
+        // rename failure) leaves them unaware the restore also failed.
+        if let Err(restore_err) = std::fs::rename(&old_backup, db_path) {
+            tracing::error!(
+                target: "reg.storage",
+                path = %db_path,
+                backup = %old_backup,
+                original_error = %e,
+                restore_error = %restore_err,
+                "DB restore after failed rotation rename ALSO failed — \
+                 manually rename {old_backup} back to {db_path} before restarting"
+            );
+        }
         let _ = std::fs::remove_file(&new_path);
         return Err(RotationError::Filesystem {
             path: db_path.to_string(),

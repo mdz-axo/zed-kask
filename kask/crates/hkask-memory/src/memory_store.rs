@@ -964,7 +964,11 @@ impl MemoryStore {
         if rows.is_empty() {
             return Ok(0);
         }
-        let count = rows[0].get_int(0).unwrap_or(0) as u64;
+        // A column-read error must surface, not read as 0 (the
+        // `.rules` unwrap_or(0) sense-input trap).
+        let count = rows[0]
+            .get_int(0)
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))? as u64;
         Ok(count)
     }
 }
