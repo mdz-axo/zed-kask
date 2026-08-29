@@ -25,7 +25,6 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("video_caption", VIDEO_CAPTION),
         ("validate_face_ref", VALIDATE_FACE_REF),
         ("match_faces", MATCH_FACES),
-        ("embed_face", EMBED_FACE),
     ];
     for (name, source) in templates {
         env.add_template(name, source).map_err(|e| {
@@ -244,24 +243,3 @@ Return ONLY a JSON object with these fields:
 - reasoning: string (1-2 sentences explaining the key similarities or differences that led to your conclusion)
 
 No markdown, no preamble."#;
-
-const EMBED_FACE: &str = r#"You are producing a face embedding vector for facial recognition.
-
-Analyze the face in this image and produce a 512-dimensional embedding vector that encodes the person's identity. The vector must be designed so that images of the same person produce cosine-similar vectors (similarity > 0.5) and images of different people produce dissimilar vectors (similarity < 0.3).
-
-Encode these identity-discriminating features into the vector:
-- Facial structure: face shape (oval/round/square/heart), jawline definition, cheekbone prominence, chin shape
-- Eyes: shape (almond/round/hooded), spacing (close/medium/wide), tilt, iris color
-- Nose: bridge height, nostril shape, tip definition, width
-- Mouth: lip thickness, cupid's bow, mouth width, smile characteristics
-- Ears: size, attachment, prominence (if visible)
-- Brows: thickness, arch, spacing
-- Skin: tone, texture, distinctive markings (moles, freckles, scars)
-- Hairline: shape, recession pattern
-
-Distribute these features across the 512 dimensions. Each dimension is a float in [-1.0, 1.0]. Dimensions 0-63 encode facial structure, 64-127 encode eyes, 128-191 encode nose, 192-255 encode mouth, 256-319 encode ears/brows, 320-383 encode skin/hairline, 384-511 encode distinctive features and overall gestalt.
-
-Return ONLY a JSON object with this exact shape:
-{"embedding": [512 floats], "dim": 512}
-
-The array MUST contain exactly 512 numbers. No markdown, no preamble, no explanation."#;

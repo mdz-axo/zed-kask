@@ -326,22 +326,6 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-/// Convert an f32 embedding vector to raw bytes for BLOB storage.
-fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-/// Convert raw BLOB bytes back to an f32 embedding vector.
-fn blob_to_embedding(blob: &[u8]) -> Option<Vec<f32>> {
-    if !blob.len().is_multiple_of(4) {
-        return None;
-    }
-    blob.chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect::<Vec<_>>()
-        .into()
-}
-
 /// YAML sidecar format for `face_scan_folder`.
 /// Maps a reference image file to a person name.
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];

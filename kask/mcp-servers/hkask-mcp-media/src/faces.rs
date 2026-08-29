@@ -7,7 +7,6 @@ use crate::MediaServer;
 use crate::error::{MediaError, map_media_error};
 use crate::gallery::vision;
 use crate::types::FaceStatus;
-use crate::{blob_to_embedding, cosine_similarity, embedding_to_blob};
 use hkask_mcp_server::server::McpToolError;
 use hkask_storage::database::value::DbValue;
 use sha2::Digest;
@@ -70,52 +69,22 @@ impl MediaServer {
             (status, notes, Some(v))
         };
 
-        // Produce a 512-dim face embedding via the `embed_face` vision LLM
-        // template. Stored as raw f32-le bytes in the `embedding` BLOB column
-        // for fast cosine-similarity matching during gallery_refresh. Falls
-        // back to None (LLM-only matching) if embedding extraction fails.
-        let embedding_blob: Option<Vec<u8>> = if status.is_valid() {
-            match self.require_vision().await {
-                Ok((vision_model, _)) => {
-                    match vision::embed_face(
-                        &self.vision_port,
-                        &self.template_env,
-                        image_url,
-                        Some(vision_model),
-                    )
-                    .await
-                    {
-                        Ok(result) => Some(embedding_to_blob(&result.embedding)),
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.media.face",
-                                error = %e,
-                                "Face embedding extraction failed — will use LLM-only matching"
-                            );
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.media.face",
-                        error = %e,
-                        "No vision model available for embedding — will use LLM-only matching"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
+        // Design decision (2026-08-29): face recognition relies on vision-LLM
+        // calls, not local code. The implementation surface is the minijinja
+        // (j2) prompt templates — `validate_face_ref` here, `match_faces` in
+        // `run_face_matching` — dispatched through the inference port, the
+        // same pattern as every other vision capability in this server. No
+        // local embedding model, no local geometric matching. Full build-out
+        // is deferred; no embedding is produced at registration. The store's
+        // nullable `embedding` column is legacy from a removed local-cosine
+        // path, is unused, and is not part of this design.
         let record = self
             .gallery_store
             .register_face(
                 first_name,
                 last_name,
                 image_id,
-                embedding_blob.as_deref(),
+                None,
                 status.as_ref(),
                 &notes,
             )
@@ -195,13 +164,10 @@ impl MediaServer {
     }
 
     /// Run face matching: for each `face` tag in the gallery, compare against
-    /// every entry in the face registry. Prefers cosine similarity on stored
-    /// embeddings (fast, local — produced by the `embed_face` template at
-    /// registration time). Falls back to the `match_faces` vision LLM template
-    /// when embeddings are missing or the cosine score is in the uncertain
-    /// band [0.3, 0.5). On a match (confidence ≥ 0.5 for embeddings, 0.7 for
-    /// LLM), persist a `face` tag with the person's name and registry_id.
-    /// Returns `(faces_matched, errors)`.
+    /// every entry in the face registry using the `match_faces` vision LLM
+    /// template (a two-image same-person comparison). On a match
+    /// (confidence ≥ 0.7), persist a `face` tag with the person's name and
+    /// registry_id. Returns `(faces_matched, errors)`.
     ///
     /// This is the composable face-matching stage called by `gallery_refresh`
     /// when `include_faces=true`.
@@ -228,19 +194,6 @@ impl MediaServer {
                 return (0, errors);
             }
         };
-
-        // Pre-decode registry embeddings once (avoid re-parsing the BLOB for
-        // every face tag).
-        let registry_embeddings: Vec<(usize, Vec<f32>)> = registry
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                r.embedding
-                    .as_ref()
-                    .and_then(|b| blob_to_embedding(b))
-                    .map(|e| (i, e))
-            })
-            .collect();
 
         for (tag, _path) in &all_tags {
             if tag.tag_type != "face" {
@@ -275,73 +228,11 @@ impl MediaServer {
                 }
             };
 
-            // Produce a query embedding once per face tag. Used for the fast
-            // cosine path; falls back to LLM-only if extraction fails.
-            let query_embedding: Option<Vec<f32>> = match vision::embed_face(
-                &self.vision_port,
-                &self.template_env,
-                &query_url,
-                Some(vision_model),
-            )
-            .await
-            {
-                Ok(result) => Some(result.embedding),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.media.face",
-                        error = %e,
-                        "Query embedding extraction failed — falling back to LLM-only matching"
-                    );
-                    None
-                }
-            };
-
-            for (reg_idx, reg_entry) in registry.iter().enumerate() {
-                // ── Fast path: cosine similarity on stored embeddings ──
-                let cosine_match: Option<(f32, &str)> = (|| {
-                    let q = query_embedding.as_ref()?;
-                    let r = registry_embeddings
-                        .iter()
-                        .find(|(i, _)| *i == reg_idx)
-                        .map(|(_, e)| e)?;
-                    let sim = cosine_similarity(q, r);
-                    if sim >= 0.5 {
-                        Some((sim, "embedding_cosine"))
-                    } else if sim < 0.3 {
-                        // Confident non-match — skip the LLM call entirely.
-                        Some((sim, "embedding_cosine_reject"))
-                    } else {
-                        // Uncertain band — fall through to LLM.
-                        None
-                    }
-                })();
-
-                if let Some((confidence, method)) = cosine_match {
-                    if method == "embedding_cosine_reject" {
-                        continue; // confident non-match, try next registry entry
-                    }
-                    // Embedding match — persist and move to next face tag.
-                    let name = format!("{} {}", reg_entry.first_name, reg_entry.last_name);
-                    let face_index = parsed.as_ref().and_then(|v| v["face_index"].as_u64());
-                    let new_value = serde_json::json!({
-                        "face_index": face_index,
-                        "name": name,
-                        "match_confidence": confidence,
-                        "registry_id": reg_entry.id,
-                        "method": method,
-                    });
-                    self.persist_tag(
-                        &tag.image_id,
-                        "face",
-                        &new_value.to_string(),
-                        confidence as f64,
-                        vision_model,
-                    );
-                    faces_matched += 1;
-                    break;
-                }
-
-                // ── Slow path: vision LLM `match_faces` template ──
+            for reg_entry in registry {
+                // Vision LLM `match_faces` two-image comparison — the only
+                // comparator. (A previous cosine fast-path on LLM-produced
+                // "embeddings" was removed: LLMs cannot emit geometrically
+                // consistent vectors, so those scores were noise.)
                 let ref_url = match self.resolve_image_url_by_id(&reg_entry.image_id) {
                     Ok(url) => url,
                     Err(e) => {

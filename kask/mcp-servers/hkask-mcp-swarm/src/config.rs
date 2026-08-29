@@ -220,11 +220,7 @@ impl SwarmConfig {
     /// degraded operation (missing key → catalogue-only mode).
     pub fn from_env(api_key: Option<String>) -> (Self, Option<String>) {
         let default = Self::default();
-        let mode = std::env::var("HKASK_SWARM_MODE")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default.mode);
+        let mode = parse_env_warn("HKASK_SWARM_MODE", default.mode);
         let api_base_url = std::env::var("HKASK_ABW_API_URL")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -275,11 +271,18 @@ impl SwarmConfig {
                 .to_string_lossy()
                 .to_string()
         };
-        let embedding_dim = std::env::var("HKASK_SWARM_EMBEDDING_DIM")
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .filter(|d| *d > 0)
-            .unwrap_or(default.embedding_dim);
+        let embedding_dim_parsed =
+            parse_env_warn("HKASK_SWARM_EMBEDDING_DIM", default.embedding_dim);
+        let embedding_dim = if embedding_dim_parsed == 0 {
+            tracing::warn!(
+                target: "hkask.mcp.env",
+                key = "HKASK_SWARM_EMBEDDING_DIM",
+                "value must be > 0 — falling back to default"
+            );
+            default.embedding_dim
+        } else {
+            embedding_dim_parsed
+        };
         let warning = if api_key.is_none() && mode == SwarmMode::Abw {
             Some(
                 "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \

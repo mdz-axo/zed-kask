@@ -28,6 +28,7 @@ hkask_steer.workspace = true
 hkask-mcp-media.workspace = true
 hkask_tool_invoker.workspace = true
 hkask_viz_core.workspace = true
+hkask_media_widget.workspace = true
 marketplace_ui_common.workspace = true
 project.workspace = true
 remote_connection.workspace = true

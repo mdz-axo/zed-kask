@@ -56,6 +56,10 @@ This server routes media generation through the inference IPC bridge to the zed 
 
 All models are open-weight. Provider prefixes (`OR/`, `KC/`, etc.) route to the appropriate inference backend.
 
+## Face recognition — design decision
+
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. Full build-out of the face-recognition feature is **deferred** — the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface. The store's nullable `embedding` column is legacy from the removed path, is unused, and is not part of this design.
+
 ## Quick Start
 
 ```bash

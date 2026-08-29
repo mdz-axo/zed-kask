@@ -64,6 +64,15 @@ pub struct MediaViewer {
     /// `refresh` can re-ingest tool-result display hints without the panel
     /// forwarding the entity again.
     thread: Option<gpui::WeakEntity<acp_thread::AcpThread>>,
+    /// The media widget for the currently-selected asset on the Media tab.
+    /// Owned directly (not via the viz cache) so the edit toolbar can reach
+    /// its playback clock and trim marks. Recreated when the selection's
+    /// body changes.
+    media_widget: Option<Entity<hkask_media_widget::MediaWidget>>,
+    media_widget_body: Option<String>,
+    /// Asset srcs queued for concatenation (`video_concat`). Two or more
+    /// queue entries enable the Concat button.
+    concat_queue: Vec<String>,
     /// Total asset count in the gallery (from `gallery_list_assets`).
     gallery_total: Option<u64>,
     /// Gallery listing pagination cursor.
@@ -84,6 +93,9 @@ impl MediaViewer {
             selected: None,
             active_tab: ViewerTab::Media,
             thread: None,
+            media_widget: None,
+            media_widget_body: None,
+            concat_queue: Vec::new(),
             gallery_total: None,
             gallery_offset: 0,
             jobs: Vec::new(),
@@ -131,6 +143,120 @@ impl MediaViewer {
 
     // ── Tool invocations (governed McpRuntime dispatch) ────────────────────
 
+    /// Merge a tool result's display hints into the asset list and select
+    /// the newest — the same ingestion `ingest_thread` applies to thread
+    /// tool results, reused for viewer-initiated edits so a trimmed clip or
+    /// concatenation surfaces immediately.
+    fn merge_tool_result(&mut self, output_text: &str, tool: &str) {
+        let tool: SharedString = tool.into();
+        let mut new_selection = None;
+        for hint in hkask_types::tool_response::display_hints_from_output_text(output_text) {
+            let Some(asset) = asset_from_hint(&hint, &tool) else {
+                continue;
+            };
+            if self
+                .assets
+                .iter()
+                .any(|existing| existing.body == asset.body)
+            {
+                continue;
+            }
+            self.assets.push(asset);
+            new_selection = Some(self.assets.len() - 1);
+        }
+        if let Some(ix) = new_selection {
+            self.selected = Some(ix);
+            self.detail = None;
+        }
+    }
+
+    /// Dispatch a media-server tool and merge its display-hint assets on
+    /// success; surface failures in the status line. The governed invoker
+    /// path — identical to `load_gallery`/`load_jobs`.
+    fn dispatch_edit(
+        &mut self,
+        tool: &'static str,
+        params: serde_json::Value,
+        describe: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.status = Some("Tool invoker not wired — edit actions unavailable.".into());
+            cx.notify();
+            return;
+        };
+        self.status = Some(format!("{tool}: {describe}…"));
+        cx.notify();
+        let task = invoker.invoke_tool(MEDIA_SERVER, tool, params);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(text) => {
+                this.update(cx, |this, cx| {
+                    this.merge_tool_result(&text, tool);
+                    this.status = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.status = Some(format!("{tool} failed: {}", error.message()));
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Trim the selected asset to the widget's transport marks via
+    /// `video_clip`. The result surfaces as a new playable asset.
+    fn dispatch_trim(&mut self, cx: &mut Context<Self>) {
+        let (in_secs, out_secs) = self
+            .media_widget
+            .as_ref()
+            .and_then(|widget| widget.read(cx).trim_range())
+            .unwrap_or_else(|| {
+                self.status = Some("Set both in and out marks before trimming.".into());
+                (f64::NAN, f64::NAN)
+            });
+        if in_secs.is_nan() {
+            cx.notify();
+            return;
+        }
+        let src = self
+            .media_widget
+            .as_ref()
+            .map(|widget| widget.read(cx).src().to_string())
+            .unwrap_or_default();
+        self.dispatch_edit(
+            "video_clip",
+            serde_json::json!({
+                "video_url": src,
+                "start_sec": in_secs,
+                "end_sec": out_secs,
+            }),
+            format!("trimming {in_secs:.1}s–{out_secs:.1}s"),
+            cx,
+        );
+    }
+
+    /// Concatenate the queued assets via `video_concat`. The result surfaces
+    /// as a new playable asset.
+    fn dispatch_concat(&mut self, cx: &mut Context<Self>) {
+        if self.concat_queue.len() < 2 {
+            self.status = Some("Queue at least two clips to concatenate.".into());
+            cx.notify();
+            return;
+        }
+        let urls = self.concat_queue.clone();
+        self.dispatch_edit(
+            "video_concat",
+            serde_json::json!({ "video_urls": urls }),
+            format!("concatenating {} clips", urls.len()),
+            cx,
+        );
+    }
+
     /// Force-refresh the view pane: drop every cached viz widget (a widget
     /// built against a broken environment — e.g. video decode before the
     /// feature fix — keeps rendering broken until evicted) and reload the
@@ -148,6 +274,8 @@ impl MediaViewer {
                 {
                     self.assets.clear();
                     self.selected = None;
+                    self.media_widget = None;
+                    self.media_widget_body = None;
                     self.ingest_thread(thread, cx);
                 } else {
                     self.status =
@@ -470,7 +598,7 @@ impl MediaViewer {
     }
 
     fn render_media(
-        &self,
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -482,7 +610,38 @@ impl MediaViewer {
                 )
                 .into_any_element();
         };
-        let asset = &self.assets[ix];
+        let asset = self.assets[ix].clone();
+
+        // Own the media widget for the selected asset directly (not via the
+        // viz cache) so the edit toolbar can reach its playback clock and
+        // trim marks. Recreate when the selection changes.
+        if self.media_widget_body.as_deref() != Some(asset.body.as_str()) {
+            match hkask_media_widget::create_media_widget(&asset.body, window, cx) {
+                Some(widget) => {
+                    self.media_widget = Some(widget);
+                    self.media_widget_body = Some(asset.body.clone());
+                }
+                None => {
+                    self.media_widget = None;
+                    self.media_widget_body = None;
+                    return self
+                        .render_empty(
+                            "Unrenderable media block",
+                            "The tool produced a display hint the viewer cannot render.",
+                        )
+                        .into_any_element();
+                }
+            }
+        }
+        let Some(widget) = self.media_widget.clone() else {
+            return self
+                .render_empty(
+                    "Unrenderable media block",
+                    "The tool produced a display hint the viewer cannot render.",
+                )
+                .into_any_element();
+        };
+
         let header = h_flex()
             .gap_2()
             .px_3()
@@ -499,33 +658,120 @@ impl MediaViewer {
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Hint),
             );
-        let renderer = hkask_viz_core::block_renderer();
-        let body = asset.body.clone();
-        let content = renderer(&body, window, &mut *cx)
-            .map(|element| {
-                // No scroll wrapper on the Media tab: a scroll container gives
-                // its children indefinite height, and the video widget's
-                // aspect-fit sizing needs a definite height derived from the
-                // pane (min_h_0 lets flex_1 shrink below content size).
-                // Library/Queue/Detail scroll; the player fills.
-                div()
-                    .id("media-viewer-content")
-                    .flex_1()
-                    .min_h_0()
-                    .p_3()
-                    .child(element)
-                    .into_any_element()
-            })
-            .unwrap_or_else(|| {
-                self.render_empty(
-                    "Unrenderable media block",
-                    "The tool produced a display hint the viewer cannot render.",
+
+        // ── Edit toolbar: trim marks + concatenation queue ───────────────
+        let (position_label, marks_label, trim_ready) = widget.read(cx).edit_state_labels();
+        let concat_count = self.concat_queue.len();
+        let queued_current = self.concat_queue.contains(&asset.src);
+        let toolbar = h_flex()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                Label::new(position_label)
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                Label::new(marks_label)
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                ui::Button::new("mark-in", "Mark In")
+                    .label_size(LabelSize::XSmall)
+                    .on_click(cx.listener({
+                        let widget = widget.clone();
+                        move |_this, _event, _window, cx| {
+                            widget.update(cx, |widget, cx| widget.mark_in(cx));
+                        }
+                    })),
+            )
+            .child(
+                ui::Button::new("mark-out", "Mark Out")
+                    .label_size(LabelSize::XSmall)
+                    .on_click(cx.listener({
+                        let widget = widget.clone();
+                        move |_this, _event, _window, cx| {
+                            widget.update(cx, |widget, cx| widget.mark_out(cx));
+                        }
+                    })),
+            )
+            .child(
+                ui::Button::new("clear-marks", "Clear Marks")
+                    .label_size(LabelSize::XSmall)
+                    .on_click(cx.listener({
+                        let widget = widget.clone();
+                        move |_this, _event, _window, cx| {
+                            widget.update(cx, |widget, cx| widget.clear_marks(cx));
+                        }
+                    })),
+            )
+            .child(
+                ui::Button::new("trim", "Trim to Marks")
+                    .label_size(LabelSize::XSmall)
+                    .disabled(!trim_ready)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.dispatch_trim(cx);
+                    })),
+            )
+            .child(
+                ui::Button::new(
+                    "queue-concat",
+                    if queued_current {
+                        "Queued ✓"
+                    } else {
+                        "Queue for Concat"
+                    },
                 )
-                .into_any_element()
+                .label_size(LabelSize::XSmall)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    if let Some(position) = this.selected
+                        && let Some(asset) = this.assets.get(position)
+                        && !this.concat_queue.contains(&asset.src)
+                    {
+                        this.concat_queue.push(asset.src.clone());
+                    }
+                    cx.notify();
+                })),
+            )
+            .child(
+                ui::Button::new("concat", format!("Concat ({concat_count})"))
+                    .label_size(LabelSize::XSmall)
+                    .disabled(concat_count < 2)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.dispatch_concat(cx);
+                    })),
+            )
+            .when(concat_count > 0, |el| {
+                el.child(
+                    ui::Button::new("clear-queue", "Clear Queue")
+                        .label_size(LabelSize::XSmall)
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.concat_queue.clear();
+                            cx.notify();
+                        })),
+                )
             });
+
+        // No scroll wrapper on the Media tab: a scroll container gives
+        // its children indefinite height, and the video widget's
+        // aspect-fit sizing needs a definite height derived from the
+        // pane (min_h_0 lets flex_1 shrink below content size).
+        // Library/Queue/Detail scroll; the player fills.
+        let content = div()
+            .id("media-viewer-content")
+            .flex_1()
+            .min_h_0()
+            .p_3()
+            .child(widget);
+
         v_flex()
             .size_full()
             .child(header)
+            .child(toolbar)
             .child(content)
             .into_any_element()
     }

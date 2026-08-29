@@ -54,6 +54,10 @@ pub struct MediaWidget {
     transport: Option<Entity<TransportBar>>,
     current_frame: Option<Arc<RenderImage>>,
     playback_task: Option<Task<()>>,
+    /// Edit marks for interactive trimming: the in/out points the operator
+    /// set on the transport, in playback-clock seconds. `None` until set.
+    mark_in_secs: Option<f64>,
+    mark_out_secs: Option<f64>,
     /// Transport state snapshot from the last tick. Used to suppress re-renders
     /// when nothing changed (paused/stopped/finished) so a visible media widget
     /// does not re-render at 30 fps forever. See `tick_playback`.
@@ -175,6 +179,8 @@ impl MediaWidget {
             transport: None,
             current_frame: None,
             playback_task: None,
+            mark_in_secs: None,
+            mark_out_secs: None,
             last_transport: None,
             audio_loading: false,
             video_loading: false,
@@ -882,6 +888,74 @@ impl gpui::Render for MediaWidget {
 }
 
 impl MediaWidget {
+    /// The current playback-clock position in seconds, when a video is
+    /// loaded. The viewer's edit toolbar reads this to label its controls.
+    #[must_use]
+    pub fn playback_position_secs(&self) -> Option<f64> {
+        self.video_player
+            .as_ref()
+            .map(|player| player.position().as_secs_f64())
+    }
+
+    /// The asset src this widget plays (path or URL) — the input for
+    /// `video_clip` / `video_concat` dispatches from the viewer.
+    #[must_use]
+    pub fn src(&self) -> &str {
+        self.reference.src()
+    }
+
+    /// Mark the current playback position as the trim in-point.
+    pub fn mark_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(position) = self.playback_position_secs() {
+            self.mark_in_secs = Some(position);
+            cx.notify();
+        }
+    }
+
+    /// Mark the current playback position as the trim out-point.
+    pub fn mark_out(&mut self, cx: &mut Context<Self>) {
+        if let Some(position) = self.playback_position_secs() {
+            self.mark_out_secs = Some(position);
+            cx.notify();
+        }
+    }
+
+    /// Clear both trim marks.
+    pub fn clear_marks(&mut self, cx: &mut Context<Self>) {
+        self.mark_in_secs = None;
+        self.mark_out_secs = None;
+        cx.notify();
+    }
+
+    /// The trim range as `(in, out)` seconds once both marks are set and
+    /// ordered. `None` while incomplete or inverted — the caller must not
+    /// dispatch `video_clip` with an invalid range (the server would reject
+    /// it, but the button should not offer a no-op).
+    #[must_use]
+    pub fn trim_range(&self) -> Option<(f64, f64)> {
+        match (self.mark_in_secs, self.mark_out_secs) {
+            (Some(in_secs), Some(out_secs)) if in_secs < out_secs => Some((in_secs, out_secs)),
+            _ => None,
+        }
+    }
+
+    /// Toolbar display state: the playback position label, the marks label,
+    /// and whether the trim range is dispatchable.
+    #[must_use]
+    pub fn edit_state_labels(&self) -> (gpui::SharedString, gpui::SharedString, bool) {
+        let position = self
+            .playback_position_secs()
+            .map(|secs| format!("{secs:.1}s"))
+            .unwrap_or_else(|| "—".to_string());
+        let marks = match (self.mark_in_secs, self.mark_out_secs) {
+            (Some(in_secs), Some(out_secs)) => format!("in {in_secs:.1}s out {out_secs:.1}s"),
+            (Some(in_secs), None) => format!("in {in_secs:.1}s out —"),
+            (None, Some(out_secs)) => format!("in — out {out_secs:.1}s"),
+            (None, None) => "no marks".to_string(),
+        };
+        (position.into(), marks.into(), self.trim_range().is_some())
+    }
+
     /// Render the OMC-driven affordance bar (Explain + I disagree) when the
     /// block carries provenance. Older blocks without provenance render only
     /// the media + transport (no affordances) — the additive contract.

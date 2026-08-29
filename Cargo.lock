@@ -12111,6 +12111,7 @@ dependencies = [
  "fs",
  "gpui",
  "hkask-mcp-media",
+ "hkask-media-widget",
  "hkask-steer",
  "hkask-tool-invoker",
  "hkask-types",
