@@ -1,13 +1,16 @@
 //! Generated-asset persistence — download/decode provider results into
-//! `{kask_data_dir}/mcp/media/generated/` and index them in the gallery.
+//! `{artifacts_dir}/media-mcp/generated/` (visible under ~/Documents/zk-data/)
+//! and index them in the gallery. Generated media are user-facing outputs —
+//! they belong in the open artifacts tree, not the hidden internal data dir
+//! (which holds only databases/infrastructure).
 
 use crate::MediaServer;
 use crate::error::MediaError;
 
 pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
-    let dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-        "mcp/media/generated",
-    ));
+    let dir = hkask_types::agent_paths::resolve_under_artifacts_dir(
+        &hkask_types::agent_paths::mcp_artifacts_subdir("media", "generated"),
+    );
     if let Err(error) = std::fs::create_dir_all(&dir) {
         tracing::warn!(
             target: "hkask.mcp.media",
@@ -19,11 +22,12 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     dir
 }
 
-/// Persist a generated asset to the data directory and add it to the gallery.
+/// Persist a generated asset to the artifacts directory and add it to the
+/// gallery.
 ///
 /// Downloads the asset from a URL or decodes a base64 data URI, saves it to
-/// `{data_dir}/mcp/media/generated/{uuid}.{ext}`, and registers it in the
-/// gallery store. Returns the local file path on success.
+/// `{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and registers it in
+/// the gallery store. Returns the local file path on success.
 ///
 /// `kind` is "image", "video", or "audio" — determines the file extension.
 /// `result` is the raw provider response JSON. The function tries multiple

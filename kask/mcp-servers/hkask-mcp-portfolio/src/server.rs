@@ -605,11 +605,12 @@ impl rmcp::ServerHandler for PortfolioServer {}
 
 /// Run the portfolio MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Canonical storage route. Read the transactions directory (default
+    // Canonical storage route. Resolve the transactions directory (default
     // `{artifacts_dir}/portfolio-mcp/transactions/`, visible under
-    // ~/Documents/zk-data/). The portfolio dashboard auto-loads new
-    // transaction files from this directory.
-    let _transactions_dir = std::env::var("HKASK_TRANSACTIONS_DIR")
+    // ~/Documents/zk-data/) and ensure it exists — users drop transaction
+    // files here, and the directory must self-heal if a user accidentally
+    // deletes or moves it.
+    let transactions_dir = std::env::var("HKASK_TRANSACTIONS_DIR")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
@@ -619,6 +620,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             .to_string_lossy()
             .to_string()
         });
+    if let Err(error) = std::fs::create_dir_all(&transactions_dir) {
+        tracing::warn!(
+            target: "hkask.mcp.portfolio",
+            path = %transactions_dir,
+            %error,
+            "Failed to ensure transactions directory exists — transaction-file \
+             imports will surface the failure"
+        );
+    }
     hkask_mcp_server::run_server(
         "hkask-mcp-portfolio",
         env!("CARGO_PKG_VERSION"),

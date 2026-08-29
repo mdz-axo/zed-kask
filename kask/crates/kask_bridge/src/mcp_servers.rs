@@ -426,8 +426,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // IPC bridge socket — required for vision/chat/media generation
             // routing through zed's LanguageModelRegistry.
             "HKASK_INFERENCE_SOCKET",
-            // Data dir — needed for the gallery DB path resolution.
+            // Data dir — needed for the gallery DB path resolution
+            // (databases stay in the internal data dir).
             "HKASK_DATA_DIR",
+            // Artifacts dir — needed so generated media (user-facing outputs)
+            // resolve under `media-mcp/generated/` in the visible artifacts
+            // dir, matching the parent process when an operator
+            // `HKASK_ARTIFACTS_DIR` override is set.
+            "HKASK_ARTIFACTS_DIR",
             // Gallery DB override (optional — defaults to
             // {data_dir}/mcp/media/gallery.db).
             "HKASK_MEDIA_DB",
@@ -1546,8 +1552,9 @@ mod tests {
     /// `extend` only overwrote allowed keys.
     ///
     /// We use the `portfolio` server, whose `config_env` allowlist is
-    /// `["HKASK_TRANSACTIONS_DIR"]` and `credentials` allowlist is `[]`
-    /// (empty). A config var outside the allowlist (e.g. `HKASK_MXROUTE_SERVER`,
+    /// `["HKASK_DATA_DIR", "HKASK_ARTIFACTS_DIR", "HKASK_TRANSACTIONS_DIR"]`
+    /// and `credentials` allowlist is `[]` (empty). A config var outside the
+    /// allowlist (e.g. `HKASK_MXROUTE_SERVER`,
     /// which only the curator server may receive) must be filtered out by the
     /// composed path.
     #[tokio::test]
@@ -1566,7 +1573,8 @@ mod tests {
         let cx = gpui::TestAppContext::single().to_async();
         let env = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
 
-        // The portfolio server's allowlist is `HKASK_TRANSACTIONS_DIR` only.
+        // The portfolio server's allowlist is
+        // `[HKASK_DATA_DIR, HKASK_ARTIFACTS_DIR, HKASK_TRANSACTIONS_DIR]`.
         // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —
         // if it does, the config filter was bypassed (Path A regression).
         assert_eq!(

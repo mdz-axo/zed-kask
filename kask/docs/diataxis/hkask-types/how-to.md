@@ -24,7 +24,8 @@ infrastructure backends and from zed's internal types.
 | `resolve_artifacts_dir` (user-artifacts regulator) | `kask/crates/hkask-types/src/agent_paths.rs:120` |
 | `resolve_under_artifacts_dir` | `kask/crates/hkask-types/src/agent_paths.rs:152` |
 | `agent_db` (renamed from `agent_pod_db`) | `kask/crates/hkask-types/src/agent_paths.rs:198` |
-| `mcp_server_db` / `mcp_server_subdir` helpers | `kask/crates/hkask-types/src/agent_paths.rs:167,182` |
+| `mcp_server_db` / `mcp_server_subdir` helpers | `kask/crates/hkask-types/src/agent_paths.rs:169,188` |
+| `mcp_artifacts_subdir` (visible `{server}-mcp/{type}` route) | `kask/crates/hkask-types/src/agent_paths.rs:211` |
 | `sanitize_name` (path-traversal guard) | `kask/crates/hkask-types/src/agent_paths.rs:209` |
 | Layout-pinning tests | `kask/crates/hkask-types/src/agent_paths.rs:241-313` |
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:147` |
@@ -55,11 +56,14 @@ Every persistent kask artifact lives under a class subdir of **one of the two
 rooted trees** (`agent_paths.rs:12-26`): internal app data under
 `resolve_data_dir()` (`agents/`, `mcp/`, `skills/`, `threads/`) or
 user-facing artifacts under `resolve_artifacts_dir()`
-(`companies-mcp/reports/`, `companies-mcp/screens/`). Reuse the existing
-constants (`MCP_DIR` at `agent_paths.rs:35`, `SKILLS_DIR` at
-`agent_paths.rs:39`; `AGENTS_DIR` at `agent_paths.rs:31` is `pub(crate)`)
-rather than introducing a new top-level directory — a new class dir is an
-architecture decision, not a helper addition.
+(`{server}-mcp/{artifact-type}/` — companies reports/screens, portfolio
+transactions, corpus cache, media generated). Reuse the existing
+constants and helpers (`MCP_DIR` at `agent_paths.rs:35`, `SKILLS_DIR` at
+`agent_paths.rs:39`; `mcp_server_db` / `mcp_server_subdir` for the hidden
+tree, `mcp_artifacts_subdir` for the visible tree; `AGENTS_DIR` at
+`agent_paths.rs:31` is `pub(crate)`) rather than introducing a new
+top-level directory — a new class dir is an architecture decision, not a
+helper addition.
 
 ### Step A2: Compose with sanitize_name
 

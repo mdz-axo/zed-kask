@@ -40,8 +40,9 @@ impl MediaServer {
                     .media_generate("generate_image", &media_params)
                     .await
                     .map_err(|e| classify_inference_error("Image generation failed", e))?;
-                // Persist the generated image to {data_dir}/mcp/media/generated/
-                // and add it to the gallery index.
+                // Persist the generated image to
+                // {artifacts_dir}/media-mcp/generated/ and add it to the
+                // gallery index.
                 match persist_generated_asset(self, &result, "image").await {
                     Ok(path) => {
                         tracing::info!(
@@ -467,7 +468,7 @@ impl MediaServer {
                 let strength = strength.unwrap_or(0.85);
                 if !(0.0..=1.0).contains(&strength) {
                     return Err(McpToolError::invalid_argument(
-                        "strength must be between 0.0 and 1.0"
+                        "strength must be between 0.0 and 1.0",
                     ));
                 }
                 let media_params = hkask_types::MediaGenerateParams {
@@ -496,8 +497,7 @@ impl MediaServer {
                         "Failed to persist region-edited image"
                     ),
                 }
-                let args = serde_json::to_value(&media_params)
-                    .unwrap_or(serde_json::Value::Null);
+                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,
                     "image_edit_region",

@@ -30,7 +30,8 @@ implementations of its own port traits, and must not depend on
 | `resolve_under_data_dir` | `kask/crates/hkask-types/src/agent_paths.rs:99` |
 | `resolve_artifacts_dir` / `resolve_under_artifacts_dir` | `kask/crates/hkask-types/src/agent_paths.rs:120,152` |
 | `agent_dir` | `kask/crates/hkask-types/src/agent_paths.rs:157` |
-| `mcp_server_db` / `mcp_server_subdir` | `kask/crates/hkask-types/src/agent_paths.rs:167,182` |
+| `mcp_server_db` / `mcp_server_subdir` | `kask/crates/hkask-types/src/agent_paths.rs:169,188` |
+| `mcp_artifacts_subdir` (visible `{server}-mcp/{type}` route) | `kask/crates/hkask-types/src/agent_paths.rs:211` |
 | `agent_db` (renamed from `agent_pod_db`) | `kask/crates/hkask-types/src/agent_paths.rs:198` |
 | `sanitize_name` | `kask/crates/hkask-types/src/agent_paths.rs:209` |
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:147` |
@@ -152,8 +153,10 @@ flowchart LR
     DATA --> MCP["mcp/"]
     DATA --> SKILLS["skills/"]
     DATA --> THREADS["threads/"]
-    ART["resolve_artifacts_dir()<br/>HKASK_ARTIFACTS_DIR → Documents → HOME"] --> CM["companies-mcp/reports/"]
-    ART --> CS["companies-mcp/screens/"]
+    ART["resolve_artifacts_dir()<br/>HKASK_ARTIFACTS_DIR → Documents → HOME"] --> CM["companies-mcp/reports/<br/>companies-mcp/screens/"]
+    ART --> PT["portfolio-mcp/transactions/"]
+    ART --> CC["corpus-mcp/cache/"]
+    ART --> MG["media-mcp/generated/"]
     AGENTS --> A1["{name}/{name}.db<br/>agent_db"]
     MCP --> M1["{server_id}/{purpose}.db<br/>mcp_server_db"]
     MCP --> M2["{server_id}/{subdir}<br/>mcp_server_subdir"]

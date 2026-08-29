@@ -213,6 +213,59 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
+    fn generate_with_messages(
+        &self,
+        messages: &[hkask_types::ChatMessage],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        let messages = messages.to_vec();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        let tools = tools.map(|t| t.to_vec());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call. The IPC
+            // client passes the message array directly to the provider
+            // (role-taged), preserving multi-turn conversation structure.
+            // Without this override, the trait default flattens messages to
+            // a single string and calls generate_with_model — the provider
+            // sees "system: ...\n\nuser: ..." instead of proper role-tagged
+            // messages, causing the "you responding to yourself" defect.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_with_messages(
+                        &messages,
+                        &params,
+                        model_override.as_deref(),
+                        tools.as_deref(),
+                    )
+                    .await;
+            }
+            // Fall back to the trait default: flatten to string and delegate
+            // to generate_with_model (which tries DirectEmbeddingPort).
+            let prompt = messages
+                .iter()
+                .map(|m| format!("{}: {}", m.role, m.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            self.generate_with_model(
+                &prompt,
+                &params,
+                model_override.as_deref(),
+                tools.as_deref(),
+            )
+            .await
+        })
+    }
+
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();

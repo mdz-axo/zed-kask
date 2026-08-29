@@ -513,6 +513,17 @@ work remains, unrelated to this pass).
    `InferenceParams.media_mask`/`media_model` added, the IPC client maps
    them from `MediaGenerateParams`, the zed-side dispatch reconstructs
    them. Pinned by `kask_bridge` `dispatch_media_generate_threads_mask_and_model`.
+9. **Error-path collapse (2026-08-28, second pass — replaces the string-marker
+   workaround)**: tools across ALL 10 MCP servers return
+   `Result<String, McpToolError>`; `McpToolError` implements rmcp's
+   `IntoCallToolResult` (wire errors get `is_error: true` + the typed kind
+   in `structured_content`). Deleted: both client-side envelope sniffers
+   and the tracker's prefix parser — the agent path reads the kind
+   structurally from `raw_output`; the governed path formats `[kind]`
+   from `structured_content` (single-producer Display convention).
+   Envelope-pinning tests rewritten to typed-error assertions in every
+   server. The `{"content": ...}` Ok-path envelope remains (display-hint
+   extraction depends on it) — its collapse is a named follow-up.
 
 ### New tasks discovered (not yet done)
 
@@ -541,17 +552,16 @@ work remains, unrelated to this pass).
 - **T-V3 (P1)**: Video Explain dispatch mismatch — `omc:Asset → gallery_analyze`
   hands a `.mp4` path as `image_url` (`media_widget.rs:640-655`). Route video
   blocks to a video-appropriate explain path.
-- **T-V4 (P2)**: UI surfaces — ⚠️ **partially done (2026-08-28)**: a
-  **Steer-only media panel** landed (`crates/media_panel/`, modeled on the
-  portfolio panel): chat-driven CRUD scoped to the `media` MCP server,
-  status bar button, View menu entry, tool advertisement verified against
-  the generated `TOOL_NAMES` via `ensure_steer`. This is the chat-driven
-  variant, not the 3-zone visual panel — variant grid, asset inspector,
-  queue bar, model browser grid, album tree, timeline, workflow composer,
-  and mask canvas remain unbuilt (the inline `MediaWidget` still renders
-  single assets in stacked fenced blocks). Priority order for the visual
-  surfaces: variant grid, asset inspector, queue bar, model browser, album
-  tree, timeline, workflow composer, mask canvas (largest new build).
+- **T-V4 (P2)**: ⚠️ **mostly done (2026-08-28, second pass)** — the panel is
+  now a Steer director + four-tab viewer (Media / Library / Queue /
+  Detail), populated structurally: Library reads the actual gallery via the
+  new `gallery_list_assets` tool (index semantics = the `image_index`
+  contract), Queue reads `job_list` with cancel, Detail reads
+  `gallery_asset_detail` (record/tags/lineage/faces), delete is a two-step
+  confirm on Library rows. **Remaining gap: album affordances** (create/
+  list/move — server tools exist, no panel UI yet). Runtime verification of
+  the invoker round-trips is manual (unit tests cover extraction and
+  merging; no GPUI integration harness exists for panel↔MCP dispatch).
 - **T-V5 (P2)**: Skill updates — `media-workflow` should add `generate_variants`,
   `image_edit_region`, `video_fetch`→`video_info`→`video_to_gif`, audio
   pipeline, workflow-composer flow, album outputs, `job_*` async pattern;

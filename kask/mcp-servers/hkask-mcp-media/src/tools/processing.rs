@@ -1047,13 +1047,14 @@ impl MediaServer {
                 }
                 let ytdlp = self.require_yt_dlp()?;
 
-                // Download to {data_dir}/mcp/media/generated/{uuid}.mp4
+                // Download to {artifacts_dir}/media-mcp/generated/{uuid}.mp4
                 let asset_dir = crate::assets::generated_assets_dir();
                 let id = uuid::Uuid::new_v4();
                 let filename = format!("{id}.mp4");
                 let output_path = asset_dir.join(&filename);
 
-                ytdlp.fetch(&url, &output_path)
+                ytdlp
+                    .fetch(&url, &output_path)
                     .await
                     .map_err(map_media_error)?;
 
@@ -1064,9 +1065,8 @@ impl MediaServer {
                     )));
                 }
 
-                let bytes = std::fs::read(&output_path).map_err(|e| {
-                    McpToolError::internal(format!("read downloaded file: {e}"))
-                })?;
+                let bytes = std::fs::read(&output_path)
+                    .map_err(|e| McpToolError::internal(format!("read downloaded file: {e}")))?;
                 let hash = {
                     use sha2::Digest;
                     let mut hasher = sha2::Sha256::new();

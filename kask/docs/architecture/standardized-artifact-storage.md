@@ -2,7 +2,7 @@
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
 last_updated: 2026-08-28
-version: "1.2.0"
+version: "2.0.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -15,14 +15,81 @@ mds_categories: [lifecycle, composition, trust]
 > archived chat threads MUST conform to this layout.
 >
 > **Authority:** `kask/crates/hkask-types/src/agent_paths.rs` is the canonical
-> path-primitive module. `resolve_data_dir()` and `resolve_under_data_dir()`
-> are the only sanctioned resolvers.
+> path-primitive module. `resolve_data_dir()` / `resolve_under_data_dir()`
+> and `resolve_artifacts_dir()` / `resolve_under_artifacts_dir()` are the
+> only sanctioned resolvers.
 >
 > **D-seam:** D28 (archived-threads + skills relocation). See `DIVERGENCE.md`
 > D28 and D1.
 >
 > **Related:** [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md)
 > §13 (the kask/ vs upstream-Zed invariant).
+
+## 0. The storage requirement (normative)
+
+There are exactly two rooted trees, split by what the artifact IS:
+
+1. **Infrastructure tree (hidden).** `resolve_data_dir()` →
+   `~/.local/share/zed-kask/` (Linux). This tree holds ONLY databases and
+   machine state — SQLCipher/SQLite DBs, journals, agent state, skills,
+   threads. Nothing the user is meant to open, read, or take elsewhere
+   goes here. Layout: `mcp/{server_id}/{purpose}.db` via `mcp_server_db`.
+
+2. **Artifacts tree (visible).** `resolve_artifacts_dir()` → the user's
+   Documents directory with a `zk-data` subfolder:
+   `~/Documents/zk-data/` (Linux/macOS). This tree holds EVERY artifact
+   file and output the MCP servers and the system produce for the user —
+   reports, screens, transaction files, generated media, corpus cache
+   files, exports. Layout: `zk-data/{server}-mcp/{artifact-type}/` via
+   `mcp_artifacts_subdir(server_id, artifact_type)` +
+   `resolve_under_artifacts_dir`. The `{server}` segment is the server's
+   root name (research, companies, portfolio, corpus, media, ...) with an
+   `-mcp` suffix; `{artifact-type}` is the human-readable artifact class
+   (reports, screens, transactions, generated, cache).
+
+The classification test for any new artifact: **would the user ever want
+ to open this file, copy it elsewhere, or back it up by hand?** If yes, it
+ is an artifact and MUST go under `{server}-mcp/{artifact-type}/` in the
+ visible tree. If it is a database or machine-maintained state that only
+ the system reads and writes, it is infrastructure and stays in the hidden
+ tree. When in doubt, the artifact goes in the visible tree — hiding
+ user-facing output is the failure mode this requirement exists to
+ prevent.
+
+**Self-healing (the chosen protection posture):** every code path that
+resolves an artifact or DB location MUST `create_dir_all` its parent before
+writing, so a user accidentally deleting or moving a directory cannot break
+the system — the directory is recreated on the next write or server start.
+Deletion of an artifact file by the user is always tolerated: servers never
+require an artifact file to exist, and they never delete user artifacts
+themselves.
+
+**Decision record — artifact protection (2026-08-28).** Three postures were
+considered for the visible tree:
+
+1. **Self-healing only** (chosen). Directories and files stay normally
+   permissioned; the system recreates missing directories and tolerates
+   missing files. Chosen for simplicity and usability: the canonical
+   structure plus self-healing is understandable at a glance, and artifacts
+   are regenerable outputs — the authoritative state lives in the hidden
+   databases.
+2. **Write-once file protection** (deferred). `chmod 0444` each artifact
+   immediately after write: users can read and copy but not accidentally
+   modify. Rejected for now because it does not prevent deletion (the
+   directory must stay writable so servers can add new files) and it
+   assumes artifacts are never rewritten in place — an assumption that
+   must be audited across every writer before it is safe. Revisit only if
+   accidental-modification incidents occur; the audit precondition is that
+   every artifact writer produces a new file per artifact, never an
+   in-place edit.
+3. **OS-level snapshots/backup** (operator-side, out of scope for the
+   codebase). The only posture that protects against deletion. Operators
+   who need deletion protection should run btrfs/ZFS snapshots, Timeshift,
+   or a periodic `tar` of `~/Documents/zk-data/`.
+
+Because the MCP servers run as the same user, no filesystem permission
+scheme can distinguish server writes from user writes — this is why the
+posture decision is a trade-off rather than a hard guarantee.
 
 ## 1. Root
 
