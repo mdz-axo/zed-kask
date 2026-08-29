@@ -64,14 +64,20 @@ impl SteerContext {
                 .with_extra_static_context(self.system_prompt)
                 .with_mcp_server_scope(self.server_scope),
         );
-        let thread_id = agent_ui::ThreadId::new();
         let resume_session_id = self.resume_session_id.clone();
-        // A resumed thread reuses its stored session; only a fresh thread
-        // needs a newly minted id.
-        let new_thread_id = if resume_session_id.is_some() {
-            None
+        // A resumed thread must reuse its stored ThreadId: ConversationView
+        // mints a fresh one when `thread_id` is None, and ThreadMetadataStore
+        // keys sidebar rows by ThreadId — a new id here duplicates the thread
+        // in the sidebar (original row + resumed row, same title). When the
+        // session is unknown to the metadata store, fall back to a fresh id.
+        let new_thread_id = if let Some(session_id) = &resume_session_id {
+            agent_ui::thread_metadata_store::ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_by_session(session_id)
+                .map(|metadata| metadata.thread_id)
+                .unwrap_or_else(agent_ui::ThreadId::new)
         } else {
-            Some(thread_id)
+            agent_ui::ThreadId::new()
         };
         cx.new(|cx| {
             ConversationView::new(
@@ -79,7 +85,7 @@ impl SteerContext {
                 connection_store,
                 Agent::Curator,
                 resume_session_id,
-                new_thread_id,
+                Some(new_thread_id),
                 None,
                 None,
                 None,

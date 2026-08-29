@@ -248,6 +248,17 @@ thread_local! {
     static VIZ_CACHE: RefCell<VizCache> = RefCell::new(VizCache::new());
 }
 
+/// Drop every cached widget entity so the next render of each block body
+/// constructs a fresh widget. Call when the environment a widget depends on
+/// changed out from under the cache (e.g. video decode was repaired, a
+/// decoder feature was enabled) — a cached widget built against the broken
+/// state keeps rendering broken until evicted.
+pub fn clear_widget_cache() {
+    VIZ_CACHE.with(|cache| {
+        cache.borrow_mut().clear();
+    });
+}
+
 struct VizCache {
     widgets: HashMap<u64, CachedWidget>,
     /// Insertion order for LRU eviction (oldest at front).
@@ -277,6 +288,11 @@ impl VizCache {
             self.order.push_back(key);
         }
         self.widgets.insert(key, widget);
+    }
+
+    fn clear(&mut self) {
+        self.widgets.clear();
+        self.order.clear();
     }
 }
 

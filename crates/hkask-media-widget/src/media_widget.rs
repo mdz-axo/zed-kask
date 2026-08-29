@@ -274,8 +274,13 @@ impl MediaWidget {
             MediaKind::Video => {
                 if let Some(path) = &resolved.path {
                     if let Some(player) = &mut self.video_player {
-                        if let Err(error) = player.open(path) {
-                            self.error = Some(SharedString::from(error.to_string()));
+                        match player.open(path) {
+                            // Autoplay: `open` leaves the player Stopped and
+                            // frames only decode while Playing — without this
+                            // the widget renders an empty placeholder until
+                            // the operator presses play.
+                            Ok(()) => player.play(),
+                            Err(error) => self.error = Some(SharedString::from(error.to_string())),
                         }
                     }
                     self.start_playback_loop(cx);
@@ -340,26 +345,38 @@ impl MediaWidget {
     /// Resolve a remote video URL on a background thread, then open it in
     /// the video player on the foreground thread. For direct video file URLs
     /// (mp4, webm, etc.), FFmpeg streams directly. For platform URLs
-    /// (YouTube, Vimeo, etc.), `yt-dlp -g` resolves the direct stream URL
-    /// first. The loading state flows into the transport bar so the user
-    /// sees a spinner during resolution.
+    /// (YouTube, Vimeo, etc.), `yt-dlp -g` resolves the direct stream URL(s)
+    /// first — DASH sources yield separate video and audio URLs, and the
+    /// player opens both so streamed video is not silent. The loading state
+    /// flows into the transport bar so the user sees a spinner during
+    /// resolution.
     fn load_video_stream_async(&mut self, url: &str, cx: &mut Context<Self>) {
         self.video_loading = true;
         cx.notify();
         let url = url.to_string();
         self.video_load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { crate::streaming::resolve_stream_url(&url).await })
+                .background_spawn(async move { crate::streaming::resolve_stream_urls(&url).await })
                 .await;
             this.update(cx, |widget, cx| {
                 widget.video_loading = false;
                 match result {
-                    Ok(resolved_url) => {
+                    Ok(stream_urls) => {
                         if let Some(player) = &mut widget.video_player {
-                            if let Err(error) = player.open_url(&resolved_url) {
-                                widget.error = Some(SharedString::from(format!(
-                                    "failed to open video stream: {error}"
-                                )));
+                            match player
+                                .open_stream(&stream_urls.video, stream_urls.audio.as_deref())
+                            {
+                                // Autoplay: `open_stream` leaves the player
+                                // Stopped and frames only decode while
+                                // Playing — without this the widget renders
+                                // an empty placeholder until the operator
+                                // presses play.
+                                Ok(()) => player.play(),
+                                Err(error) => {
+                                    widget.error = Some(SharedString::from(format!(
+                                        "failed to open video stream: {error}"
+                                    )));
+                                }
                             }
                         }
                         widget.start_playback_loop(cx);
@@ -491,8 +508,11 @@ impl MediaWidget {
             if player.is_playing() {
                 match player.advance_and_decode(delta) {
                     Ok(Some(frame)) => {
+                        // BGRA bytes in an Rgba-typed buffer: GPUI's RenderImage
+                        // upload expects BGRA (see video_decoder's scaler) —
+                        // the image-crate type is just the byte container.
                         let buffer =
-                            image::ImageBuffer::from_raw(frame.width, frame.height, frame.rgba)
+                            image::ImageBuffer::from_raw(frame.width, frame.height, frame.bgra)
                                 .unwrap_or_else(|| {
                                     image::ImageBuffer::new(frame.width, frame.height)
                                 });
@@ -735,82 +755,109 @@ impl gpui::Render for MediaWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        let main_content = match &self.reference {
-            MediaRef::Error(message) => div()
+        // A load/decode failure must be visible — storing it in `self.error`
+        // without rendering it leaves an empty widget the operator cannot
+        // distinguish from a slow load.
+        let main_content = if let Some(message) = &self.error {
+            div()
                 .p_4()
+                .flex_1()
                 .text_sm()
                 .text_color(theme.colors().text_muted)
                 .child(SharedString::from(format!("Media error: {message}")))
-                .into_any_element(),
+                .into_any_element()
+        } else {
+            match &self.reference {
+                MediaRef::Error(message) => div()
+                    .p_4()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(theme.colors().text_muted)
+                    .child(SharedString::from(format!("Media error: {message}")))
+                    .into_any_element(),
 
-            MediaRef::Asset { src, kind } => match kind {
-                MediaKind::Image | MediaKind::Svg => {
-                    let source: ImageSource = src.as_str().into();
-                    div()
-                        .size_full()
-                        .min_h(px(100.0))
-                        .child(img(source).size_full().object_fit(ObjectFit::Contain))
-                        .into_any_element()
-                }
-                MediaKind::Audio => {
-                    let transport = self.transport.clone();
-                    let mut container = div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_3()
-                        .border_1()
-                        .border_color(theme.colors().border)
-                        .rounded_md()
-                        .child(
-                            div()
-                                .text_sm()
-                                .child(SharedString::from(format!("Audio: {src}"))),
-                        );
-                    if let Some(transport) = transport {
-                        container = container.child(transport);
+                MediaRef::Asset { src, kind } => match kind {
+                    MediaKind::Image | MediaKind::Svg => {
+                        let source: ImageSource = src.as_str().into();
+                        // flex_1 (not size_full): the parent is a flex column with
+                        // definite height, so flex_1 gives this box — and the
+                        // Contain-fit img inside it — a definite height to scale
+                        // against. size_full against a content-driven parent
+                        // collapses.
+                        div()
+                            .flex_1()
+                            .min_h(px(100.0))
+                            .child(img(source).size_full().object_fit(ObjectFit::Contain))
+                            .into_any_element()
                     }
-                    container.into_any_element()
-                }
-                MediaKind::Video => {
-                    let transport = self.transport.clone();
-                    let frame = self.current_frame.clone();
-                    let mut container = div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .border_1()
-                        .border_color(theme.colors().border)
-                        .rounded_md()
-                        .overflow_hidden();
-
-                    let mut video_area = div()
-                        .flex_1()
-                        .min_h(px(120.0))
-                        .bg(theme.colors().editor_background);
-
-                    if let Some(frame) = frame {
-                        video_area = video_area.child(
-                            img(ImageSource::Render(frame))
-                                .size_full()
-                                .object_fit(ObjectFit::Contain),
-                        );
-                    } else {
-                        video_area = video_area
-                            .size_full()
+                    MediaKind::Audio => {
+                        let transport = self.transport.clone();
+                        let mut container = div()
                             .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(SharedString::from("Video"));
+                            .flex_col()
+                            .flex_1()
+                            .gap_2()
+                            .p_3()
+                            .border_1()
+                            .border_color(theme.colors().border)
+                            .rounded_md()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child(SharedString::from(format!("Audio: {src}"))),
+                            );
+                        if let Some(transport) = transport {
+                            container = container.child(transport);
+                        }
+                        container.into_any_element()
                     }
+                    MediaKind::Video => {
+                        let transport = self.transport.clone();
+                        let frame = self.current_frame.clone();
+                        let mut container = div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .gap_1()
+                            .border_1()
+                            .border_color(theme.colors().border)
+                            .rounded_md()
+                            .overflow_hidden();
 
-                    container = container.child(video_area);
-                    if let Some(transport) = transport {
-                        container = container.child(transport);
+                        let mut video_area = div()
+                            .flex_1()
+                            .min_h(px(120.0))
+                            .bg(theme.colors().editor_background);
+
+                        if let Some(frame) = frame {
+                            // size_full + Contain against the flex_1 parent's
+                            // definite height: the frame scales to fit the pane
+                            // in both dimensions. (A fraction width alone does
+                            // NOT trigger gpui's img auto-height derivation —
+                            // that only fires for `Definite(Absolute)` widths,
+                            // img.rs — so w_full here left the frame at its
+                            // natural 480px height, unscaled.)
+                            video_area = video_area.child(
+                                img(ImageSource::Render(frame))
+                                    .size_full()
+                                    .object_fit(ObjectFit::Contain),
+                            );
+                        } else {
+                            video_area = video_area
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(SharedString::from("Video"));
+                        }
+
+                        container = container.child(video_area);
+                        if let Some(transport) = transport {
+                            container = container.child(transport);
+                        }
+                        container.into_any_element()
                     }
-                    container.into_any_element()
-                }
-            },
+                },
+            }
         };
 
         div()
@@ -818,6 +865,12 @@ impl gpui::Render for MediaWidget {
             .track_focus(&self.focus_handle)
             .size_full()
             .min_h(px(80.0))
+            // Flex column so the main content's flex_1 resolves against a
+            // definite height — the root's size_full is definite only when
+            // the embedding pane provides one (the viewer's Media tab does;
+            // scrollable containers do not).
+            .flex()
+            .flex_col()
             .child(main_content)
             .children(self.render_affordances(cx))
     }

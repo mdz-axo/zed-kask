@@ -60,6 +60,10 @@ pub struct MediaViewer {
     assets: Vec<MediaAsset>,
     selected: Option<usize>,
     active_tab: ViewerTab,
+    /// The observed conversation thread (weak — the panel owns it), kept so
+    /// `refresh` can re-ingest tool-result display hints without the panel
+    /// forwarding the entity again.
+    thread: Option<gpui::WeakEntity<acp_thread::AcpThread>>,
     /// Total asset count in the gallery (from `gallery_list_assets`).
     gallery_total: Option<u64>,
     /// Gallery listing pagination cursor.
@@ -79,6 +83,7 @@ impl MediaViewer {
             assets: Vec::new(),
             selected: None,
             active_tab: ViewerTab::Media,
+            thread: None,
             gallery_total: None,
             gallery_offset: 0,
             jobs: Vec::new(),
@@ -92,6 +97,7 @@ impl MediaViewer {
     /// extracted assets. Deduplicates by body. A newly-seen asset
     /// auto-selects: the latest result is what the operator wants to see.
     pub fn ingest_thread(&mut self, thread: Entity<acp_thread::AcpThread>, cx: &App) {
+        self.thread = Some(thread.downgrade());
         let thread = thread.read(cx);
         let mut new_selection = None;
         for entry in thread.entries() {
@@ -124,6 +130,36 @@ impl MediaViewer {
     }
 
     // ── Tool invocations (governed McpRuntime dispatch) ────────────────────
+
+    /// Force-refresh the view pane: drop every cached viz widget (a widget
+    /// built against a broken environment — e.g. video decode before the
+    /// feature fix — keeps rendering broken until evicted) and reload the
+    /// active tab's data from its source.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        hkask_viz_core::clear_widget_cache();
+        match self.active_tab {
+            ViewerTab::Media => {
+                // Re-ingest the thread's tool-result display hints. The
+                // assets list is rebuilt from scratch so entries removed
+                // from the thread disappear too.
+                let thread = self.thread.clone();
+                if let Some(thread) = thread
+                    && let Some(thread) = thread.upgrade()
+                {
+                    self.assets.clear();
+                    self.selected = None;
+                    self.ingest_thread(thread, cx);
+                } else {
+                    self.status =
+                        Some("No conversation thread to re-ingest — open a thread first.".into());
+                }
+            }
+            ViewerTab::Library => self.load_gallery(cx),
+            ViewerTab::Queue => self.load_jobs(cx),
+            ViewerTab::Detail => self.load_detail(cx),
+        }
+        cx.notify();
+    }
 
     /// Load the gallery's assets (spec: the Library shows the actual
     /// gallery, not just conversation artifacts) and merge them into the
@@ -467,10 +503,15 @@ impl MediaViewer {
         let body = asset.body.clone();
         let content = renderer(&body, window, &mut *cx)
             .map(|element| {
+                // No scroll wrapper on the Media tab: a scroll container gives
+                // its children indefinite height, and the video widget's
+                // aspect-fit sizing needs a definite height derived from the
+                // pane (min_h_0 lets flex_1 shrink below content size).
+                // Library/Queue/Detail scroll; the player fills.
                 div()
                     .id("media-viewer-content")
                     .flex_1()
-                    .overflow_y_scroll()
+                    .min_h_0()
                     .p_3()
                     .child(element)
                     .into_any_element()
@@ -826,12 +867,26 @@ impl Render for MediaViewer {
                     .child(self.tab_button(ViewerTab::Library, library_label, cx))
                     .child(self.tab_button(ViewerTab::Queue, queue_label, cx))
                     .child(self.tab_button(ViewerTab::Detail, "Detail".into(), cx))
+                    // Force-refresh: rebuild cached widgets + reload the
+                    // active tab. Right-aligned so it stays put as tab labels
+                    // change width.
+                    .child(
+                        div().ml_auto().child(
+                            ui::IconButton::new("media-viewer-refresh", ui::IconName::RotateCw)
+                                .icon_size(ui::IconSize::Small)
+                                .tooltip(ui::Tooltip::text(
+                                    "Refresh — rebuild widgets and reload this tab",
+                                ))
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.refresh(cx);
+                                })),
+                        ),
+                    )
                     .when_some(self.status.clone(), |el, status| {
                         el.child(
                             Label::new(status)
                                 .size(LabelSize::XSmall)
                                 .color(ui::Color::Error)
-                                .ml_auto()
                                 .truncate(),
                         )
                     }),

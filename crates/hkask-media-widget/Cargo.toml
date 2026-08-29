@@ -36,7 +36,16 @@ ffmpeg-next = { workspace = true, optional = true }
 
 [features]
 default = ["vendored"]
-vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build", "ffmpeg-next/build-lib-openssl"]
+# `vendored` must imply `video` — the decoder is cfg-gated on `video`, so a
+# vendored build that omits it compiles the stub and every `open()` fails
+# with "video decode is not enabled" (the default build shipped broken).
+vendored = [
+    "dep:ffmpeg-next",
+    "ffmpeg-next/static",
+    "ffmpeg-next/build",
+    "ffmpeg-next/build-lib-openssl",
+    "video",
+]
 video = ["dep:ffmpeg-next"]
 
 [lints]
