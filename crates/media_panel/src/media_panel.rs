@@ -21,6 +21,7 @@ use gpui::{
     Window, actions,
 };
 use ui::{Icon, IconName, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -110,6 +111,12 @@ pub struct MediaPanel {
     /// The observed conversation thread + the observation subscription.
     /// Wired lazily in `render` once the Steer conversation exists.
     thread_observation: Option<gpui::Subscription>,
+    /// The "Open Thread" picker — resumes a database thread in this panel's
+    /// Steer surface.
+    thread_picker: Entity<hkask_steer::ThreadPicker>,
+    /// The session id to resume on the next `ensure_steer` — set by
+    /// `open_thread`, consumed by `ensure_steer`.
+    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
 }
 
 impl MediaPanel {
@@ -121,15 +128,46 @@ impl MediaPanel {
         let workspace_handle = workspace.weak_handle();
         let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
-        cx.new(|cx| Self {
-            focus_handle: cx.focus_handle(),
-            steer: hkask_steer::SteerSurface::new(),
-            project,
-            fs,
-            workspace_handle: workspace_handle.clone(),
-            viewer: cx.new(|_| MediaViewer::new()),
-            thread_observation: None,
+        cx.new(|cx| {
+            let panel_handle: gpui::WeakEntity<MediaPanel> = cx.weak_entity();
+            let thread_picker = cx.new(|cx| {
+                hkask_steer::ThreadPicker::new(
+                    std::rc::Rc::new(move |session_id, window, cx: &mut gpui::App| {
+                        panel_handle
+                            .update(cx, |panel, cx| panel.open_thread(session_id, window, cx))
+                            .log_err();
+                    }),
+                    cx,
+                )
+            });
+            Self {
+                focus_handle: cx.focus_handle(),
+                steer: hkask_steer::SteerSurface::new(),
+                project,
+                fs,
+                workspace_handle: workspace_handle.clone(),
+                viewer: cx.new(|_| MediaViewer::new()),
+                thread_observation: None,
+                thread_picker,
+                pending_resume: None,
+            }
         })
+    }
+
+    /// Resume a database thread in this panel's Steer surface, replacing the
+    /// live conversation. The viewer's thread observation is dropped so the
+    /// next render re-wires it against the resumed conversation's thread.
+    fn open_thread(
+        &mut self,
+        session_id: agent_client_protocol::schema::v1::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_resume = Some(session_id);
+        self.steer.invalidate();
+        self.thread_observation = None;
+        self.ensure_steer(window, cx);
+        cx.notify();
     }
 
     /// Lazily construct the Steer `ConversationView`. Scoped to the media
@@ -143,6 +181,7 @@ impl MediaPanel {
                 fs: self.fs.clone(),
                 project: self.project.clone(),
                 workspace: self.workspace_handle.clone(),
+                resume_session_id: self.pending_resume.take(),
             },
             hkask_mcp_media::TOOL_NAMES,
             &[
@@ -246,6 +285,18 @@ impl gpui::Render for MediaPanel {
             .min_w_96()
             .border_r_1()
             .border_color(cx.theme().colors().border_variant)
+            .flex()
+            .flex_col()
+            // The Open Thread affordance sits above the conversation so the
+            // operator can resume a previous steer session at any time.
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.thread_picker.clone()),
+            )
             .when_some(conversation, |el, conversation| el.child(conversation));
 
         h_flex()

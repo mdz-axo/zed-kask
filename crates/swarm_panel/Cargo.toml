@@ -24,6 +24,7 @@ path = "src/swarm_panel.rs"
 test-support = ["workspace/test-support", "remote_connection/test-support"]
 
 [dependencies]
+agent-client-protocol.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 editor.workspace = true

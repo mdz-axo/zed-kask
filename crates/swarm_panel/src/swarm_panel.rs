@@ -713,6 +713,12 @@ pub struct SwarmPanel {
     /// first selects Steer. Uses the retained-view pattern (one
     /// `ConversationView`, reused across re-renders).
     steer: hkask_steer::SteerSurface,
+    /// The "Open Thread" picker — resumes a database thread in this panel's
+    /// Steer surface.
+    thread_picker: Entity<hkask_steer::ThreadPicker>,
+    /// The session id to resume on the next `ensure_steer_conversation` —
+    /// set by `open_thread`, consumed by `ensure_steer_conversation`.
+    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
     /// Last-seen `kask.swarm.mode` value, used to detect mode changes that
     /// invalidate the Steer conversation's baked-in system prompt. The Steer
     /// prompt interpolates the mode at construction (`ensure_steer_conversation`),
@@ -964,6 +970,21 @@ impl SwarmPanel {
                 e
             });
 
+            let panel_handle: gpui::WeakEntity<SwarmPanel> = cx.weak_entity();
+            let thread_picker = cx.new(|cx| {
+                hkask_steer::ThreadPicker::new(
+                    std::rc::Rc::new(move |session_id, window, cx: &mut gpui::App| {
+                        if let Err(error) = panel_handle
+                            .update(cx, |panel, cx| panel.open_thread(session_id, window, cx))
+                        {
+                            log::warn!(
+                                "swarm panel: failed to open thread — panel entity dropped: {error}"
+                            );
+                        }
+                    }),
+                    cx,
+                )
+            });
             let mut this = Self {
                 workspace: workspace_handle,
                 project,
@@ -996,6 +1017,8 @@ impl SwarmPanel {
                 app_form,
                 pending_app_load: None,
                 steer: hkask_steer::SteerSurface::new(),
+                thread_picker,
+                pending_resume: None,
                 last_swarm_mode: Some(Self::current_swarm_mode(cx)),
                 spend: SpendState {
                     in_flight: None,
@@ -1310,12 +1333,29 @@ impl SwarmPanel {
                 fs: self.fs.clone(),
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
+                resume_session_id: self.pending_resume.take(),
             },
             parse::SWARM_TOOLS,
             &["swarm_"],
             window,
             cx,
         );
+    }
+
+    /// Resume a database thread in this panel's Steer surface, replacing the
+    /// live conversation. The mode-scoped system prompt is rebuilt from the
+    /// current settings, so the resumed thread steers against the backend
+    /// mode the operator is looking at.
+    fn open_thread(
+        &mut self,
+        session_id: agent_client_protocol::schema::v1::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_resume = Some(session_id);
+        self.steer.invalidate();
+        self.ensure_steer_conversation(window, cx);
+        cx.notify();
     }
 
     /// Launch the pending swarm-intelligence plan by injecting a message into
@@ -3398,6 +3438,19 @@ impl Render for SwarmPanel {
                             match self.steer.conversation() {
                                 Some(view) => this
                                     .child(launch_button)
+                                    // The Open Thread affordance sits above the
+                                    // conversation so the operator can resume a
+                                    // previous steer session at any time.
+                                    .child(
+                                        h_flex()
+                                            .px_2()
+                                            .py_1()
+                                            .border_b_1()
+                                            .border_color(
+                                                cx.theme().colors().border_variant
+                                            )
+                                            .child(self.thread_picker.clone()),
+                                    )
                                     .child(view.clone())
                                     .into_any_element(),
                                 None => this

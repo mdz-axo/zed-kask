@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 68 skills ship. 62 template crates remain under
+> plus a markdown body of process instructions. 68 skills ship. 316 Jinja2 templates across 64 crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -47,7 +47,7 @@ for external capabilities. Convergence is the model's judgment, optionally check
 | Surface | Count | Notes |
 |---------|-------|-------|
 | SKILL.md directories (`.agents/skills/*/`, repo root) | **68** | Every directory contains a `SKILL.md` |
-| Template crates (`kask/registry/templates/*/`) | **62** | Companion Jinja2 resources for `render_template` |
+| Template crates (`kask/registry/templates/*/`) | **64** (316 `.j2` templates) | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -193,5 +193,5 @@ read-only resources the skill body may reference via `render_template`.
 | **Total** | **68** |
 
 > **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 68 SKILL.md
-> directories (66 at the prior verification plus `eqm` and `eqm-improvement`, added 2026-08-28). `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
+> directories (66 at the prior verification plus `eqm` and `eqm-improvement`, added 2026-08-28). `kask/registry/templates/` contains 64 template crates holding 316 `.j2` files (companion Jinja2 resources
 > for `render_template`).

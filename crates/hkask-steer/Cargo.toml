@@ -10,12 +10,20 @@ path = "src/hkask_steer.rs"
 
 [dependencies]
 agent.workspace = true
+agent-client-protocol.workspace = true
 agent_ui.workspace = true
 fs.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
+picker.workspace = true
 project.workspace = true
+ui.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+util.workspace = true
 
 [lints]
 workspace = true

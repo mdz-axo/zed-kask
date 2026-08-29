@@ -28,6 +28,9 @@ use gpui::{App, AppContext, Entity, SharedString, WeakEntity, Window};
 use project::Project;
 use workspace::Workspace;
 
+pub mod thread_picker;
+pub use thread_picker::ThreadPicker;
+
 /// The per-panel inputs a Steer conversation is constructed from.
 pub struct SteerContext {
     /// The MCP server id the conversation is scoped to (e.g. `"kanban"`,
@@ -39,6 +42,10 @@ pub struct SteerContext {
     pub fs: Arc<dyn Fs>,
     pub project: Entity<Project>,
     pub workspace: WeakEntity<Workspace>,
+    /// Resume an existing thread (from the thread database) instead of
+    /// starting a fresh one. `None` starts a new thread — the historical
+    /// behavior. Set via `open_steer_thread`, not by panels directly.
+    pub resume_session_id: Option<agent_client_protocol::schema::v1::SessionId>,
 }
 
 impl SteerContext {
@@ -58,13 +65,21 @@ impl SteerContext {
                 .with_mcp_server_scope(self.server_scope),
         );
         let thread_id = agent_ui::ThreadId::new();
+        let resume_session_id = self.resume_session_id.clone();
+        // A resumed thread reuses its stored session; only a fresh thread
+        // needs a newly minted id.
+        let new_thread_id = if resume_session_id.is_some() {
+            None
+        } else {
+            Some(thread_id)
+        };
         cx.new(|cx| {
             ConversationView::new(
                 agent_server,
                 connection_store,
                 Agent::Curator,
-                None,
-                Some(thread_id),
+                resume_session_id,
+                new_thread_id,
                 None,
                 None,
                 None,
@@ -151,6 +166,26 @@ pub fn ensure_steer(
 ) {
     verify_tool_advertisement(&context.system_prompt, server_tools, prefixes);
     surface.ensure(SteerContext::make_view, context, window, cx);
+}
+
+/// Open an existing thread (by session id, from the thread database) in the
+/// panel's Steer surface, replacing the live conversation. The next
+/// `ensure` rebuilds the `ConversationView` resuming that thread's history.
+/// Panels call this from their thread-picker callback; anything observing the
+/// previous conversation's thread entity (e.g. the media panel's viewer
+/// ingest) must drop its observation so the next render re-wires it.
+pub fn open_steer_thread(
+    surface: &mut SteerSurface,
+    mut context: SteerContext,
+    server_tools: &[&str],
+    prefixes: &[&str],
+    session_id: agent_client_protocol::schema::v1::SessionId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    context.resume_session_id = Some(session_id);
+    surface.invalidate();
+    ensure_steer(surface, context, server_tools, prefixes, window, cx);
 }
 
 /// Extract the backticked tool names carrying one of `prefixes` from a

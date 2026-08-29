@@ -12,6 +12,7 @@ workspace = true
 path = "src/kanban_panel.rs"
 
 [dependencies]
+agent-client-protocol.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
 hkask-types.workspace = true

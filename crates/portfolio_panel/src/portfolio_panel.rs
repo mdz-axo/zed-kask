@@ -15,6 +15,7 @@ use gpui::{
     Window, actions,
 };
 use ui::{Icon, IconName, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -93,6 +94,12 @@ pub struct PortfolioPanel {
     project: Entity<project::Project>,
     fs: std::sync::Arc<dyn fs::Fs>,
     workspace_handle: WeakEntity<Workspace>,
+    /// The "Open Thread" picker — resumes a database thread in this panel's
+    /// Steer surface.
+    thread_picker: Entity<hkask_steer::ThreadPicker>,
+    /// The session id to resume on the next `ensure_steer` — set by
+    /// `open_thread`, consumed by `ensure_steer`.
+    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
 }
 
 impl PortfolioPanel {
@@ -104,12 +111,27 @@ impl PortfolioPanel {
         let workspace_handle = workspace.weak_handle();
         let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
-        cx.new(|cx| Self {
-            focus_handle: cx.focus_handle(),
-            steer: hkask_steer::SteerSurface::new(),
-            project,
-            fs,
-            workspace_handle: workspace_handle.clone(),
+        cx.new(|cx| {
+            let panel_handle: gpui::WeakEntity<PortfolioPanel> = cx.weak_entity();
+            let thread_picker = cx.new(|cx| {
+                hkask_steer::ThreadPicker::new(
+                    std::rc::Rc::new(move |session_id, window, cx: &mut gpui::App| {
+                        panel_handle
+                            .update(cx, |panel, cx| panel.open_thread(session_id, window, cx))
+                            .log_err();
+                    }),
+                    cx,
+                )
+            });
+            Self {
+                focus_handle: cx.focus_handle(),
+                steer: hkask_steer::SteerSurface::new(),
+                project,
+                fs,
+                workspace_handle: workspace_handle.clone(),
+                thread_picker,
+                pending_resume: None,
+            }
         })
     }
 
@@ -124,12 +146,27 @@ impl PortfolioPanel {
                 fs: self.fs.clone(),
                 project: self.project.clone(),
                 workspace: self.workspace_handle.clone(),
+                resume_session_id: self.pending_resume.take(),
             },
             hkask_mcp_portfolio::TOOL_NAMES,
             &["portfolio_", "ledger_"],
             window,
             cx,
         );
+    }
+
+    /// Resume a database thread in this panel's Steer surface, replacing the
+    /// live conversation.
+    fn open_thread(
+        &mut self,
+        session_id: agent_client_protocol::schema::v1::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_resume = Some(session_id);
+        self.steer.invalidate();
+        self.ensure_steer(window, cx);
+        cx.notify();
     }
 }
 
@@ -165,6 +202,18 @@ impl gpui::Render for PortfolioPanel {
         let conversation = self.steer.conversation().cloned();
         div()
             .size_full()
+            .flex()
+            .flex_col()
+            // The Open Thread affordance sits above the conversation so the
+            // operator can resume a previous steer session at any time.
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.thread_picker.clone()),
+            )
             .when_some(conversation, |div, conversation| div.child(conversation))
     }
 }
@@ -251,10 +300,7 @@ mod tests {
     #[test]
     fn steer_prompt_advertises_only_known_tools() {
         let prompt = steer_system_prompt();
-        for name in hkask_steer::advertised_tool_names(
-            &prompt,
-            &["portfolio_", "ledger_"],
-        ) {
+        for name in hkask_steer::advertised_tool_names(&prompt, &["portfolio_", "ledger_"]) {
             assert!(
                 hkask_mcp_portfolio::TOOL_NAMES.contains(&name.as_str()),
                 "steer prompt advertises `{name}`, not in hkask_mcp_portfolio::TOOL_NAMES"

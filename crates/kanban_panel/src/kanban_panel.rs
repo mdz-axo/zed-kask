@@ -52,7 +52,6 @@ use workspace::{
 // create tasks, spawn subagents, move tasks, and decompose work via the
 // kanban MCP tools.
 
-
 pub mod panel_button;
 pub mod task_actions;
 pub use panel_button::KanbanPanelButton;
@@ -505,6 +504,12 @@ pub struct KanbanPanel {
     fs: Option<std::sync::Arc<dyn fs::Fs>>,
     /// Workspace handle (needed for ConversationView construction).
     workspace_handle: Option<WeakEntity<Workspace>>,
+    /// The "Open Thread" picker — resumes a database thread in this panel's
+    /// Steer surface.
+    thread_picker: Entity<hkask_steer::ThreadPicker>,
+    /// The session id to resume on the next `ensure_steer_conversation` —
+    /// set by `open_thread`, consumed by `ensure_steer_conversation`.
+    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
     /// Subscriptions.
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -519,6 +524,17 @@ impl KanbanPanel {
         let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
         cx.new(|cx| {
+            let panel_handle: gpui::WeakEntity<KanbanPanel> = cx.weak_entity();
+            let thread_picker = cx.new(|cx| {
+                hkask_steer::ThreadPicker::new(
+                    std::rc::Rc::new(move |session_id, window, cx: &mut gpui::App| {
+                        panel_handle
+                            .update(cx, |panel, cx| panel.open_thread(session_id, window, cx))
+                            .log_err();
+                    }),
+                    cx,
+                )
+            });
             let mut this = Self {
                 workspace: workspace_handle.clone(),
                 focus_handle: cx.focus_handle(),
@@ -543,6 +559,8 @@ impl KanbanPanel {
                 project: Some(project),
                 fs: Some(fs),
                 workspace_handle: Some(workspace_handle),
+                thread_picker,
+                pending_resume: None,
                 _subscriptions: Vec::new(),
             };
             this.fetch_boards(cx);
@@ -1410,12 +1428,29 @@ impl KanbanPanel {
                 fs,
                 project,
                 workspace,
+                resume_session_id: self.pending_resume.take(),
             },
             hkask_mcp_kata_kanban::TOOL_NAMES,
             &["kanban_", "contract_"],
             window,
             cx,
         );
+    }
+
+    /// Resume a database thread in this panel's Steer surface, replacing the
+    /// live conversation. The board-scoped system prompt is rebuilt from the
+    /// current board selection, so the resumed thread steers against the
+    /// board the operator is looking at.
+    fn open_thread(
+        &mut self,
+        session_id: agent_client_protocol::schema::v1::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_resume = Some(session_id);
+        self.steer.invalidate();
+        self.ensure_steer_conversation(window, cx);
+        cx.notify();
     }
 
     fn select_board(&mut self, board_id: String, cx: &mut Context<Self>) {
@@ -2036,7 +2071,23 @@ impl Render for KanbanPanel {
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 if mode == PanelMode::Steer {
                     if let Some(conversation) = self.steer.conversation() {
-                        this.child(conversation.clone()).into_any_element()
+                        this.child(
+                            v_flex()
+                                .size_full()
+                                // The Open Thread affordance sits above the
+                                // conversation so the operator can resume a
+                                // previous steer session at any time.
+                                .child(
+                                    h_flex()
+                                        .px_2()
+                                        .py_1()
+                                        .border_b_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(self.thread_picker.clone()),
+                                )
+                                .child(conversation.clone()),
+                        )
+                        .into_any_element()
                     } else {
                         this.child(Label::new("Initializing Steer mode…").color(Color::Muted))
                             .into_any_element()

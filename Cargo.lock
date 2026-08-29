@@ -9200,11 +9200,17 @@ name = "hkask-steer"
 version = "0.39.0"
 dependencies = [
  "agent",
+ "agent-client-protocol",
  "agent_ui",
+ "chrono",
  "fs",
+ "fuzzy",
  "gpui",
  "log",
+ "picker",
  "project",
+ "ui",
+ "util",
  "workspace",
 ]
 
@@ -10562,6 +10568,7 @@ name = "kanban_panel"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent-client-protocol",
  "agent_ui",
  "anyhow",
  "editor",
@@ -12095,6 +12102,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent",
+ "agent-client-protocol",
  "agent_ui",
  "anyhow",
  "editor",
@@ -15169,6 +15177,7 @@ name = "portfolio_panel"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent-client-protocol",
  "agent_ui",
  "anyhow",
  "editor",
@@ -15183,6 +15192,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -19498,6 +19508,7 @@ name = "swarm_panel"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent-client-protocol",
  "agent_ui",
  "anyhow",
  "chrono",
