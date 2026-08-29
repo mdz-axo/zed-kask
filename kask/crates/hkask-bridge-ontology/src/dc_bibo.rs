@@ -70,12 +70,23 @@ pub const CITES_AS_EVIDENCE: DcConcept = "cito:citesAsEvidence";
 // ── Mapping helpers ───────────────────────────────────────────────────────
 
 /// Map a MIME type to its Dublin Core type.
+///
+/// Office document MIME types (docx/pptx → Text, xlsx → Dataset) are included
+/// so the corpus ingest path — whose supported formats are exactly
+/// pdf/markdown/html/plain/docx/pptx/xlsx/csv — can ground every converted
+/// artifact's state identity (the crate-level "every artifact carries a state
+/// identity" contract).
 pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
     match mime {
         "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/tiff" => Some(STILL_IMAGE),
         "video/mp4" | "video/webm" | "video/quicktime" => Some(MOVING_IMAGE),
         "audio/mpeg" | "audio/wav" | "audio/ogg" | "audio/flac" => Some(SOUND),
         "text/plain" | "text/markdown" | "text/html" | "application/pdf" => Some(TEXT),
+        // Word and PowerPoint documents are text artifacts.
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        | "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some(TEXT),
+        // Spreadsheets are tabular data.
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some(DATASET),
         "application/json" | "text/csv" => Some(DATASET),
         _ => None,
     }
@@ -97,5 +108,55 @@ pub fn kind_to_bibo(kind: &str) -> Option<DcConcept> {
         "report" | "technical_report" => Some(REPORT),
         "manuscript" => Some(MANUSCRIPT),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mime_to_dc_type_covers_corpus_ingest_formats() {
+        // Every format `corpus_convert` supports must ground to a DC type —
+        // the "every artifact carries a state identity" contract.
+        assert_eq!(mime_to_dc_type("application/pdf"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("text/markdown"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("text/html"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("text/plain"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("text/csv"), Some(DATASET));
+        assert_eq!(
+            mime_to_dc_type(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+            Some(TEXT)
+        );
+        assert_eq!(
+            mime_to_dc_type(
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+            Some(TEXT)
+        );
+        assert_eq!(
+            mime_to_dc_type(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            Some(DATASET)
+        );
+    }
+
+    #[test]
+    fn mime_to_dc_type_maps_media_families() {
+        assert_eq!(mime_to_dc_type("image/png"), Some(STILL_IMAGE));
+        assert_eq!(mime_to_dc_type("video/mp4"), Some(MOVING_IMAGE));
+        assert_eq!(mime_to_dc_type("audio/wav"), Some(SOUND));
+        assert_eq!(mime_to_dc_type("application/x-unknown"), None);
+    }
+
+    #[test]
+    fn kind_to_bibo_maps_work_kinds() {
+        assert_eq!(kind_to_bibo("Article"), Some(ARTICLE));
+        assert_eq!(kind_to_bibo("arxiv"), Some(PREPRINT));
+        assert_eq!(kind_to_bibo("Dissertation"), Some(THESIS));
+        assert_eq!(kind_to_bibo("podcast"), None);
     }
 }

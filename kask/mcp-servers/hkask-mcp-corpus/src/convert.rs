@@ -31,6 +31,47 @@ pub(crate) fn detect_format(path: &str) -> (&'static str, bool, Option<&'static 
     }
 }
 
+/// Ground the Dublin Core type of a source file from its extension, via the
+/// canonical MIME mapping (`hkask_bridge_ontology::dc_bibo::mime_to_dc_type`).
+///
+/// This is the ingest point of the "every artifact carries a state identity"
+/// contract: `corpus_convert` emits the grounded `dc_type` alongside the
+/// extracted text so downstream tagging starts from a real type, not an
+/// LLM-invented one. Returns `None` for extensions with no mapping — the
+/// caller surfaces that, never a fabricated type.
+pub(crate) fn dc_type_for_path(path: &str) -> Option<hkask_bridge_ontology::dc_bibo::DcConcept> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "md" | "markdown" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpeg" | "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "tiff" | "tif" => "image/tiff",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => return None,
+    };
+    hkask_bridge_ontology::dc_bibo::mime_to_dc_type(mime)
+}
+
 /// Strip YAML frontmatter (delimited by `---`) from content.
 pub fn strip_frontmatter(content: &str) -> String {
     if content.starts_with("---") {
@@ -240,4 +281,38 @@ pub(crate) fn sanitize_links(text: &str) -> String {
         .map(|l| l.trim_end())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dc_type_for_path_grounds_every_supported_convert_format() {
+        // Every format detect_format reports as supported must ground to a
+        // DC type — the ingest state-identity contract.
+        for path in [
+            "doc.pdf", "doc.md", "doc.markdown", "doc.html", "doc.htm",
+            "doc.txt", "doc.docx", "doc.pptx", "doc.xlsx", "doc.csv",
+        ] {
+            let (format, supported, _) = detect_format(path);
+            assert!(supported, "{path} must be a supported format");
+            assert!(
+                dc_type_for_path(path).is_some(),
+                "{path} (format {format}) must ground to a Dublin Core type"
+            );
+        }
+    }
+
+    #[test]
+    fn dc_type_for_path_maps_extension_families() {
+        assert_eq!(dc_type_for_path("img.png"), Some("dcterms:StillImage"));
+        assert_eq!(dc_type_for_path("clip.mp4"), Some("dcterms:MovingImage"));
+        assert_eq!(dc_type_for_path("note.wav"), Some("dcterms:Sound"));
+        assert_eq!(dc_type_for_path("data.json"), Some("dcterms:Dataset"));
+        // Legacy binary extensions (.doc/.xls/.ppt) have no canonical MIME
+        // mapping — surfaced as None, never fabricated.
+        assert_eq!(dc_type_for_path("old.doc"), None);
+        assert_eq!(dc_type_for_path("noext"), None);
+    }
 }

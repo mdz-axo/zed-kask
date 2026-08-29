@@ -8866,6 +8866,7 @@ version = "0.39.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-mcp-swarm",

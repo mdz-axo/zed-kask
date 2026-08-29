@@ -27,7 +27,7 @@ use serde::Deserialize;
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs."
+        description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs."
     )]
     pub async fn corpus_convert(
         &self,
@@ -49,9 +49,25 @@ impl CorpusServer {
             "corpus_convert",
             Self::ontology_anchor("corpus_convert"),
             async {
-                ConvertService::from_corpus(self)
+                let result = ConvertService::from_corpus(self)
                     .convert(path, force_ocr, target_pages)
-                    .await
+                    .await?;
+                // Ground the artifact's state identity at ingest: the DC type
+                // from the source file's extension (canonical MIME mapping),
+                // never an LLM-invented one. Unmapped extensions surface a
+                // note — the absence of the type is visible, not silent.
+                let mut result = result;
+                match crate::convert::dc_type_for_path(&result["path"].as_str().unwrap_or("")) {
+                    Some(dc_type) => {
+                        result["dc_type"] = serde_json::json!(dc_type);
+                    }
+                    None => {
+                        result["dc_type_note"] = serde_json::json!(
+                            "source extension has no Dublin Core type mapping — state identity not grounded at ingest"
+                        );
+                    }
+                }
+                Ok(result)
             },
         )
         .await

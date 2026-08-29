@@ -99,9 +99,13 @@ pub const PREVIOUS_VERSION: PkoConcept = "pko:previousVersion";
 // ── Mapping helpers ───────────────────────────────────────────────────────
 
 /// Map a kanban task status to PKO execution status.
+///
+/// Covers the standard kanban `TaskStatus` wire strings (backlog, ready,
+/// in_progress, review, done) plus their common aliases. `ready` maps to
+/// queued — a ready task is pulled but not yet started.
 pub fn kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept> {
     match status.to_lowercase().as_str() {
-        "todo" | "backlog" => Some("pko:ProcedureExecutionStatus/queued"),
+        "todo" | "backlog" | "ready" => Some("pko:ProcedureExecutionStatus/queued"),
         "in_progress" | "doing" => Some("pko:ProcedureExecutionStatus/inProgress"),
         "review" | "verify" => Some("pko:ProcedureExecutionStatus/verifying"),
         "done" | "complete" => Some("pko:ProcedureExecutionStatus/completed"),
@@ -171,5 +175,46 @@ pub fn task_breakdown_field_to_pko(field: &str) -> Option<PkoConcept> {
         "iteration" | "version" => Some(HAS_VERSION),
         "next_version" => Some(NEXT_VERSION),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kanban_status_maps_all_standard_wire_statuses() {
+        // The kanban TaskStatus wire strings (hkask-types, rename_all =
+        // lowercase) must all map — an unmapped standard status would leave
+        // the execution-axis annotation silently absent.
+        assert_eq!(
+            kanban_status_to_pko_execution("backlog"),
+            Some("pko:ProcedureExecutionStatus/queued")
+        );
+        assert_eq!(
+            kanban_status_to_pko_execution("ready"),
+            Some("pko:ProcedureExecutionStatus/queued")
+        );
+        assert_eq!(
+            kanban_status_to_pko_execution("in_progress"),
+            Some("pko:ProcedureExecutionStatus/inProgress")
+        );
+        assert_eq!(
+            kanban_status_to_pko_execution("review"),
+            Some("pko:ProcedureExecutionStatus/verifying")
+        );
+        assert_eq!(
+            kanban_status_to_pko_execution("done"),
+            Some("pko:ProcedureExecutionStatus/completed")
+        );
+    }
+
+    #[test]
+    fn kanban_status_mapping_is_case_insensitive_and_rejects_unknown() {
+        assert_eq!(
+            kanban_status_to_pko_execution("Done"),
+            Some("pko:ProcedureExecutionStatus/completed")
+        );
+        assert_eq!(kanban_status_to_pko_execution("archived"), None);
     }
 }

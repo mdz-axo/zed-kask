@@ -556,7 +556,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Move a task to a new column (status transition)")]
+    #[tool(
+        description = "Move a task to a new column (status transition). The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
+    )]
     pub async fn kanban_task_move(
         &self,
         Parameters(TaskMoveRequest {
@@ -595,6 +597,15 @@ impl KanbanServer {
                         previous_status,
                         new_status: task.status.to_string(),
                         ontology: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
+                        // Execution axis: the new status as a PKO execution
+                        // status (the shared vocabulary mapper — not a local
+                        // re-implementation, so it cannot drift from the
+                        // bridge contract).
+                        pko_execution_status:
+                            hkask_bridge_ontology::pko::kanban_status_to_pko_execution(
+                                &task.status.to_string(),
+                            )
+                            .map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),

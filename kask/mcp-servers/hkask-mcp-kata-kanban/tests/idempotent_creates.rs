@@ -557,3 +557,42 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
         error.message
     );
 }
+
+// ── kanban_task_move PKO execution-status annotation ────────────────────────
+
+/// A status transition must carry the execution-axis annotation: the new
+/// status mapped to its PKO execution status via the shared vocabulary bridge
+/// (`hkask_bridge_ontology::pko::kanban_status_to_pko_execution`), not a local
+/// re-implementation. The full backlog → done ladder is walked so every
+/// standard status's mapping is pinned.
+#[tokio::test]
+async fn task_move_carries_pko_execution_status_for_every_standard_transition() {
+    let server = make_server();
+    let board = create_board(&server, "pko-board", None).await;
+    let board_id = board["board_id"].as_str().expect("board id").to_string();
+    let task = create_task(&server, &board_id, "pko task", None)
+        .await
+        .expect("task ok");
+    let task_id = task["task_id"].as_str().expect("task id").to_string();
+
+    for (target, expected) in [
+        ("ready", "pko:ProcedureExecutionStatus/queued"),
+        ("in_progress", "pko:ProcedureExecutionStatus/inProgress"),
+        ("review", "pko:ProcedureExecutionStatus/verifying"),
+        ("done", "pko:ProcedureExecutionStatus/completed"),
+    ] {
+        let out = server
+            .kanban_task_move(Parameters(TaskMoveRequest {
+                task_id: task_id.clone(),
+                target_status: target.to_string(),
+            }))
+            .await
+            .expect("move ok");
+        let parsed = parse(&out);
+        assert_eq!(
+            parsed["pko_execution_status"].as_str(),
+            Some(expected),
+            "moving to {target} must carry the PKO execution status, got: {parsed}"
+        );
+    }
+}

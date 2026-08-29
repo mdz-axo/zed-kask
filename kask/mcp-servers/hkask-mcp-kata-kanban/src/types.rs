@@ -176,6 +176,12 @@ pub(crate) struct TaskMoveResponse {
     /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
+    /// The new status mapped to its PKO execution status (the execution axis:
+    /// pko:ProcedureExecutionStatus/queued|inProgress|verifying|completed).
+    /// All standard TaskStatus wire strings map, so this is present on every
+    /// successful move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pko_execution_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
