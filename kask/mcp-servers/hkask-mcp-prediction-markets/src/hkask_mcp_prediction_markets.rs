@@ -1536,10 +1536,12 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CACHE_TTL_SECS: u64 = 60;
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Resolve the inference port once, before entering the sync server-
-    // construction closure. `resolve_inference_port` is async (it may connect
-    // to the zed IPC bridge); the closure passed to `run_server` is sync, so
-    // the await must happen here. Used by the EQM scoring tool.
+    // Construct the inference port before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it constructs
+    // a `LazyInferencePort` — the bridge connection itself is deferred to
+    // each `generate()` call, which re-tries `InferenceIpcClient::from_env()`);
+    // the closure passed to `run_server` is sync, so the await must happen
+    // here. Used by the EQM scoring tool.
     let inference_port = hkask_inference::resolve_inference_port().await;
 
     // A malformed numeric env var must warn, not silently fall back — an

@@ -1,8 +1,8 @@
 ---
 title: "hkask-tool-port — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -10,7 +10,7 @@ mds_categories: [trust, curation]
 
 # hkask-tool-port — Explanation
 
-The capability layer exists to keep tool authority *separated* — to make it
+The dispatch port exists to keep tool authority *separated* — to make it
 structurally impossible for an agent to reach a tool nobody granted it. It does
 **not** try to re-check that grant on every call. `McpRuntime::invoke` meters
 the call, dispatches it, and emits the outcome span; the decision about what an
@@ -24,14 +24,14 @@ worthless.
 
 | Concept                              | Location                                                       |
 | ------------------------------------ | -------------------------------------------------------------- |
-| Per-call gate removal rationale      | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:5-21`    |
-| `invoke` does not authorize          | `kask/crates/hkask-tool-port/src/tool_port.rs:64-83`          |
-| `invoke` metering + dispatch         | `kask/crates/hkask-mcp/src/runtime.rs:969-1057`                |
-| `CallMeterOutcome` branches          | `kask/crates/hkask-regulation/src/energy.rs:35-45`             |
-| Per-request allowlist gate           | `kask/crates/kask_bridge/src/inference_ipc_server.rs:724-747` |
-| Per-agent `mcp_tools` allowlist       | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:236-346` |
-| Per-server credential allowlist      | `kask/crates/kask_bridge/src/mcp_servers.rs:26-43`             |
-| Taint gate removal rationale         | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:19-21`   |
+| Per-call gate removal rationale      | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:5-19`     |
+| `invoke` does not authorize          | `kask/crates/hkask-tool-port/src/tool_port.rs:68-83`          |
+| `invoke` metering + dispatch         | `kask/crates/hkask-mcp/src/runtime.rs:1286-1400`              |
+| `CallMeterOutcome` branches          | `kask/crates/hkask-regulation/src/energy.rs:30-40`            |
+| Per-request allowlist gate           | `kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831` |
+| Per-agent `mcp_tools` allowlist       | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219,431-437` |
+| Per-server credential allowlist      | `kask/crates/kask_bridge/src/mcp_servers.rs:43`                |
+| Taint gate removal rationale         | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:17-19`     |
 
 ## Where authority lives
 
@@ -39,17 +39,19 @@ Capability separation is enforced at boundaries that hold a list the caller
 cannot set:
 
 - **The per-request `tool_allowlist`** on the inference IPC `tool_invoke`
-  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`). The child
-  MCP server declares what it may dispatch; the zed side enforces it before
-  dispatch, so the gate does not depend on the child's own matching being
-  correct. Fail-closed: a missing or empty allowlist is a protocol violation,
-  never an implicit grant-all. Pinned by `dispatch_tool_invoke_rejects_unallowed_tool`.
+  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`).
+  The child MCP server declares what it may dispatch; the zed side enforces it
+  before dispatch, so the gate does not depend on the child's own matching
+  being correct. Fail-closed: a missing or empty allowlist is a protocol
+  violation, never an implicit grant-all (`inference_ipc_server.rs:831`).
+  Pinned by `dispatch_tool_invoke_rejects_unallowed_tool`
+  (`inference_ipc_server.rs:1359`).
 - **The per-agent `mcp_tools` allowlist** on each swarm agent card
-  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`). A tool call
-  outside the declared set is refused with "not in declared mcp_tools
-  allowlist" and never dispatched.
+  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219`). A tool
+  call outside the declared set is refused with "not in declared mcp_tools
+  allowlist" (`agent_executor.rs:431-437`) and never dispatched.
 - **The per-server MCP env/credential allowlists**
-  (`kask/crates/kask_bridge/src/mcp_servers.rs`). A server's process receives
+  (`kask/crates/kask_bridge/src/mcp_servers.rs:43`). A server's process receives
   only the credentials scoped to it.
 
 Each of these is a list written by a different actor than the one it
@@ -71,24 +73,26 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-004
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-mcp/src/runtime.rs:969-1057 (impl ToolPort for McpRuntime, charge_call_metered branch + no-governance branch); kask/crates/hkask-regulation/src/energy.rs:35-45 (CallMeterOutcome); kask/crates/hkask-mcp/tests/invoke_gate.rs
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-mcp/src/runtime.rs:1286-1400 (impl ToolPort for McpRuntime, charge_call_metered branch + no-governance branch); kask/crates/hkask-regulation/src/energy.rs:30-40 (CallMeterOutcome); kask/crates/hkask-mcp/src/runtime.rs:2042,2088 (pinned tests)
 status: VERIFIED
 -->
 
 One mechanism remains on the dispatch path, and it does not authorize:
 
 **The runaway-loop breaker.** One call is charged against the agent's per-tick
-ceiling. Only an exhausted ceiling refuses (`EnergyBudgetExceeded`), and the
-cap resets each regulation tick. Its purpose is to end a non-terminating tool
-loop and to meter usage so cost can be optimized over time — not to limit
-precisely or to authorize. It is deliberately **fail-open** on an agent with no
-registered ceiling: such an agent is auto-registered at
-`DEFAULT_RUNAWAY_CALL_CEILING` and the wiring gap is logged. The prior
-fail-closed behavior demonstrated why: `main.rs` seeded a ceiling only for the
-`swarm-panel` persona while the IPC dispatch used `kask-panel` and the MCP
-runtime used a different persona, so every delegated tool call was refused for a wiring
-omission that had nothing to do with authority.
+ceiling. Only an exhausted ceiling refuses (`EnergyBudgetExceeded`,
+`runtime.rs:1337-1345`), and the cap resets each regulation tick. Its purpose
+is to end a non-terminating tool loop and to meter usage so cost can be
+optimized over time — not to limit precisely or to authorize. It is
+deliberately **fail-open** on an agent with no registered ceiling: such an
+agent is auto-registered at `DEFAULT_RUNAWAY_CALL_CEILING` (`energy.rs:26`)
+and the wiring gap is logged (`runtime.rs:1318-1326`). The prior fail-closed
+behavior demonstrated why: the composition root seeded a ceiling only for
+some personas while the IPC dispatch used `kask-panel` and the MCP runtime
+used a different persona, so every delegated tool call was refused for a
+wiring omission that had nothing to do with authority
+(`runtime.rs:1311-1317`).
 
 ## Information flow control (Layer 5) is absent by decision
 
@@ -96,8 +100,8 @@ Defense **Layer 5 (information flow control) is absent by decision** — the
 same disposition Layer 3 (instruction hierarchy) has. That is the honest state
 and the safer one: an inert gate invites reliance on a protection that does
 not exist. A real IFC gate would have to prove it can actually deny: tools
-carrying real labels, taint propagated on context write, and a test showing a
-`Source → Sink` flow being refused.
+carrying real labels, taint propagated on context write, and a test showing
+a `Source → Sink` flow being refused.
 
 ## If a real trust boundary appears
 
@@ -124,8 +128,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-005
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:64-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:724-747 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:236-346 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:26-43 (credential allowlist)
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219,431-437 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
 status: VERIFIED
 -->
 
@@ -142,12 +146,8 @@ without that proof.
   the invoke pipeline.
 - [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
 
-> `RR-NNNN` ids in this document refer to the retired `kali-audit` security
-> regression library (removed 2026-08-20). They are historical rationale
-> markers only; there is no longer a file to open.
-
 ---
 
-[^fides-cap]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser lattice and the Source→Sink endorsement rule. Retained as the academic source for a design this crate no longer implements — the lattice was deleted (RR-0053). Citing it is not a claim that information flow control is deployed.
+[^fides-cap]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser lattice and the Source→Sink endorsement rule. Retained as the academic source for a design this crate no longer implements — the lattice was deleted. Citing it is not a claim that information flow control is deployed.
 
 [^miller-ocap]: Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control._ Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model, retained here as the source of the principle that authority must be *separated* by a list the caller cannot choose.

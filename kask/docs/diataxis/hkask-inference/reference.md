@@ -1,8 +1,8 @@
 ---
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-20
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition]
@@ -10,108 +10,135 @@ mds_categories: [domain, composition]
 
 # hkask-inference — Reference
 
-`hkask-inference` is the IPC-bridge facade that lets hKask MCP server child
-processes route inference back to zed's `LanguageModelRegistry` over a Unix
-socket, instead of holding API keys or speaking HTTP directly. The crate
-defines the `ProviderId` enum and `InferenceConfig` struct, the
-`InferenceIpcClient` (the single `InferencePort` / `ToolDispatchPort` /
-`WorktreeSpawnPort` implementation), the per-port resolvers, the
-`resolve_ports()` entry point that shares one connection across all three
-ports, and the `openai_compat` response-body redaction utility. There is no
-in-process media-provider registry, no direct-HTTP chat path, and no
-model-entry type in this crate — those were removed in the IPC-bridge
-refactor. Every method of the IPC client is a newline-delimited JSON
-request/response over the socket; zed holds the credentials and the guard.
+`hkask-inference` is the MCP-server-side inference crate. Its primary path is
+the IPC bridge: MCP server child processes route chat, vision, embedding,
+batch, media, tool dispatch, and worktree spawn back to zed's
+`LanguageModelRegistry` over a Unix socket (`HKASK_INFERENCE_SOCKET`),
+instead of holding API keys. The crate also contains a **lazy fallback
+layer** (`LazyInferencePort` → `DirectEmbeddingPort` / standalone
+`MediaRouter`) for servers that start before the socket exists or run
+outside zed's governed launch, a **batch API router** (OpenRouter /
+DeepInfra), a **pluggable media-provider registry** with 7-dimension scored
+selection, and the `openai_compat` response-body redaction utility.
 
 ## Source citations
 
-Every row below was re-derived from disk via `grep -n` against the current
-source. Symbols removed in the refactor (notably `chat_protocol`,
-`openai_compatible_generate[_messages]`, `openai_chat_roundtrip`,
-`RouterModelEntry`, `from_model_entry`, `infer_vision_support`,
-`DEFAULT_VISION_MODEL`, `InferenceConfig::build_client`,
-`InferenceConfig::timeout_secs`/`pool_max_idle`, `MediaOp`, `MediaProvider`,
-`ProviderRegistry`, `MediaRouter`, `resolve_skill_exec_port`,
-`UnavailableSkillExec`) are intentionally absent — they no longer exist.
+All line numbers re-verified against the current tree on 2026-08-28 via
+`grep -n`. Surfaces that earlier doc revisions described — `resolve_ports`,
+`InferencePorts`, `UnavailableInference`, the single-`Mutex<UnixStream>`
+connection design, and `IPC_READ_TIMEOUT` (120 s) — no longer exist and are
+intentionally absent.
+
+### `hkask_inference.rs` (lib root)
+
+| Symbol | Location |
+|--------|----------|
+| module list (`batch` … `scoring`) | `kask/crates/hkask-inference/src/hkask_inference.rs:29-37` |
+| public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:40-41` |
+| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:48` |
+| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:59` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
+| `LazyInferencePort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:102` |
+| `impl InferencePort for LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:114` |
+| `DirectEmbeddingPort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:337` |
+| `DirectEmbeddingProvider` descriptor (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:349` |
+| `DIRECT_EMBEDDING_PROVIDERS` static | `kask/crates/hkask-inference/src/hkask_inference.rs:359` |
+| `DirectEmbeddingPort::try_new` | `kask/crates/hkask-inference/src/hkask_inference.rs:377` |
+| `impl InferencePort for DirectEmbeddingPort` | `kask/crates/hkask-inference/src/hkask_inference.rs:431` |
+| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:713` |
+| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:725` |
+| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:753` |
+| `UnavailableWorktreeSpawn` (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:764` |
+
+### `inference_ipc_client.rs`
+
+| Symbol | Location |
+|--------|----------|
+| `MAX_IPC_LINE_BYTES` (16 MiB, private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:74` |
+| `read_socket_path_from_file` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:82` |
+| `IPC_READ_TIMEOUT_GRACE` (30 s, private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:117` |
+| `IPC_READ_TIMEOUT_FALLBACK` (600 s, private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:127` |
+| `ipc_read_timeout` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:147` |
+| `IPC_BATCH_READ_TIMEOUT` (6 h + 60 s, private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:183` |
+| `read_response_line` / `read_response_line_with_timeout` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:190`, `:197` |
+| `IpcTransportError` enum (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:233` |
+| `unexpected_outcome_msg` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:265` |
+| `strip_provider_prefix` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:279` |
+| `InferenceIpcClient` struct (`#[derive(Clone)]`) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:295` |
+| `InferenceIpcClient::connect` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:308` |
+| `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:330` |
+| `ipc_roundtrip` (private transport skeleton) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:352` |
+| `call` (private, generate path) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:413` |
+| `call_generate_batch` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:448` |
+| `call_media_generate` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:534` |
+| `call_embed` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:569` |
+| `InferenceIpcClient::embed` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:612` |
+| `call_list_models` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:624` |
+| `InferenceIpcClient::invoke_tool` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:662` |
+| `InferenceIpcClient::create_worktree_thread` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:707` |
+| `impl InferencePort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:748` |
+| `impl ToolDispatchPort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:909` |
+| `impl WorktreeSpawnPort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:926` |
 
 ### `config.rs`
 
 | Symbol | Location |
 |--------|----------|
 | `ProviderId` enum | `kask/crates/hkask-inference/src/config.rs:34` |
-| `ProviderId::parse_from_model` | `kask/crates/hkask-inference/src/config.rs:59` |
+| `ProviderId::parse_from_model` (`PREFIXES` at `:62`) | `kask/crates/hkask-inference/src/config.rs:59` |
 | `ProviderId::from_prefix_segment` | `kask/crates/hkask-inference/src/config.rs:94` |
 | `ProviderId::prefix_model` | `kask/crates/hkask-inference/src/config.rs:110` |
 | `ProviderId::as_str` | `kask/crates/hkask-inference/src/config.rs:120` |
 | `InferenceConfig` struct | `kask/crates/hkask-inference/src/config.rs:135` |
-| `impl Default for InferenceConfig` | `kask/crates/hkask-inference/src/config.rs:150` |
-| `InferenceConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:172` |
-| `resolve_api_key` (private) | `kask/crates/hkask-inference/src/config.rs:211` |
-| `resolve_default_provider` (private) | `kask/crates/hkask-inference/src/config.rs:227` |
-| `parse_provider_code` (private) | `kask/crates/hkask-inference/src/config.rs:237` |
-| `resolve_config_str` (private) | `kask/crates/hkask-inference/src/config.rs:252` |
-| `ProviderConfig` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/config.rs:265` |
-| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:275` |
-| `ProviderConfig::is_configured` | `kask/crates/hkask-inference/src/config.rs:288` |
+| `impl Default for InferenceConfig` | `kask/crates/hkask-inference/src/config.rs:154` |
+| `InferenceConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:179` |
+| `resolve_api_key` (private) | `kask/crates/hkask-inference/src/config.rs:221` |
+| `resolve_default_provider` (private) | `kask/crates/hkask-inference/src/config.rs:237` |
+| `parse_provider_code` (private) | `kask/crates/hkask-inference/src/config.rs:247` |
+| `resolve_config_str` (private) | `kask/crates/hkask-inference/src/config.rs:262` |
+| `ProviderConfig` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/config.rs:275` |
+| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:285` |
 
-### `inference_ipc_client.rs`
-
-| Symbol | Location |
-|--------|----------|
-| `MAX_IPC_LINE_BYTES` (`pub(crate)`) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:67` |
-| `IPC_READ_TIMEOUT` (`pub(crate)`) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:76` |
-| `read_response_line` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:82` |
-| `InferenceIpcClient` struct (`#[derive(Clone)]`) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:173` |
-| `InferenceIpcClient::connect` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:184` |
-| `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:197` |
-| `ipc_roundtrip` (private transport skeleton) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:218` |
-| `call` (private, generate path) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:301` |
-| `call_embed` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:329` |
-| `call_list_models` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:381` |
-| `InferenceIpcClient::embed` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:369` |
-| `InferenceIpcClient::invoke_tool` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:416` |
-| `InferenceIpcClient::create_worktree_thread` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:458` |
-| `impl InferencePort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:496` |
-| `impl ToolDispatchPort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:620` |
-| `impl WorktreeSpawnPort for InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:637` |
-
-### `hkask_inference.rs` (lib root)
-
-| Symbol | Location |
-|--------|----------|
-| public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:36-37` |
-| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:44` |
-| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:55` |
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
-| `UnavailableInference` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:112` |
-| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:189` |
-| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:201` |
-| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:229` |
-| `UnavailableWorktreeSpawn` (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:240` |
-| `InferencePorts` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:277` |
-| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:290` |
+There is no `ProviderConfig::is_configured` method in the current tree.
 
 ### `model_constants.rs`
 
 | Symbol | Location |
 |--------|----------|
 | `DEFAULT_CLASSIFIER_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:24` |
-| `DEFAULT_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:32` |
-| `DEFAULT_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:41` |
-| `DEFAULT_FALLBACK_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:46` |
-| `DEFAULT_AGENT_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:50` |
-| `classifier_model()` | `kask/crates/hkask-inference/src/model_constants.rs:55` |
-| `embedding_model()` | `kask/crates/hkask-inference/src/model_constants.rs:60` |
-| `ocr_model()` | `kask/crates/hkask-inference/src/model_constants.rs:65` |
+| `DEFAULT_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:35` |
+| `DEFAULT_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:44` |
+| `DEFAULT_FALLBACK_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:49` |
+| `DEFAULT_AGENT_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:53` |
+| `DEFAULT_TTS_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:56` |
+| `DEFAULT_STT_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:59` |
+| `DEFAULT_VISION_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:62` |
+| `DEFAULT_IMAGE_GEN_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:65` |
+| `DEFAULT_VIDEO_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:68` |
+| `classifier_model()` / `embedding_model()` / `ocr_model()` / `resolve()` | `kask/crates/hkask-inference/src/model_constants.rs:73`, `:78`, `:83`, `:88` |
 
-### `openai_compat.rs`
+### `media_router.rs`, `media_providers.rs`, `provider.rs`, `scoring.rs`, `batch.rs`, `openai_compat.rs`
 
 | Symbol | Location |
 |--------|----------|
-| `ERROR_BODY_MAX_CHARS` (`pub(crate)`) | `kask/crates/hkask-inference/src/openai_compat.rs:16` |
-| `SECRET_PREFIXES` (`pub(crate)`) | `kask/crates/hkask-inference/src/openai_compat.rs:24` |
-| `sanitize_error_body` | `kask/crates/hkask-inference/src/openai_compat.rs:51` |
-| `redact_secret_tokens` (`pub(crate)`) | `kask/crates/hkask-inference/src/openai_compat.rs:66` |
+| `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs:43` |
+| `MediaRouter::new` | `kask/crates/hkask-inference/src/media_router.rs:59` |
+| `BRIDGE_ERROR` const | `kask/crates/hkask-inference/src/media_router.rs:237` |
+| `impl InferencePort for MediaRouter` | `kask/crates/hkask-inference/src/media_router.rs:240` |
+| `DeepInfraMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:43` |
+| `OpenRouterMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:466` |
+| `MediaOp` enum (8 ops) | `kask/crates/hkask-inference/src/provider.rs:24` |
+| `MediaProvider` trait | `kask/crates/hkask-inference/src/provider.rs:81` |
+| `ProviderRegistry` | `kask/crates/hkask-inference/src/provider.rs:105` |
+| `ProviderRegistry::execute` | `kask/crates/hkask-inference/src/provider.rs:156` |
+| `ProviderScore` / `ScoreWeights` / `ScoredProvider` | `kask/crates/hkask-inference/src/scoring.rs:15`, `:27`, `:53` |
+| `select_scored` | `kask/crates/hkask-inference/src/scoring.rs:86` |
+| `BatchProvider` enum | `kask/crates/hkask-inference/src/batch.rs:51` |
+| `detect_batch_provider` | `kask/crates/hkask-inference/src/batch.rs:89` |
+| `BatchResult` | `kask/crates/hkask-inference/src/batch.rs:130` |
+| `submit_batch` | `kask/crates/hkask-inference/src/batch.rs:159` |
+| `ERROR_BODY_MAX_CHARS` / `SECRET_PREFIXES` | `kask/crates/hkask-inference/src/openai_compat.rs:16`, `:24` |
+| `sanitize_error_body` / `redact_secret_tokens` | `kask/crates/hkask-inference/src/openai_compat.rs:51`, `:66` |
 
 ## Class diagram
 
@@ -131,222 +158,256 @@ classDiagram
         +default_provider: ProviderId
         +openrouter_base_url: String
         +openrouter_api_key: String
+        +deepinfra_base_url: String
+        +deepinfra_api_key: String
         +ollama_base_url: String
         +ollama_api_key: String
         +default_model: String
         +from_env() Self
     }
-    class ProviderConfig {
-        +base_url: String
-        +api_key: String
-        +from_env(prefix, default_base_url) Self
-        +is_configured() bool
-    }
     class InferenceIpcClient {
-        -stream: Arc~Mutex~Option~UnixStream~~
+        -socket_path: Arc~PathBuf~
         -next_id: Arc~AtomicU64~
         +connect(path) Result~Self~
         +from_env() Option~Result~Self~~
         +embed(model, texts) Result
+        +call_generate_batch(model, prompts, ...) Result
+        +call_media_generate(op, params) Result
         +invoke_tool(server, tool, args, allowed) Result
         +create_worktree_thread(prompt, title, ...) Result
     }
-    class InferencePorts {
-        +inference: Arc~InferencePort~
-        +tool_dispatch: Arc~ToolDispatchPort~
-        +worktree_spawn: Arc~WorktreeSpawnPort~
+    class LazyInferencePort {
+        -embedding_model: String
+        +generate_with_model(...) bridge then DirectEmbeddingPort
+        +embed(...) bridge then DirectEmbeddingPort
+        +media_generate(...) bridge then MediaRouter
+        +list_models() bridge only, Err otherwise
+    }
+    class DirectEmbeddingPort {
+        -api_url: String
+        -api_key: String
+        -client: reqwest::Client
+        +try_new(embedding_model) Option~Self~
+    }
+    class MediaRouter {
+        +registry: ProviderRegistry
+        +new(config) Self
+        +generate_image(...) Result
+    }
+    class UnavailableToolDispatch {
+        +invoke_tool(...) Err
     }
     class UnavailableWorktreeSpawn {
         +create_worktree_thread(...) Err
     }
 
     InferenceConfig --> ProviderId : default_provider
-    ProviderConfig ..> InferenceConfig : from_env feeds
-    InferencePorts --> InferenceIpcClient : clones one client into three trait objects
-    InferenceIpcClient ..> UnavailableWorktreeSpawn : resolve_ports falls back to stubs
+    LazyInferencePort ..> InferenceIpcClient : tries bridge per call
+    LazyInferencePort ..> DirectEmbeddingPort : chat/embed fallback
+    LazyInferencePort ..> MediaRouter : media fallback
+    resolve_inference_port() --> LazyInferencePort
+    resolve_tool_dispatch_port() ..> UnavailableToolDispatch : bridge down
+    resolve_worktree_spawn_port() ..> UnavailableWorktreeSpawn : bridge down
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-REF
-verified_date: 2026-08-24
-verified_against: kask/crates/hkask-inference/src/config.rs (ProviderId, InferenceConfig, ProviderConfig), kask/crates/hkask-inference/src/inference_ipc_client.rs (InferenceIpcClient), kask/crates/hkask-inference/src/hkask_inference.rs:277 (InferencePorts)
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-inference/src/config.rs:34,135; kask/crates/hkask-inference/src/inference_ipc_client.rs:295; kask/crates/hkask-inference/src/hkask_inference.rs:102,337,725,764; kask/crates/hkask-inference/src/media_router.rs:43
 status: VERIFIED
 -->
 
-The three unavailable stubs (`UnavailableInference`, `UnavailableToolDispatch`,
-`UnavailableWorktreeSpawn`) are the fallbacks `resolve_ports` / the per-port
-resolvers return when the bridge is down. `UnavailableWorktreeSpawn` is `pub(crate)`
-(so `LazyLocalSwarmRuntime` — also `pub(crate)` — can name the type); the other two
-stubs and `InferencePorts` are private/`pub(crate)` because every external call
-site goes through the `Arc<dyn …Port>` trait object returned by the per-port
-resolvers.
-
 ## `ProviderId`
 
-The `ProviderId` enum (`config.rs:34`) identifies the inference provider. The
-three variants are `Runpod`, `OpenRouter`, and `Ollama`. Each variant carries a
-`#[serde(rename = "XX")]` two-letter serialization tag (`"RP"`, `"OR"`,
-`"OM"`). The model-name prefix is registered separately in the `PREFIXES`
-const of `parse_from_model` (`config.rs:59`): `"RunPod/"`, `"OpenRouter/"`,
-`"ollama/"`.
-
-`parse_from_model` (`config.rs:59`) does strict case-sensitive full-prefix
-stripping and returns `Some((provider, stripped_model))` on a match, or `None`
-for unrecognized or missing prefix (an empty remainder after stripping also
-returns `None`). `from_prefix_segment` (`config.rs:94`) is the lenient
-counterpart: it classifies an already-split segment case-insensitively and
-accepts short aliases (`"or"`, `"rp"`, `"om"`); unrecognized segments fall back
-to `OpenRouter`. `prefix_model` (`config.rs:110`) constructs
-`"{as_str}/{model}"`. `as_str` (`config.rs:120`) returns the full provider
-name used as the model-string prefix.
+The `ProviderId` enum (`config.rs:34`) has three variants — `Runpod`,
+`OpenRouter`, `Ollama` — each with a two-letter serde tag (`"RP"`, `"OR"`,
+`"OM"`). The model-name prefixes are registered in the `PREFIXES` const
+inside `parse_from_model` (`config.rs:62`): `"RunPod/"`, `"OpenRouter/"`,
+`"ollama/"`. `parse_from_model` (`config.rs:59`) does strict case-sensitive
+prefix stripping and returns `None` for an unrecognized prefix or an empty
+remainder. `from_prefix_segment` (`config.rs:94`) is the lenient
+counterpart: case-insensitive, accepts aliases (`"or"`, `"rp"`, `"om"`),
+and falls back to `OpenRouter` for unrecognized segments.
+`prefix_model` (`config.rs:110`) constructs `"{as_str}/{model}"`;
+`as_str` (`config.rs:120`) returns `"RunPod"`, `"OpenRouter"`, or
+`"ollama"`.
 
 ## `InferenceConfig`
 
-The `InferenceConfig` struct (`config.rs:135`) holds the base URLs and API
-keys for OpenRouter and Ollama, plus the `default_provider` field and
-`default_model`. There is **no** `timeout_secs`, `pool_max_idle`, or
-`build_client` — those configured the deleted direct-HTTP client and were
-removed with it. The `Default` impl (`config.rs:150`) sets
-`default_provider` to `OpenRouter`, the cloud base URLs to their public
-endpoints, `ollama_base_url` to `http://localhost:11434`, and `default_model`
-to `DEFAULT_FALLBACK_MODEL` (`"OpenRouter/z-ai/glm-5.2"`).
-
-`from_env` (`config.rs:172`) resolves each provider via
-`ProviderConfig::from_env` (`config.rs:275`), which sanitizes the prefix to
-uppercase (removing spaces and dots) and reads `{PREFIX}_BASE_URL` and
-`{PREFIX}_API_KEY`. `default_provider` comes from `resolve_default_provider`
-(`config.rs:227`), which reads `HKASK_DEFAULT_PROVIDER` and parses it via
-`parse_provider_code` (`config.rs:237`). `default_model` falls back to
-`DEFAULT_FALLBACK_MODEL` when `HKASK_DEFAULT_MODEL` is unset
-(`config.rs:182`).
-
-`ProviderConfig::is_configured` (`config.rs:288`) returns `true` when the API
-key is non-empty. `ProviderConfig` is `pub(crate)` — it is an internal
-construction helper for `InferenceConfig::from_env`, not part of the public
-re-export surface.
+`InferenceConfig` (`config.rs:135`) holds `default_provider`, base
+URLs + API keys for **OpenRouter, DeepInfra, and Ollama**, and
+`default_model`. The `Default` impl (`config.rs:154`) sets
+`default_provider: OpenRouter`, `deepinfra_base_url:
+"https://api.deepinfra.com"`, `ollama_base_url: "http://localhost:11434"`,
+and `default_model` from `DEFAULT_FALLBACK_MODEL`. `from_env`
+(`config.rs:179`) resolves each provider via `ProviderConfig::from_env`
+(`config.rs:285`), which uppercases the prefix (removing spaces/dots) and
+reads `{PREFIX}_BASE_URL` / `{PREFIX}_API_KEY`. API keys are read **only**
+from the environment — `resolve_api_key` (`config.rs:221`) documents why
+it must not fall back to the `hkask` keychain namespace (reserved for
+sovereignty keys; the settings UI writes to zed's
+`kask://credentials/<key>` namespace instead).
 
 ## `InferenceIpcClient`
 
-The `InferenceIpcClient` struct (`inference_ipc_client.rs:173`) is
-`#[derive(Clone)]`. It holds an `Arc<Mutex<Option<UnixStream>>>` (one request
-in flight at a time — the protocol is request-response, not multiplexed) and
-an `Arc<AtomicU64>` next-request id shared across clones so one connection can
-serve multiple trait objects (see `resolve_ports`).
+`InferenceIpcClient` (`inference_ipc_client.rs:295`) is
+`#[derive(Clone)]` and holds only a `socket_path: Arc<PathBuf>` and a
+`next_id: Arc<AtomicU64>` shared across clones. It opens a **new
+connection per request** (`ipc_roundtrip`, `inference_ipc_client.rs:352`,
+connects at `:369`): the server side spawns a task per connection, so
+concurrent callers run in parallel rather than serializing behind a
+stream lock (module doc, `inference_ipc_client.rs:16-28`).
 
-`connect` (`inference_ipc_client.rs:184`) opens a `UnixStream`;
-`from_env` (`inference_ipc_client.rs:197`) reads `HKASK_INFERENCE_SOCKET`
-(`INFERENCE_SOCKET_ENV`) and returns `None` if unset or empty, otherwise
-`Some(Result<Self>)`.
+`connect` (`:308`) verifies reachability with a throwaway connection;
+`from_env` (`:330`) reads `HKASK_INFERENCE_SOCKET`
+(`INFERENCE_SOCKET_ENV`, `kask/crates/hkask-types/src/inference_ipc.rs:53`)
+and falls back to the file `$XDG_RUNTIME_DIR/kask/inference-socket-path`
+(`read_socket_path_from_file`, `:82`), written by
+`kask_bridge::set_inference_socket_path`
+(`kask/crates/kask_bridge/src/inference_socket.rs:24`) so a server
+relaunched with a stale `LaunchSpec` still finds the current socket.
 
-The private transport skeleton `ipc_roundtrip`
-(`inference_ipc_client.rs:218`) serializes an `InferenceRequest`, writes it
-as a single line, reads one capped response line via `read_response_line`
-(`inference_ipc_client.rs:82`, capped at `MAX_IPC_LINE_BYTES` = 16 MiB
-(`inference_ipc_client.rs:67`), `IPC_READ_TIMEOUT` = 120 s
-(`inference_ipc_client.rs:76`)), and matches the response `id` to the
-request `id`. Any read failure, clean EOF, parse failure, or id mismatch
-nulls the cached stream so the next call reconnects instead of retrying on a
-dead/half-consumed stream. The private per-method wrappers `call`
-(`:301`), `call_embed` (`:329`), and `call_list_models` (`:381`) classify
-the `InferenceOutcome` to the right success type and reject mismatched
-outcomes with a `Connection` error. The public methods are `embed` (`:369`),
-`invoke_tool` (`:416`), and `create_worktree_thread` (`:458`); the chat,
-vision, and model-listing paths are exposed through the `InferencePort`
-trait impl (`:496`), the tool-dispatch path through `ToolDispatchPort`
-(`:620`), and the worktree-spawn path through `WorktreeSpawnPort` (`:637`).
+Read deadlines are server-aligned: `ipc_read_timeout` (`:147`) reads
+`HKASK_INFERENCE_TIMEOUT_SECS`
+(`INFERENCE_TIMEOUT_ENV`, `kask/crates/hkask-types/src/inference_ipc.rs:71`)
+and returns `server_timeout + 30 s` grace (`IPC_READ_TIMEOUT_GRACE`,
+`:117`), so the client strictly outlasts the server and a timed-out
+inference produces one timeout, not a `BrokenPipe` pair. Unset or
+malformed values fall back to 600 s (`IPC_READ_TIMEOUT_FALLBACK`, `:127`)
+with a `tracing::warn!` naming the offending value. Batch roundtrips use
+`IPC_BATCH_READ_TIMEOUT` = 6 h + 60 s (`:183`), matching `MAX_BATCH_WAIT`
+(`batch.rs:44`). Response lines are capped at 16 MiB
+(`MAX_IPC_LINE_BYTES`, `:74`; CWE-400).
 
-Streaming is not supported over IPC — the server side collects the stream
-and returns a single `InferenceResult`. This matches the existing
-`LanguageModelInferencePort` pattern and is sufficient for MCP server use
-cases (OCR, classification, summarization, etc.).
+Every IPC method shares the `ipc_roundtrip` transport skeleton; transport
+failures are `IpcTransportError`s (`:233`) mapped per-method via `From`
+impls (`:242`, `:251`), and each method's outcome match is exhaustive —
+every `InferenceOutcome` variant is named so adding one is a compile
+error at every call site (module doc, `:37-48`). `list_models` (`:838`)
+maps `ModelListEntry.name` through `strip_provider_prefix` (`:279`,
+first-segment-only) into `ModelEntry { prefixed_name, model }`.
 
-## Port resolvers
+## Lazy fallback layer
 
-The lib root (`hkask_inference.rs`) provides three per-port resolvers plus the
-shared-connection `resolve_ports`. Each resolver calls
-`connect_bridge(label)` (`hkask_inference.rs:55`) — the single match+log site —
-and, on `None`, returns a socket-named stub.
+`resolve_inference_port` (`hkask_inference.rs:94`) returns a
+`LazyInferencePort` (`:102`) — not a resolve-once stub. Each call
+re-attempts `InferenceIpcClient::from_env()`; on failure:
 
-| Resolver | Location | Fallback |
-|----------|----------|----------|
-| `resolve_inference_port` | `hkask_inference.rs:94` | `UnavailableInference` (private) |
-| `resolve_tool_dispatch_port` | `hkask_inference.rs:189` | `UnavailableToolDispatch` (private) |
-| `resolve_worktree_spawn_port` | `hkask_inference.rs:229` | `UnavailableWorktreeSpawn` (`pub(crate)`) |
-| `resolve_ports` | `hkask_inference.rs:290` | all three stubs |
+- `generate_with_model` / `embed` fall back to `DirectEmbeddingPort`
+  (`:337`), which resolves the model's provider prefix against
+  `DIRECT_EMBEDDING_PROVIDERS` (`:359` — DeepInfra, OpenRouter, ollama;
+  deliberately mirrors `kask_bridge`'s `INFERENCE_PROVIDERS` table because
+  `hkask-inference` cannot depend on `kask_bridge` without inverting the
+  D8 seam) and calls the OpenAI-compatible `/chat/completions` and
+  `/embeddings` endpoints directly with env-var keys.
+- `media_generate` (`:271`) falls back to a standalone `MediaRouter`
+  (`media_router.rs:43`) built from `InferenceConfig::from_env()`.
+- `generate_vision` returns a clear `Connection` error (no fallback);
+  `list_models` and `generate_batch` are bridge-only and return
+  socket-named `Connection` errors (`:233`, `:265`).
 
-`resolve_ports` (`hkask_inference.rs:290`) connects **once** and clones the
-single `InferenceIpcClient` into all three trait objects
-(`InferencePorts { inference, tool_dispatch, worktree_spawn }`,
-`hkask_inference.rs:277`). The shared `Arc`-backed socket and id counter mean
-the three objects multiplex on one connection, serialized by the stream
-mutex. This avoids the three separate socket connections that calling the
-per-port resolvers independently would open. Prefer `resolve_ports` when an
-MCP server needs more than one port.
+This eliminates the resolve-once-at-startup problem where a corpus MCP
+server started before the IPC socket existed and never re-resolved
+(`resolve_inference_port` doc comment, `hkask_inference.rs:86-93`).
 
-The `UnavailableInference` stub (`hkask_inference.rs:112`) overrides
-`generate`, `generate_vision`, `embed`, **and** `list_models` with
-socket-named errors so a missing bridge is never read as `Ok(Vec::new())` —
-the `.rules` broken-feedback-loop trap (the trait's default `list_models`
-returns an empty `Vec`, which a DB outage / missing socket would otherwise
-look like). `UnavailableToolDispatch` (`:200`) and `UnavailableWorktreeSpawn`
-(`:239`) return a `Connection` error naming the missing socket
-(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:44`). Tool dispatch and
-worktree spawn only exist on the zed side — there is no standalone fallback.
+## Media generation stack
+
+`MediaRouter` (`media_router.rs:43`) handles only media ops — chat, vision,
+and embed routed to it return the `BRIDGE_ERROR` message (`:237`). Its
+`InferencePort` impl (`:240`) is the standalone path; in zed-governed
+launches media routes over the IPC bridge
+(`call_media_generate`, `inference_ipc_client.rs:534`) and terminates in
+the zed-side `MediaRouter` held by `InferenceIpcServer`
+(`kask/crates/kask_bridge/src/inference_chat.rs:198`).
+
+`MediaRouter::new` (`media_router.rs:59`) registers `DeepInfraMediaProvider`
+(`media_providers.rs:43`) first (preferred) and
+`OpenRouterMediaProvider` (`media_providers.rs:466`) second, only when
+their API keys are present; an empty registry warns. Dispatch goes through
+`ProviderRegistry::execute` (`provider.rs:156`): when multiple providers
+support the op, the primary is chosen by `scoring::select_scored`
+(`scoring.rs:86`, emits the `reg.media.select` span at `:126`) and the
+fallback chain is ordered by descending weighted score. The 7 dimensions
+(`ProviderScore`, `scoring.rs:15`) default to weights task_fit 0.30,
+quality 0.20, control 0.15, reliability 0.15, cost 0.10, latency 0.05,
+continuity 0.05 (`ScoreWeights::default`, `scoring.rs:37-49`). Note:
+`score_provider` (`scoring.rs:77`) currently returns a neutral baseline
+for every provider — provider-specific scoring arms are **not yet
+implemented**; with the neutral baseline, multi-provider selection
+effectively falls to registration order among equal scores.
+
+## Batch API
+
+`batch.rs` implements the OpenAI Batch API flow (upload JSONL → create
+batch → poll → download) for OpenRouter and DeepInfra
+(`BatchProvider`, `batch.rs:51`). `detect_batch_provider` (`batch.rs:89`)
+detects eligibility: an `:batch` suffix routes to OpenRouter, a
+`DeepInfra/` prefix routes to DeepInfra, and `HKASK_BATCH_PROVIDER`
+forces either. `submit_batch` (`batch.rs:159`) waits up to `MAX_BATCH_WAIT`
+= 6 h (`:44`) polling every 30 s (`POLL_INTERVAL`, `:47`). `BatchResult`
+(`batch.rs:130`) keys results by `custom_id` — failures are kept, not
+dropped. The zed side holds the API keys; the MCP server never sees them
+(`call_generate_batch` doc, `inference_ipc_client.rs:443-447`).
 
 ## Model constants
-
-The `model_constants` module is the single source of truth for default model
-ids. Every model has a corresponding env var for override; the constants are
-compile-time defaults, env vars take precedence.
 
 | Constant | Value | Env override |
 |----------|-------|--------------|
 | `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_CLASSIFIER_MODEL` |
-| `DEFAULT_EMBEDDING_MODEL` | `ollama/nomic-embed-text` | `HKASK_EMBEDDING_MODEL` |
+| `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
 | `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
 | `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |
 | `DEFAULT_AGENT_MODEL` | `claude-haiku-4-5-20251001` | — |
+| `DEFAULT_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | — |
+| `DEFAULT_STT_MODEL` | `DeepInfra/whisper-large-v3` | — |
+| `DEFAULT_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | — |
+| `DEFAULT_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | — |
+| `DEFAULT_VIDEO_MODEL` | `DeepInfra/Wan-AI/Wan2.2-T2V-A14B` | — |
 
-The accessor functions `classifier_model()` (`model_constants.rs:55`),
-`embedding_model()` (`model_constants.rs:60`), and `ocr_model()`
-(`model_constants.rs:65`) resolve env var → default. Per the project rules,
-model-name constants must reference these constants, not re-declare literals
-across crates.
-
-There is no `DEFAULT_VISION_MODEL`, `DEFAULT_TTS_MODEL`,
-`DEFAULT_STT_MODEL`, or `DEFAULT_IMAGE_GEN_MODEL` constant in this module —
-those were removed (they had zero callers). Vision, TTS, STT, and
-image-generation model overrides are settings fields on
-`KaskMediaSettings` / `KaskCorpusSettings`, not compile-time constants here.
+Accessors `classifier_model()` (`model_constants.rs:73`),
+`embedding_model()` (`:78`), `ocr_model()` (`:83`), and the generic
+`resolve()` (`:88`) implement env-var → default. This module is the
+single source of truth — `hkask-services-core` resolves its defaults
+here (`kask/crates/hkask-services-core/src/settings.rs:65-79`), and
+`kask_bridge` re-exports it (`kask/crates/kask_bridge/src/kask_bridge.rs:42`).
 
 ## `openai_compat` module
 
-The `openai_compat` module (`openai_compat.rs`) now holds only the
-response-body redaction utility — the direct-HTTP chat helpers
-(`openai_compatible_generate[_messages]`, `openai_chat_roundtrip`,
-`stream_chat_completion`) were deleted with the direct-HTTP chat path.
+Only the redaction utility remains here. `sanitize_error_body`
+(`openai_compat.rs:51`) redacts secret-shaped substrings via
+`redact_secret_tokens` (`:66`) and truncates to 200 chars
+(`ERROR_BODY_MAX_CHARS`, `:16`, char-boundary safe). `SECRET_PREFIXES`
+(`:24`) scans for `authorization:`, `bearer `, `sk-`, `api_key`, GitHub
+PATs, AWS keys, Slack/GitLab tokens, and JWT headers (CWE-209
+defense-in-depth). Consumers include the MCP `classify_http_error` helper
+(`kask/crates/hkask-mcp-server/src/server/http_helpers.rs:3`).
 
-- `sanitize_error_body(body)` (`openai_compat.rs:51`) redacts secret-shaped
-  substrings via `redact_secret_tokens` (`:66`) and truncates to
-  `ERROR_BODY_MAX_CHARS` = 200 chars (`:16`, char-boundary safe). It is the
-  single shared redaction path used by `hkask-mcp-server`'s
-  `classify_http_error` and by `hkask-mcp-research` provider error
-  formatting.
-- `SECRET_PREFIXES` (`:24`) is the lowercase prefix scan list
-  (`"authorization:"`, `"api-key:"`, `"bearer "`, …) matched against the
-  lowercased body. Redaction is a prefix scan, not a parser —
-  defense-in-depth before the body reaches IPC/log sinks (CWE-209).
+## Consumers
+
+- `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:288`,
+  `.../hkask-mcp-curator/src/hkask_mcp_curator.rs:1430`,
+  `.../hkask-mcp-media/src/hkask_mcp_media.rs:474`,
+  `.../hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1545`,
+  `.../hkask-mcp-training/src/hkask_mcp_training.rs:370` — call
+  `resolve_inference_port()`.
+- `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:186-187` — calls
+  `resolve_inference_port()` + `resolve_tool_dispatch_port()`.
+- `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:1743`
+  — calls `resolve_worktree_spawn_port()`.
+- `kask_bridge` — holds the server side (`inference_ipc_server.rs`) and a
+  zed-side `MediaRouter` (`inference_chat.rs:198`).
 
 ## See also
 
-- [hkask-inference How-to](./how-to.md): routing inference through the IPC
-  bridge.
+- [hkask-inference How-to](./how-to.md): wiring an MCP server to the
+  bridge and adding a chat provider.
 - [hkask-inference Tutorial](./tutorial.md): routing your first request.
-- [hkask-inference Explanation](./explanation.md): why the IPC bridge is the
-  single path.
-- [hkask-types Reference](../hkask-types/reference.md): the `InferencePort`,
-  `ToolDispatchPort`, and `WorktreeSpawnPort` traits the client implements.
+- [hkask-inference Explanation](./explanation.md): why the bridge is the
+  primary path and how the fallbacks are shaped.
+- [hkask-types Reference](../hkask-types/reference.md): the `InferencePort`
+  (`kask/crates/hkask-types/src/ports/inference_port.rs:147`),
+  `ToolDispatchPort` (`:97`), and `WorktreeSpawnPort` (`:135`) traits.
 
 ---
 
-[^hexagonal]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The port-trait abstraction that lets the IPC-bridge client and the unavailable stubs be swapped at startup.
+[^hexagonal]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The port-trait boundary that lets the IPC-bridge client, the lazy fallback, and the unavailable stubs be swapped behind `Arc<dyn …Port>`.

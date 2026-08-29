@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — Explanation: Why Database Splits from SqliteDriver"
 audience: [architects, developers]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [trust, curation]
@@ -10,35 +10,32 @@ mds_categories: [trust, curation]
 
 # hkask-storage — Explanation: Why Database Splits from SqliteDriver
 
-The consolidated `hkask-storage` crate separates two concerns that the
-pre-merge crates tangled: `Database` handles file infrastructure (the
-SQLCipher salt file, parent directories, passphrase validation), and
-`SqliteDriver` handles everything SQLite-related (the r2d2 pool, PRAGMAs,
-schema initialization, query dispatch). This split is not aesthetic — it
-eliminates the dual-path bugs that the consolidation was commissioned to
-fix, and it lets stores code against a provider-agnostic port
-(`DatabaseDriver`) instead of `rusqlite::Connection` directly[^fowler-poeaa].
+The consolidated `hkask-storage` crate separates two concerns: `Database`
+handles file infrastructure (the SQLCipher salt file, parent directories,
+passphrase validation), and `SqliteDriver` handles everything SQLite-related
+(the r2d2 pool, PRAGMAs, schema initialization, query dispatch). This split
+is not aesthetic — it eliminates dual-path bugs, and it lets stores code
+against a provider-agnostic port (`DatabaseDriver`) instead of
+`rusqlite::Connection` directly[^fowler-poeaa].
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
-| `Database` struct (path + passphrase + pool_cache) | `kask/crates/hkask-storage/src/core/database.rs:104-110` |
-| `Database::open_impl` (file infra, no SQLite) | `kask/crates/hkask-storage/src/core/database.rs:117-175` |
-| `Database::sqlite_pool` (cached r2d2 pool) | `kask/crates/hkask-storage/src/core/database.rs:222-244` |
-| `file_pool` (passphrase probe before pool) | `kask/crates/hkask-storage/src/core/database.rs:297-395` |
-| `in_memory_pool` (max_size 1) | `kask/crates/hkask-storage/src/core/database.rs:272-295` |
-| `DatabaseError::PassphraseMismatch` | `kask/crates/hkask-storage/src/core/database.rs:89-90` |
-| `open_or_repair` (never deletes files) | `kask/crates/hkask-storage/src/core/database.rs:427-431` |
-| `init_sqlite_vec_on` (per-connection, before schema) | `kask/crates/hkask-storage/src/core/database.rs:56-76` |
+| `Database` struct (path + passphrase + pool_cache) | `kask/crates/hkask-storage/src/core/connection.rs:109-115` |
+| `Database::open_impl` (file infra, no SQLite) | `kask/crates/hkask-storage/src/core/connection.rs:122-192` |
+| `Database::sqlite_pool` (cached r2d2 pool) | `kask/crates/hkask-storage/src/core/connection.rs:261-283` |
+| `file_pool` (passphrase probe before pool) | `kask/crates/hkask-storage/src/core/connection.rs:336-434` |
+| `in_memory_pool` (max_size 1) | `kask/crates/hkask-storage/src/core/connection.rs:311-334` |
+| `DatabaseError::PassphraseMismatch` / `SaltMissing` | `kask/crates/hkask-storage/src/core/connection.rs:89-97` |
+| `open_or_repair` (self-heal on missing salt) | `kask/crates/hkask-storage/src/core/connection.rs:466-513` |
+| `init_sqlite_vec_on` (per-connection, before schema) | `kask/crates/hkask-storage/src/core/connection.rs:56-76` |
 | `DatabaseDriver` trait (the port) | `kask/crates/hkask-storage/src/database/driver.rs:16-58` |
 | `SqliteDriver` (the only impl) | `kask/crates/hkask-storage/src/database/sqlite.rs:42-50` |
 | `define_driver_store!` (store boilerplate) | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
-| `HMemStore::from_driver` (no re-create of core table) | `kask/crates/hkask-storage/src/hmem.rs:177-184` |
-| `KataHistoryStore::init_schema` (no-op for core table) | `kask/crates/hkask-storage/src/kata.rs:36-44` |
-| `RegulationArchive::init_schema` (store-specific table) | `kask/crates/hkask-storage/src/regulation_store.rs:78-106` |
-| `Encryptor` (ENCv1 transparent encryption) | `kask/crates/hkask-storage/src/database/encrypt.rs:17-115` |
-| `BackupArchive` (sovereignty export) | `kask/crates/hkask-storage/src/hmem/archive.rs:56-59` |
+| `HMemStore::from_driver` (no re-create of core table) | `kask/crates/hkask-storage/src/hmem.rs:140-163` |
+| `RegulationArchive::init_schema` (store-specific table) | `kask/crates/hkask-storage/src/regulation_store.rs:76-104` |
+| `Encryptor` (ENCv1 transparent encryption) | `kask/crates/hkask-storage/src/database/encrypt.rs:15-75` |
 
 ## The open/connect sequence
 
@@ -86,8 +83,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-005
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-storage/src/core/database.rs:117-175,222-244,272-395,427-431; kask/crates/hkask-storage/src/database/sqlite.rs:24-35
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:122-192,261-283,311-434,466-513; kask/crates/hkask-storage/src/database/sqlite.rs:24-35
 status: VERIFIED
 -->
 
@@ -95,27 +92,34 @@ status: VERIFIED
 
 ### 1. No dual-path passphrase handling
 
-Before the consolidation, `open()` both wrote the salt file and opened a
-SQLite connection, so a wrong passphrase could leave the codec in a corrupted
-state and SIGSEGV on connection teardown. The new `file_pool` verifies the
-passphrase with a **standalone probe connection** before creating the pool
-(`core/database.rs:318-326`): a wrong key fails the probe, the pool is never
-built, and the codec cleanup runs on the probe alone. The pool only ever
-holds connections with a validated key.
+A wrong passphrase can leave SQLCipher's native codec in a corrupted state;
+when the pool later drops that connection during teardown, the codec
+cleanup can SIGSEGV. `file_pool` therefore verifies the passphrase with a
+**standalone probe connection** before creating the pool
+(`core/connection.rs:352-365`): a wrong key fails the probe, the pool is
+never built, and the codec cleanup runs on the probe alone. The pool only
+ever holds connections with a validated key.
 
-`open_or_repair` (`core/database.rs:427-431`) enforces the P1 invariant "a
-passphrase mistake never destroys my encrypted database": it calls `open`
-then `sqlite_pool`, and on `PassphraseMismatch` it returns the error without
-touching the database or salt file. The test at `core/database.rs:451-479`
-pins this — a wrong passphrase leaves both files byte-identical.
+`open_or_repair` (`core/connection.rs:466-513`) enforces the P1 invariant
+"a passphrase mistake never destroys my encrypted database" with one
+explicit exception. A wrong passphrase returns `PassphraseMismatch` without
+touching the database or salt file — pinned by the test
+`open_or_repair_wrong_passphrase_does_not_delete_db`
+(`core/connection.rs:602-640`). The exception: when the DB file exists but
+its salt file is missing (`SaltMissing`, `core/connection.rs:159-170`), the
+DB is permanently unopenable — no passphrase can decrypt it without its
+original salt — so `open_or_repair` deletes the orphaned DB and creates a
+fresh one. This is the "repair" the function name promises; a wrong
+passphrase does NOT trigger it.
 
-### 2. `Database` is not `Send`-irrelevant; `SqliteDriver` is the store handle
+### 2. `Database` is the connection manager; `SqliteDriver` is the store handle
 
 Stores hold `Arc<dyn DatabaseDriver>`, not `Arc<Database>`. `Database` is a
-connection manager with a `Mutex<Option<Pool>>` cache; `SqliteDriver` is the
-thin, cloneable, `Send + Sync` handle that the `DatabaseDriver` trait
-requires. This lets stores be passed across threads (the regulation loop,
-the curator ingest path) without dragging the pool cache's lock along.
+connection manager with a `Mutex<Option<Pool>>` cache
+(`core/connection.rs:113-114`); `SqliteDriver` is the thin, cloneable,
+`Send + Sync` handle that the `DatabaseDriver` trait requires. This lets
+stores be passed across threads (the regulation loop, the curator ingest
+path) without dragging the pool cache's lock along.
 
 ### 3. Stores code against a port, not `rusqlite`
 
@@ -125,13 +129,8 @@ The `DatabaseDriver` trait (`database/driver.rs:16-58`) is dyn-compatible:
 free-function helpers `query_map` / `query_row` (`database/driver.rs:78-109`)
 and never touch `rusqlite::Connection` directly. The one exception is
 `EmbeddingStore`, which needs the raw connection for `vec0` MATCH — it
-downcasts via `as_any()` and uses `sqlite_pool()` to acquire a connection
-(`embeddings.rs:103-107, 281-295`).
-
-The port abstraction earned its keep during consolidation: the
-`hkask-database` crate's `DatabaseDriver` trait and the `hkask-storage-core`
-crate's `Database` handle merged without touching any store's call sites.
-A future Postgres driver would implement the same trait.
+downcasts via `sqlite_pool()` to acquire a connection
+(`embeddings.rs:104-108`).
 
 ## Why per-store `init_schema` instead of a migration runner
 
@@ -144,23 +143,25 @@ constructed against a missing table (`core/store_macros.rs:44-71`).
 Two ownership patterns coexist:
 
 - **Core tables** (`hmems`, `embeddings`, `vec_embeddings`, `audit_log`,
-  `kata_history`, `pod_meta`, `agent_registry`, `loop_cursors`,
+  `memory_links`, `pod_meta`, `agent_registry`, `loop_cursors`,
   `reg_variety_checkpoint`, `reg_alerts`) live in `core/sql/schema.sql` and
-  are loaded by `Database::initialize_schema` on every pool creation. Stores
-  for these tables implement `init_schema` as a no-op — `KataHistoryStore`
-  documents why (`kata.rs:36-44`): re-creating the table here would duplicate
-  the schema and drift, because the prior `IF NOT EXISTS` no-op meant the
-  live schema depended on which store ran first.
-- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`)
-  are created inline in the store's `init_schema`.
-  `HMemStore::from_driver` explicitly does NOT re-create `hmems`
-  (`hmem.rs:170-176`): the prior `CREATE TABLE IF NOT EXISTS` here declared
+  are loaded by `Database::initialize_schema` on every pool creation
+  (`core/connection.rs:223-229`). Stores for these tables do not re-create
+  them: `HMemStore::from_driver` explicitly does NOT re-create `hmems`
+  (`hmem.rs:143-149`) — the prior `CREATE TABLE IF NOT EXISTS` here declared
   `recalled_at TEXT` nullable while `schema.sql` declared it
   `NOT NULL DEFAULT`, and the `IF NOT EXISTS` no-op meant the live schema
   depended on which ran first.
+- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`,
+  the gallery tables) are created inline in the store's `init_schema`
+  (`regulation_store.rs:76-104`, `escalation.rs:83-103`,
+  `gallery.rs:193-270`).
 
-The state machine below shows the schema-ownership decision a contributor
-faces when adding a table.
+The one schema migration that exists is column-level:
+`migrate_embeddings_passage_text` (`core/connection.rs:236-250`) adds the
+`passage_text` column to pre-existing `embeddings` tables via
+`ALTER TABLE`, because `CREATE TABLE IF NOT EXISTS` cannot add columns to
+an already-existing table.
 
 ```mermaid
 stateDiagram-v2
@@ -177,8 +178,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-006
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-storage/src/core/database.rs:206-211; kask/crates/hkask-storage/src/core/store_macros.rs:44-71; kask/crates/hkask-storage/src/kata.rs:36-44; kask/crates/hkask-storage/src/hmem.rs:170-184; kask/crates/hkask-storage/src/regulation_store.rs:78-106
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:223-250; kask/crates/hkask-storage/src/core/store_macros.rs:44-71; kask/crates/hkask-storage/src/hmem.rs:140-163; kask/crates/hkask-storage/src/regulation_store.rs:76-104; kask/crates/hkask-storage/src/escalation.rs:83-103
 status: VERIFIED
 -->
 
@@ -187,63 +188,55 @@ status: VERIFIED
 `SqliteConnectionManager::memory()` creates a separate in-memory database
 per connection. A pool size greater than 1 would scatter writes across
 independent databases, breaking read-your-writes semantics for tests
-(`core/database.rs:272-295`). The file pool, by contrast, defaults to
+(`core/connection.rs:311-334`). The file pool, by contrast, defaults to
 `max_size(8)` (overridable via `HKASK_DB_POOL_SIZE`, with a `warn!` on
-malformed values per the `.rules` trap on numeric env vars).
+malformed values, `core/connection.rs:395-409`).
 
 ## Why sqlite-vec is loaded per-connection
 
-`init_sqlite_vec_on` (`core/database.rs:56-76`) loads the `vec0` extension
-into each connection via the r2d2 `with_init` closure, before schema init
-(which creates `vec0` virtual tables). This avoids `sqlite3_auto_extension`,
-whose process-global registration is deprecated on Apple platforms and is a
-known teardown-segfault source. Scoping the extension's lifetime to each
-connection means its state is torn down with the connection, not orphaned at
-process exit.
+`init_sqlite_vec_on` (`core/connection.rs:56-76`) loads the `vec0`
+extension into each connection via the r2d2 `with_init` closure, before
+schema init (which creates `vec0` virtual tables). This avoids
+`sqlite3_auto_extension`, whose process-global registration is deprecated
+on Apple platforms and is a known teardown-segfault source. Scoping the
+extension's lifetime to each connection means its state is torn down with
+the connection, not orphaned at process exit.
 
 ## Why `EmbeddingStore` duplicates the vector BLOB
 
 The vector BLOB is stored in both the `embeddings` table (metadata + vector)
 and the `vec_embeddings` virtual table (KNN index). `vec0` requires the
 vector for its MATCH operator; `embeddings.vector` provides uniform
-retrieval via the backend-agnostic `DatabaseDriver` query path
-(`get`, `get_all_by_prefix`). Deduplicating would require backend-conditional
-retrieval (join `vec0` for the KNN path, read the column for the metadata
-path) — more complexity for ~4 KB/embedding savings. The redundancy earns
-its keep by preserving the uniform retrieval abstraction
+retrieval via the backend-agnostic `DatabaseDriver` query path (`get`,
+`get_all_by_prefix`). Deduplicating would require backend-conditional
+retrieval — more complexity for ~4 KB/embedding savings. The redundancy
+earns its keep by preserving the uniform retrieval abstraction
 (`embeddings.rs:1-14`).
 
-## Why `HMemStore` has an optional `Encryptor`
+## Why `HMemStore` has an optional `Encryptor` — and why it is not yet wired
 
-`HMemStore::with_passphrase` attaches an `Encryptor` that does transparent
-AES-256-GCM encryption of `DbValue::Text` values, with an `ENCv1:` prefix
-for automatic detection (`database/encrypt.rs:1-115`). Plaintext passes
-through on decrypt, so a store can be migrated from unencrypted to
-encrypted without a schema change. The encryption is at the driver level,
-not the SQLCipher level: SQLCipher encrypts the whole database file, while
-the `Encryptor` encrypts individual text values, so a curator with database
-access still cannot read encrypted h_mem values without the value-passphrase.
-
-## Why `BackupArchive` is a separate SQLCipher file
-
-`BackupArchive` (`hmem/archive.rs:56-59`) creates a single SQLCipher-encrypted
-SQLite file containing a `backup_meta` table and the user's full live h_mem
-set. This is the P1 sovereignty mechanism: a user can export their h_mems
-to a downloadable, passphrase-encrypted file and restore them into another
-instance. The archive covers SQLite + h_mems only — adapter weight blobs and
-GGUFs are not backed up by anything today, and the archive's doc comment
-warns against adding a third ad-hoc S3 sync path (`hmem/archive.rs:1-15`).
+`HMemStore` holds an `encryptor: Option<Arc<Encryptor>>` field
+(`hmem.rs:137`), and the `Encryptor` (`database/encrypt.rs:15-75`) does
+transparent AES-256-GCM encryption of text values with an `ENCv1:` prefix
+for automatic detection — plaintext passes through on decrypt, so a store
+could migrate from unencrypted to encrypted without a schema change.
+However, `HMemStore::from_driver` currently always sets `encryptor: None`
+(`hmem.rs:155`), and no other constructor sets it: **value-level
+encryption is not yet wired** — the encrypt/decrypt branches exist but are
+unreachable in production. SQLCipher file-level encryption is the enforced
+confidentiality mechanism today.
 
 ## See also
 
 - [hkask-storage Reference](./reference.md): ERD of the full schema and the
   `DatabaseDriver` class diagram.
 - [hkask-storage How-to](./how-to.md): procedural flowchart for adding a new
-  migration.
+  store.
 - [hkask-storage Tutorial](./tutorial.md): the store lifecycle from
   `Database` to CRUD.
-- [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
-  P1 (User Sovereignty) governing `open_or_repair` and `BackupArchive`.
+- [`kask/docs/architecture/core/magna-carta.md`](../../architecture/core/magna-carta.md):
+  P1 (User Sovereignty) governing `open_or_repair`'s passphrase-safety
+  contract.
 
 ---
 

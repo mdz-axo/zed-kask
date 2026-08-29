@@ -1,164 +1,193 @@
 ---
-title: "hkask-inference — Explanation: Why Inference Routes Through the IPC Bridge"
+title: "hkask-inference — Explanation: Why Inference Routes Through the IPC Bridge (and What the Fallbacks Are)"
 audience: [architects, developers]
-last_updated: 2026-08-20
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [trust, curation]
 ---
 
-# hkask-inference — Explanation: Why Inference Routes Through the IPC Bridge
+# hkask-inference — Explanation: Why Inference Routes Through the IPC Bridge (and What the Fallbacks Are)
 
-`hkask-inference` is an IPC-bridge facade. MCP server child processes route
-chat, vision, embedding, tool dispatch, and worktree spawn back to zed's
-`LanguageModelRegistry` over a Unix socket (`HKASK_INFERENCE_SOCKET`), rather
-than holding API keys or speaking HTTP directly. At startup an MCP server
-calls `resolve_inference_port()` (`hkask_inference.rs:94`) or
-`resolve_ports()` (`hkask_inference.rs:290`); both return an
-`InferenceIpcClient`-backed trait object when the socket is reachable, or a
-socket-named `Unavailable*` stub when it is not. There is no second
-`InferencePort` implementation and no in-process media-provider registry in
-this crate — those were removed in the IPC-bridge refactor. This document
-explains why the bridge is the single path, why the stubs are never silent,
-and why provider selection is prefix-based.
+`hkask-inference` is primarily an IPC-bridge facade. MCP server child
+processes route chat, vision, embedding, batch, media, tool dispatch, and
+worktree spawn back to zed's `LanguageModelRegistry` over a Unix socket
+(`HKASK_INFERENCE_SOCKET`), rather than holding API keys or speaking HTTP
+directly. But the crate is no longer bridge-only: since the lazy-fallback
+refactor, `resolve_inference_port()` (`hkask_inference.rs:94`) returns a
+`LazyInferencePort` (`hkask_inference.rs:102`) that re-attempts the bridge
+on **every call** and falls back to a direct-HTTP port or a standalone
+media router when the socket is unavailable. This document explains why
+the bridge is the primary path, why the fallbacks exist, why the stubs
+are never silent, and why provider selection is prefix-based.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
 | `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
-| `resolve_ports` | `kask/crates/hkask-inference/src/hkask_inference.rs:290` |
-| `InferencePorts` struct | `kask/crates/hkask-inference/src/hkask_inference.rs:277` |
-| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:55` |
-| `UnavailableInference` | `kask/crates/hkask-inference/src/hkask_inference.rs:112` |
-| `UnavailableWorktreeSpawn` | `kask/crates/hkask-inference/src/hkask_inference.rs:240` |
-| `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs:173` |
-| `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:197` |
-| `ipc_roundtrip` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:218` |
-| `MAX_IPC_LINE_BYTES` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:67` |
-| `IPC_READ_TIMEOUT` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:76` |
+| `LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:102` |
+| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:59` |
+| `IPC_BRIDGE_UNAVAILABLE` | `kask/crates/hkask-inference/src/hkask_inference.rs:48` |
+| `DirectEmbeddingPort` | `kask/crates/hkask-inference/src/hkask_inference.rs:337` |
+| `DIRECT_EMBEDDING_PROVIDERS` | `kask/crates/hkask-inference/src/hkask_inference.rs:359` |
+| `UnavailableToolDispatch` | `kask/crates/hkask-inference/src/hkask_inference.rs:725` |
+| `UnavailableWorktreeSpawn` | `kask/crates/hkask-inference/src/hkask_inference.rs:764` |
+| `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs:295` |
+| `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:330` |
+| `ipc_roundtrip` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:352` |
+| `ipc_read_timeout` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:147` |
+| `MAX_IPC_LINE_BYTES` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:74` |
+| `MediaRouter` | `kask/crates/hkask-inference/src/media_router.rs:43` |
 | `ProviderId::parse_from_model` | `kask/crates/hkask-inference/src/config.rs:59` |
-| `resolve_api_key` | `kask/crates/hkask-inference/src/config.rs:211` |
+| `resolve_api_key` | `kask/crates/hkask-inference/src/config.rs:221` |
 
-## Startup selection state
+## Startup and per-call selection state
 
 ```mermaid
 stateDiagram-v2
-    [*] --> CheckSocket: MCP server startup
-    CheckSocket --> SocketSet: HKASK_INFERENCE_SOCKET set
-    CheckSocket --> SocketUnset: env var unset or empty
-    SocketSet --> Connect: InferenceIpcClient::connect
-    Connect --> IpcBridge: connect Ok
-    Connect --> Stubs: connect Err (warn)
-    SocketUnset --> Stubs: info log
-    IpcBridge --> [*]: chat/vision/embed/tools/worktree via zed
-    Stubs --> [*]: socket-named errors, never silent
+    [*] --> Resolve: MCP server startup calls resolve_inference_port
+    Resolve --> Lazy: LazyInferencePort (no connection yet)
+    Lazy --> Bridge: each call retries InferenceIpcClient::from_env
+    Bridge --> BridgeOk: socket reachable
+    Bridge --> Fallback: socket unset/unreachable
+    BridgeOk --> [*]: chat/vision/embed/batch/media via zed
+    Fallback --> Direct: generate/embed -> DirectEmbeddingPort (env keys)
+    Fallback --> MediaRouter: media_generate -> standalone MediaRouter
+    Fallback --> NamedErr: vision/list_models/batch -> socket-named Err
+    Direct --> [*]
+    MediaRouter --> [*]
+    NamedErr --> [*]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-004
-verified_date: 2026-08-20
-verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:55-103,229-309; kask/crates/hkask-inference/src/inference_ipc_client.rs:184-201
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:94-292 (LazyInferencePort impl), :337 (DirectEmbeddingPort), :271-291 (media_generate fallback); kask/crates/hkask-inference/src/inference_ipc_client.rs:330 (from_env)
 status: VERIFIED
 -->
 
-`connect_bridge(label)` (`hkask_inference.rs:55`) is the single match+log
-site shared by all three resolvers. On `Some(Ok(client))` it logs at `info`
-that the port is routed through the bridge; on `Some(Err(e))` it warns with
-the error; on `None` (env var unset) it logs at `info`. Every `None` branch
-returns the resolver's own socket-named stub, so a missing bridge is never
-reported as an empty success.
+`connect_bridge(label)` (`hkask_inference.rs:59`) is the single match+log
+site for the tool-dispatch and worktree-spawn resolvers: on
+`Some(Ok(client))` it logs `info`, on `Some(Err(e))` it warns with the
+error, and on `None` (env unset) it logs `info`. The inference resolver
+does **not** use it — `LazyInferencePort` retries the bridge inside each
+trait method instead (`hkask_inference.rs:172`, `:205`, `:230`, `:260`,
+`:280`), which is the fix for the resolve-once-at-startup problem: a
+corpus MCP server that starts before the IPC socket exists no longer
+needs a restart to pick it up (doc comment, `hkask_inference.rs:86-93`).
 
-## Why the IPC bridge is the single path
+## Why the IPC bridge is the primary path
 
-In zed-kask, the zed process is the trust boundary for inference credentials.
-It holds the API keys in its `CredentialsProvider` keychain
+In zed-kask, the zed process is the trust boundary for inference
+credentials. It holds the API keys in its `CredentialsProvider` keychain
 (`kask://credentials/<key>`) and the guard that governs tool dispatch and
 worktree spawn. When zed launches an MCP server child process, it injects
-the API keys the child needs as environment variables via
-`kask_bridge::build_mcp_server_env`, and it passes a Unix socket path via
-`HKASK_INFERENCE_SOCKET` so the child can route inference back to zed's
-`LanguageModelRegistry`.
+the keys the child needs as environment variables and passes the socket
+path via `HKASK_INFERENCE_SOCKET` so the child routes inference back to
+zed's `LanguageModelRegistry`.
 
-Routing through the IPC bridge gives the MCP server three properties it
+Routing through the bridge gives the MCP server three properties it
 cannot get standalone:
 
-1. **Credential isolation.** The child process holds only the env-var keys
-   zed chose to inject; it never touches the keychain directly. The
-   `resolve_api_key` helper (`config.rs:211`) reads only the environment —
-   it does **not** fall back to the `hkask` keychain namespace, which is
-   reserved for sovereignty keys (db passphrase). Reading inference keys
-   from the `hkask` namespace was a spec violation that produced silent
-   "API key not configured" errors; the doc comment at `config.rs:211`
-   records why.
+1. **Credential isolation.** The child holds only the env-var keys zed
+   chose to inject. `resolve_api_key` (`config.rs:221`) reads only the
+   environment — it does not fall back to the `hkask` keychain namespace,
+   which is reserved for sovereignty keys; the doc comment at
+   `config.rs:210-217` records why the old fallback was a spec violation.
 2. **Governed tool dispatch / worktree spawn.** These capabilities only
    exist on the zed side. `resolve_tool_dispatch_port`
-   (`hkask_inference.rs:189`) and `resolve_worktree_spawn_port`
-   (`hkask_inference.rs:229`) return the IPC bridge client when the socket
-   is available, or an `Unavailable*` stub that returns a clear error naming
-   the missing socket. There is no standalone fallback for these — they
-   require the zed process.
-3. **Unified model routing.** Chat, vision, and embedding all route through
-   zed's `LanguageModelRegistry`, which resolves provider prefixes
-   (`OpenRouter/`, `ollama/`, `RunPod/`) to the configured provider. The MCP
-   server does not need to know how zed maps prefixes to credentials; it
-   just sends a model name.
+   (`hkask_inference.rs:713`) and `resolve_worktree_spawn_port`
+   (`hkask_inference.rs:753`) return the IPC-bridge client when the
+   socket is available, or a stub that returns a clear error naming the
+   missing socket. There is no standalone fallback for these.
+3. **Unified model routing.** Chat, vision, and embedding all route
+   through zed's `LanguageModelRegistry`, which resolves provider
+   prefixes (`OpenRouter/`, `ollama/`, `RunPod/`) to the configured
+   provider. The MCP server just sends a model name.
+
+## Why the fallbacks exist (and their limits)
+
+The lazy fallbacks cover exactly the standalone scenarios, and nothing
+more:
+
+- **`DirectEmbeddingPort`** (`hkask_inference.rs:337`) serves
+  `generate_with_model` and `embed` only, by resolving the model's
+  provider prefix against `DIRECT_EMBEDDING_PROVIDERS` (`:359` — DeepInfra,
+  OpenRouter, ollama) and calling the OpenAI-compatible endpoints
+  directly with env-var keys. The table deliberately mirrors
+  `kask_bridge`'s `INFERENCE_PROVIDERS` static
+  (`kask/crates/kask_bridge/src/inference_providers.rs:55`) — duplicated
+  because `hkask-inference` cannot depend on `kask_bridge` without
+  inverting the D8 seam (`hkask_inference.rs:337-340` doc comment).
+- **Standalone `MediaRouter`** (`media_router.rs:43`) serves
+  `media_generate` when the bridge is down — e.g. the media MCP server
+  running outside zed's launch with `DEEPINFRA_API_KEY` or
+  `OPENROUTER_API_KEY` set in the shell (`hkask_inference.rs:283-289`).
+- **No fallback** for `generate_vision`, `list_models`, or
+  `generate_batch`: they return socket-named `Connection` errors
+  (`hkask_inference.rs:145-149`, `:233-235`, `:265-267`). Vision needs
+  zed's multimodal providers; model listing needs zed's registry; batch
+  needs the zed side to hold the provider Batch API keys
+  (`inference_ipc_client.rs:443-447`).
 
 ## Why the stubs are never silent
 
-`UnavailableInference` (`hkask_inference.rs:112`) overrides `generate`,
-`generate_vision`, `embed`, **and** `list_models` with socket-named
-`Connection` errors. This is deliberate: the `InferencePort` trait's default
-`list_models` returns `Ok(Vec::new())`, which a missing bridge would
-otherwise read as an empty model registry — the `.rules`
-broken-feedback-loop trap (`unwrap_or(0)`-class, where a broken bridge reads
-as "no models"). `UnavailableToolDispatch` (`hkask_inference.rs:201`) and
-`UnavailableWorktreeSpawn` (`hkask_inference.rs:240`) likewise return
-`Connection` errors naming the missing socket
-(`IPC_BRIDGE_UNAVAILABLE`, `hkask_inference.rs:44`). The error tells the
-operator exactly what to fix: set `HKASK_INFERENCE_SOCKET` and ensure zed is
-running.
+The `Unavailable*` stubs override the trait defaults that are **not**
+socket-named. `UnavailableToolDispatch` (`hkask_inference.rs:725`) and
+`UnavailableWorktreeSpawn` (`:764`) return `Connection` errors naming
+`IPC_BRIDGE_UNAVAILABLE` (`:48`). On the lazy port, `list_models`
+(`:233-235`) returns `Err` rather than the trait default
+`Ok(Vec::new())` — otherwise a broken bridge would read as an empty model
+registry, the `.rules` broken-feedback-loop trap. The doc comment at
+`hkask_inference.rs:293-311` records this "every method names the missing
+socket" contract.
 
-`UnavailableWorktreeSpawn` is `pub(crate)` because `LazyLocalSwarmRuntime` names
-the type when it falls back to in-memory delegation; the other two stubs are
-private because every call site goes through the `Arc<dyn …Port>` trait
-object.
+`UnavailableWorktreeSpawn` is `pub(crate)` because
+`LazyLocalSwarmRuntime` names the type when it falls back to in-memory
+delegation; the tool-dispatch stub is private because every call site
+goes through the `Arc<dyn ToolDispatchPort>` trait object.
 
-## Why `resolve_ports` shares one connection (crate-internal)
+## Why per-request connections
 
-`resolve_ports` (`hkask_inference.rs:290`) connects to the bridge **once** and
-clones the single `InferenceIpcClient` into the three trait objects of
-`InferencePorts` (`hkask_inference.rs:277`, `pub(crate)`). It is a
-crate-internal convenience: external MCP server crates use the per-port
-resolvers (`resolve_inference_port`, `resolve_tool_dispatch_port`,
-`resolve_worktree_spawn_port`) because `InferencePorts` is `pub(crate)` and not
-nameable outside the crate. The `InferenceIpcClient` is
-`#[derive(Clone)]` (`inference_ipc_client.rs:173`); the clone shares the
-`Arc<Mutex<Option<UnixStream>>>` socket and the `Arc<AtomicU64>` id counter,
-so the three objects multiplex on one connection, serialized by the stream
-mutex. This avoids the three separate socket connections that calling
-`resolve_inference_port` + `resolve_tool_dispatch_port` +
-`resolve_worktree_spawn_port` independently would open. Servers that need
-only one port can still call the per-port resolver directly — which is what
-the real MCP servers do.
+The IPC client opens a **new connection per request**
+(`ipc_roundtrip`, `inference_ipc_client.rs:352`, connects at `:369`). The
+previous single-`Mutex<UnixStream>` design serialized all requests —
+parallel embedding of large corpora was impractical even with concurrent
+server-side tasks (module doc, `inference_ipc_client.rs:16-28`). Unix
+domain socket `connect()` is a kernel-level operation, so the per-request
+overhead is negligible against inference calls that take seconds. The
+client struct (`:295`) therefore holds only the socket path and a shared
+`AtomicU64` request-id counter — nothing to null or reconnect.
+
+## Why the read deadline tracks the server
+
+`ipc_read_timeout` (`inference_ipc_client.rs:147`) computes the client
+read deadline as the server's published establishment timeout
+(`HKASK_INFERENCE_TIMEOUT_SECS`) **plus 30 s grace**
+(`IPC_READ_TIMEOUT_GRACE`, `:117`). If the client gave up first, it would
+close its socket and the server's response write would hit `EPIPE` — a
+`BrokenPipe` warn storm with two contradictory timeouts for one slow
+inference. With alignment, a timed-out inference produces exactly one
+timeout: the server's. Malformed or zero values fall back to 600 s
+(`:127`) with a `tracing::warn!` naming the value — the `.rules`
+requirement for numeric env vars.
 
 ## Why prefix-based provider selection
 
 Provider selection is prefix-based: a caller chooses the provider by
-prefixing the model name (`OpenRouter/...`, `ollama/...`, `RunPod/...`).
-`ProviderId::parse_from_model` (`config.rs:59`) parses the prefix; an
-unprefixed name uses `default_provider` (OpenRouter by default). This keeps
-the provider choice explicit and auditable — a span that records the model
-name also records the provider. A configuration-based approach (where the
-provider is selected by a separate setting) would hide the provider from
-the model name, making audit harder.
-
-Unrecognized prefixes are not rejected — the model name is passed through to
-zed's `LanguageModelRegistry` (via the IPC bridge), which does the actual
-provider routing. `from_prefix_segment` (`config.rs:94`) classifies a model
-name's provider prefix segment for model-listing labels; it does not gate
-routing.
+prefixing the model name (`OpenRouter/...`, `ollama/...`, `RunPod/...`,
+`DeepInfra/...`). `ProviderId::parse_from_model` (`config.rs:59`) parses
+the prefix; an unprefixed name uses the default provider (OpenRouter by
+default, `config.rs:157`). The prefix keeps the provider choice explicit
+and auditable — a span that records the model name also records the
+provider. Unrecognized prefixes are not rejected here; the model string
+passes through to zed's `LanguageModelRegistry` (or, on the direct
+fallback, to `DIRECT_EMBEDDING_PROVIDERS` prefix matching,
+`hkask_inference.rs:371-375`), which does the actual routing.
+`from_prefix_segment` (`config.rs:94`) classifies a prefix segment for
+model-listing labels; it does not gate routing.
 
 ## IPC request-response sequence
 
@@ -166,49 +195,49 @@ routing.
 sequenceDiagram
     participant MCP as MCP server
     participant Client as InferenceIpcClient
-    participant Socket as Unix socket
+    participant Socket as Unix socket (fresh per request)
     participant Zed as zed LanguageModelRegistry
 
     MCP->>Client: generate_with_model(model, prompt, params)
     Client->>Client: next_id.fetch_add(1)
-    Client->>Socket: write InferenceRequest JSON + "\n"
+    Client->>Socket: connect + write InferenceRequest JSON + "\n"
     Socket->>Zed: dispatch to LanguageModelRegistry
     Zed-->>Socket: InferenceResponse JSON + "\n"
-    Socket-->>Client: read_response_line (capped 16 MiB, 120 s)
+    Socket-->>Client: read_response_line (capped 16 MiB, server timeout + 30s)
     Client->>Client: match response.id == request.id
     Client-->>MCP: Ok(InferenceResult) | Err(InferenceError)
-    Note over Client,Socket: On any read/parse/id failure: null cached stream, next call reconnects
+    Note over Client,Socket: Batch calls use a 6h+60s deadline; every outcome match is exhaustive
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-005
-verified_date: 2026-08-20
-verified_against: kask/crates/hkask-inference/src/inference_ipc_client.rs:218-300,67,76
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-inference/src/inference_ipc_client.rs:352-410 (ipc_roundtrip), :74 (MAX_IPC_LINE_BYTES), :117 (grace), :147 (ipc_read_timeout), :183 (batch timeout)
 status: VERIFIED
 -->
 
-The protocol is newline-delimited JSON over a Unix socket. Each request is a
-single line; each response is a single line. The `id` field correlates
-responses to requests. The client holds a single socket connection protected
-by a `Mutex` so only one request is in flight at a time. If the connection
-drops, the next call returns `InferenceError::Connection`; the caller can
-retry by constructing a new client. `MAX_IPC_LINE_BYTES` (16 MiB,
-`inference_ipc_client.rs:67`) caps unbounded `read_line` growth (CWE-400);
-`IPC_READ_TIMEOUT` (120 s, `inference_ipc_client.rs:76`) prevents the MCP
-server from blocking forever if zed hangs.
+The protocol is newline-delimited JSON over a Unix socket: one line per
+request, one per response, correlated by `id`. Transport failures (dead
+socket, malformed line, id mismatch) are `IpcTransportError`s
+(`inference_ipc_client.rs:233`) mapped to each method's error type;
+outcome classification stays at the call site with exhaustive matches
+(module doc, `:37-48`). `MAX_IPC_LINE_BYTES` (16 MiB, `:74`) caps
+unbounded `read_line` growth (CWE-400).
 
 ## See also
 
 - [hkask-inference Reference](./reference.md): class diagram and the full
   citation table.
 - [hkask-inference Tutorial](./tutorial.md): routing your first request.
-- [hkask-inference How-to](./how-to.md): wiring an MCP server to the bridge
-  and adding a chat provider.
-- [hkask-types Reference](../hkask-types/reference.md): the `InferencePort`,
-  `ToolDispatchPort`, and `WorktreeSpawnPort` traits the client implements.
+- [hkask-inference How-to](./how-to.md): wiring an MCP server to the
+  bridge and adding a chat provider.
+- [hkask-types Reference](../hkask-types/reference.md): the
+  `InferencePort`, `ToolDispatchPort`, and `WorktreeSpawnPort` traits
+  (`kask/crates/hkask-types/src/ports/inference_port.rs:147`, `:97`,
+  `:135`).
 
 ---
 
-[^hexagonal]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The port-trait boundary that lets the IPC-bridge client and the unavailable stubs be swapped at startup.
+[^hexagonal]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The port-trait boundary that lets the IPC-bridge client, the lazy fallbacks, and the unavailable stubs be swapped behind one trait object.
 
 [^cwe400]: MITRE. (n.d.). *CWE-400: Uncontrolled Resource Consumption.* <https://cwe.mitre.org/data/definitions/400.html>. The unbounded `read_line` growth that `MAX_IPC_LINE_BYTES` caps.

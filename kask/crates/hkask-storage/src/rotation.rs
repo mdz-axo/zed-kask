@@ -4,28 +4,36 @@
 //! # Why this exists
 //!
 //! SQLCipher encrypts a database file with a key derived from the passphrase
-//! and a salt file (`<db>.salt`). Changing the passphrase requires
-//! re-encrypting every page — there is no in-place "PRAGMA rekey" path that
-//! survives a crash mid-rotation. The safe approach is:
+//! (salt lives in the DB header under the native KDF). Changing the
+//! passphrase requires re-encrypting every page — there is no in-place
+//! "PRAGMA rekey" path that survives a crash mid-rotation. The safe approach
+//! is:
 //!
 //! 1. Open the source DB with the old passphrase (verifies it).
 //! 2. Attach a new DB file encrypted with the new passphrase.
 //! 3. Copy every table's schema + rows via `INSERT INTO ... SELECT *`.
 //! 4. Detach, close both connections, and atomically rename:
 //!    `<db>` → `<db>.old`, `<db>.new` → `<db>`, then delete `<db>.old`.
-//! 5. Replace the salt file with the new DB's salt.
 //!
-//! If any step fails, the original DB and salt are untouched — the caller
-//! continues using the old passphrase. The `.new` and `.old` artifacts are
-//! cleaned up on the failure path.
+//! If any step fails, the original DB is untouched — the caller continues
+//! using the old passphrase. The `.new` and `.old` artifacts are cleaned up
+//! on the failure path.
+//!
+//! # Legacy KDF migration
+//!
+//! [`migrate_legacy_kdf`] re-encrypts a DB created by the pre-native scheme
+//! (Argon2id over an external `.salt` file + raw-key PRAGMA) under the native
+//! passphrase KDF, using the same copy + atomic-rename choreography. It is
+//! triggered automatically by `Database::file_pool` when a `.salt` file is
+//! present, runs at most once per DB, and deletes the salt file on success.
+//! Once no `.salt` files remain in the wild, this function (and the Argon2
+//! dependency it carries) is dead code and can be deleted.
 //!
 //! # Atomicity
 //!
 //! The rename step uses `std::fs::rename`, which is atomic on POSIX for
 //! same-directory renames. The new DB is written to `<db>.new` (same directory
-//! as `<db>`) so the rename is same-directory. The salt file is renamed
-//! alongside: `<db>.salt` → `<db>.salt.old`, `<db>.new.salt` → `<db>.salt`,
-//! then `<db>.salt.old` is deleted.
+//! as `<db>`) so the rename is same-directory.
 //!
 //! # What is copied
 //!
@@ -76,9 +84,6 @@ pub enum RotationError {
         #[source]
         error: rusqlite::Error,
     },
-    /// The source DB has no salt file (corrupted or not a SQLCipher DB).
-    #[error("Source DB at {path} has no salt file — cannot rotate")]
-    MissingSalt { path: String },
 }
 
 /// Atomically re-encrypt a SQLCipher database under a new passphrase.
@@ -143,14 +148,11 @@ pub fn rotate_passphrase(
 
     let new_path = format!("{db_path}.new");
     let old_backup = format!("{db_path}.old");
-    let salt_path = format!("{db_path}.salt");
-    let new_salt_path = format!("{new_path}.salt");
-    let old_salt_backup = format!("{db_path}.salt.old");
 
     // Clean up any leftover .new/.old artifacts from a prior failed rotation.
     // These are safe to delete because a successful rotation deletes them.
-    cleanup_artifact(&new_path, &new_salt_path);
-    cleanup_artifact(&old_backup, &old_salt_backup);
+    cleanup_artifact(&new_path, &format!("{new_path}.salt"));
+    cleanup_artifact(&old_backup, &format!("{old_backup}.salt"));
 
     // 1. Open the source DB with the old passphrase. This verifies the
     //    passphrase and gives us a connection to read from.
@@ -177,23 +179,20 @@ pub fn rotate_passphrase(
             })?;
 
     // 2. Create the new DB file encrypted with the new passphrase.
-    //    `Database::open` creates the salt file and parent dirs.
+    //    `Database::open` creates parent dirs; the native KDF stores the
+    //    salt in the DB header, so there is no salt file to manage.
     tracing::info!(
         target: "reg.storage",
         path = %new_path,
         "Creating new DB with new passphrase"
     );
-    let new_db = Database::open(&new_path, new_passphrase).map_err(|e| {
-        // Clean up the new salt file if creation failed.
-        let _ = std::fs::remove_file(&new_salt_path);
-        RotationError::Filesystem {
+    let new_db =
+        Database::open(&new_path, new_passphrase).map_err(|e| RotationError::Filesystem {
             path: new_path.clone(),
             error: std::io::Error::other(format!("Failed to create new DB: {e}")),
-        }
-    })?;
+        })?;
     let new_pool = new_db.sqlite_pool().map_err(|e| {
         let _ = std::fs::remove_file(&new_path);
-        let _ = std::fs::remove_file(&new_salt_path);
         RotationError::Filesystem {
             path: new_path.clone(),
             error: std::io::Error::other(format!("Failed to open new DB pool: {e}")),
@@ -212,7 +211,6 @@ pub fn rotate_passphrase(
     if let Err(e) = result {
         // Clean up the new DB artifacts — the source is untouched.
         let _ = std::fs::remove_file(&new_path);
-        let _ = std::fs::remove_file(&new_salt_path);
         // Also clean up WAL/SHM files that SQLite may have created.
         let _ = std::fs::remove_file(format!("{new_path}-wal"));
         let _ = std::fs::remove_file(format!("{new_path}-shm"));

@@ -364,7 +364,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     let pipeline = DatasetPipeline::new(cache_dir);
 
     // Resolve the inference port before the sync server factory closure.
-    // This tries the IPC bridge to zed first, falling back to a MediaRouter.
+    // `resolve_inference_port` constructs a `LazyInferencePort` that tries the
+    // IPC bridge on each call, falling back to `DirectEmbeddingPort` for
+    // `generate`/`generate_with_model`/`embed` when the bridge is unavailable.
     let inference_port = hkask_inference::resolve_inference_port().await;
 
     hkask_mcp_server::run_server(

@@ -241,7 +241,7 @@ impl gpui::Render for MediaPanel {
         let conversation = self.steer.conversation().cloned();
         let director = div()
             .h_full()
-            .flex_2()
+            .flex_1()
             .min_w_96()
             .border_r_1()
             .border_color(cx.theme().colors().border_variant)
@@ -253,7 +253,7 @@ impl gpui::Render for MediaPanel {
             // operations through the scoped media MCP tools.
             .child(director)
             // The viewing pane: what the tools produced, structurally.
-            .child(div().h_full().flex_3().child(self.viewer.clone()))
+            .child(div().h_full().flex_1().child(self.viewer.clone()))
     }
 }
 

@@ -131,7 +131,22 @@ impl TrainingServer {
                                     .await
                                 {
                                     Ok(judge) => judge.text.trim().to_uppercase().contains("CORRECT"),
-                                    Err(_) => false,
+                                    Err(e) => {
+                                        // A judge failure is NOT a wrong answer —
+                                        // log it so the operator can distinguish
+                                        // "model answered wrong" from "judge LLM
+                                        // broken." Counting it as `errors` keeps
+                                        // the denominator honest (the example is
+                                        // neither correct nor confidently wrong).
+                                        tracing::warn!(
+                                            target: "hkask.training.evaluate",
+                                            example = i,
+                                            error = %e,
+                                            "Semantic judge inference failed — counting as error, not incorrect"
+                                        );
+                                        errors += 1;
+                                        false
+                                    }
                                 }
                             }
                             _ => generated == expected_trimmed,

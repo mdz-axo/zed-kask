@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-20
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "1.2.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -29,23 +29,24 @@ integration concern to one crate whose diff is reviewable as a unit.
 | Symbol | Location |
 |--------|----------|
 | Governing invariant | `kask/crates/kask_bridge/src/kask_bridge.rs:9-10` |
-| `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
-| `LanguageModelInferencePort` channel split | `kask/crates/kask_bridge/src/inference.rs:179-216` |
-| Skill execution (D1 seam) | `crates/agent/src/tools/skill_tool.rs:266` (`SkillTool::run`) |
-| `render_skill_envelope` | `crates/agent/src/agent.rs` (body injection) |
+| `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:122` |
+| `LanguageModelInferencePort` channel split | `kask/crates/kask_bridge/src/inference_chat.rs:190-232` |
+| Skill execution (D1 seam) | `crates/agent/src/tools/skill_tool.rs:167` (`SkillTool::run`) |
+| `render_skill_envelope` | `crates/agent/src/tools/skill_tool.rs:47` (call site `crates/agent/src/agent.rs:2294`) |
 | `lisp_eval` tool | `crates/agent/src/tools/lisp_eval_tool.rs` |
 | `render_template` tool | `crates/agent/src/tools/render_template_tool.rs` |
-| Template base path hook | `agent::set_template_base_path()` (OnceLock, wired in `main.rs`) |
-| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
-| `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:128-253` |
-| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1359-1361` |
-| `CuratorStore` self-healing | `kask/crates/kask_bridge/src/memory/curator_stores.rs:52-161` |
-| `curator_db_path` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29` |
-| `BUILT_IN_MCP_SERVERS` | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
-| `build_mcp_server_env` | `kask/crates/kask_bridge/src/mcp_servers.rs:514-559` |
-| `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:217-257` |
-| `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:717-1046` |
-| `HKASK_TRANSACTIONS_DIR` emission (D28) | `kask/crates/kask_bridge/src/settings.rs:804-816` |
+| Template base path hook | `agent::set_template_base_path()` at `crates/agent/src/agent.rs:4367` (wired at `crates/zed/src/main.rs:711`) |
+| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:74` |
+| `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:130` |
+| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1001` |
+| `CuratorStore` self-healing | `kask/crates/kask_bridge/src/memory/curator_stores.rs:52-61` |
+| `CuratorStore::try_heal` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:118` |
+| `curator_db_path` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:20` |
+| `BUILT_IN_MCP_SERVERS` (11 servers) | `kask/crates/kask_bridge/src/mcp_servers.rs:55-431` |
+| `build_mcp_server_env` | `kask/crates/kask_bridge/src/mcp_servers.rs:523-649` |
+| `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:92-125` |
+| `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:674-712` + `mcp_env.rs` (19 translators) |
+| `HKASK_TRANSACTIONS_DIR` emission (D28) | `kask/crates/kask_bridge/src/mcp_env.rs:127-138` |
 
 ## Why a single seam
 
@@ -107,8 +108,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-006
-verified_date: 2026-08-20
-verified_against: kask/crates/kask_bridge/src/kask_bridge.rs:9-10; kask/crates/kask_bridge/src/metacognition_bridge.rs:16-24; kask/crates/kask_bridge/src/identity.rs:217-257; kask/crates/kask_bridge/src/memory.rs:128-253,1359-1361; kask/crates/kask_bridge/src/context_injector.rs:168-204; kask/crates/kask_bridge/src/inference.rs:189-216; crates/agent/src/tools/skill_tool.rs:266; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25
+verified_date: 2026-08-28
+verified_against: kask/crates/kask_bridge/src/kask_bridge.rs:9-10; kask/crates/kask_bridge/src/metacognition_bridge.rs:16; kask/crates/kask_bridge/src/identity.rs:92-125; kask/crates/kask_bridge/src/memory.rs:130,1001; kask/crates/kask_bridge/src/context_injector.rs:142,164; kask/crates/kask_bridge/src/inference_chat.rs:190-232; crates/agent/src/tools/skill_tool.rs:167; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; kask/crates/kask_bridge/src/condenser_bridge.rs:22
 status: VERIFIED
 -->
 
@@ -121,11 +122,12 @@ configured" from "configured but broken."
 
 ## Why the inference adapter uses channels
 
-`LanguageModelInferencePort` (`inference.rs:179-182`) does not call
+`LanguageModelInferencePort` (`inference_chat.rs:190-192`) does not call
 `LanguageModel::stream_completion` directly from the trait method. Instead
-it sends an `InferenceRequest` over an mpsc channel to a task running on
-the GPUI foreground executor, which owns the `AsyncApp` and performs the
-streaming completion (`inference.rs:189-216`).
+it sends an `InferenceRequest` (`inference_chat.rs:34`) over an mpsc channel
+to a task running on the GPUI foreground executor, which owns the
+`AsyncApp` and performs the streaming completion
+(`inference_chat.rs:230-232`).
 
 The reason is a GPUI constraint: `AsyncApp` is not `Send` (the foreground
 executor holds `Rc`-based state). The hKask `InferencePort` trait methods are
@@ -142,10 +144,11 @@ executors meet, and channels are the only safe crossing.
 
 ## Why MCP server env has one canonical path
 
-`build_mcp_server_env` (`mcp_servers.rs:514-559`) is the single place that
-assembles a kask MCP server child-process env. It composes two filters in
-load-bearing order: config first, then credentials, then the inference
-socket last.
+`build_mcp_server_env` (`mcp_servers.rs:523-649`) is the single place that
+assembles a kask MCP server child-process env. It composes the filters in
+load-bearing order: config first, then credentials (with the
+startup-default passphrase tier), then the inference socket and inference
+timeout last.
 
 The order matters because the two filters apply to disjoint key sets.
 Config vars live in `BuiltinMcpServer::config_env`; credentials live in
@@ -159,7 +162,7 @@ in isolation, never the composed path (`mcp_servers.rs:11-22`).
 
 The single-path design makes the composition testable:
 `build_mcp_server_env_composition_respects_allowlists`
-(`mcp_servers.rs:1452-1510`) exercises the composed path and would catch
+(`mcp_servers.rs:1279-1343`) exercises the composed path and would catch
 either regression.
 
 ## Why the curator has a sovereign database
@@ -167,7 +170,7 @@ either regression.
 `RealMemoryPort` writes each completed turn to two databases: the user's
 `memory.db` (episodic, first-person) and the curator's `curator.db`
 (semantic, shared). The curator DB path is resolved by `curator_db_path`
-(`memory/curator_stores.rs:20-29`) to `agents/curator/curator.db` under the
+(`memory/curator_stores.rs:20`) to `agents/curator/curator.db` under the
 hKask data dir.
 
 The split exists for two reasons:
@@ -176,7 +179,7 @@ The split exists for two reasons:
    the curator's copy is shared. Storing them in separate SQLCipher
    databases lets each have its own encryption key and access policy. The
    `HMemOntology` blob on each h_mem distinguishes them, so no second store
-   struct is needed (`memory/curator_stores.rs:42-46`).
+   struct is needed (`memory/curator_stores.rs:44`).
 
 2. **Curator MCP server reads.** The curator MCP server's
    `curator_memory_recall` and `curator_semantic_search` tools read from
@@ -185,7 +188,7 @@ The split exists for two reasons:
    passphrase — a wider secret surface. The sovereign DB keeps the
    curator's reads scoped to its own passphrase.
 
-The `CuratorStore` handle (`memory/curator_stores.rs:52-161`) is
+The `CuratorStore` handle (`memory/curator_stores.rs:52-61`) is
 self-healing because the curator DB can be transiently unavailable at
 startup (locked by a previous MCP server instance, I/O error). When the
 initial open fails, the store is `None` and every access re-attempts the
@@ -193,14 +196,15 @@ open. A successful re-open restores curator memory mid-session without an
 app restart; persistent failure is signaled with a warn-once per healing
 attempt, never silently. This is the `.rules` "Advertised invariants need
 enforcement points" pattern — the self-healing claim points at
-`CuratorStore::try_heal` (`memory/curator_stores.rs:118-160`).
+`CuratorStore::try_heal` (`memory/curator_stores.rs:118`).
 
 ## Why skills execute via body injection
 
 Skill execution in zed-kask follows upstream Zed's body-injection model.
-`SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the
+`SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the
 `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it
-into the conversation via `render_skill_envelope`. The model reads the body
+into the conversation via `render_skill_envelope`
+(`crates/agent/src/tools/skill_tool.rs:47`). The model reads the body
 and follows the instructions. The bridge crate does not participate in
 skill execution.
 
@@ -215,10 +219,11 @@ SKILL.md bodies describe:
    renders Jinja2 templates from the kask registry (`kask/registry/templates/`)
    via `minijinja`. The agent calls it when a SKILL.md instructs it to get
    structured prompt scaffolding for a specific step. The template base path
-   is wired via `agent::set_template_base_path()` (OnceLock), called from
-   `main.rs` at startup (dev: `kask/registry/templates/`, prod:
+   is wired via `agent::set_template_base_path()` (OnceLock,
+   `crates/agent/src/agent.rs:4367`), called from `main.rs` at startup (dev:
+   `kask/registry/templates/`, prod:
    `{kask_data_dir}/skills/registry/templates/`). Registered in
-   `register_session` alongside `SkillTool`.
+   `add_default_tools` alongside `lisp_eval`.
 
 The bridge crate does not participate in skill execution — it has no skill
 executor module. The D1 seam lives entirely in the `agent` crate's tool
@@ -234,14 +239,14 @@ Per the `.rules` "Kask settings defaults" trap, `Default` impls are the
 single source of truth for kask settings defaults — not `#[serde(default)]`
 attributes, not `From<Content>` literals, not `mcp_env()` comparison
 literals. `From<Content>` reads from `Default` via `unwrap_or(default.field)`
-(e.g. `settings.rs:686-695` for `KaskToolRouterSettings`), and `mcp_env()`
-compares against `Default` to decide whether to emit a var
-(`settings.rs:755-760`).
+(e.g. `settings.rs:622-635` for `KaskToolRouterSettings`), and the
+`mcp_env()` translators in `mcp_env.rs` compare against `Default` to decide
+whether to emit a var.
 
 The trap is real: inlining magic numbers instead of comparing against
-`Default` is the drift class that silently disabled all 10 kask MCP servers
-when `KaskMcpSettings::default()` disagreed with the serde default. The
-`Default`-as-source rule means changing `Default` automatically updates
+`Default` is the drift class that once silently disabled every kask MCP
+server when `KaskMcpSettings::default()` disagreed with the serde default.
+The `Default`-as-source rule means changing `Default` automatically updates
 both the `From<Content>` path and the `mcp_env()` emission decision — there
 is one place to edit.
 
@@ -274,8 +279,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-007
-verified_date: 2026-08-13
-verified_against: kask/crates/kask_bridge/src/memory.rs:65-119; kask/crates/kask_bridge/src/memory/curator_stores.rs:97-160; kask/crates/kask_bridge/src/kask_bridge.rs:9-10
+verified_date: 2026-08-28
+verified_against: kask/crates/kask_bridge/src/memory.rs:74; kask/crates/kask_bridge/src/memory/curator_stores.rs:52-61,118; kask/crates/kask_bridge/src/kask_bridge.rs:9-10
 status: VERIFIED
 -->
 
@@ -292,17 +297,17 @@ to `Failed`.
 The D28 divergence surface touches this crate in four places:
 
 1. **Threads DB override hook** — `HKASK_CURATOR_DB` is read by
-   `curator_db_path` (`memory/curator_stores.rs:20-29`) to override the
+   `curator_db_path` (`memory/curator_stores.rs:20`) to override the
    curator DB location.
 2. **Skills dir override hook** — `HKASK_SKILLS_DIR` is emitted from
-   `mcp_env` when `swarm.skills_dir` is set (`settings.rs:953-958`) and
-   allowlisted for the swarm server (`mcp_servers.rs:332-337`). Retained for
+   `emit_swarm_env` when `swarm.skills_dir` is set (`mcp_env.rs:307`)
+   and allowlisted for the swarm server (`mcp_servers.rs:335`). Retained for
    settings UI compatibility; the swarm server no longer reads it (skill
    cascade cleanup removed the read site).
 3. **`HKASK_TRANSACTIONS_DIR` emission** — always emitted, default
    `mcp/portfolio/transactions/` under the kask data root
-   (`settings.rs:804-816`); allowlisted for the portfolio server
-   (`mcp_servers.rs:78`).
+   (`mcp_env.rs:127-138`); allowlisted for the portfolio server
+   (`mcp_servers.rs:72`).
 4. **MCP server DB paths under `mcp/{server_id}/`** — the transactions dir
    follows the `mcp/<server>/` convention; the curator DB lives at
    `agents/curator/curator.db` (renamed from the former `pod.db`).

@@ -685,8 +685,7 @@ impl CuratorServer {
     /// A full inference-grounded response (where the curator agent itself
     /// synthesizes) requires the in-process `CuratorAgentServer`, which
     /// lives in the zed process, not in this MCP server. That path is a
-    /// future enhancement (requires a new IPC method + recursion cap +
-    /// gas budget).
+    /// future enhancement (requires a new IPC method + recursion cap).
     #[tool(
         description = "Consult the curator's memory with a question. Returns perspective-scoped and entity-wide memory fragments matching the query by semantic similarity. Memory-grounded consultation, not a full curator agent turn."
     )]
@@ -756,10 +755,13 @@ impl CuratorServer {
                 // recall is unavailable, then fall back to the exact-entity
                 // lookup (which only matches when the query IS an entity).
                 Err(reason) => {
-                    result["entity_wide_fragments"] = json!({
-                        "status": "degraded",
-                        "note": format!("semantic recall unavailable — exact-entity fallback: {reason}"),
-                    });
+                    // Degradation, not a silent fallback — surface why semantic
+                    // recall is unavailable, then fall back to the exact-entity
+                    // lookup (which only matches when the query IS an entity).
+                    // The note is preserved alongside the fallback results so the
+                    // operator can distinguish "semantic recall broken" from
+                    // "no matching memories" — same pattern as
+                    // `curator_semantic_search` (L540-545).
                     match stores.memory() {
                         Ok(sem) => match sem.query_deduped(&req.query) {
                             Ok(h_mems) => {
@@ -777,6 +779,8 @@ impl CuratorServer {
                                     .collect();
                                 result["entity_wide_fragments"] = json!({
                                     "count": fragments.len(),
+                                    "mode": "entity_exact",
+                                    "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
                                     "h_mems": fragments,
                                 });
                             }
@@ -808,6 +812,8 @@ impl CuratorServer {
                                     .collect();
                                 result["perspective_scoped_fragments"] = json!({
                                     "count": fragments.len(),
+                                    "mode": "entity_exact",
+                                    "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
                                     "h_mems": fragments,
                                 });
                             }
@@ -1414,11 +1420,13 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
 }
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Resolve the inference port once, before entering the sync server-
-    // construction closure. `resolve_inference_port` is async (it connects to
-    // the zed IPC bridge); the closure passed to `run_server` is sync, so the
-    // await must happen here. Used by `curator_semantic_search` and
-    // `curator_consult` to embed recall queries.
+    // Construct the inference port before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it constructs
+    // a `LazyInferencePort` — the bridge connection itself is deferred to
+    // each `embed()` call, which re-tries `InferenceIpcClient::from_env()`);
+    // the closure passed to `run_server` is sync, so the await must happen
+    // here. Used by `curator_semantic_search` and `curator_consult` to embed
+    // recall queries.
     let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         SERVER_NAME,

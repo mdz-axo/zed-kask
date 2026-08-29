@@ -6,11 +6,12 @@ use hkask_services_core::ServiceError;
 
 /// Inference context for the corpus server.
 ///
-/// The `shared_port` is the IPC client that routes through zed's
-/// `LanguageModelRegistry`. When available, all generation calls go through
-/// it (with `model_override` for non-default models). The `inference_config`
-/// is kept only for model listing (which the IPC client returns empty for —
-/// model discovery needs the direct provider API).
+/// The `shared_port` is a `LazyInferencePort` (constructed by
+/// `resolve_inference_port`) that tries the IPC bridge on each call, falling
+/// back to `DirectEmbeddingPort` for `generate`/`embed` when the bridge is
+/// unavailable. The `default_model` is the operator-configured generation
+/// model (from `InferenceConfig::from_env`), passed to `generate_with_model`
+/// as the `model_override`.
 pub(crate) struct InferenceContext {
     pub shared_port: Option<Arc<dyn InferencePort>>,
     pub default_model: String,
@@ -40,10 +41,11 @@ impl InferenceService {
         tracing::info!(target: "hkask.inference_svc", operation = "resolve_port", model = %model, has_shared = ctx.shared_port.is_some(), "REG");
 
         if let Some(ref port) = ctx.shared_port {
-            // The shared port (InferenceIpcClient) routes through zed's
-            // LanguageModelRegistry. It supports `generate_with_model` with
-            // a `model_override`, so any model can be routed through zed's
-            // configured providers — no standalone MediaRouter fallback needed.
+            // The shared port (`LazyInferencePort`) tries the IPC bridge on
+            // each call, falling back to `DirectEmbeddingPort` for
+            // `generate`/`embed` when the bridge is unavailable. It supports
+            // `generate_with_model` with a `model_override`, so any model can
+            // be routed through zed's configured providers.
             return Ok(Arc::clone(port));
         }
 

@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — How-to: Add a Path Helper or Port Trait"
 audience: [developers]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-28
+version: "2.0.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [composition]
@@ -18,16 +18,19 @@ infrastructure backends and from zed's internal types.
 
 | Symbol | Location |
 |--------|----------|
-| `AGENTS_DIR` / `MCP_DIR` / `SKILLS_DIR` / `THREADS_DIR` constants | `kask/crates/hkask-types/src/agent_paths.rs:25,29,34,38` |
-| `resolve_data_dir` (single regulator) | `kask/crates/hkask-types/src/agent_paths.rs:62` |
-| `resolve_under_data_dir` (delegates to regulator) | `kask/crates/hkask-types/src/agent_paths.rs:98` |
-| `agent_db` (renamed from `agent_pod_db`) | `kask/crates/hkask-types/src/agent_paths.rs:146` |
-| `mcp_server_db` helper | `kask/crates/hkask-types/src/agent_paths.rs:113` |
-| `sanitize_name` (path-traversal guard) | `kask/crates/hkask-types/src/agent_paths.rs:180` |
-| `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:212` |
-| `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:113` |
-| `ports/mod.rs` re-export pattern | `kask/crates/hkask-types/src/ports/mod.rs:1` |
-| `pub use ports::*` crate-root re-export | `kask/crates/hkask-types/src/hkask_types.rs:66` |
+| `AGENTS_DIR` (pub(crate)) / `MCP_DIR` / `SKILLS_DIR` / `DEFAULT_DB_PATH` constants | `kask/crates/hkask-types/src/agent_paths.rs:31,35,39,44` |
+| `resolve_data_dir` (internal-data regulator) | `kask/crates/hkask-types/src/agent_paths.rs:63` |
+| `resolve_under_data_dir` (delegates to regulator) | `kask/crates/hkask-types/src/agent_paths.rs:99` |
+| `resolve_artifacts_dir` (user-artifacts regulator) | `kask/crates/hkask-types/src/agent_paths.rs:120` |
+| `resolve_under_artifacts_dir` | `kask/crates/hkask-types/src/agent_paths.rs:152` |
+| `agent_db` (renamed from `agent_pod_db`) | `kask/crates/hkask-types/src/agent_paths.rs:198` |
+| `mcp_server_db` / `mcp_server_subdir` helpers | `kask/crates/hkask-types/src/agent_paths.rs:167,182` |
+| `sanitize_name` (path-traversal guard) | `kask/crates/hkask-types/src/agent_paths.rs:209` |
+| Layout-pinning tests | `kask/crates/hkask-types/src/agent_paths.rs:241-313` |
+| `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:147` |
+| `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:111` |
+| `ports.rs` re-export pattern | `kask/crates/hkask-types/src/ports.rs:13-24` |
+| `pub use ports::*` crate-root re-export | `kask/crates/hkask-types/src/hkask_types.rs:60` |
 
 ## Procedure A: Add a path helper
 
@@ -35,32 +38,37 @@ infrastructure backends and from zed's internal types.
 flowchart TD
     A[Pick a class dir constant] --> B[Compose with sanitize_name]
     B --> C[Return relative PathBuf]
-    C --> D[Caller resolves via resolve_under_data_dir]
+    C --> D[Caller resolves via resolve_under_data_dir or resolve_under_artifacts_dir]
     D --> E[Add a test pinning the layout]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-002
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-types/src/agent_paths.rs:113,125,135,146,180; kask/crates/hkask-types/src/agent_paths.rs:258-407
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:157,167,182,198,209; kask/crates/hkask-types/src/agent_paths.rs:241-313
 status: VERIFIED
 -->
 
-### Step A1: Pick the class directory
+### Step A1: Pick the class directory and the root tree
 
-All persistent kask artifacts live under one of four class subdirs of
-`resolve_data_dir()`: `agents/`, `mcp/`, `skills/`, or `threads/`. Reuse the
-existing constants (`AGENTS_DIR`, `MCP_DIR`, `SKILLS_DIR`, `THREADS_DIR`)
+Every persistent kask artifact lives under a class subdir of **one of the two
+rooted trees** (`agent_paths.rs:12-26`): internal app data under
+`resolve_data_dir()` (`agents/`, `mcp/`, `skills/`, `threads/`) or
+user-facing artifacts under `resolve_artifacts_dir()`
+(`companies-mcp/reports/`, `companies-mcp/screens/`). Reuse the existing
+constants (`MCP_DIR` at `agent_paths.rs:35`, `SKILLS_DIR` at
+`agent_paths.rs:39`; `AGENTS_DIR` at `agent_paths.rs:31` is `pub(crate)`)
 rather than introducing a new top-level directory — a new class dir is an
 architecture decision, not a helper addition.
 
 ### Step A2: Compose with sanitize_name
 
 Every user-controlled segment of the path MUST pass through `sanitize_name`
-(`agent_paths.rs:180`). This replaces filesystem-hostile characters with
-hyphens, collapses consecutive dashes, and substitutes `"unnamed"` for names
-that sanitize to `.` or `..`. Skipping this step opens a path-traversal
-escape. Follow the shape of `mcp_server_db` (`agent_paths.rs:113`):
+(`agent_paths.rs:209`). This replaces filesystem-hostile characters with
+hyphens, collapses consecutive dashes, trims leading/trailing dashes, and
+substitutes `"unnamed"` for names that sanitize to `.` or `..`. Skipping
+this step opens a path-traversal escape. Follow the shape of
+`mcp_server_db` (`agent_paths.rs:167`):
 
 ```rust
 pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
@@ -73,25 +81,29 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 ### Step A3: Return a relative PathBuf
 
 Path helpers return a *relative* path. The caller resolves it against the
-data dir via `resolve_under_data_dir` (`agent_paths.rs:98`), which delegates
-to `resolve_data_dir` so the `HKASK_DATA_DIR` / XDG / HOME fallback chain has
-exactly one regulator. Do not call `resolve_data_dir` inside the helper —
-that splits responsibilities and re-introduces the F4 divergence the single
-regulator was introduced to fix.
+appropriate root via `resolve_under_data_dir` (`agent_paths.rs:99`) or
+`resolve_under_artifacts_dir` (`agent_paths.rs:152`), each of which delegates
+to its single regulator so the env-var fallback chains cannot diverge. Do
+not call `resolve_data_dir` or `resolve_artifacts_dir` inside the helper —
+that splits responsibilities and re-introduces the F4 divergence the
+single-regulator design was introduced to fix (the F4 history is recorded
+at `agent_paths.rs:58-61,93-97`).
 
 ### Step A4: Add a test pinning the layout
 
-Add a test in the `tests` module of `agent_paths.rs` (the existing tests run
-from `agent_paths.rs:213` onward). Assert the helper produces the expected
+Add a test in the `tests` module of `agent_paths.rs` (existing tests run from
+`agent_paths.rs:241` onward). Assert the helper produces the expected
 component count, lives under the right class dir, and sanitizes a hostile
-name. The `mcp_server_db_sanitizes_server_id` test
-(`agent_paths.rs:374-388`) is the template.
+name. The `mcp_server_db_follows_mcp_class_layout` test
+(`agent_paths.rs:260-269`) and
+`all_layout_helpers_resolve_under_one_root` (`agent_paths.rs:281-293`) are
+the templates.
 
 ## Procedure B: Add a port trait
 
 ```mermaid
 flowchart TD
-    A[Create trait file in ports/] --> B[Re-export from ports/mod.rs]
+    A[Create trait file in ports/] --> B[Re-export from ports.rs]
     B --> C[Re-export from hkask_types.rs]
     C --> D[Implement in downstream crate]
     D --> E[Wire in composition root]
@@ -100,8 +112,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-003
-verified_date: 2026-08-13
-verified_against: kask/crates/hkask-types/src/ports/mod.rs:1; kask/crates/hkask-types/src/ports/inference_port.rs:212; kask/crates/hkask-types/src/ports/memory_port.rs:113; kask/crates/hkask-types/src/hkask_types.rs:66
+verified_date: 2026-08-28
+verified_against: kask/crates/hkask-types/src/ports.rs:7-24; kask/crates/hkask-types/src/ports/inference_port.rs:147,386; kask/crates/hkask-types/src/ports/memory_port.rs:111; kask/crates/hkask-types/src/hkask_types.rs:60
 status: VERIFIED
 -->
 
@@ -109,31 +121,31 @@ status: VERIFIED
 
 Create `kask/crates/hkask-types/src/ports/<name>_port.rs`. Define a
 `Send + Sync` trait. Use `Pin<Box<dyn Future + Send + 'a>>` for async return
-types — do not use `async_trait`; the `InferencePort` trait-level comment at
-`inference_port.rs:65` explains the object-safety rationale. If the return
-type grows complex, extract a named future alias like `EmbedFuture`
-(`inference_port.rs:19`) to stay under clippy's `type_complexity` threshold.
+types — do not use `async_trait`; the named-alias pattern
+(`EmbedFuture` at `inference_port.rs:17`, `MediaFuture` at
+`inference_port.rs:24`) keeps the trait object-safe without a macro
+dependency and stays under clippy's `type_complexity` threshold.
 
-### Step B2: Re-export from ports/mod.rs
+### Step B2: Re-export from ports.rs
 
-Add `pub mod <name>_port;` and `pub use <name>_port::*;` to
-`kask/crates/hkask-types/src/ports/mod.rs`. Group the re-export with the
-existing cluster re-exports.
+Add `pub mod <name>_port;` and a `pub use <name>_port::{...};` line to
+`kask/crates/hkask-types/src/ports.rs`, following the existing cluster
+re-exports at `ports.rs:13-24`.
 
 ### Step B3: Re-export from crate root
 
-The `pub use ports::*;` at `hkask_types.rs:66` automatically re-exports the
-new trait. If the trait has companion types used by ≥3 downstream crates, add
-an explicit re-export in the "Essential re-exports" block
-(`hkask_types.rs:41-65`) following the existing pattern.
+The `pub use ports::*;` at `hkask_types.rs:60` automatically re-exports the
+new trait. If the trait has companion types used by ≥3 downstream crates,
+add an explicit re-export in the "Essential re-exports" block
+(`hkask_types.rs:40-58`) following the existing pattern.
 
 ### Step B4: Implement in a downstream crate
 
 Create an adapter struct in `kask_bridge`, `hkask-storage`, or
 `hkask-regulation` that implements the trait against a concrete backend. If
-the trait is object-safe and callers will hold a shared handle, add a blanket
-impl for `Arc<dyn Trait>` following the `InferencePort for Arc<dyn
-InferencePort>` pattern at `inference_port.rs:441`.
+the trait is object-safe and callers will hold a shared handle, add a
+blanket impl for `Arc<dyn Trait>` following the `InferencePort for
+Arc<dyn InferencePort>` pattern at `inference_port.rs:386`.
 
 ### Step B5: Wire in the composition root
 
@@ -147,7 +159,7 @@ hook is re-settable and does not need it.
 Add a test in the new trait file asserting the trait is object-safe
 (`fn assert_obj_safe(_: &dyn MyPort) {}`) and that the blanket `Arc` impl
 delegates correctly. The `InferencePort for Arc<dyn InferencePort>` impl at
-`inference_port.rs:441-534` is the reference shape.
+`inference_port.rs:386` is the reference shape.
 
 ## See also
 

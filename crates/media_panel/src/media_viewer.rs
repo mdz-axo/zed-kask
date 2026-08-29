@@ -155,6 +155,7 @@ impl MediaViewer {
         let content = renderer(&body, window, &mut *cx)
             .map(|element| {
                 div()
+                    .id("media-viewer-content")
                     .flex_1()
                     .overflow_y_scroll()
                     .p_3()
@@ -230,6 +231,7 @@ impl MediaViewer {
             })
             .collect::<Vec<_>>();
         v_flex()
+            .id("media-viewer-library")
             .flex_1()
             .overflow_y_scroll()
             .gap_0p5()

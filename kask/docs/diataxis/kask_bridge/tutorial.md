@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Tutorial: Tracing a Turn Through the Bridge"
 audience: [developers new to zed-kask, agents onboarding to the integration seam]
-last_updated: 2026-08-20
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "1.2.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [lifecycle]
@@ -27,16 +27,16 @@ crate that depends on both sides (`kask/crates/kask_bridge/src/kask_bridge.rs:9-
 | Symbol | Location |
 |--------|----------|
 | Crate-level invariant | `kask/crates/kask_bridge/src/kask_bridge.rs:3-10` |
-| `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
-| `should_recall` gate | `kask/crates/kask_bridge/src/context_injector.rs:110-115` |
-| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:179-182` |
-| `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:459-654` |
-| `SkillTool::run` (D1 — body injection) | `crates/agent/src/tools/skill_tool.rs:266` |
-| `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22-25` |
-| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
-| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1359-1361` |
-| `MemoryPort` impl | `kask/crates/kask_bridge/src/memory.rs:628-956` |
-| `curator_db_path` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29` |
+| `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:122` |
+| `should_recall` gate | `kask/crates/kask_bridge/src/context_injector.rs:85` |
+| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference_chat.rs:190` |
+| `InferencePort` impl | `kask/crates/kask_bridge/src/inference_chat.rs:669` |
+| `SkillTool::run` (D1 — body injection) | `crates/agent/src/tools/skill_tool.rs:167` |
+| `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
+| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:74` |
+| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1001` |
+| `MemoryPort` impl | `kask/crates/kask_bridge/src/memory.rs:454` |
+| `curator_db_path` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:20` |
 
 ## Learning path
 
@@ -59,8 +59,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-001
-verified_date: 2026-08-20
-verified_against: kask/crates/kask_bridge/src/context_injector.rs:144-160; kask/crates/kask_bridge/src/inference.rs:179-182; crates/agent/src/tools/skill_tool.rs:266; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25; kask/crates/kask_bridge/src/memory.rs:65-119,1359-1361
+verified_date: 2026-08-28
+verified_against: kask/crates/kask_bridge/src/context_injector.rs:122; kask/crates/kask_bridge/src/inference_chat.rs:190; crates/agent/src/tools/skill_tool.rs:167; kask/crates/kask_bridge/src/condenser_bridge.rs:22; kask/crates/kask_bridge/src/memory.rs:74,1001
 status: VERIFIED
 -->
 
@@ -68,57 +68,60 @@ status: VERIFIED
 
 When the agent crate receives a `UserPrompt` intent, it calls the
 `ContextInjector` hook. The bridge's implementation is `BridgeContextInjector`
-(`context_injector.rs:144-160`), which delegates to an `hkask_types::MemoryPort`.
+(`context_injector.rs:122`), which delegates to an `hkask_types::MemoryPort`.
 
 Before any SQL or HTTP fires, the injector applies a zero-cost prompt-length
 gate: prompts shorter than 20 characters or 3 words skip recall entirely
-(`context_injector.rs:110-115`). This avoids an embedding HTTP call for short
+(`context_injector.rs:85`). This avoids an embedding HTTP call for short
 code-focused prompts like "run the tests."
 
 When recall does fire, the injector calls `memory_port.recall_context`
 (prompt-salient, embedding similarity) and `memory_port.recall_thread`
-(thread-scoped, entity match), filters each by its confidence threshold,
+(thread-scoped, entity match) — the two-path contract is documented at
+`context_injector.rs:6-8` — filters each by its confidence threshold,
 and wraps each snippet in an explicit data boundary
-(`MEMORY_CONTEXT_OPEN` … `MEMORY_CONTEXT_CLOSE`, `context_injector.rs:42-46`)
+(`MEMORY_CONTEXT_OPEN` … `MEMORY_CONTEXT_CLOSE`, `context_injector.rs:56-60`)
 so the model treats recalled memory as data, not as instructions. Both recall
 paths are fresh every turn — no session-lifetime snapshot. The kask tool-use
 warnings are baked into the `system_prompt.hbs` template as an unconditional
 `## Tool failure-mode warnings (kask)` section.
 
-A second constructor, `new_curator` (`context_injector.rs:191-204`), produces
+A second constructor, `new_curator` (`context_injector.rs:164`), produces
 an injector that recalls from the curator's sovereign `curator.db` instead of
 the user's `memory.db` — same logic, different perspective-scoped store.
 
 ## Step 2 — Inference
 
 The agent crate needs an `InferencePort`. The bridge provides
-`LanguageModelInferencePort` (`inference.rs:179-182`), which wraps zed's
+`LanguageModelInferencePort` (`inference_chat.rs:190`), which wraps zed's
 `LanguageModel` trait.
 
-The adapter holds only channel senders (`Send + Sync`); the actual inference
-call happens on the GPUI foreground executor via a spawned task that owns the
-`AsyncApp` (`inference.rs:189-216`). This split is forced by GPUI:
+The adapter holds only channel senders (`Send + Sync`,
+`inference_chat.rs:190-192`); the actual inference call happens on the GPUI
+foreground executor via a spawned task that owns the `AsyncApp`
+(`inference_chat.rs:230-232`). This split is forced by GPUI:
 `AsyncApp` is not `Send` (the foreground executor holds `Rc`-based state), so
 the tokio-side trait method cannot call `stream_completion` directly. Instead
-it sends an `InferenceRequest` (`inference.rs:33-42`) over an mpsc channel and
+it sends an `InferenceRequest` (`inference_chat.rs:34`) over an mpsc channel and
 awaits a oneshot reply.
 
 Two paths exist: non-streaming (`generate`) collects the stream into a single
 `InferenceResult`; streaming (`generate_stream`) forwards
 `InferenceStreamChunk`s as they arrive for live thinking traces in the skill
-cascade. A `model_override` field on each request lets the caller route to a
-specific provider-prefixed model via `LanguageModelRegistry` resolution
-(`inference.rs:219-253`).
+cascade. A `model_override` field on each request (`inference_chat.rs:41, 49`)
+lets the caller route to a specific provider-prefixed model via
+`LanguageModelRegistry` resolution — an unresolvable override is logged, not
+silently dropped (`inference_chat.rs:354-355`).
 
 ## Step 3 — Skill body injection and tool calls
 
 If the user activates a skill, the agent crate's `SkillTool` follows
 upstream Zed's body-injection model. `SkillTool::run`
-(`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from
+(`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from
 disk via `agent_skills::read_skill_body` and injects it into the
-conversation via `render_skill_envelope` (`crates/agent/src/agent.rs`). The
-model reads the body and follows the instructions. The bridge does not
-participate in this path.
+conversation via `render_skill_envelope`
+(`crates/agent/src/tools/skill_tool.rs:47`). The model reads the body and
+follows the instructions. The bridge does not participate in this path.
 
 Two companion built-in agent tools support the model-coordinated PDCA loops
 the SKILL.md bodies describe:
@@ -131,47 +134,48 @@ the SKILL.md bodies describe:
   renders Jinja2 templates from `kask/registry/templates/` via `minijinja`.
   The agent calls it when a SKILL.md instructs structured prompt scaffolding
   for a specific step. Template base path wired via
-  `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.
-  Registered in `register_session` alongside `SkillTool`.
+  `agent::set_template_base_path()` (OnceLock, `crates/agent/src/agent.rs:4367`)
+  in `main.rs` at startup (`crates/zed/src/main.rs:711`). Registered in
+  `add_default_tools` alongside `lisp_eval`.
 
 For tool execution during skill iteration (and during ordinary agent turns),
 the composition root passes `McpRuntime` directly as the `ToolPort`. There is
-no adapter struct — the runtime already implements the trait. The 10 built-in
+no adapter struct — the runtime already implements the trait. The 11 built-in
 MCP servers are registered in `BUILT_IN_MCP_SERVERS`
-(`mcp_servers.rs:53-394`), and each server's child-process env is assembled by
-the single canonical path `build_mcp_server_env` (`mcp_servers.rs:514-559`).
+(`mcp_servers.rs:55-431`), and each server's child-process env is assembled by
+the single canonical path `build_mcp_server_env` (`mcp_servers.rs:523-649`).
 
 ## Step 4 — Condensation
 
 Before a tool result enters the message history, the agent crate calls the
 `ThreadCondenser` hook. The bridge's implementation is
-`BridgeThreadCondenser` (`condenser_bridge.rs:22-25`), which wraps
+`BridgeThreadCondenser` (`condenser_bridge.rs:22`), which wraps
 `hkask_condenser::CondenserEngine`.
 
 If `auto_compress_tool_results` is false (the default,
-`settings.rs:355-364`), the condenser returns the output verbatim. Otherwise
-it calls `CondenserEngine::compress(tool_name, output, None)` using the
+`settings.rs:275-283`), the condenser returns the output verbatim
+(`condenser_bridge.rs:46`). Otherwise it calls the engine using the
 configured profile (`heavy`, `normal`, `soft`, or `light`). The engine is
 behind a `Mutex`; if the lock is poisoned the condenser logs a warn and
-returns the uncompressed output rather than panicking
-(`condenser_bridge.rs:50-60`).
+returns the uncompressed output rather than panicking.
 
 ## Step 5 — Memory ingest
 
 When the turn completes, the agent crate calls the `ThreadMemoryPort` hook.
-The bridge's implementation is `BridgeMemoryPort` (`memory.rs:1359-1361`),
-a thin wrapper over `RealMemoryPort` (`memory.rs:65-119`) that adapts the
+The bridge's implementation is `BridgeMemoryPort` (`memory.rs:1001`),
+a thin wrapper over `RealMemoryPort` (`memory.rs:74`) that adapts the
 agent crate's `ThreadMemoryPort` trait to the hKask `MemoryPort` trait.
 
-`RealMemoryPort::new` (`memory.rs:128-253`) opens a SQLCipher database at the
+`RealMemoryPort::new` (`memory.rs:130`) opens a SQLCipher database at the
 provisioned `memory.db` path, creates unified `HMemStore` + `EmbeddingStore`
 instances, and wires a regulation archive so every `store()` persists a
-`reg.memory.encode` span. It also opens the curator's sovereign
-`curator.db` behind a self-healing handle (`CuratorStore`,
-`memory/curator_stores.rs:52-161`): if the initial open fails, every access
-re-attempts it, and a successful re-open restores curator memory mid-session.
+`reg.memory.encode` span (`memory.rs:333-346`). It also opens the curator's
+sovereign `curator.db` behind a self-healing handle (`CuratorStore`,
+`memory/curator_stores.rs:52`): if the initial open fails, every access
+re-attempts it via `try_heal` (`memory/curator_stores.rs:118`), and a
+successful re-open restores curator memory mid-session.
 
-The `MemoryPort` impl (`memory.rs:628-956`) stores each completed turn as:
+The `MemoryPort` impl (`memory.rs:454`) stores each completed turn as:
 1. an episodic h_mem (Private, perspective = user WebID) in the user's
    `memory.db`;
 2. a semantic h_mem (Shared) in the curator's `curator.db` — the same DB the
@@ -180,7 +184,7 @@ The `MemoryPort` impl (`memory.rs:628-956`) stores each completed turn as:
 3. an embedding of the user prompt for future semantic retrieval.
 
 The curator DB path is resolved by `curator_db_path`
-(`memory/curator_stores.rs:20-29`): `HKASK_CURATOR_DB` if set, else
+(`memory/curator_stores.rs:20`): `HKASK_CURATOR_DB` if set, else
 `agent_db("curator")` resolved under the hKask data dir — which yields
 `agents/curator/curator.db`.
 

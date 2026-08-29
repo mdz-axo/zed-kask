@@ -1,19 +1,23 @@
 //! Database connection with SQLCipher encryption.
 //!
-//! Uses SQLCipher with AES-256-CBC encryption. Passphrases are derived
-//! using Argon2id to produce 256-bit encryption keys.
+//! Uses SQLCipher's native passphrase KDF: `PRAGMA key = '<passphrase>'`
+//! derives the page key via PBKDF2 inside SQLCipher, and the salt lives in
+//! the DB file header — no external key material, no custom KDF. Databases
+//! created by the pre-native scheme (Argon2id + external `.salt` file) are
+//! re-encrypted in place on first open by `rotation::migrate_legacy_kdf`;
+//! once no `.salt` files remain, that migration path is dead code and can
+//! be deleted.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Database::open(path, passphrase)  →  writes salt file, no SQLite connection
+//! Database::open(path, passphrase)  →  validates passphrase, no SQLite connection
 //! Database::connect()               →  creates r2d2 pool with encryption + WAL + schema
 //! ```rust,no_run
 //!
 //! `open()` handles file infrastructure. `connect()` handles everything
 //! SQLite-related. One path for each. No dual-path bugs.
 
-use hkask_keystore::derive_key;
 use thiserror::Error;
 
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
@@ -90,11 +94,6 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
-    /// DB file exists but its salt file is missing. The DB is permanently
-    /// unopenable without its original salt — no passphrase can recover it.
-    /// Remediable: `open_or_repair` deletes the orphaned DB and recreates.
-    #[error("DB file exists at {db_path} but salt file is missing at {salt_path}")]
-    SaltMissing { db_path: String, salt_path: String },
 }
 
 /// Database handle — path, passphrase, and whether it's a new file.
@@ -115,10 +114,11 @@ pub struct Database {
 }
 
 impl Database {
-    /// Open a database at `path`, creating the salt file if new.
+    /// Open a database at `path`, creating parent directories if needed.
     ///
-    /// Validates the passphrase. Creates parent directories. Does NOT
-    /// open a SQLite connection — call `connect()` for that.
+    /// Validates the passphrase. Does NOT open a SQLite connection — call
+    /// `sqlite_pool()` for that. Creates no external key material: with the
+    /// native SQLCipher KDF the salt lives in the DB file header.
     fn open_impl(
         path: &str,
         passphrase: &str,
@@ -145,41 +145,10 @@ impl Database {
             })?;
         }
 
-        let salt_path = format!("{}.salt", path);
-        let salt_existed = if std::path::Path::new(&salt_path).exists() {
-            let salt_bytes = std::fs::read(&salt_path).map_err(|e| {
-                DatabaseError::SqlCipher(format!("Failed to read salt file: {}", e))
-            })?;
-            if salt_bytes.len() != SQLCIPHER_SALT_SIZE {
-                return Err(DatabaseError::SqlCipher(
-                    "Invalid salt file size".to_string(),
-                ));
-            }
-            true
-        } else if std::path::Path::new(path).exists() {
-            // The DB file exists but its salt file is missing. The DB was
-            // encrypted with the original salt — generating a new salt would
-            // create a permanent key mismatch that makes the DB unopenable
-            // and that self-healing cannot fix (each heal regenerates another
-            // mismatched salt). Return a typed `SaltMissing` error so
-            // `open_or_repair` can match on the variant (not a string) and
-            // delete the orphaned DB to start fresh.
-            return Err(DatabaseError::SaltMissing {
-                db_path: path.to_string(),
-                salt_path,
-            });
-        } else {
-            let salt = generate_salt();
-            std::fs::write(&salt_path, salt)
-                .map_err(|e| DatabaseError::SqlCipher(format!("Failed to write salt: {}", e)))?;
-            false
-        };
-
         tracing::info!(
             target: "reg.storage",
             operation = "open",
             path = %path,
-            is_new = !salt_existed,
             "Database opened"
         );
 
@@ -334,20 +303,24 @@ impl Database {
     }
 
     fn file_pool(&self) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
+        // A `.salt` file marks a DB encrypted by the pre-native scheme
+        // (Argon2id over the external salt + raw-key PRAGMA). Re-encrypt it
+        // in place under the native passphrase KDF before opening — the
+        // migration deletes the salt file, so it runs at most once per DB
+        // and is a no-op for every DB created after the switch.
         let salt_path = format!("{}.salt", self.path);
-        let salt_bytes = std::fs::read(&salt_path)
-            .map_err(|e| DatabaseError::SqlCipher(format!("Failed to read salt file: {}", e)))?;
-        if salt_bytes.len() != SQLCIPHER_SALT_SIZE {
-            return Err(DatabaseError::SqlCipher(
-                "Invalid salt file size".to_string(),
-            ));
+        if std::path::Path::new(&salt_path).exists() {
+            crate::rotation::migrate_legacy_kdf(&self.path, &self.passphrase, &salt_path).map_err(
+                |e| DatabaseError::SqlCipher(format!("legacy KDF migration failed: {e}")),
+            )?;
         }
-        let mut salt = [0u8; SQLCIPHER_SALT_SIZE];
-        salt.copy_from_slice(&salt_bytes);
 
-        let key = derive_key(&self.passphrase, &salt)
-            .map_err(|e| DatabaseError::KeyDerivation(e.to_string()))?;
-        let key_hex = hex::encode(*key);
+        // SQLCipher native passphrase KDF. The passphrase is passed as a
+        // SQL string literal (single quotes doubled) — SQLCipher derives
+        // the page key via PBKDF2 internally and stores the salt in the DB
+        // header. No external key material exists to lose.
+        let escaped = self.passphrase.replace('\'', "''");
+        let key_pragma = format!("PRAGMA key = '{escaped}';");
 
         // Verify the passphrase with a standalone connection BEFORE creating
         // the pool. A wrong key leaves SQLCipher's native codec in a corrupted
@@ -357,8 +330,7 @@ impl Database {
         {
             let probe = rusqlite::Connection::open(&self.path)
                 .map_err(|e| DatabaseError::SqlCipher(format!("probe open: {e}")))?;
-            probe.execute_batch("PRAGMA cipher_plaintext_header_size = 32;")?;
-            probe.execute_batch(&format!("PRAGMA key = 'x\"{}\"';", key_hex))?;
+            probe.execute_batch(&key_pragma)?;
             probe
                 .query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
                 .map_err(|_| DatabaseError::PassphraseMismatch(self.path.clone()))?;
@@ -367,18 +339,9 @@ impl Database {
         let path = self.path.clone();
 
         let manager = r2d2_sqlite::SqliteConnectionManager::file(&path).with_init(move |conn| {
-            // Load sqlite-vec per-connection (before PRAGMA key). The extension
-            // only registers its virtual-table module here; it touches no DB
-            // pages, so loading before decryption is safe and matches the
-            // prior auto-extension timing. Must precede schema init (vec0).
+            // Load sqlite-vec per-connection (before schema init — vec0).
             init_sqlite_vec_on(conn)?;
-            // cipher_plaintext_header_size MUST be set on EVERY connection to a
-            // database created with it, not only on first creation. SQLCipher
-            // reads the salt location from this pragma; omitting it on reopen
-            // makes the codec misparse page 1. This MUST run before PRAGMA key
-            // because PRAGMA key triggers encryption of page 1.
-            conn.execute_batch("PRAGMA cipher_plaintext_header_size = 32;")?;
-            conn.execute_batch(&format!("PRAGMA key = 'x\"{}\"';", key_hex))?;
+            conn.execute_batch(&key_pragma)?;
             // Standard WAL PRAGMAs — busy_timeout MUST precede journal_mode = WAL
             // (see super::database::init_wal_pragmas for rationale).
             conn.execute_batch(crate::database::WAL_PRAGMA_BATCH)?;
@@ -453,245 +416,147 @@ impl Drop for Database {
 /// \[P1\] Motivating: User Sovereignty — user data remains under the user's control.
 /// pre: `path` identifies a SQLCipher database and `passphrase` is non-empty.
 /// post: returns an opened database only when the passphrase verifies.
-/// inv: never deletes or modifies the database or its salt file.
+/// inv: never deletes or modifies the database.
 /// \[P4\] Constraining: Clear Boundaries — recovery is an explicit operation, not an implicit side effect.
 ///
-/// The one exception to the "never deletes" invariant: when the DB file
-/// exists but its salt file is missing (`SaltMissing`), the DB is permanently
-/// unopenable — no passphrase can decrypt it without its original salt. In
-/// this case the function deletes the orphaned DB and its WAL/SHM files,
-/// then creates a fresh database. This is the "repair" the function name
-/// promises. A wrong passphrase does NOT trigger this path — it returns
-/// `PassphraseMismatch`, preserving the DB for manual recovery.
+/// With the native SQLCipher KDF there is no external key material to lose,
+/// so there is nothing to "repair": a wrong passphrase returns
+/// `PassphraseMismatch` (the DB is preserved for manual recovery) and a
+/// corrupt file returns `Corrupted`. A DB from the pre-native scheme
+/// (marked by a `.salt` file) is re-encrypted in place by
+/// `rotation::migrate_legacy_kdf` during pool creation — data-preserving,
+/// never destructive.
 pub fn open_or_repair(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
-    match Database::open(path, passphrase) {
-        Ok(db) => {
-            db.sqlite_pool()?;
-            Ok(db)
-        }
-        Err(DatabaseError::SaltMissing { db_path, salt_path }) => {
-            tracing::warn!(
-                target: "reg.storage",
-                db_path = %db_path,
-                salt_path = %salt_path,
-                "DB file exists but salt is missing — deleting orphaned DB and creating fresh"
-            );
-            // Log cleanup errors — a failed delete shouldn't abort the repair
-            // (the subsequent open will produce the real error), but the
-            // operator must see it to distinguish "couldn't delete" from
-            // "couldn't open." `let _ =` would silently swallow per .rules.
-            if let Err(e) = std::fs::remove_file(&db_path) {
-                tracing::warn!(
-                    target: "reg.storage",
-                    error = %e,
-                    path = %db_path,
-                    "Failed to delete orphaned DB file during repair"
-                );
-            }
-            if let Err(e) = std::fs::remove_file(format!("{db_path}-wal")) {
-                tracing::warn!(
-                    target: "reg.storage",
-                    error = %e,
-                    path = format!("{db_path}-wal"),
-                    "Failed to delete orphaned WAL file during repair"
-                );
-            }
-            if let Err(e) = std::fs::remove_file(format!("{db_path}-shm")) {
-                tracing::warn!(
-                    target: "reg.storage",
-                    error = %e,
-                    path = format!("{db_path}-shm"),
-                    "Failed to delete orphaned SHM file during repair"
-                );
-            }
-            let db = Database::open(path, passphrase)?;
-            db.sqlite_pool()?;
-            Ok(db)
-        }
-        Err(e) => Err(e),
-    }
+    let db = Database::open(path, passphrase)?;
+    db.sqlite_pool()?;
+    Ok(db)
 }
 
 pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
     if path == ":memory:" {
         Database::in_memory()
     } else {
-        // Route file paths through `open_or_repair` so all production callers
-        // get the self-healing repair contract — a missing salt file deletes
-        // the orphaned DB and recreates instead of permanently breaking.
-        // `Database::open` remains the explicit no-repair path for callers
-        // that want manual control (rotation, tests).
+        // All production file paths go through `open_or_repair` — which, with
+        // the native KDF, is open + pool creation (plus the one-time legacy
+        // KDF migration for pre-native DBs, triggered inside `file_pool`).
         open_or_repair(path, passphrase)
     }
-}
-
-fn generate_salt() -> [u8; SQLCIPHER_SALT_SIZE] {
-    use rand::Rng;
-    rand::rng().random()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Pin the self-healing repair: if the DB file exists but its salt file
-    /// is missing, `open_or_repair` must delete the orphaned DB and create a
-    /// fresh one instead of generating a mismatched salt that makes the DB
-    /// permanently unopenable.
-    ///
-    /// Before the fix, `open_impl` unconditionally generated a new salt when
-    /// the salt file was missing — even if the DB file existed and was
-    /// encrypted with the original salt. The new salt never matched, so
-    /// `file_pool` failed with `PassphraseMismatch` on every heal attempt,
-    /// and the self-healing loop could never recover.
-    #[test]
-    fn open_or_repair_self_heals_when_salt_missing_but_db_exists() {
-        let dir = std::env::temp_dir().join(format!("hkask-storage-test-{}", std::process::id()));
+    fn temp_db_path(name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("hkask-storage-test-{}-{}", std::process::id(), name));
         let _ = std::fs::create_dir_all(&dir);
-        let db_path = dir.join("heal_test.db");
-        let db_path_str = db_path.to_string_lossy().to_string();
-        let salt_path = format!("{db_path_str}.salt");
-
-        // Clean up any prior run.
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
-
-        // 1. Create a valid DB.
-        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
-        drop(db);
-        assert!(db_path.exists(), "DB file should exist after initial open");
-        assert!(
-            std::path::Path::new(&salt_path).exists(),
-            "Salt file should exist after initial open"
-        );
-
-        // 2. Simulate the failure: delete only the salt file.
-        std::fs::remove_file(&salt_path).unwrap();
-        assert!(db_path.exists(), "DB file should still exist");
-        assert!(
-            !std::path::Path::new(&salt_path).exists(),
-            "Salt file should be deleted"
-        );
-
-        // 3. open_or_repair must self-heal: delete the orphaned DB and create fresh.
-        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
-        drop(db);
-        assert!(db_path.exists(), "DB file should exist after heal");
-        assert!(
-            std::path::Path::new(&salt_path).exists(),
-            "Salt file should exist after heal"
-        );
-
-        // 4. The healed DB must be openable (not permanently broken).
-        let db = open_or_repair(&db_path_str, "test_passphrase").unwrap();
-        drop(db);
-
-        // Clean up.
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
-        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("test.db").to_string_lossy().to_string()
     }
 
-    /// Pin that a wrong passphrase does NOT trigger the self-healing delete
-    /// path — a `PassphraseMismatch` must preserve the DB for manual recovery.
+    /// Native KDF round-trip: open, write, reopen with the same passphrase,
+    /// read back. No salt file is ever created.
     #[test]
-    fn open_or_repair_wrong_passphrase_does_not_delete_db() {
-        let dir =
-            std::env::temp_dir().join(format!("hkask-storage-test-wp-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let db_path = dir.join("wrong_pass_test.db");
-        let db_path_str = db_path.to_string_lossy().to_string();
-        let salt_path = format!("{db_path_str}.salt");
-
-        // Clean up any prior run.
+    fn native_kdf_round_trip_preserves_data_and_creates_no_salt() {
+        let db_path = temp_db_path("native-roundtrip");
+        let salt_path = format!("{db_path}.salt");
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(&salt_path);
 
-        // 1. Create a valid DB with the correct passphrase.
-        let db = open_or_repair(&db_path_str, "correct_passphrase").unwrap();
-        drop(db);
+        {
+            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
+            let pool = db.sqlite_pool().unwrap();
+            let conn = pool.get().unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS roundtrip (id INTEGER PRIMARY KEY, v TEXT);
+                 INSERT OR REPLACE INTO roundtrip (id, v) VALUES (1, 'hello');",
+            )
+            .unwrap();
+        }
+        assert!(!std::path::Path::new(&salt_path).exists(),
+            "the native KDF must never create a salt file");
 
-        // 2. Try to open with a wrong passphrase — must fail, not delete.
-        let result = open_or_repair(&db_path_str, "wrong_passphrase");
-        assert!(result.is_err(), "Wrong passphrase must fail");
-        assert!(
-            db_path.exists(),
-            "DB file must NOT be deleted on wrong passphrase"
-        );
-        assert!(
-            std::path::Path::new(&salt_path).exists(),
-            "Salt file must NOT be deleted on wrong passphrase"
-        );
+        {
+            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
+            let pool = db.sqlite_pool().unwrap();
+            let conn = pool.get().unwrap();
+            let v: String = conn.query_row("SELECT v FROM roundtrip WHERE id = 1", [], |r| r.get(0)).unwrap();
+            assert_eq!(v, "hello", "data must survive close/reopen under the native KDF");
+        }
 
-        // 3. The DB must still be openable with the correct passphrase.
-        let db = open_or_repair(&db_path_str, "correct_passphrase").unwrap();
-        drop(db);
-
-        // Clean up.
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(format!("{db_path}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path}-shm"));
     }
 
-    /// Pin that `open_database` (the dispatcher used by `ServerContext`)
-    /// routes file paths through `open_or_repair` — so all production callers
-    /// get the self-healing repair, not just the 2 that call `open_or_repair`
-    /// directly. Before the fix, `open_database` called `Database::open`
-    /// directly, bypassing repair.
+    /// A wrong passphrase must return PassphraseMismatch and PRESERVE the DB
+    /// file — a passphrase mistake never destroys the database.
     #[test]
-    fn open_database_self_heals_when_salt_missing() {
-        let dir =
-            std::env::temp_dir().join(format!("hkask-storage-test-odb-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let db_path = dir.join("dispatcher_test.db");
-        let db_path_str = db_path.to_string_lossy().to_string();
-        let salt_path = format!("{db_path_str}.salt");
-
-        // Clean up any prior run.
+    fn wrong_passphrase_returns_mismatch_and_preserves_db() {
+        let db_path = temp_db_path("wrong-pass");
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
 
-        // 1. Create a valid DB via the dispatcher.
-        let db = open_database(&db_path_str, "test_passphrase").unwrap();
-        drop(db);
-        assert!(db_path.exists());
-        assert!(std::path::Path::new(&salt_path).exists());
+        {
+            let db = open_or_repair(&db_path, "correct_passphrase").unwrap();
+            drop(db);
+        }
+        assert!(std::path::Path::new(&db_path).exists());
 
-        // 2. Delete only the salt file.
-        std::fs::remove_file(&salt_path).unwrap();
+        let err = open_or_repair(&db_path, "wrong_passphrase!!").unwrap_err();
+        assert!(matches!(err, DatabaseError::PassphraseMismatch(_)),
+            "wrong passphrase must be PassphraseMismatch, got: {err:?}");
+        assert!(std::path::Path::new(&db_path).exists(),
+            "a wrong passphrase must never delete the DB");
 
-        // 3. open_database must self-heal (via open_or_repair routing).
-        let db = open_database(&db_path_str, "test_passphrase").unwrap();
-        drop(db);
-        assert!(
-            db_path.exists(),
-            "DB file should exist after heal via dispatcher"
-        );
-        assert!(
-            std::path::Path::new(&salt_path).exists(),
-            "Salt file should exist after heal via dispatcher"
-        );
-
-        // Clean up.
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(&salt_path);
-        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(format!("{db_path}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path}-shm"));
     }
 
-    /// Pin that `:memory:` paths still bypass repair (in-memory DBs have no
-    /// salt file and no file to repair).
+    /// A legacy-scheme DB (Argon2id + external salt, created by the
+    /// pre-native code) is migrated in place on first open: data survives,
+    /// the salt file is deleted, and the DB opens natively afterwards.
     #[test]
-    fn open_database_memory_path_bypasses_repair() {
+    fn legacy_kdf_db_migrates_in_place_on_open() {
+        let db_path = temp_db_path("legacy-migrate");
+        let salt_path = format!("{db_path}.salt");
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&salt_path);
+
+        // Create a legacy-scheme DB with one row of data.
+        crate::rotation::tests::create_legacy_db(&db_path, "test_passphrase");
+        assert!(std::path::Path::new(&salt_path).exists(),
+            "fixture: legacy DB must have a salt file");
+
+        // First open triggers the migration.
+        {
+            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
+            let pool = db.sqlite_pool().unwrap();
+            let conn = pool.get().unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS legacy_probe (id INTEGER PRIMARY KEY, v TEXT);",
+            )
+            .unwrap();
+        }
+        assert!(!std::path::Path::new(&salt_path).exists(),
+            "migration must delete the salt file");
+
+        // Data written under the legacy scheme must survive the migration.
+        {
+            let db = open_or_repair(&db_path, "test_passphrase").unwrap();
+            let pool = db.sqlite_pool().unwrap();
+            let conn = pool.get().unwrap();
+            let count: i64 = conn.query_row(
+                "SELECT count(*) FROM h_mems", [], |r| r.get(0)).unwrap();
+            assert_eq!(count, 1, "legacy data must survive the KDF migration");
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{db_path}-wal"));
+        let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    }
+
+    #[test]
+    fn open_database_memory_path_bypasses_file_pool() {
         let db = open_database(":memory:", "test_passphrase").unwrap();
         drop(db);
     }
