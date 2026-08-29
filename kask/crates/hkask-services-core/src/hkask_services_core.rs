@@ -14,7 +14,7 @@
 //! - `settings` — `HkaskSettings` and the canonical settings path
 
 pub mod error;
-pub mod settings;
+pub mod standalone_settings;
 
 pub use error::{DomainKind, ErrorKind, ServiceError};
-pub use settings::HkaskSettings;
+pub use standalone_settings::HkaskSettings;

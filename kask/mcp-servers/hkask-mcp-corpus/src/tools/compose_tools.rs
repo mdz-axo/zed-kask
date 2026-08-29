@@ -20,7 +20,7 @@ use crate::{McpToolError, Parameters, execute_tool_semantic, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
 fn embedding_model() -> String {
-    hkask_services_core::settings::HkaskSettings::load().embedding_model()
+    hkask_services_core::standalone_settings::HkaskSettings::load().embedding_model()
 }
 
 /// Resolve the generation model from InferenceConfig.

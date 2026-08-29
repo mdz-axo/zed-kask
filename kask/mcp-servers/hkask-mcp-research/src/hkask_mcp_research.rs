@@ -29,9 +29,10 @@ use crate::research::{
     MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
     MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
     ProviderProfileOutput, RateLimiter, RecommendProviderOutput, RecommendProviderRequest,
-    ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput,
-    SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
-    WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, provider_profile,
+    RerankInfo, ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
+    SearchResultOutput, SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest,
+    UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed,
+    llm_rerank, provider_profile,
 };
 
 // ── Constants ──
@@ -54,6 +55,11 @@ hkask_mcp_server::mcp_server!(
         pub rate_limiter: RateLimiter,
         pub rss_db: Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
         pub rss_client: Client,
+        /// Inference port for the deep strategy's templated LLM rerank.
+        /// Resolved via `hkask_inference::resolve_inference_port()` — a
+        /// `LazyInferencePort` that bridges to zed's LanguageModelRegistry
+        /// over `HKASK_INFERENCE_SOCKET` on each call.
+        pub inference_port: Arc<dyn hkask_types::InferencePort>,
     }
 );
 
@@ -284,6 +290,51 @@ impl ResearchServer {
 
                 compound.results.truncate(num_results as usize);
 
+                // Deep strategy rerank stage: one templated LLM scoring call
+                // per candidate, fanned out concurrently up to
+                // `HKASK_RERANK_MAX_CONCURRENCY` (default 8) — the functional
+                // driver is responsiveness: scoring must not serialize.
+                // Every degraded outcome (all calls failed, or some failed)
+                // is surfaced in `rerank` — never a silent fallback.
+                let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
+                    let outcome = llm_rerank(
+                        self.inference_port.as_ref(),
+                        &req.query,
+                        &mut compound.results,
+                    )
+                    .await;
+                    if outcome.scored == 0 {
+                        tracing::warn!(
+                            target: "hkask.web",
+                            error = ?outcome.first_error,
+                            "LLM rerank failed — keeping heuristic RRF order"
+                        );
+                        Some(RerankInfo {
+                            mode: "heuristic".to_string(),
+                            reason: outcome
+                                .first_error
+                                .or_else(|| Some("no candidates scored".to_string())),
+                        })
+                    } else if outcome.failed > 0 {
+                        Some(RerankInfo {
+                            mode: "llm".to_string(),
+                            reason: Some(format!(
+                                "{} of {} rerank scoring calls failed; unscored results \
+                                 kept heuristic order at the end",
+                                outcome.failed,
+                                outcome.scored + outcome.failed
+                            )),
+                        })
+                    } else {
+                        Some(RerankInfo {
+                            mode: "llm".to_string(),
+                            reason: None,
+                        })
+                    }
+                } else {
+                    None
+                };
+
                 // Surface which provider was actually used when a single
                 // provider was selected (explicit override or quick strategy).
                 let selected_provider = if req.provider.is_some() || strat == SearchStrategy::Quick
@@ -334,6 +385,7 @@ impl ResearchServer {
                     providers_failed: compound.providers_failed.clone(),
                     selected_provider,
                     provider_profiles,
+                    rerank,
                 };
 
                 let output = serde_json::to_value(&search_output)
@@ -1717,6 +1769,13 @@ impl ResearchServer {
 
 /// Run the research MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
+    // Resolve the inference port before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it constructs
+    // a `LazyInferencePort` — the bridge connection itself is deferred to
+    // each call, which re-tries the socket); the closure passed to
+    // `run_server` is sync, so the await must happen here. Used by the deep
+    // strategy's LLM rerank stage.
+    let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         "hkask-mcp-research",
         SERVER_VERSION,
@@ -1830,6 +1889,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     detail: e.to_string(),
                 })?;
 
+            // Resolve the inference port for the deep strategy's LLM rerank.
+            // Resolved above (before the sync construction closure); the lazy
+            // port re-tries the bridge on each call, so a socket that appears
+            // after server start is picked up without a restart.
             Ok(ResearchServer::new(
                 ctx.webid,
                 Arc::new(pool),
@@ -1840,6 +1903,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 RateLimiter::new(RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECS),
                 rss_db,
                 rss_client,
+                inference_port.clone(),
             ))
         },
         credential_requirements(),

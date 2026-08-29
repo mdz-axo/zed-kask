@@ -31,10 +31,14 @@ use hkask_mcp_research::research::rss_types::{
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
-    ExtractedContent, FindSimilarRequest, ProviderHealthEntry, ProviderRecommendation, RateLimiter,
-    SearchQuery, SearchRequest, SearchStrategy, WebError,
+    ExtractedContent, FindSimilarRequest, ProviderHealthEntry, ProviderRecommendation,
+    RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
+use hkask_types::InferenceError;
+use hkask_types::InferencePort;
+use hkask_types::InferenceResult;
+use hkask_types::InferenceUsage;
 use hkask_types::McpErrorKind;
 use hkask_types::WebID;
 use hkask_types::tool_response::parse_tool_response;
@@ -119,6 +123,64 @@ impl WebSearchPort for NoCredentialsPool {
     }
 }
 
+// ── Stub InferencePort ─────────────────────────────────────────────────────
+
+/// Stub inference port that always fails — pins the degradation contract:
+/// the deep strategy must surface the failure reason, never collapse it.
+struct FailingInferencePort;
+
+impl InferencePort for FailingInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: inference bridge down".to_string(),
+            ))
+        })
+    }
+}
+
+/// Stub inference port that scores each candidate by URL substring — pins
+/// the success contract: the LLM's per-candidate scores reach the caller
+/// and the output names `mode: "llm"` with no reason.
+struct ScoringInferencePort;
+
+impl InferencePort for ScoringInferencePort {
+    fn generate(
+        &self,
+        prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        let score = if prompt.contains("gamma") {
+            90
+        } else if prompt.contains("alpha") {
+            50
+        } else {
+            10
+        };
+        Box::pin(async move {
+            Ok(InferenceResult {
+                text: format!("{{\"score\": {score}}}"),
+                model: "stub".to_string(),
+                usage: InferenceUsage::default(),
+                finish_reason: "stop".to_string(),
+                tool_calls: Vec::new(),
+                reasoning: None,
+                cost_usd: None,
+            })
+        })
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn make_server_without_db() -> ResearchServer {
@@ -131,6 +193,7 @@ fn make_server_without_db() -> ResearchServer {
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
+        Arc::new(FailingInferencePort),
     )
 }
 
@@ -155,6 +218,7 @@ fn make_server_with_rss_db() -> ResearchServer {
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
+        Arc::new(FailingInferencePort),
     )
 }
 
@@ -536,5 +600,216 @@ async fn rss_get_entries_rejects_non_base64_continuation_token() {
         error.message.contains("base64"),
         "error should mention base64; got: {}",
         error.message
+    );
+}
+
+// ── web_search deep-strategy LLM rerank ────────────────────────────────────
+
+/// Stub pool that returns three fixed results for any search — lets the
+/// deep-strategy rerank stage run against a stub inference port without
+/// touching the network.
+struct FixedResultsPool;
+
+#[async_trait]
+impl WebSearchPort for FixedResultsPool {
+    async fn search(
+        &self,
+        query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        let result = |title: &str, url: &str| RankedResult {
+            title: title.to_string(),
+            url: url.to_string(),
+            description: None,
+            source: None,
+            published: None,
+            rrf_score: 1.0,
+            provider_count: 1,
+            providers: vec!["stub".to_string()],
+            best_rank: None,
+            content_preview: None,
+            semantic_score: None,
+            extracted_content: None,
+        };
+        Ok(CompoundSearchResult {
+            query: query.query.clone(),
+            strategy: "deep".to_string(),
+            results: vec![
+                result("Alpha", "https://example.com/alpha"),
+                result("Beta", "https://example.com/beta"),
+                result("Gamma", "https://example.com/gamma"),
+            ],
+            answer_box: None,
+            related_questions: Vec::new(),
+            providers_queried: Vec::new(),
+            providers_succeeded: vec!["stub".to_string()],
+            providers_failed: Vec::new(),
+            total_before_dedup: 3,
+            duplicates_removed: 0,
+        })
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-fixed-results".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
+fn make_server_with_pool_and_port(
+    pool: Arc<dyn WebSearchPort>,
+    inference_port: Arc<dyn InferencePort>,
+) -> ResearchServer {
+    ResearchServer::new(
+        WebID::new(),
+        pool,
+        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
+        RateLimiter::new(10000, 60),
+        None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        inference_port,
+    )
+}
+
+fn deep_search_request() -> SearchRequest {
+    SearchRequest {
+        query: "test query".to_string(),
+        num_results: Some(10),
+        include_domains: None,
+        exclude_domains: None,
+        freshness: None,
+        strategy: Some("deep".to_string()),
+        provider: None,
+    }
+}
+
+/// Success contract: the LLM's per-candidate scores reach the caller
+/// (descending score order) and the output names `mode: "llm"` with no
+/// reason.
+#[tokio::test]
+async fn deep_search_llm_rerank_reorders_results() {
+    let server =
+        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(ScoringInferencePort));
+    let output = parse(&ok(server
+        .web_search(Parameters(deep_search_request()))
+        .await));
+
+    let rerank = output
+        .get("rerank")
+        .expect("deep strategy must surface rerank info");
+    assert_eq!(rerank.get("mode").and_then(|m| m.as_str()), Some("llm"));
+    assert!(
+        rerank.get("reason").is_none(),
+        "fully successful rerank must not claim a degradation"
+    );
+    let urls: Vec<&str> = output["results"]
+        .as_array()
+        .expect("results array")
+        .iter()
+        .map(|r| r["url"].as_str().expect("url"))
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com/gamma",
+            "https://example.com/alpha",
+            "https://example.com/beta",
+        ],
+        "descending score order (gamma 90, alpha 50, beta 10) must reach the caller"
+    );
+}
+
+/// Degradation contract: when the inference bridge is down, the heuristic
+/// order is kept AND the failure reason is surfaced — never a silent
+/// fallback.
+#[tokio::test]
+async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
+    let server =
+        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(FailingInferencePort));
+    let output = parse(&ok(server
+        .web_search(Parameters(deep_search_request()))
+        .await));
+
+    let rerank = output
+        .get("rerank")
+        .expect("deep strategy must surface rerank info even on failure");
+    assert_eq!(
+        rerank.get("mode").and_then(|m| m.as_str()),
+        Some("heuristic")
+    );
+    let reason = rerank
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .expect("heuristic fallback must name the cause");
+    assert!(
+        reason.contains("inference"),
+        "reason should name the inference failure; got: {reason}"
+    );
+    let urls: Vec<&str> = output["results"]
+        .as_array()
+        .expect("results array")
+        .iter()
+        .map(|r| r["url"].as_str().expect("url"))
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com/alpha",
+            "https://example.com/beta",
+            "https://example.com/gamma",
+        ],
+        "heuristic order must be kept on rerank failure"
+    );
+}
+
+/// Non-deep strategies do not rerank — no rerank field in the output.
+#[tokio::test]
+async fn quick_search_has_no_rerank_field() {
+    let server =
+        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(FailingInferencePort));
+    let mut request = deep_search_request();
+    request.strategy = Some("quick".to_string());
+    let output = parse(&ok(server.web_search(Parameters(request)).await));
+    assert!(
+        output.get("rerank").is_none(),
+        "quick strategy must not claim a rerank stage"
     );
 }

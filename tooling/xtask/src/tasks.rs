@@ -1,3 +1,4 @@
+pub mod bundle_commits;
 pub mod clippy;
 pub mod compliance;
 pub mod licenses;

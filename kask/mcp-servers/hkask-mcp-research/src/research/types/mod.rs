@@ -35,7 +35,7 @@ pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 // ── Re-exports ──
 
 pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
-pub(crate) use ranking::{apply_rerank, rrf_score};
+pub(crate) use ranking::{apply_rerank, llm_rerank, rrf_score};
 pub use rate_limiter::RateLimiter;
 pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 
@@ -555,6 +555,27 @@ pub(crate) struct SearchOutput {
     /// Empty when no profiles are registered (e.g. only free providers).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_profiles: Vec<ProviderProfileOutput>,
+    /// How the deep strategy's rerank stage ran. `mode: "llm"` when the
+    /// templated LLM scoring calls produced the ordering; `mode:
+    /// "heuristic"` when every scoring call failed and the heuristic RRF
+    /// order was kept. `reason` is present on any degraded outcome — full
+    /// failure (naming the cause) or partial failure (naming how many
+    /// scoring calls failed) — and `None` only when every call succeeded.
+    /// `None` for non-deep strategies (they do not rerank).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<RerankInfo>,
+}
+
+/// Surfaced rerank stage outcome for the deep strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RerankInfo {
+    /// "llm" or "heuristic"
+    pub mode: String,
+    /// Why the rerank stage degraded — present on heuristic fallback (all
+    /// scoring calls failed) or partial failure (some calls failed);
+    /// `None` only when every scoring call succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Serializable view of a `ProviderProfile` for tool output. Owned `String`s

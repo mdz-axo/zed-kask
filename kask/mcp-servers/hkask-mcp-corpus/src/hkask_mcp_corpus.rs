@@ -53,7 +53,7 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 use crate::ocr::ThresholdConfig;
 use hkask_bridge_ontology::{dc_bibo, golem, pko};
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_services_core::settings::HkaskSettings;
+use hkask_services_core::standalone_settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -511,11 +511,26 @@ mod ontology_anchor_tests {
     fn ontology_anchor_pins_dual_axis_assignments() {
         use hkask_bridge_ontology::{dc_bibo, golem, pko};
         // Process axis: ingest step, processing functions, extraction actions.
-        assert_eq!(CorpusServer::ontology_anchor("corpus_convert"), Some(pko::STEP));
-        assert_eq!(CorpusServer::ontology_anchor("corpus_ocr"), Some(pko::FUNCTION));
-        assert_eq!(CorpusServer::ontology_anchor("corpus_chunk"), Some(pko::FUNCTION));
-        assert_eq!(CorpusServer::ontology_anchor("corpus_embed"), Some(pko::FUNCTION));
-        assert_eq!(CorpusServer::ontology_anchor("corpus_tag_chunks"), Some(pko::ACTION));
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_convert"),
+            Some(pko::STEP)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_ocr"),
+            Some(pko::FUNCTION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_chunk"),
+            Some(pko::FUNCTION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_embed"),
+            Some(pko::FUNCTION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_tag_chunks"),
+            Some(pko::ACTION)
+        );
         assert_eq!(
             CorpusServer::ontology_anchor("corpus_is_complex"),
             Some(pko::STEP_VERIFICATION)

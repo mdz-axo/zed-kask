@@ -42,6 +42,8 @@ Web search, extraction, and feed-based research MCP server.
 | `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS tools) |
 | `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 50)          |
+| `HKASK_RERANK_MODEL`          | Model for the deep strategy's LLM rerank stage (default: `DeepInfra/Qwen/Qwen3-Reranker-8B`; resolved per call via the inference bridge) |
+| `HKASK_RERANK_MAX_CONCURRENCY` | Max concurrent rerank scoring calls per deep search (default: 8; the stage fans out one scoring call per candidate up to this cap) |
 
 Free providers (Semantic Scholar, arXiv) are always available — no API key
 required for basic web search. RSS tools require `HKASK_DB_PASSPHRASE`;

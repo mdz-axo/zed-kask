@@ -13,6 +13,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Propose a commit-bundling plan for the zed-kask fork range (DRY RUN ONLY).
+    BundleCommits(tasks::bundle_commits::BundleCommitsArgs),
     /// Runs `cargo clippy`.
     Clippy(tasks::clippy::ClippyArgs),
     Compliance(tasks::compliance::ComplianceArgs),
@@ -37,6 +39,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
+        CliCommand::BundleCommits(args) => tasks::bundle_commits::run_bundle_commits(args),
         CliCommand::Clippy(args) => tasks::clippy::run_clippy(args),
         CliCommand::Compliance(args) => tasks::compliance::check_compliance(args),
         CliCommand::Licenses(args) => tasks::licenses::run_licenses(args),

@@ -8,6 +8,7 @@
 //! - `HKASK_CLASSIFIER_MODEL` — primary classifier model
 //! - `HKASK_EMBEDDING_MODEL` — default embedding model
 //! - `HKASK_OCR_MODEL` — OCR model for scanned PDF fallback
+//! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
 //! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
 
 /// Canonical classifier model for all classification surfaces (corpus
@@ -67,6 +68,14 @@ pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-kl
 /// Default video generation model — Wan2.2 via DeepInfra.
 pub const DEFAULT_VIDEO_MODEL: &str = "DeepInfra/Wan-AI/Wan2.2-T2V-A14B";
 
+/// Default rerank model for the research server's deep-strategy rerank stage
+/// (relevance judgment over search candidates, strict-JSON output).
+/// Qwen3-Reranker-8B via DeepInfra — a dedicated reranker built for
+/// query–document relevance judgment; override with `HKASK_RERANK_MODEL`.
+/// The `DeepInfra/` prefix resolves through zed's `LanguageModelRegistry`
+/// when passed as the `model_override` to `InferencePort::generate_with_model`.
+pub const DEFAULT_RERANK_MODEL: &str = "DeepInfra/Qwen/Qwen3-Reranker-8B";
+
 // ── Resolved model accessors (env var → default) ──────────────────────────
 
 /// Resolve the primary classifier: `HKASK_CLASSIFIER_MODEL` → default.
@@ -82,6 +91,11 @@ pub fn embedding_model() -> String {
 /// Resolve the OCR model: `HKASK_OCR_MODEL` → default.
 pub fn ocr_model() -> String {
     std::env::var("HKASK_OCR_MODEL").unwrap_or_else(|_| DEFAULT_OCR_MODEL.to_string())
+}
+
+/// Resolve the rerank model: `HKASK_RERANK_MODEL` → default.
+pub fn rerank_model() -> String {
+    std::env::var("HKASK_RERANK_MODEL").unwrap_or_else(|_| DEFAULT_RERANK_MODEL.to_string())
 }
 
 /// Resolve a model name from an env var or fall back to a default.

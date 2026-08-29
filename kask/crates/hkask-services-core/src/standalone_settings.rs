@@ -1,8 +1,26 @@
-//! Shared settings path utility — single source of truth for the settings file
-//! location used by CLI, API, and REPL surfaces. Magna Carta P3: all surfaces
-//! read/write the same `~/.config/hkask/settings.json`.
-//!
+//! Standalone (non-zed) settings layer — single source of truth for the
+//! settings file location used by CLI, API, and REPL surfaces. Magna Carta
+//! P3: all surfaces read/write the same `~/.config/hkask/settings.json`.
 //! Also provides `HkaskSettings` for model defaults shared across all servers.
+//!
+//! # The two settings layers
+//!
+//! There are TWO settings modules in the workspace — this file is the
+//! **standalone layer**, not the zed layer. Do not confuse them:
+//!
+//! - **This file** (`hkask-services-core/src/standalone_settings.rs`):
+//!   `~/.config/zed-kask/settings.json` + env vars. Read by CLI, API, REPL,
+//!   and by MCP servers when they are NOT launched by zed (no IPC bridge).
+//!   Priority: env var > settings.json > hardcoded default.
+//! - **The zed layer** (`kask/crates/kask_bridge/src/settings.rs`): zed's
+//!   settings store (`KaskSettings`, `From<Content>` conversions, schema in
+//!   `crates/settings_content/src/settings_content.rs`). Read when servers
+//!   ARE launched by zed; `KaskSettings::mcp_env()` translates it into the
+//!   same env vars this layer reads.
+//!
+//! The layers meet at the env vars (`HKASK_*_MODEL` etc.): zed writes them
+//! from its settings store at launch; standalone surfaces read them from the
+//! shell or fall back to this file.
 
 use serde::{Deserialize, Serialize};
 

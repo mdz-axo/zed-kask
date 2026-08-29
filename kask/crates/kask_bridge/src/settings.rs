@@ -527,13 +527,25 @@ pub struct KaskMediaSettings {
 /// When a field is empty, kask falls back to its default model selection
 /// (typically the zed `agent.default_model`).
 ///
-/// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
-/// and `classifier_model` default to empty strings in `Default`. When empty, the
-/// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants, which are
-/// themselves `const` references to the single source of truth in
-/// `hkask_inference::model_constants`. This lets users override individual models
-/// in settings.json while keeping the kask built-in defaults as the fallback.
-/// Do not duplicate the model ids anywhere else — `model_constants` is canonical.
+// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
+// and `classifier_model` default to empty strings in `Default`. When empty, the
+// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants, which are
+// themselves `const` references to the single source of truth in
+// `hkask_inference::model_constants`. This lets users override individual models
+// in settings.json while keeping the kask built-in defaults as the fallback.
+// Do not duplicate the model ids anywhere else — `model_constants` is canonical.
+//
+// **Adding a field here touches six files — the full chain, in order:**
+// 1. `crates/settings_content/src/settings_content.rs` — the `*Content` twin
+//    (zed's settings.json schema; the `From<Content>` impl below reads it)
+// 2. This file — the field + the `From<Content>` arm
+// 3. `kask/crates/kask_bridge/src/mcp_env.rs` — `emit_models_env` (or the
+//    per-server `emit_*_env`) writes the `HKASK_*` env var
+// 4. `kask/crates/kask_bridge/src/mcp_servers.rs` — the target server's
+//    `config_env` allowlist (pinned by `*_allowlist_matches_actual_reads`)
+// 5. The consuming MCP server — reads the env var
+// 6. `crates/settings_ui/src/pages/kask_page/models.rs` — the settings UI page
+// The standalone (non-zed) layer is `hkask-services-core/src/standalone_settings.rs`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
