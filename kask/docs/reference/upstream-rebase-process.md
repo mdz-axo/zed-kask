@@ -256,12 +256,12 @@ F20 (deferred task) → after user resolves, F2
 1. **`kask_settings_for_mcp` use-before-def (F4 uses F9, but F4 was placed at
    L700 and F9 at L849).** The DAG says F4 must come after F9. The fork's
    incremental evolution inserted F4 (algedonic wiring) before F9 (settings
-   load) because F4 was added in a later commit (`6e7bf4fa0e`) without moving
+   load) because F4 was added in a later commit (`0ae806eb6d`) without moving
    F9 up. **Re-application fixes this by placing F9 before F4 per the DAG.**
 
 2. **`cybernetics_loop_for_tick` duplicate (F6 defines it at L742, then a
    duplicate `let` at L769).** The fork added the tick-cycle spawn block (F10)
-   in `6e7bf4fa0e` and re-cloned the binding instead of reusing the F6 clone.
+   in `0ae806eb6d` and re-cloned the binding instead of reusing the F6 clone.
    **Re-application fixes this by defining once in F6 and reusing in F10.**
 
 ### 4.4 Upstream insertion landmarks

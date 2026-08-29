@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Harness evolve cycle — orchestrates the test harness self-improvement loop.
 #
-# BROKEN since 009b04066a (2026-08-04): this script calls `./scripts/test --trace`
+# BROKEN since 4304db290f (2026-08-04): this script calls `./scripts/test --trace`
 # at L52, but `kask/scripts/test` was deleted in that commit. The cycle will fail
 # at step 1 with "no such file" until `scripts/test` is rebuilt per
 # kask/docs/plans/evolving-test-harness.md §2.2. The `hkask-test-harness` crate

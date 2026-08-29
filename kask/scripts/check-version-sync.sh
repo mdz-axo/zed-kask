@@ -12,7 +12,7 @@
 #
 # History: this gate previously also checked kask/registry/manifests/*.yaml
 # `version:` fields and brand-header comments. The manifest registry was
-# removed in 5f4cf5f10d ("Remove hkask-templates crate and manifest registry"),
+# removed in 80e466c1a5 ("Remove hkask-templates crate and manifest registry"),
 # so those checks were dead — they iterated over a non-existent directory and
 # silently no-op'd while reporting [OK]. They are removed here; the two live
 # checks below remain.

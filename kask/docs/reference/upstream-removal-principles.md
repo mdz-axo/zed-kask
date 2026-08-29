@@ -69,7 +69,7 @@ Only the *provably unreachable* form survives as Category 4.
   `.desktop` template rendered for zed-kask (`.rules:126`).
 - **Failure mode if mis-applied:** zed-kask silently hijacks the user's real
   Zed (or vice versa) — the project's fundamental premise ("complements, not
-  replaces") fails. This happened in commit `853542beab` (Jul 26 2026): the URL
+  replaces") fails. This happened in commit `dcc5aa6dd3` (Jul 26 2026): the URL
   scheme was fixed but `text/plain`, `application/x-zerosize`, and
   `Keywords=zed` were left in place.
 - **Anchoring evidence:** `.rules:126` (the `.desktop` collision trap);

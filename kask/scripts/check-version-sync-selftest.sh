@@ -14,7 +14,7 @@
 #      mode).
 #
 # History: this self-test previously pinned manifest-dir drift and an empty
-# manifest dir. The manifest registry was removed in 5f4cf5f10d, so the gate's
+# manifest dir. The manifest registry was removed in 80e466c1a5, so the gate's
 # manifest checks were deleted; the cases were re-based onto the two live
 # checks (MCP provenance literals + README version lines).
 #

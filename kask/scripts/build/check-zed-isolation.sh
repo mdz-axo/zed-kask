@@ -78,7 +78,7 @@ assert_absent "$repo_root/kask/crates/kask_bridge/src/github_update.rs"
 # zed-kask icons live in kask/assets/icons/ — the upstream icon files in
 # crates/zed/resources/ must NOT exist. Leaving them creates a collision
 # surface where upstream merge could restore upstream Zed icons and
-# zed-kask code might accidentally reference them (commit 853542beab).
+# zed-kask code might accidentally reference them (commit dcc5aa6dd3).
 for icon_path in \
     "$repo_root/crates/zed/resources/app-icon.png" \
     "$repo_root/crates/zed/resources/app-icon@2x.png" \

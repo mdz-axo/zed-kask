@@ -18,7 +18,7 @@ condensation; git history preserves the originals.
 # Part I — The Agent System Prompt
 
 > **Scope:** the agent system prompt only. Verified against zed-kask `HEAD`
-> (`67a5604b55`) and upstream Zed `upstream/main` (`e3adf43f37`) on
+> (`e510ec4a92`) and upstream Zed `upstream/main` (`e3adf43f37`) on
 > 2026-08-28. Every claim here is traceable to a `file:line` or a named test.
 
 ## 1. Purpose
@@ -236,7 +236,7 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 
 ### 5.5 `## Agent Skills` — body injection (D1)
 
-**Reverted 2026-08-20 (commit `24d2bd7fd3`, "revert skill cascade") — the
+**Reverted 2026-08-20 (commit `e7503c0cf4`, "revert skill cascade") — the
 prompt-side divergence is gone.** Body injection still happens, but as runtime
 behaviour of the `skill` tool, not as prompt text.
 
@@ -281,7 +281,7 @@ and `test_refuse_skill_catalog_read_allows_skill_md` (`:589`).
 
 ### 5.6 `skill_bundle` composition — removed section (D1)
 
-**Removed 2026-08-20 (commit `24d2bd7fd3`, "revert skill cascade").** The
+**Removed 2026-08-20 (commit `e7503c0cf4`, "revert skill cascade").** The
 `## Multi-skill composition with skill_bundle` prompt section and the
 `skill_bundle` tool no longer exist: the template carries no `skill_bundle`
 text, and no `skill_bundle` tool is registered in `crates/agent/src`. Bundle
