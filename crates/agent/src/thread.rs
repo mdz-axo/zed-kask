@@ -274,6 +274,47 @@ pub enum Message {
     Compaction(CompactionInfo),
 }
 
+/// Extract `kanban_goal_*` tool results from an agent message as first-class
+/// goal events for curator memory. The goal store is ephemeral (operator
+/// ruling 2026-08-29: zed-agent goals are ephemeral; the curator's memory
+/// is the durable vehicle) — these events are what the memory write path
+/// turns into structured goal h_mems, so therapy / algedonic-review find
+/// goal entities (text, criteria, verdicts, Brier scores), not prose
+/// archaeology.
+///
+/// Non-goal tools are ignored. A goal tool with no recorded result (the
+/// turn ended mid-call) is skipped — an unobserved result is not a goal
+/// event. The result's raw `output` JSON is preferred; when absent, the
+/// text content is stored verbatim (parsed as JSON when it parses, as a
+/// string otherwise — the value is preserved either way, never dropped).
+pub(crate) fn extract_goal_events(message: &AgentMessage) -> Vec<hkask_types::GoalEvent> {
+    message
+        .content
+        .iter()
+        .filter_map(|content| {
+            let tool_use = match content {
+                AgentMessageContent::ToolUse(tool_use) => tool_use,
+                _ => return None,
+            };
+            if !tool_use.name.starts_with("kanban_goal_") {
+                return None;
+            }
+            let result = message.tool_results.get(&tool_use.id)?;
+            let output = match result.output.clone() {
+                Some(output) => output,
+                None => {
+                    let text = result.text_contents();
+                    serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+                }
+            };
+            Some(hkask_types::GoalEvent {
+                tool_name: tool_use.name.to_string(),
+                output,
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompactionInfo {
     Summary(SharedString),
@@ -2983,6 +3024,18 @@ impl Thread {
                                     .map(|m| m.name().0.to_string())
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
+                                goal_events: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::Agent(agent_msg) = &**msg {
+                                            Some(extract_goal_events(agent_msg))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
                                 agent_id: thread.agent_id().cloned(),
                             });
                             if let Ok(record) = record {

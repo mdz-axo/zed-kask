@@ -2915,6 +2915,12 @@ pub struct ThreadTurnRecord {
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,
+    /// Goal-tool events from this turn's last agent message (every
+    /// `kanban_goal_*` tool result). The goal store is ephemeral; these
+    /// events are the durable record — the bridge's memory write path
+    /// turns them into first-class goal h_mems in the curator's memory
+    /// (functional-interaction-spec: curator memory is the vehicle).
+    pub goal_events: Vec<hkask_types::GoalEvent>,
 }
 
 /// Port for ingesting completed thread turns into memory (D6).

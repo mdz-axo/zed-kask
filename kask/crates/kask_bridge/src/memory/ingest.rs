@@ -153,6 +153,71 @@ pub(crate) async fn write_turn(
         }
     }
 
+    // ── 3. Goal events — first-class goal memory ─────────────────────
+    // The goal store is ephemeral (operator ruling 2026-08-29: zed-agent
+    // goals are ephemeral; the curator's memory is the durable vehicle).
+    // Each `kanban_goal_*` tool result becomes a structured goal h_mem so
+    // therapy / algedonic-review find goal entities (text, criteria,
+    // verdicts, Brier scores), not prose archaeology. Routing mirrors the
+    // turn writes above: curator turns get a curator-perspective Private
+    // h_mem (the curator's own memory of goals it was involved with); every
+    // turn gets a shared copy (curator recall sees every goal event even
+    // after the ephemeral store has evaporated).
+    for event in &record.goal_events {
+        let goal_id = event
+            .output
+            .get("goal_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("list");
+        let goal_ontology = HMemOntology {
+            dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
+            dc_type: "pko:Goal".to_string(),
+            dc_source: "kanban".to_string(),
+            ..Default::default()
+        };
+
+        if is_curator_turn {
+            let curator_goal = HMem::new(
+                &format!("goal:{goal_id}"),
+                event.tool_name.as_str(),
+                event.output.clone(),
+                ctx.curator_webid,
+            )
+            .with_perspective(ctx.curator_webid)
+            .with_visibility(Visibility::Private)
+            .with_ontology(goal_ontology.clone());
+            if let Some(ref curator_store) = curator_store {
+                if let Err(e) = curator_store.store(curator_goal) {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        thread_id = %thread_id,
+                        error = %e,
+                        "Failed to store curator goal h_mem"
+                    );
+                }
+            }
+        }
+
+        let shared_goal = HMem::new(
+            &format!("curator:goal:{goal_id}"),
+            event.tool_name.as_str(),
+            event.output.clone(),
+            ctx.curator_webid,
+        )
+        .with_visibility(Visibility::Shared)
+        .with_ontology(goal_ontology);
+        if let Some(ref curator_store) = curator_store {
+            if let Err(e) = curator_store.store(shared_goal) {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    error = %e,
+                    "Failed to store shared goal h_mem"
+                );
+            }
+        }
+    }
+
     // ── 3. Embed the user prompt for future retrieval ─────────────────
     // Skipped when no embedding port is available — h_mem writes (steps 1-2)
     // are pure SQL and don't need embeddings. Semantic recall will degrade to

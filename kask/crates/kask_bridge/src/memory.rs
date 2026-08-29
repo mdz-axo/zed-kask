@@ -1072,6 +1072,7 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                     model: record.model,
                     thread_title: record.thread_title,
                     agent_id: record.agent_id.map(|id| id.to_string()),
+                    goal_events: record.goal_events,
                 })
                 .await
                 .map_err(|e| e.to_string())
@@ -1214,6 +1215,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: Some("Rust Discussion".to_string()),
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -1236,6 +1238,115 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn ingest_turn_stores_zed_goal_events_as_shared_h_mems_only() {
+        // Operator ruling 2026-08-29: zed-agent goals are ephemeral; the
+        // curator's memory is the durable vehicle. A zed turn's goal events
+        // get a SHARED goal h_mem (curator recall) but NO curator-perspective
+        // h_mem — the curator only remembers goals it was involved with.
+        let port = in_memory_port();
+        let curator_webid = port.curator_webid;
+        let record = TurnRecord {
+            thread_id: "zed-thread".to_string(),
+            user_input: "add date filtering".to_string(),
+            agent_response: "done".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "goal_id": "g-123",
+                    "goal_text": "The user can filter by date",
+                    "prediction": 0.8
+                }),
+            }],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+
+        // Shared copy exists — curator recall sees the goal event.
+        let shared = curator_store
+            .query_for_deduped_untouched("curator:goal:g-123", curator_webid)
+            .expect("query should succeed");
+        assert_eq!(shared.len(), 1, "one shared goal h_mem");
+        assert_eq!(shared[0].attribute, "kanban_goal_create");
+        assert_eq!(
+            shared[0].value.get("goal_text").and_then(|v| v.as_str()),
+            Some("The user can filter by date")
+        );
+
+        // No curator-perspective h_mem — the curator was not involved.
+        let perspective = curator_store
+            .query_for_deduped_untouched("goal:g-123", curator_webid)
+            .expect("query should succeed");
+        assert!(
+            perspective.is_empty(),
+            "zed-agent goal events must not create curator-perspective h_mems"
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_curator_goal_events_get_curator_perspective_h_mem() {
+        // "Curator remembers all goals it is involved with": a curator
+        // turn's goal events get BOTH the curator-perspective Private h_mem
+        // (the curator's own memory) and the shared copy.
+        let port = in_memory_port();
+        let curator_webid = port.curator_webid;
+        let record = TurnRecord {
+            thread_id: "curator-thread".to_string(),
+            user_input: "set a goal".to_string(),
+            agent_response: "goal recorded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: vec![
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "goal_id": "g-456",
+                        "achieved": true,
+                        "brier": 0.04
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_list".to_string(),
+                    output: serde_json::json!({"goals": []}),
+                },
+            ],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+
+        // Curator-perspective h_mem for the scored goal.
+        let perspective = curator_store
+            .query_for_deduped_untouched("goal:g-456", curator_webid)
+            .expect("query should succeed");
+        assert_eq!(perspective.len(), 1, "curator-perspective goal h_mem");
+        assert_eq!(perspective[0].attribute, "kanban_goal_score");
+        assert_eq!(
+            perspective[0].value.get("brier").and_then(|v| v.as_f64()),
+            Some(0.04)
+        );
+
+        // Shared copies for both events.
+        let shared_score = curator_store
+            .query_for_deduped_untouched("curator:goal:g-456", curator_webid)
+            .expect("query should succeed");
+        assert_eq!(shared_score.len(), 1);
+        // The list event (no goal_id) lands under the list entity.
+        let shared_list = curator_store
+            .query_for_deduped_untouched("curator:goal:list", curator_webid)
+            .expect("query should succeed");
+        assert_eq!(shared_list.len(), 1, "goal_list event uses the list entity");
+    }
+
+    #[tokio::test]
     async fn ingest_turn_stores_semantic_curator_copy() {
         let port = in_memory_port();
         let record = TurnRecord {
@@ -1245,6 +1356,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -1283,6 +1395,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: Some("Memory fix".to_string()),
             agent_id: Some("Zed Agent".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -1327,6 +1440,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -1350,6 +1464,7 @@ pub(crate) mod tests {
             model: "test".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -1376,6 +1491,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "ingest_turn should succeed");
@@ -1501,6 +1617,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok());
@@ -1546,6 +1663,7 @@ pub(crate) mod tests {
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: Some("Curator".to_string()),
+                goal_events: Vec::new(),
             },
         ];
         for record in records {
@@ -1587,6 +1705,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("ingest succeeds despite embed failure");
@@ -1636,6 +1755,7 @@ pub(crate) mod tests {
                         model: "test-model".to_string(),
                         thread_title: None,
                         agent_id: Some("Curator".to_string()),
+                        goal_events: Vec::new(),
                     })
                     .await
                     .expect("ingest succeeds");
@@ -1698,6 +1818,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record).await.expect("ingest succeeds");
 
@@ -1742,6 +1863,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Zed Agent".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record).await.expect("ingest succeeds");
 
@@ -1864,6 +1986,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("ingest succeeds");
@@ -1937,6 +2060,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         let record2 = TurnRecord {
             thread_id: "sem-2".to_string(),
@@ -1945,6 +2069,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         // Spawn both ingestions concurrently.
@@ -1984,6 +2109,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
 
         let result = port.ingest_turn(record).await;
@@ -2030,6 +2156,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record)
             .await
@@ -2065,6 +2192,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record)
             .await
@@ -2096,6 +2224,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record)
             .await
@@ -2182,6 +2311,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         };
         port.ingest_turn(record).await.expect("ingest succeeds");
 
@@ -2269,6 +2399,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("post-heal ingestion succeeds");
@@ -2306,6 +2437,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: None,
+            goal_events: Vec::new(),
         };
         let result = bridge.ingest_turn(record).await;
         assert!(

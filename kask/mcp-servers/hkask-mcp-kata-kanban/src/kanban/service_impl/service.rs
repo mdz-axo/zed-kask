@@ -35,6 +35,14 @@ use crate::kanban::{
 #[derive(Clone)]
 pub struct KanbanService {
     pub(crate) store: HMemStore,
+    /// Ephemeral goal store — in-memory, dies with the process (operator
+    /// ruling 2026-08-29: zed-agent goals are ephemeral; the curator's
+    /// memory is the durable vehicle, fed by the turn-ingestion goal-event
+    /// path in `kask_bridge/src/memory/ingest.rs`). Shared across service
+    /// clones via `Arc`; lazily initialized on first goal operation so the
+    /// de-facto-infallible in-memory driver creation surfaces as a typed
+    /// error rather than a constructor panic.
+    pub(crate) goal_store: std::sync::Arc<std::sync::Mutex<Option<HMemStore>>>,
 }
 
 // HMem entity prefixes
@@ -49,7 +57,10 @@ impl KanbanService {
     /// post: returns a KanbanService ready for use
     #[must_use]
     pub fn new(store: HMemStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            goal_store: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     /// Create a task-scoped rJoule accountant bound to a specific kanban task.

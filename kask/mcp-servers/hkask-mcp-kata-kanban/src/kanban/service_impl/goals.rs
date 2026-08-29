@@ -1,14 +1,22 @@
 //! Goal operations — the native goal-setting and verification system.
 //!
 //! Thin vertical slice per `kask/docs/architecture/functional-interaction-spec.md`
-//! Phase B: the functional goal (kata target condition) as a first-class,
-//! persistent object with verifiable criteria, recorded verdicts, and
-//! Brier-scored intake predictions. Schema lifted from the validated
-//! `goal-analysis` skill templates.
+//! Phase B: the functional goal (kata target condition) as a first-class
+//! object with verifiable criteria, recorded verdicts, and Brier-scored
+//! intake predictions. Schema lifted from the validated `goal-analysis`
+//! skill templates.
 //!
-//! HMem scheme (mirrors boards/tasks):
+//! **Ephemeral by design (operator ruling 2026-08-29):** the goal store is
+//! in-memory and dies with the process — zed-agent goals leave no persistent
+//! clutter. The curator's memory is the durable vehicle: every `kanban_goal_*`
+//! tool result in a turn is extracted by the thread-side record builder and
+//! written as a first-class goal h_mem by `kask_bridge/src/memory/ingest.rs`,
+//! so therapy / algedonic-review find goal entities, not prose archaeology.
+//!
+//! HMem scheme (ephemeral in-memory store):
 //!   kanban:goal → {goal_id} → JSON Goal
 
+use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::{GoalID, TaskId};
 
@@ -87,7 +95,7 @@ impl KanbanService {
             owner,
         )
         .with_ontology(goal_ontology);
-        self.store
+        self.goal_store()?
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
 
@@ -109,7 +117,7 @@ impl KanbanService {
     #[must_use = "result must be used"]
     pub(crate) fn goal_get(&self, goal_id: GoalID) -> Result<Option<Goal>, KanbanError> {
         let h_mems = self
-            .store
+            .goal_store()?
             .query_by_entity_attribute(GOAL_ENTITY, &goal_id.to_string())
             .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
 
@@ -129,7 +137,7 @@ impl KanbanService {
     #[must_use = "result must be used"]
     pub(crate) fn goal_list(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
         let h_mems = self
-            .store
+            .goal_store()?
             .query_by_entity(GOAL_ENTITY)
             .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
 
@@ -192,7 +200,7 @@ impl KanbanService {
 
         goal.verdicts.push(verdict);
         goal.updated_at = chrono::Utc::now();
-        self.goal_store(&goal)?;
+        self.goal_persist(&goal)?;
         Ok(goal)
     }
 
@@ -234,7 +242,7 @@ impl KanbanService {
             resolved_at: chrono::Utc::now(),
         });
         goal.updated_at = chrono::Utc::now();
-        self.goal_store(&goal)?;
+        self.goal_persist(&goal)?;
 
         tracing::info!(
             target: "hkask.kanban",
@@ -259,8 +267,28 @@ impl KanbanService {
         })
     }
 
-    /// Persist a goal (insert-or-replace by entity+attribute key).
-    fn goal_store(&self, goal: &Goal) -> Result<(), KanbanError> {
+    /// The ephemeral in-memory goal store. Lazily initialized on first
+    /// use; shared across service clones via the `Arc` in
+    /// [`KanbanService`]. Init failure surfaces as a typed error naming the
+    /// cause — never a silent fallback.
+    fn goal_store(&self) -> Result<HMemStore, KanbanError> {
+        let mut guard = self
+            .goal_store
+            .lock()
+            .map_err(|_| KanbanError::Internal("goal store mutex poisoned".to_string()))?;
+        if let Some(store) = &*guard {
+            return Ok(store.clone());
+        }
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver)
+            .map_err(|e| KanbanError::Internal(format!("in-memory goal store init failed: {e}")))?;
+        *guard = Some(store.clone());
+        Ok(store)
+    }
+
+    /// Persist a goal to the ephemeral store (insert-or-replace by
+    /// entity+attribute key).
+    fn goal_persist(&self, goal: &Goal) -> Result<(), KanbanError> {
         let h_mem = hkask_storage::HMem::new(
             GOAL_ENTITY,
             &goal.id.to_string(),
@@ -268,7 +296,7 @@ impl KanbanService {
                 .map_err(|e| KanbanError::Internal(format!("goal serialization failed: {e}")))?,
             goal.owner,
         );
-        self.store
+        self.goal_store()?
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
         Ok(())
@@ -415,6 +443,47 @@ mod goal_tests {
 
         // Double-resolution is rejected.
         assert!(svc.goal_score(no_pred.id, true, owner).is_err());
+    }
+
+    #[test]
+    fn goals_are_ephemeral_not_written_to_the_persistent_store() {
+        // Operator ruling 2026-08-29: zed-agent goals are ephemeral — the
+        // in-memory goal store serves the session; the curator's memory (fed
+        // by the turn-ingestion goal-event path) is the durable vehicle. This
+        // pins that goal operations NEVER touch the service's persistent
+        // store, so conversational goals leave no kanban-DB clutter.
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc
+            .goal_create("ephemeral goal".into(), criteria(2), None, None, owner)
+            .unwrap();
+        let _ = svc
+            .goal_judge(
+                goal.id,
+                GoalVerdict {
+                    verdict: GoalVerdictValue::Done,
+                    confidence: 0.9,
+                    criterion_results: vec![],
+                    reasoning: "done".into(),
+                    judged_at: chrono::Utc::now(),
+                },
+                owner,
+            )
+            .unwrap();
+
+        // The ephemeral store serves the goal.
+        assert!(svc.goal_get(goal.id).unwrap().is_some());
+
+        // The persistent store has zero goal h_mems.
+        let persistent = svc
+            .store
+            .query_by_entity("kanban:goal")
+            .expect("persistent store query");
+        assert!(
+            persistent.is_empty(),
+            "goals must not be written to the persistent kanban store — \
+             conversational goals are ephemeral by design"
+        );
     }
 
     #[test]

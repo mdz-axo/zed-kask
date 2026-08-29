@@ -46,6 +46,24 @@ pub struct TurnRecord {
     /// turns are written to the curator's sovereign DB with the curator's
     /// WebID, not the user's.
     pub agent_id: Option<String>,
+    /// Goal-tool events observed in this turn (every `kanban_goal_*` tool
+    /// result from the last agent message). The goal store is ephemeral
+    /// (operator ruling 2026-08-29: zed-agent goals are ephemeral; curator
+    /// memory is the durable vehicle) — these events are what the memory
+    /// write path turns into first-class goal h_mems, so therapy and
+    /// algedonic reviews find goal entities, not prose archaeology.
+    pub goal_events: Vec<GoalEvent>,
+}
+
+/// A goal-tool event observed in a turn — the durable record of goal
+/// activity, extracted from the turn's `kanban_goal_*` tool results.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoalEvent {
+    /// The goal tool that produced this event (e.g. `kanban_goal_create`).
+    pub tool_name: String,
+    /// The tool result's JSON output (goal text, criteria, verdicts, Brier
+    /// scores — the structured record the curator's memory stores).
+    pub output: serde_json::Value,
 }
 
 impl TurnRecord {
