@@ -92,25 +92,6 @@ pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
     }
 }
 
-/// Map a common resource kind string to its BIBO type.
-pub fn kind_to_bibo(kind: &str) -> Option<DcConcept> {
-    match kind.to_lowercase().as_str() {
-        "article" | "paper" => Some(ARTICLE),
-        "academic_article" | "journal_article" => Some(ACADEMIC_ARTICLE),
-        "journal" => Some(JOURNAL),
-        "book" => Some(BOOK),
-        "chapter" | "book_section" => Some(BOOK_SECTION),
-        "thesis" | "dissertation" => Some(THESIS),
-        "webpage" | "url" | "web" => Some(WEBPAGE),
-        "document" => Some(DOCUMENT),
-        "preprint" | "arxiv" => Some(PREPRINT),
-        "proceedings" | "conference" => Some(PROCEEDINGS),
-        "report" | "technical_report" => Some(REPORT),
-        "manuscript" => Some(MANUSCRIPT),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,9 +118,7 @@ mod tests {
             Some(TEXT)
         );
         assert_eq!(
-            mime_to_dc_type(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            mime_to_dc_type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             Some(DATASET)
         );
     }
@@ -150,13 +129,5 @@ mod tests {
         assert_eq!(mime_to_dc_type("video/mp4"), Some(MOVING_IMAGE));
         assert_eq!(mime_to_dc_type("audio/wav"), Some(SOUND));
         assert_eq!(mime_to_dc_type("application/x-unknown"), None);
-    }
-
-    #[test]
-    fn kind_to_bibo_maps_work_kinds() {
-        assert_eq!(kind_to_bibo("Article"), Some(ARTICLE));
-        assert_eq!(kind_to_bibo("arxiv"), Some(PREPRINT));
-        assert_eq!(kind_to_bibo("Dissertation"), Some(THESIS));
-        assert_eq!(kind_to_bibo("podcast"), None);
     }
 }

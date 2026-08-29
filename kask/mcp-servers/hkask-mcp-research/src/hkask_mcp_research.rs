@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use hkask_bridge_ontology::{dc_bibo, eso, pko};
+use hkask_bridge_ontology::{dc_bibo, pko};
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool_semantic, map_join_error,
     resolve_db_passphrase, validate_tool_url_with_dns,
@@ -133,46 +133,53 @@ macro_rules! require_rss_db {
 impl ResearchServer {
     /// Map a tool name to its ontology concept URI. The concept tags the
     /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
-    /// routing. The mapping follows the research workflow stages
-    /// (`pko::research_stage_to_pko`) with ESO for the epistemic axis:
+    /// routing.
     ///
-    /// - Web search/browse/extract → ESO `HAS_EVIDENCE` (search discovers
-    ///   evidence — the epistemic axis is primary for web tools).
-    /// - RSS search/discover/fetch → PKO `ACTION` (the process axis is
-    ///   primary: these are search/extract stage actions).
+    /// A tool *execution* is a process, so the anchor maps each tool to its
+    /// research-workflow stage and delegates the stage→concept values to the
+    /// canonical bridge mapper (`pko::research_stage_to_pko`) — single source
+    /// of truth, same pattern as the corpus server's anchor. ESO predicates
+    /// (`eso:hasEvidence` etc.) annotate *passage content* in corpus
+    /// assertion extraction; they are relation predicates, not types, and are
+    /// never used as tool-span tags (the category error this delegation
+    /// removed: web tools were previously tagged `eso:hasEvidence`).
+    ///
+    /// - Search/discovery (web + RSS) → PKO `ACTION` (search stage).
+    /// - Content extraction (web pages, feeds) → PKO `ACTION` (extract stage).
     /// - Synthesis tools → PKO `PROCEDURE_EXECUTION` (synthesize stage).
     /// - Feed management (subscribe/unsubscribe/import/export/tag) → PKO
     ///   `PROCEDURE` (curate stage — organizing is a procedure).
+    /// - Evaluation (evidence, provider recommendation) → PKO
+    ///   `STEP_VERIFICATION` (evaluate stage).
     /// - Pure queries and health checks → `dc_bibo::DATASET` (no process
     ///   stage; the artifact is a dataset reference).
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        match tool {
-            // Epistemic-axis: web search/browse/extract discovers evidence.
-            "web_search" | "web_find_similar" | "web_extract" | "web_browse" => {
-                Some(eso::HAS_EVIDENCE)
-            }
-            // Metacognitive-axis: provider recommendation is a self-assessment
-            // of capability — the system observing its own search surface.
-            "web_recommend_provider" => Some(eso::HAS_EVIDENCE),
-            // Process-axis search/extract: RSS discovery and fetching are actions.
-            "rss_search" | "rss_discover_feeds" | "rss_fetch" => Some(pko::ACTION),
-            // Process-axis synthesize: synthesis is a procedure execution.
-            "rss_synthesize" | "rss_fetch_synthetic" => Some(pko::PROCEDURE_EXECUTION),
-            // Process-axis curate: feed management is organizing (a procedure).
+        // Tool → research-workflow stage; the canonical mapper supplies the
+        // stage→concept value so this table cannot drift from the bridge.
+        let stage = match tool {
+            // Search/discovery actions (web + RSS).
+            "web_search" | "web_find_similar" | "rss_search" | "rss_discover_feeds" => "search",
+            // Content extraction (web pages, feed entries).
+            "web_extract" | "web_browse" | "rss_fetch" => "extract",
+            // Synthesis.
+            "rss_synthesize" | "rss_fetch_synthetic" => "synthesize",
+            // Feed management is curation (organizing).
             "rss_subscribe"
             | "rss_unsubscribe"
             | "rss_mark_all_read"
             | "rss_export_opml"
             | "rss_import_opml"
             | "rss_edit_tag"
-            | "rss_delete_synthetic" => Some(pko::PROCEDURE),
-            // Process-axis evaluate: evidence evaluation is step verification.
-            "evaluate_evidence" => Some(pko::STEP_VERIFICATION),
-            // Process-axis cite: citation is a reference to a resource.
-            "cite_sources" => Some(pko::REFERENCES_RESOURCE),
-            // Dataset-axis: pure queries and health checks (no process stage).
-            _ => Some(dc_bibo::DATASET),
-        }
+            | "rss_delete_synthetic" => "curate",
+            // Evaluation: evidence assessment and provider recommendation are
+            // capability/evidence evaluations.
+            "evaluate_evidence" | "web_recommend_provider" => "evaluate",
+            // Citation.
+            "cite_sources" => "cite",
+            // Pure queries and health checks (no process stage).
+            _ => return Some(dc_bibo::DATASET),
+        };
+        pko::research_stage_to_pko(stage)
     }
 
     // ═══════════════════ Web tools ═══════════════════

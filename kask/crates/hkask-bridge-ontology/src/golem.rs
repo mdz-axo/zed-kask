@@ -120,25 +120,33 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
     EVOKES,
 ];
 
-// ── Mapping helpers ────────────────────────────────
+// ── Mapping helpers ────────────────────────────────────────
 
-/// Map a corpus server operation to its GOLEM concept.
+/// Map a corpus creative operation to its GOLEM concept.
+///
+/// Takes the bare operation name — the corpus tool name minus its `corpus_`
+/// prefix (`corpus_compose` → `compose`). Only creative generation anchors on
+/// GOLEM: compose and rewrite produce narrative prose (creative works).
+/// Discovery is deliberately NOT here — it is a search action on the process
+/// axis (`corpus_stage_to_pko_step`), not a creative work.
 pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {
     match op {
-        "corpus_compose" => Some(CREATIVE_WORK),
-        "corpus_discover" => Some(CREATIVE_WORK),
+        "compose" | "rewrite" => Some(CREATIVE_WORK),
         _ => None,
     }
 }
 
-/// Map a style attribute to a narrative concept.
-pub fn style_dimension_to_golem(dim: &str) -> Option<GolemConcept> {
-    match dim.to_lowercase().as_str() {
-        "voice" | "tone" | "persona" => Some(CHARACTER),
-        "setting" | "atmosphere" | "place" => Some(SETTING),
-        "plot" | "structure" | "arc" => Some(NARRATIVE_FUNCTION),
-        "character" | "protagonist" => Some(CHARACTER),
-        "event" | "scene" | "action" => Some(EVENT),
-        _ => None,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corpus_op_mapper_covers_creative_generation_only() {
+        // Creative generation anchors on GOLEM; discovery is a process action
+        // (corpus_stage_to_pko_step), not a creative work.
+        assert_eq!(corpus_op_to_golem("compose"), Some(CREATIVE_WORK));
+        assert_eq!(corpus_op_to_golem("rewrite"), Some(CREATIVE_WORK));
+        assert_eq!(corpus_op_to_golem("discover"), None);
+        assert_eq!(corpus_op_to_golem("convert"), None);
     }
 }

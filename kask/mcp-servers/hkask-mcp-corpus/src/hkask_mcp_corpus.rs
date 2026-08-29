@@ -51,7 +51,7 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use crate::ocr::ThresholdConfig;
-use hkask_bridge_ontology::{dc_bibo, eso, golem, pko};
+use hkask_bridge_ontology::{dc_bibo, golem, pko};
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_services_core::settings::HkaskSettings;
 use hkask_types::InferencePort;
@@ -278,33 +278,27 @@ impl CorpusServer {
 
     /// Map a tool name to its ontology concept URI. The concept tags the
     /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
-    /// routing. Four families, per the corpus pipeline:
+    /// routing. Delegates to the canonical bridge mappers — the single source
+    /// of truth, so this mapping cannot drift from the bridge contract (same
+    /// pattern as companies → `fibo::tool_to_ontology` and media →
+    /// `omc::tool_to_omc`).
     ///
-    /// - Document processing (convert, OCR, chunk, tag, embed) → Dublin Core
-    ///   `TEXT` / PKO `FUNCTION` / `ACTION` / `STEP_VERIFICATION`.
-    /// - Knowledge extraction (extract_assertions, QA) → ESO `HAS_EVIDENCE`.
-    /// - Compose/rewrite (corpus_compose, corpus_rewrite) → GOLEM `CREATIVE_WORK`.
-    /// - Storage/query/gather → Dublin Core `DATASET` / PKO `ACTION`.
+    /// Functional rule (dual-axis framework): a tool *execution* is a process,
+    /// so pipeline operations anchor on the process axis (PKO —
+    /// `corpus_stage_to_pko_step`); creative generation anchors on GOLEM
+    /// (`corpus_op_to_golem`); storage/registry operations anchor on the state
+    /// axis (Dublin Core Dataset — the artifact they manage).
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        match tool {
-            // Document processing → text artifacts.
-            "corpus_convert" | "corpus_ocr" => Some(dc_bibo::TEXT),
-            // Document processing → PKO functions/actions.
-            "corpus_chunk" | "corpus_embed" => Some(pko::FUNCTION),
-            "corpus_tag_chunks" => Some(pko::ACTION),
-            "corpus_is_complex" => Some(pko::STEP_VERIFICATION),
-            // Knowledge extraction → epistemic evidence.
-            "corpus_extract_assertions"
-            | "corpus_generate_qa"
-            | "corpus_generate_qa_batch"
-            | "corpus_ingest_qa" => Some(eso::HAS_EVIDENCE),
-            // Compose/rewrite → creative works.
-            "corpus_compose" | "corpus_rewrite" => Some(golem::CREATIVE_WORK),
-            // Gather → discovery actions.
-            "corpus_discover" | "corpus_discover_company" => Some(pko::ACTION),
-            // Storage/query/registry → dataset operations.
-            _ => Some(dc_bibo::DATASET),
+        // The mappers take the bare operation name (corpus_convert → convert).
+        let operation = tool.strip_prefix("corpus_").unwrap_or(tool);
+        if let Some(concept) = pko::corpus_stage_to_pko_step(operation) {
+            return Some(concept);
         }
+        if let Some(concept) = golem::corpus_op_to_golem(operation) {
+            return Some(concept);
+        }
+        // Storage / registry / everything else: the state axis.
+        Some(dc_bibo::DATASET)
     }
 }
 
@@ -486,6 +480,75 @@ mod smoke {
         assert!(
             !error.message.is_empty(),
             "typed error must carry a message, got: {error:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ontology_anchor_tests {
+    use super::*;
+
+    /// Every registered tool must have a non-None ontology anchor — a tool
+    /// outside the anchor mapping would emit untagged reg.tool spans, breaking
+    /// type-aware feedback routing. Mirrors the companies/media pin tests.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CorpusServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                CorpusServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'",
+                tool.name
+            );
+        }
+    }
+
+    /// Pin the unified dual-axis assignments: pipeline operations on the
+    /// process axis (PKO), creative generation on GOLEM, storage/registry on
+    /// the state axis (DC Dataset). These pins make drift from the canonical
+    /// bridge mappers visible at test time.
+    #[test]
+    fn ontology_anchor_pins_dual_axis_assignments() {
+        use hkask_bridge_ontology::{dc_bibo, golem, pko};
+        // Process axis: ingest step, processing functions, extraction actions.
+        assert_eq!(CorpusServer::ontology_anchor("corpus_convert"), Some(pko::STEP));
+        assert_eq!(CorpusServer::ontology_anchor("corpus_ocr"), Some(pko::FUNCTION));
+        assert_eq!(CorpusServer::ontology_anchor("corpus_chunk"), Some(pko::FUNCTION));
+        assert_eq!(CorpusServer::ontology_anchor("corpus_embed"), Some(pko::FUNCTION));
+        assert_eq!(CorpusServer::ontology_anchor("corpus_tag_chunks"), Some(pko::ACTION));
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_is_complex"),
+            Some(pko::STEP_VERIFICATION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_extract_assertions"),
+            Some(pko::ACTION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_generate_qa"),
+            Some(pko::ACTION)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_discover"),
+            Some(pko::ACTION)
+        );
+        // Creative generation → GOLEM.
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_compose"),
+            Some(golem::CREATIVE_WORK)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_rewrite"),
+            Some(golem::CREATIVE_WORK)
+        );
+        // Storage / registry → the state axis.
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_cache"),
+            Some(dc_bibo::DATASET)
+        );
+        assert_eq!(
+            CorpusServer::ontology_anchor("corpus_clear_index"),
+            Some(dc_bibo::DATASET)
         );
     }
 }

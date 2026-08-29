@@ -46,8 +46,7 @@ citation relationships. The universal "what is this" axis.
 Full list: `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs`
 
 **Helpers:** `mime_to_dc_type(mime: &str) -> Option<DcConcept>`
-(`dc_bibo.rs:73`), `kind_to_bibo(kind: &str) -> Option<DcConcept>`
-(`dc_bibo.rs:85`).
+(`dc_bibo.rs:79`).
 
 ### `pko` — Procedural Knowledge Ontology (process axis, universal)
 
@@ -65,9 +64,9 @@ The universal "how did this come to be" axis.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
-**Helpers:** `kanban_status_to_pko_execution` (`pko.rs:102`),
-`corpus_stage_to_pko_step` (`pko.rs:114`), `research_stage_to_pko`
-(`pko.rs:128`), `task_breakdown_field_to_pko` (`pko.rs:150`).
+**Helpers:** `kanban_status_to_pko_execution` (`pko.rs:106`),
+`corpus_stage_to_pko_step` (`pko.rs:127`), `research_stage_to_pko`
+(`pko.rs:156`).
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 

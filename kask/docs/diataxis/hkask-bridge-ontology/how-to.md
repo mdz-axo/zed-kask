@@ -109,24 +109,23 @@ let procedure = pko::PROCEDURE;        // "pko:Procedure"        (pko.rs:21)
 let step_exec = pko::STEP_EXECUTION;   // "pko:StepExecution"    (pko.rs:54)
 ```
 
-Two mapping helpers convert runtime values to state-axis concepts
+One mapping helper converts runtime values to state-axis concepts
 without forcing every caller to maintain its own match table:
 
 ```rust
 use hkask_bridge_ontology::dc_bibo;
 
-// MIME type → Dublin Core type vocabulary      (dc_bibo.rs:73)
+// MIME type → Dublin Core type vocabulary      (dc_bibo.rs:79)
 let dc_type = dc_bibo::mime_to_dc_type("application/pdf");  // Some("dcterms:Text")
-
-// Resource kind string → BIBO type             (dc_bibo.rs:85)
-let bibo = dc_bibo::kind_to_bibo("arxiv");  // Some("bibo:Preprint")
 ```
 
 PKO also ships stage-mapping helpers for the servers that convert their
 domain stages to process concepts: `kanban_status_to_pko_execution`
-(`pko.rs:102`), `corpus_stage_to_pko_step` (`pko.rs:114`),
-`research_stage_to_pko` (`pko.rs:128`), and `task_breakdown_field_to_pko`
-(`pko.rs:150`).
+(`pko.rs:106`), `corpus_stage_to_pko_step` (`pko.rs:127`), and
+`research_stage_to_pko` (`pko.rs:156`). GOLEM ships `corpus_op_to_golem`
+(`golem.rs:132`) for creative-generation operations. The corpus server's
+`ontology_anchor` delegates to `corpus_stage_to_pko_step` and
+`corpus_op_to_golem` — the canonical mapping, so it cannot drift.
 
 ## Step 2 — Use a domain supplement when the universal axes are too coarse
 
@@ -346,10 +345,10 @@ their own mapping today.
 | DC+BIBO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:330` |
 | SUMO fallback / empty → Core | `kask/crates/hkask-bridge-ontology/src/axis.rs:345-351` |
 | `dc_bibo` constants (TITLE/DATASET/ARTICLE/CITES/...) | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:15`, `:37`, `:44`, `:59` |
-| `dc_bibo::mime_to_dc_type` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:73` |
-| `dc_bibo::kind_to_bibo` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:85` |
+| `dc_bibo::mime_to_dc_type` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:79` |
 | `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:21`, `:54` |
-| `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:102`, `:114`, `:128`, `:150` |
+| `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:106`, `:127`, `:156` |
+| `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:132` |
 | `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/PORTFOLIO/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:32`, `:51`, `:93`, `:141` |
 | `eso` constants (HAS_HYPOTHESIS/...) | `kask/crates/hkask-bridge-ontology/src/eso.rs:23` |
 | `golem` constants (CHARACTER/EVENT/SETTING/CREATIVE_WORK/...) | `kask/crates/hkask-bridge-ontology/src/golem.rs:23`, `:27`, `:30`, `:51` |
