@@ -69,12 +69,13 @@ pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-kl
 pub const DEFAULT_VIDEO_MODEL: &str = "DeepInfra/Wan-AI/Wan2.2-T2V-A14B";
 
 /// Default rerank model for the research server's deep-strategy rerank stage
-/// (relevance judgment over search candidates, strict-JSON output).
-/// Qwen3-Reranker-8B via DeepInfra — a dedicated reranker built for
-/// query–document relevance judgment; override with `HKASK_RERANK_MODEL`.
-/// The `DeepInfra/` prefix resolves through zed's `LanguageModelRegistry`
-/// when passed as the `model_override` to `InferencePort::generate_with_model`.
-pub const DEFAULT_RERANK_MODEL: &str = "DeepInfra/Qwen/Qwen3-Reranker-8B";
+/// (native relevance scoring over search candidates via the provider's rerank
+/// endpoint). Qwen3-Reranker-8B via OpenRouter's rerank router — a dedicated
+/// reranker whose entire training objective is query–document relevance
+/// judgment; override with `HKASK_RERANK_MODEL`. The `OpenRouter/` prefix
+/// routes the request to OpenRouter's `/api/v1/rerank` endpoint on the zed
+/// side of the inference IPC bridge (the prefix is stripped before the call).
+pub const DEFAULT_RERANK_MODEL: &str = "OpenRouter/qwen/qwen3-reranker-8b";
 
 // ── Resolved model accessors (env var → default) ──────────────────────────
 

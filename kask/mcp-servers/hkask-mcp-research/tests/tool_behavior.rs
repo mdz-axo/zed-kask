@@ -38,7 +38,6 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
 use hkask_types::InferencePort;
 use hkask_types::InferenceResult;
-use hkask_types::InferenceUsage;
 use hkask_types::McpErrorKind;
 use hkask_types::WebID;
 use hkask_types::tool_response::parse_tool_response;
@@ -144,40 +143,66 @@ impl InferencePort for FailingInferencePort {
             ))
         })
     }
+
+    fn rerank<'a>(
+        &'a self,
+        _model: &str,
+        _query: &str,
+        _documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: rerank bridge down".to_string(),
+            ))
+        })
+    }
 }
 
-/// Stub inference port that scores each candidate by URL substring — pins
-/// the success contract: the LLM's per-candidate scores reach the caller
-/// and the output names `mode: "llm"` with no reason.
+/// Stub inference port whose rerank scores each candidate by document
+/// content — pins the success contract: the reranker's native scores reach
+/// the caller and the output names `mode: "llm"` with no reason.
 struct ScoringInferencePort;
 
 impl InferencePort for ScoringInferencePort {
     fn generate(
         &self,
-        prompt: &str,
+        _prompt: &str,
         _parameters: &hkask_types::template::LLMParameters,
         _tools: Option<&[hkask_types::ChatToolDefinition]>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let score = if prompt.contains("gamma") {
-            90
-        } else if prompt.contains("alpha") {
-            50
-        } else {
-            10
-        };
-        Box::pin(async move {
-            Ok(InferenceResult {
-                text: format!("{{\"score\": {score}}}"),
-                model: "stub".to_string(),
-                usage: InferenceUsage::default(),
-                finish_reason: "stop".to_string(),
-                tool_calls: Vec::new(),
-                reasoning: None,
-                cost_usd: None,
-            })
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: generate unused in rerank tests".to_string(),
+            ))
         })
+    }
+
+    fn rerank<'a>(
+        &'a self,
+        _model: &str,
+        _query: &str,
+        documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| {
+                let relevance_score = if document.contains("gamma") {
+                    0.90
+                } else if document.contains("alpha") {
+                    0.50
+                } else {
+                    0.10
+                };
+                hkask_types::inference_ipc::RerankScoreEntry {
+                    index,
+                    relevance_score,
+                }
+            })
+            .collect();
+        Box::pin(async move { Ok(scores) })
     }
 }
 

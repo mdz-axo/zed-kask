@@ -149,6 +149,13 @@ pub enum InferenceMethod {
     /// `InferenceParams`. The result is returned as
     /// `InferenceOutcome::Media`.
     MediaGenerate,
+    /// Rerank documents against a query with a dedicated reranker via the
+    /// provider's rerank endpoint (OpenRouter `/api/v1/rerank`). Uses
+    /// `rerank_model`, `rerank_query`, `rerank_documents` from
+    /// `InferenceParams`. The zed side holds the API key and calls the
+    /// provider directly — the MCP server never sees the credential. The
+    /// result is returned as `InferenceOutcome::RerankScores`.
+    Rerank,
 }
 
 /// Parameters for an inference request.
@@ -230,6 +237,18 @@ pub struct InferenceParams {
     /// Defaults to `HEAD`.
     #[serde(default)]
     pub worktree_base_ref: Option<String>,
+    // ── Rerank fields (for `InferenceMethod::Rerank`) ──
+    /// Rerank model string (provider-prefixed, e.g.
+    /// `OpenRouter/qwen/qwen3-reranker-8b`). The zed side strips the
+    /// provider prefix and routes to that provider's rerank endpoint.
+    #[serde(default)]
+    pub rerank_model: Option<String>,
+    /// The search query to rerank documents against.
+    #[serde(default)]
+    pub rerank_query: Option<String>,
+    /// Documents to rerank — plain text per candidate.
+    #[serde(default)]
+    pub rerank_documents: Option<Vec<String>>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -289,11 +308,28 @@ pub enum InferenceOutcome {
         #[serde(rename = "batch_results")]
         results: Vec<BatchResultEntry>,
     },
+    /// Rerank scores from `InferenceMethod::Rerank`. One entry per scored
+    /// document, sorted by descending relevance by the provider.
+    RerankScores {
+        #[serde(rename = "rerank_scores")]
+        scores: Vec<RerankScoreEntry>,
+    },
     /// Error from the inference port.
     Error {
         #[serde(rename = "error")]
         error: InferenceErrorPayload,
     },
+}
+
+/// A single reranked document's score — the provider's native relevance
+/// judgment, not a parsed LLM generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankScoreEntry {
+    /// Index of the document in the original input list.
+    pub index: usize,
+    /// Relevance score of the document to the query (provider-scaled,
+    /// typically 0.0-1.0).
+    pub relevance_score: f64,
 }
 
 /// A model entry in a `ListModels` response — a serializable subset of

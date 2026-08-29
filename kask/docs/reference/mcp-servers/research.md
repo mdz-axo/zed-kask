@@ -41,37 +41,47 @@ a templated LLM call, not a heuristic. The original heuristic implementation
 must also be trustworthy: general models commit category errors — well-formed
 but semantically wrong judgments that structural validation cannot catch.
 
-**Decision.** Per-candidate (pointwise) scoring: one LLM call per
-(query, candidate) pair, each returning a strict-JSON relevance score 0-100;
-candidates sort by descending score. Calls fan out concurrently, bounded by
-`HKASK_RERANK_MAX_CONCURRENCY` (default 8). The default model is a dedicated
-reranker — `DeepInfra/Qwen/Qwen3-Reranker-8B` — overridable via
-`HKASK_RERANK_MODEL` or the `kask.models.rerank_model` setting.
+**Decision.** Native rerank protocol: ONE `InferencePort::rerank` call
+ carrying all candidates as documents, routed through the inference IPC
+ bridge to the provider's rerank endpoint (OpenRouter `/api/v1/rerank`).
+The default model is a dedicated reranker — `OpenRouter/qwen/qwen3-reranker-8b`,
+served via OpenRouter's native rerank endpoint — overridable via
+`HKASK_RERANK_MODEL` or the `kask.models.rerank_model` setting. The zed side
+of the bridge holds the OpenRouter key (keychain
+`kask://credentials/openrouter`) and calls the provider directly; the MCP
+server never sees the credential (same pattern as `GenerateBatch`).
 
-**Why per-candidate, not list-ordering.**
+**Why the native protocol.**
 
-1. *Consistency by construction* — every candidate gets the identical prompt
-   and rubric, so judgments are comparable. A list-ordering prompt makes each
-   item's judgment depend on its neighbors.
-2. *Bounded blast radius* — a wrong score misorders one item and cannot
-   cascade. The model's output space is a per-item number, never a permutation
-   it must track across a long list.
-3. *Positional robustness* — long-list ordering is where LLMs degrade:
-   performance collapses for items in the middle of the input context (Liu et
-   al., TACL 2023, arXiv:2307.03172). Per-candidate prompts have no middle.
-4. *Dedicated rerankers are trained for this shape* — query-document relevance
-   judgment (Zhang et al., arXiv:2506.05176). LLM reranking as a pattern is
-   established by RankGPT (Sun et al., EMNLP 2023, arXiv:2304.09542), which
-   introduced sliding windows to work around list-length limits —
-   per-candidate scoring is the same insight taken to its limit.
+1. *No category-error surface* — the reranker's output is a per-document
+   `relevance_score`, its own relevance judgment, not a parsed LLM
+   generation. The model cannot emit prose, hallucinate a format, or
+   misorder a list it must track. The trust problem that motivated this
+   design is answered by the protocol, not by validation layered over
+   generation.
+2. *Consistency by construction* — every candidate is judged by the same
+   model with the same internal rubric in the same request.
+3. *One call replaces N* — the earlier per-candidate chat-completions
+   fanout (and its concurrency cap) is obsolete; cost and latency scale with
+   one request, not with `num_results`.
+4. *Dedicated rerankers are trained for exactly this shape* — query-document
+   relevance judgment (Zhang et al., arXiv:2506.05176). LLM reranking as a
+   pattern is established by RankGPT (Sun et al., EMNLP 2023,
+   arXiv:2304.09542), whose sliding-window workaround for list-length limits
+   is precisely what a native documents-array rerank endpoint makes
+   unnecessary. Positional degradation in long contexts (Liu et al., TACL
+   2023, arXiv:2307.03172) motivated the earlier per-candidate design; the
+   native endpoint inherits that robustness while restoring single-request
+   economics.
 
 **Degradation contract.** Every degraded outcome is surfaced in the tool
 output's `rerank` field — never a silent fallback:
 
-- All calls failed → `mode: "heuristic"` with the first error as `reason`;
-  the heuristic RRF order is kept.
-- Some calls failed → `mode: "llm"` with a `reason` naming the failure count;
-  unscored candidates keep heuristic order after the scored ones.
+- The rerank call failed (or returned no valid scores) → `mode: "heuristic"`
+  with the error as `reason`; the heuristic RRF order is kept.
+- Some documents missing from the response → `mode: "llm"` with a `reason`
+  naming the count; unscored candidates keep heuristic order after the
+  scored ones.
 - Non-deep strategies → no `rerank` field (they do not rerank).
 
 **Canonical-pattern interactions.**
@@ -79,9 +89,10 @@ output's `rerank` field — never a silent fallback:
 - *RRF fusion* (`providers/mod.rs`): heuristic signals remain the base
   scoring; the rerank stage reorders on top and falls back to RRF order on
   total failure.
-- *LazyInferencePort* (`hkask-inference`): scoring routes through the zed IPC
-  bridge per call; a socket appearing after server start is picked up without
-  a restart.
+- *Inference IPC bridge* (`InferenceMethod::Rerank`): the call routes to
+  the zed side, which holds the OpenRouter key and calls the provider's
+  rerank endpoint directly — the MCP server never sees the credential
+  (same pattern as `GenerateBatch`).
 - *Model constants* (`hkask-inference/model_constants.rs`):
   `DEFAULT_RERANK_MODEL` is the single source of truth. The settings chain
   (settings_content → `KaskModelsSettings` → `emit_models_env` →
@@ -102,8 +113,8 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS tools) |
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
-| `HKASK_RERANK_MODEL` | Rerank model override (default `DeepInfra/Qwen/Qwen3-Reranker-8B`) |
-| `HKASK_RERANK_MAX_CONCURRENCY` | Rerank fanout cap (default 8; malformed values warn and use the default) |
+| `HKASK_RERANK_MODEL` | Rerank model override (default `OpenRouter/qwen/qwen3-reranker-8b`) |
+
 
 ## References
 

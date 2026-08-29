@@ -271,12 +271,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // RSS DB path — read by open_database_with_extensions(). Without
             // this, RSS tools return "not configured" despite the env being set.
             "HKASK_RSS_DB",
-            // Deep-strategy rerank model + fanout cap — read by
-            // `hkask_inference::model_constants::rerank_model()` and
-            // `rerank_max_concurrency()` at call time. Without these, an
-            // operator override is silently stripped under governed launch.
+            // Deep-strategy rerank model — read by
+            // `hkask_inference::model_constants::rerank_model()` at call
+            // time. Without this, an operator override is silently stripped
+            // under governed launch.
             "HKASK_RERANK_MODEL",
-            "HKASK_RERANK_MAX_CONCURRENCY",
         ]),
     },
     BuiltinMcpServer {
@@ -1155,14 +1154,12 @@ mod tests {
              but HKASK_DATA_DIR is not allowlisted — an operator override \
              would be silently dropped"
         );
-        for key in ["HKASK_RERANK_MODEL", "HKASK_RERANK_MAX_CONCURRENCY"] {
-            assert!(
-                s.config_env.unwrap().contains(&key),
-                "research reads {key} via std::env::var (rerank model resolution \
-                 / fanout cap) but it is not allowlisted — an operator override \
-                 would be silently stripped under governed launch"
-            );
-        }
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_RERANK_MODEL"),
+            "research reads HKASK_RERANK_MODEL via std::env::var (rerank model \
+             resolution) but it is not allowlisted — an operator override \
+             would be silently stripped under governed launch"
+        );
     }
 
     #[test]

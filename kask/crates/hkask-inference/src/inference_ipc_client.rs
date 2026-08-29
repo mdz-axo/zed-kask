@@ -437,6 +437,9 @@ impl InferenceIpcClient {
             InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "BatchResults"),
             )),
+            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "RerankScores"),
+            )),
         }
     }
 
@@ -601,6 +604,9 @@ impl InferenceIpcClient {
             InferenceOutcome::BatchResults { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "BatchResults"),
             )),
+            InferenceOutcome::RerankScores { .. } => Err(EmbeddingGenerationError::Connection(
+                unexpected_outcome_msg(&method, "RerankScores"),
+            )),
         }
     }
 
@@ -649,7 +655,70 @@ impl InferenceIpcClient {
             InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "BatchResults"),
             )),
+            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "RerankScores"),
+            )),
         }
+    }
+
+    /// Rerank documents against a query with a dedicated reranker via the
+    /// IPC bridge. The zed side holds the provider API key and calls the
+    /// provider's rerank endpoint directly.
+    async fn call_rerank(
+        &self,
+        model: &str,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<hkask_types::inference_ipc::RerankScoreEntry>, InferenceError> {
+        let method = InferenceMethod::Rerank;
+        let params = InferenceParams {
+            rerank_model: Some(model.to_string()),
+            rerank_query: Some(query.to_string()),
+            rerank_documents: Some(documents.to_vec()),
+            ..InferenceParams::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::RerankScores { scores } => Ok(scores),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Result"),
+            )),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Embeddings"),
+            )),
+            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ModelList"),
+            )),
+            InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "Media"),
+            )),
+            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolResult"),
+            )),
+            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "WorktreeThread"),
+            )),
+            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "BatchResults"),
+            )),
+        }
+    }
+
+    /// Rerank documents against a query via the IPC bridge. Public entry
+    /// point — validates inputs, then delegates to `call_rerank`.
+    pub async fn rerank_documents(
+        &self,
+        model: &str,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<hkask_types::inference_ipc::RerankScoreEntry>, InferenceError> {
+        if documents.is_empty() {
+            return Err(InferenceError::Generation(
+                "rerank requires at least one document".to_string(),
+            ));
+        }
+        self.call_rerank(model, query, documents).await
     }
 
     /// Invoke a governed MCP tool on the zed side via the IPC bridge.
@@ -696,6 +765,9 @@ impl InferenceIpcClient {
             InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "BatchResults"),
             )),
+            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "RerankScores"),
+            )),
         }
     }
 
@@ -740,6 +812,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "BatchResults"),
+            )),
+            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "RerankScores"),
             )),
         }
     }
@@ -833,6 +908,19 @@ impl InferencePort for InferenceIpcClient {
         let texts = texts.to_vec();
         let this = self;
         async move { this.embed(&model, &texts).await }.boxed()
+    }
+
+    fn rerank<'a>(
+        &'a self,
+        model: &str,
+        query: &str,
+        documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        let model = model.to_string();
+        let query = query.to_string();
+        let documents = documents.to_vec();
+        let this = self;
+        async move { this.rerank_documents(&model, &query, &documents).await }.boxed()
     }
 
     fn list_models<'a>(

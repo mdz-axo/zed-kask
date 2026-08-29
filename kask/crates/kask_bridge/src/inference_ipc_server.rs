@@ -1028,6 +1028,105 @@ async fn dispatch(
         }
     }
 
+    // Rerank requests are dispatched to the provider's rerank endpoint
+    // (OpenRouter `/api/v1/rerank`). The zed side reads the API key from the
+    // keychain via the GPUI-side credential channel, then calls
+    // `hkask_inference::rerank::rerank_documents`. The MCP server never
+    // sees the API key.
+    if matches!(request.method, InferenceMethod::Rerank) {
+        let model = params.rerank_model.as_deref().unwrap_or("");
+        let query = params.rerank_query.as_deref().unwrap_or("");
+        let documents = params.rerank_documents.as_deref().unwrap_or(&[]);
+
+        if query.is_empty() || documents.is_empty() {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "InvalidArgument".to_string(),
+                    message: "rerank requires rerank_query and at least one \
+                         rerank_document"
+                        .to_string(),
+                },
+            };
+        }
+
+        // Detect the provider from the model prefix. Only OpenRouter has a
+        // rerank endpoint among the registered providers.
+        let Some((_provider, clean_model)) = hkask_inference::rerank::detect_rerank_provider(model)
+        else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "InvalidArgument".to_string(),
+                    message: format!(
+                        "rerank model '{model}' is not rerank-eligible — use an \
+                         'OpenRouter/'-prefixed rerank model (e.g. \
+                         OpenRouter/qwen/qwen3-reranker-8b)"
+                    ),
+                },
+            };
+        };
+
+        // Read the API key from the keychain via the GPUI-side channel.
+        let credential_url = "kask://credentials/openrouter";
+        let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
+        if batch_credential_tx
+            .send((credential_url.to_string(), tx_reply))
+            .is_err()
+        {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "GPUI-side credential task dropped — server shutting \
+                         down"
+                        .to_string(),
+                },
+            };
+        }
+        let api_key = match rx_reply.await {
+            Ok(Ok(key)) => key,
+            Ok(Err(e)) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "PermissionDenied".to_string(),
+                        message: format!(
+                            "rerank requires {credential_url}: {e}. \
+                             Set the API key via the kask settings UI."
+                        ),
+                    },
+                };
+            }
+            Err(e) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Connection".to_string(),
+                        message: format!("credential channel failed: {e}"),
+                    },
+                };
+            }
+        };
+
+        match hkask_inference::rerank::rerank_documents(&api_key, &clean_model, query, documents)
+            .await
+        {
+            Ok(scores) => {
+                tracing::info!(
+                    target: "hkask.inference.rerank",
+                    scored = scores.len(),
+                    model = %clean_model,
+                    "Rerank completed"
+                );
+                return InferenceOutcome::RerankScores { scores };
+            }
+            Err(e) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Internal".to_string(),
+                        message: format!("rerank API failed: {e}"),
+                    },
+                };
+            }
+        }
+    }
+
     // Media generation requests are dispatched via the InferencePort's
     // `media_generate` method. The zed-side `InferencePort` impl
     // (`LanguageModelInferencePort`) routes this to the `MediaRouter`.
@@ -1108,7 +1207,8 @@ async fn dispatch(
         | InferenceMethod::ToolInvoke
         | InferenceMethod::CreateWorktreeThread
         | InferenceMethod::GenerateBatch
-        | InferenceMethod::MediaGenerate => {
+        | InferenceMethod::MediaGenerate
+        | InferenceMethod::Rerank => {
             tracing::error!(
                 target: "reg.inference",
                 method = ?request.method,

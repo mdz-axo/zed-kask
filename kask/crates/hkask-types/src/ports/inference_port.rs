@@ -24,6 +24,17 @@ pub type EmbedFuture<'a> =
 pub type MediaFuture<'a> =
     Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
 
+/// Future returned by [`InferencePort::rerank`]. Same rationale as
+/// `EmbedFuture` — keeps the trait signature under clippy's
+/// `type_complexity` threshold.
+pub type RerankFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<Vec<crate::inference_ipc::RerankScoreEntry>, InferenceError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 /// Parameters for [`InferencePort::media_generate`].
 ///
 /// Carries the media-generation fields (image/video/speech/transcription)
@@ -283,6 +294,25 @@ pub trait InferencePort: Send + Sync {
         Box::pin(async {
             Err(EmbeddingGenerationError::Connection(
                 "embed not supported by this InferencePort".into(),
+            ))
+        })
+    }
+
+    /// Rerank documents against a query with a dedicated reranker.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// `DEFAULT_RERANK_MODEL`); the implementation strips the prefix and
+    /// routes to that provider's rerank endpoint. Returns one
+    /// `RerankScoreEntry` per scored document — the provider's native
+    /// relevance judgment, not a parsed LLM generation.
+    ///
+    /// Default: returns an error so an implementation cannot silently drop
+    /// rerank requests. `InferenceIpcClient` overrides this to route through
+    /// the zed-side rerank handler via the IPC bridge.
+    fn rerank<'a>(&'a self, _model: &str, _query: &str, _documents: &[String]) -> RerankFuture<'a> {
+        Box::pin(async {
+            Err(InferenceError::NotConfigured(
+                "rerank not supported by this InferencePort".to_string(),
             ))
         })
     }

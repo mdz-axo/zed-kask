@@ -221,6 +221,162 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_contains_division_of_responsibilities() {
+        // Pins the four-moves interaction loop (functional-interaction-spec.md,
+        // Phase A) so an upstream merge that drops it is caught. The section
+        // must carry the four moves and the authority boundary: the user
+        // decides functional questions, the agent interprets — never revises —
+        // the functional requirement.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("## Division of Responsibilities (kask)"),
+            "the division section must be present in the rendered prompt"
+        );
+        for move_phrase in [
+            "Point at the same target",
+            "Bring choices to the user as experiences",
+            "Report outcomes, not artifacts",
+            "Bank the learning",
+        ] {
+            assert!(
+                rendered.contains(move_phrase),
+                "all four moves must be present; missing: {move_phrase}"
+            );
+        }
+        assert!(
+            rendered.contains("The user decides; you implement"),
+            "the authority boundary must be explicit: functional decisions are the user's"
+        );
+        assert!(
+            rendered.contains("to interpret it, not to revise it"),
+            "the agent interprets the functional requirement; it never revises it"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_autonomy_bullet_includes_experience_trigger() {
+        // Pins the amended autonomy bullet in `## Task Execution`: asking is
+        // triggered not only by missing information or risk but by choices
+        // that change what the user will experience. Without this carve-out
+        // the bullet licenses unilateral functional decisions (the agent has
+        // the information; the question is authority, not information).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("a choice changes what the user will experience"),
+            "the autonomy bullet must name the experience-changing-choice ask trigger"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_final_message_leads_with_functional_outcome() {
+        // Pins the functional-first Final Message bullet: reports lead with
+        // what the user can now do (or no longer experiences as broken)
+        // before technical detail. The prior bullet alone rehearsed a
+        // file-list summary format every turn.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("Lead with the functional outcome"),
+            "the Final Message section must require the functional outcome first"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_vagueness_resolved_with_user() {
+        // Pins the amended `## Ambition vs. Precision` bullet: scope vagueness
+        // is resolved WITH the user, not filled with initiative. The upstream
+        // text ("creative touches when scope is vague") directly contradicted
+        // the Division of Responsibilities — scope-vague is the four-moves'
+        // ask-trigger, so the contradiction is asserted absent as well.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("resolve the vagueness with the user"),
+            "vague scope must route to the user, not to initiative"
+        );
+        assert!(
+            !rendered.contains("creative touches when scope is vague"),
+            "the upstream phrase licenses unilateral product decisions in \
+             exactly the situation where the functional requirement matters most"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_autonomy_bullet_reframes_prematurely() {
+        // Pins the amended autonomy bullet: the anti-pattern is asking for
+        // findable information — not asking per se. "Prematurely" framed
+        // user-contact as cost and biased against interpretation rounds and
+        // choice-surfacing.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("for information you can find yourself"),
+            "the autonomy bullet must name findable-information as the anti-pattern, not asking per se"
+        );
+        assert!(
+            !rendered.contains("coming back to the user prematurely"),
+            "\"prematurely\" biases against the Division's ask-triggers"
+        );
+    }
+
+    #[test]
     fn test_system_prompt_mermaid_list_uses_renderer_directives() {
         // Supersedes an earlier test that asserted `kanban` was NOT a mermaid
         // type. That was wrong: `kanban` is in the renderer's allowlist

@@ -34,6 +34,7 @@ pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
 pub mod provider;
+pub mod rerank;
 pub mod scoring;
 
 // Re-exports — public API

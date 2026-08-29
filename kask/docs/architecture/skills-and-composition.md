@@ -42,7 +42,7 @@ plus **three overlays**, all delivered through a single channel.
 
 | # | Surface | Location | Size | Scope |
 |---|---------|----------|------|-------|
-| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 22,277 B / 302 lines | Every thread |
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 24,156 B / 330 lines | Every thread |
 | 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37-68` (`CURATOR_STATIC_CONTEXT`) | ~1.7 KB | Curator threads |
 | 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs:155-313` (`steer_system_prompt`) | ~9.8 KB | Swarm panel, Steer mode |
 | 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs:311-351` (`steer_system_prompt`) | ~2.4 KB | Kanban panel, Steer mode |
@@ -144,7 +144,8 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 | User's Custom Instructions | `:253` | Identical |
 | → Personal `AGENTS.md` | `:258` | Identical |
 | → Project Rules | `:268` | Identical |
-| Tool failure-mode warnings (kask) | `:285` | **New section** (§5.1) |
+| Tool failure-mode warnings (kask) | `:286` | **New section** (§5.1) |
+| Division of Responsibilities (kask) | `:294` | **New section** (§5.7, D40) |
 | Session Context | `:294` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
@@ -288,6 +289,37 @@ text, and no `skill_bundle` tool is registered in `crates/agent/src`. Bundle
 composition is now driven by the **skill-bundler** skill (see Part II,
 "Composing Skill Bundles").
 
+### 5.7 `## Division of Responsibilities (kask)` — new section (D40)
+
+- **zed-kask** `:294-319` carries the four-moves interaction loop from the
+  functional-interaction spec
+  ([`functional-interaction-spec.md`](functional-interaction-spec.md)):
+  point at the same target (intake interpretation, user corrects), bring
+  choices to the user as experiences (options + recommendation, user
+  decides), report outcomes not artifacts (functional outcome first),
+  bank the learning. Three shared-section bullets are amended alongside:
+  the `## Task Execution` autonomy bullet's ask-trigger gains "a choice
+  changes what the user will experience" and its "prematurely" is
+  reframed to "for information you can find yourself"; the
+  `## Ambition vs. Precision` bullet replaces "creative touches when
+  scope is vague" with "resolve the vagueness with the user"; and
+  `## Final Message` gains a functional-outcome-first bullet.
+- **Upstream** has none of these; its autonomy bullet licenses unilateral
+  functional decisions (the trigger is missing information, not authority),
+  and its Final Message bullet rehearses a file-list summary format.
+- **Why:** the severance of functional requirements from technical work is
+  structural — technical tokens crowd out the functional frame in a shared
+  context window. The section is deliberately **preference-framed** (an
+  evaluation axis: "the user evaluates this work by what it lets them do")
+  rather than prohibition-framed, per the spec's gradient-over-constraint
+  principle: constraint walls habituate and provoke escape-seeking.
+- **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
+  (section + all four moves + the authority boundary),
+  `test_system_prompt_autonomy_bullet_includes_experience_trigger`,
+  `test_system_prompt_autonomy_bullet_reframes_prematurely`,
+  `test_system_prompt_vagueness_resolved_with_user`, and
+  `test_system_prompt_final_message_leads_with_functional_outcome`.
+
 ## 6. Divergence-free sections
 
 Fourteen of the eighteen upstream `##` sections are byte-identical, including all
@@ -311,7 +343,7 @@ sync:
 
 1. Merge normally. Conflicts will land in the five hunks of §5.
 2. Re-apply each §5 divergence. The pinning tests are the checklist — run
-   `cargo test -p agent --lib templates::` (16 tests) and
+   `cargo test -p agent --lib templates::` (19 tests) and
    `cargo test -p markdown --lib mermaid` (21 tests). A dropped divergence fails a
    named test rather than silently reverting.
 3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,

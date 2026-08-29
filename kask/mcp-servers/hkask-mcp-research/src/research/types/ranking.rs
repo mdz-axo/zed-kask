@@ -5,11 +5,8 @@
 //! crate) and had nothing to do with memory.
 
 use chrono::Datelike;
-use futures_util::StreamExt;
 
 use hkask_types::InferencePort;
-use hkask_types::json_extract::extract_json_from_response;
-use hkask_types::template::LLMParameters;
 
 use crate::research::types::{RankedResult, RerankSignal};
 
@@ -207,62 +204,67 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 
 // ── LLM rerank (deep strategy) ─────────────────────────────────────────────
 //
-// DECISION RECORD — per-candidate (pointwise) scoring, not list-ordering.
+// DECISION RECORD — native rerank protocol (one call, dedicated reranker).
 //
 // Requirement: the deep strategy's rerank stage must be a templated LLM call
 // (operator directive), and its output must be trustworthy — a general model
 // asked to reorder a list can commit category errors (well-formed but
 // semantically wrong orderings) that no structural validation catches.
 //
-// Decision: one scoring call per (query, candidate) pair, each returning a
-// strict-JSON relevance score in 0-100; candidates sort by descending score.
-// The default model is a dedicated reranker (`DeepInfra/Qwen/Qwen3-Reranker-8B`,
-// override via `HKASK_RERANK_MODEL` / the kask models settings).
+// Decision: ONE `InferencePort::rerank` call carrying all candidates as
+// documents, routed through the zed-side IPC bridge to the provider's
+// rerank endpoint (OpenRouter `/api/v1/rerank`). The default model is a
+// dedicated reranker (`OpenRouter/qwen/qwen3-reranker-8b`, override via
+// `HKASK_RERANK_MODEL` / the kask models settings) whose native output is a
+// per-document `relevance_score` — the model's own relevance judgment, not
+// a parsed LLM generation.
 //
-// Why per-candidate beats list-ordering here:
-// 1. Consistency by construction — every candidate gets the identical prompt
-//    and rubric, so judgments are comparable (the operator's consistency
-//    requirement). A list-ordering prompt makes each item's judgment depend
-//    on its neighbors.
-// 2. Bounded blast radius — a wrong score misorders ONE item; it cannot
-//    cascade. The model's output space is a per-item number, never a
-//    permutation it must track across a long list.
-// 3. Positional robustness — long-list ordering is exactly where LLMs degrade:
-//    performance collapses for items in the middle of the input context
-//    (Liu et al., "Lost in the Middle: How Language Models Use Long Contexts",
-//    TACL 2023, arXiv:2307.03172). Per-candidate prompts have no middle.
+// Why the native protocol beats both alternatives:
+// 1. No category-error surface — the model cannot emit prose, hallucinate a
+//    format, or misorder a list it must track; its output space is a score
+//    per document. The trust problem that motivated this design is answered
+//    by the protocol, not by validation layered over generation.
+// 2. Consistency by construction — every candidate is judged by the same
+//    model with the same internal rubric in the same request (the operator's
+//    consistency requirement).
+// 3. One call replaces N — the earlier per-candidate chat-completions fanout
+//    (and its concurrency cap) is obsolete; cost and latency scale with one
+//    request, not with `num_results`.
 // 4. Dedicated rerankers are trained for exactly this shape — query–document
-//    relevance judgment (Qwen3-Reranker series: Zhang et al., "Qwen3 Embedding:
-//    Advancing Text Embedding and Reranking Through Foundation Models",
-//    arXiv:2506.05176). LLM reranking as a pattern is established by RankGPT
-//    (Sun et al., "Is ChatGPT Good at Search?", EMNLP 2023, arXiv:2304.09542),
-//    which also introduced sliding windows to work around list-length limits —
-//    per-candidate scoring is the same insight taken to its limit.
+//    relevance judgment (Qwen3-Reranker series: Zhang et al., "Qwen3
+//    Embedding: Advancing Text Embedding and Reranking Through Foundation
+//    Models", arXiv:2506.05176). LLM reranking as a pattern is established
+//    by RankGPT (Sun et al., "Is ChatGPT Good at Search?", EMNLP 2023,
+//    arXiv:2304.09542), whose sliding-window workaround for list-length
+//    limits is precisely what a native documents-array rerank endpoint makes
+//    unnecessary. Positional degradation in long contexts (Liu et al., "Lost
+//    in the Middle", TACL 2023, arXiv:2307.03172) motivated the earlier
+//    per-candidate design; the native endpoint inherits that robustness
+//    while restoring single-request economics.
 //
 // Canonical-pattern interactions:
 // - RRF fusion (providers/mod.rs): heuristic signals remain the base scoring;
 //   this stage reorders on top. On total failure the RRF order is kept.
-// - LazyInferencePort (hkask-inference): scoring calls route through the zed
-//   IPC bridge per call; a socket appearing after server start is picked up.
-// - Degradation surfacing: every degraded outcome (all calls failed, some
-//   failed) is named in the tool output's `rerank` field — never silent.
+// - Inference IPC bridge: the rerank call routes through
+//   `InferenceMethod::Rerank` to the zed side, which holds the OpenRouter key
+//   (keychain `kask://credentials/openrouter`) and calls the provider
+//   directly — the MCP server never sees the credential (same pattern as
+//   `GenerateBatch`).
+// - Degradation surfacing: every degraded outcome (call failed, documents
+//   missing from the response) is named in the tool output's `rerank` field
+//   — never silent.
 // - Model constants (hkask-inference/model_constants.rs):
 //   `DEFAULT_RERANK_MODEL` is the single source of truth; the settings chain
 //   (settings_content → KaskModelsSettings → emit_models_env → this env var)
 //   overrides it, and the research server's config_env allowlist passes it
 //   through under governed launch.
 
-/// Cap on title/description field lengths fed to the rerank prompt, so a
-/// deep search over 50 results with full extracted content cannot blow the
-/// model's context window.
+/// Cap on title/description field lengths fed to the rerank document text,
+/// so a deep search over 50 results with full extracted content cannot blow
+/// the reranker's context window (Qwen3-Reranker-8B: 41K tokens per query
+/// and document).
 const RERANK_FIELD_MAX_CHARS: usize = 400;
 const RERANK_CONTENT_MAX_CHARS: usize = 1200;
-
-/// Default cap on concurrent rerank scoring calls. The functional driver is
-/// responsiveness: a deep search must not serialize its scoring calls (the
-/// user feels the program is stuck) nor fire them unbounded (the provider
-/// rate-limits and every call fails). Fanout ramps up to this cap.
-const DEFAULT_RERANK_MAX_CONCURRENCY: usize = 8;
 
 fn truncate_field(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
@@ -277,241 +279,151 @@ fn truncate_field(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Resolve the rerank fanout cap: `HKASK_RERANK_MAX_CONCURRENCY` → default.
-/// A malformed value warns naming the value (never a silent fallback) and
-/// uses the default; a zero-or-negative parse is malformed, not a cap of 0.
-pub(crate) fn rerank_max_concurrency() -> usize {
-    match std::env::var("HKASK_RERANK_MAX_CONCURRENCY") {
-        Ok(value) => match value.parse::<usize>() {
-            Ok(parsed) if parsed >= 1 => parsed,
-            _ => {
-                tracing::warn!(
-                    target: "hkask.web",
-                    value = %value,
-                    "HKASK_RERANK_MAX_CONCURRENCY malformed — using default \
-                     {DEFAULT_RERANK_MAX_CONCURRENCY}"
-                );
-                DEFAULT_RERANK_MAX_CONCURRENCY
-            }
-        },
-        Err(_) => DEFAULT_RERANK_MAX_CONCURRENCY,
-    }
-}
-
-/// Build one pairwise scoring prompt: the query plus a single candidate.
-///
-/// The rerank model (default `DeepInfra/Qwen/Qwen3-Reranker-8B`) is a
-/// dedicated query–document relevance scorer, so each candidate is judged
-/// in its own call — one (query, candidate) pair per prompt. This is also
-/// what makes fanout possible: N candidates become N independent calls
-/// that run concurrently up to the cap.
-pub(crate) fn build_score_prompt(query: &str, result: &RankedResult) -> String {
-    let mut prompt = String::new();
-    prompt.push_str(
-        "You are a search relevance scorer. Rate how well the single \
-         candidate result below satisfies the query's intent.\n\n",
-    );
-    prompt.push_str(&format!("Query: {query}\n\n"));
-    prompt.push_str("Candidate:\n");
-    prompt.push_str(&format!(
+/// Build the document text for one candidate — the fields a relevance
+/// judgment needs (title, URL, description, date, content), truncated per
+/// field. Every candidate gets the same shape, so the reranker's judgments
+/// are comparable by construction.
+fn build_rerank_document(result: &RankedResult) -> String {
+    let mut document = String::new();
+    document.push_str(&format!(
         "Title: {}\n",
         truncate_field(&result.title, RERANK_FIELD_MAX_CHARS)
     ));
-    prompt.push_str(&format!("URL: {}\n", result.url));
+    document.push_str(&format!("URL: {}\n", result.url));
     if let Some(ref description) = result.description {
-        prompt.push_str(&format!(
+        document.push_str(&format!(
             "Description: {}\n",
             truncate_field(description, RERANK_FIELD_MAX_CHARS)
         ));
     }
     if let Some(ref published) = result.published {
-        prompt.push_str(&format!("Published: {published}\n"));
+        document.push_str(&format!("Published: {published}\n"));
     }
     if let Some(ref content) = result.extracted_content {
-        prompt.push_str(&format!(
-            "Content: {}\n",
+        document.push_str(&format!(
+            "Content: {}",
             truncate_field(content, RERANK_CONTENT_MAX_CHARS)
         ));
     } else if let Some(ref preview) = result.content_preview {
-        prompt.push_str(&format!(
-            "Preview: {}\n",
+        document.push_str(&format!(
+            "Preview: {}",
             truncate_field(preview, RERANK_FIELD_MAX_CHARS)
         ));
     }
-    prompt.push_str("\nReturn ONLY a JSON object, no prose, no markdown fences:\n");
-    prompt.push_str("{\"score\": <integer 0-100, higher = more relevant>}\n");
-    prompt
+    document
 }
 
-/// Outcome of a rerank fanout, surfaced by the caller in the tool output.
+/// Outcome of a rerank stage, surfaced by the caller in the tool output.
 #[derive(Debug)]
 pub(crate) struct RerankOutcome {
     /// Candidates that received a valid relevance score.
     pub scored: usize,
-    /// Candidates whose scoring call failed (inference error or unparseable
-    /// output) — they keep their heuristic order at the end of the results.
+    /// Candidates without a valid score (the call failed, or their index was
+    /// missing from the response) — they keep their heuristic order at the
+    /// end of the results.
     pub failed: usize,
-    /// First scoring failure's reason — present when `failed > 0`.
+    /// First failure's reason — present when `failed > 0`.
     pub first_error: Option<String>,
 }
 
-fn rerank_parameters() -> LLMParameters {
-    LLMParameters {
-        temperature: 0.1,
-        top_p: 0.9,
-        top_k: 40,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-        min_p: 0.0,
-        typical_p: 0.0,
-        seed: None,
-        thinking_allowed: false,
-        adapter: None,
-        system_prompt: Some(
-            "You are a precise search relevance scorer. You respond with strict \
-             JSON only — no prose, no markdown fences."
-                .to_string(),
-        ),
-    }
-}
-
-/// Parse a scoring response: `{"score": N}` with N in 0..=100. A bare
-/// integer is also accepted — some backends strip the JSON wrapper.
-fn parse_score(raw: &str) -> Result<u64, String> {
-    let parsed: serde_json::Value =
-        serde_json::from_str(raw).map_err(|error| format!("unparseable score JSON: {error}"))?;
-    let score = match parsed {
-        serde_json::Value::Object(map) => map.get("score").and_then(|value| value.as_u64()),
-        serde_json::Value::Number(number) => number.as_u64(),
-        _ => None,
-    };
-    score
-        .filter(|score| (0..=100).contains(score))
-        .ok_or_else(|| "score missing or outside 0-100".to_string())
-}
-
-async fn score_candidate(
-    inference_port: &dyn InferencePort,
-    prompt: &str,
-    rerank_model: &str,
-    parameters: &LLMParameters,
-) -> Result<u64, String> {
-    let result = inference_port
-        .generate_with_model(prompt, parameters, Some(rerank_model), None)
-        .await
-        .map_err(|error| format!("inference: {error}"))?;
-    parse_score(&extract_json_from_response(&result.text))
-}
-
-/// Reorder `results` by LLM relevance scores, fanning out one scoring call
-/// per candidate with concurrency bounded by `max_concurrency`.
+/// Reorder `results` by the reranker's native relevance scores — ONE call
+/// to `InferencePort::rerank` carrying all candidates as documents.
 ///
 /// Scored candidates sort by descending score (ties keep heuristic order);
-/// candidates whose call failed keep their heuristic relative order after
-/// the scored ones. When every call fails the heuristic order is kept
-/// untouched. The outcome counts are returned for the caller to surface —
-/// never a silent fallback.
-pub(crate) async fn llm_rerank_with_limit(
+/// candidates without a valid score keep their heuristic relative order
+/// after the scored ones. When the call fails entirely the heuristic order is
+/// kept untouched. The outcome counts are returned for the caller to
+/// surface — never a silent fallback.
+pub(crate) async fn llm_rerank(
     inference_port: &dyn InferencePort,
     query: &str,
     results: &mut Vec<RankedResult>,
-    max_concurrency: usize,
 ) -> RerankOutcome {
     let total = results.len();
     // The rerank model is a named constant with an env override
     // (`HKASK_RERANK_MODEL`) — resolved per call so an operator override
     // takes effect without a server restart.
     let rerank_model = hkask_inference::model_constants::rerank_model();
-    let parameters = rerank_parameters();
+    let documents: Vec<String> = results.iter().map(build_rerank_document).collect();
 
-    let prompts: Vec<(usize, String)> = results
-        .iter()
-        .enumerate()
-        .map(|(index, result)| (index, build_score_prompt(query, result)))
-        .collect();
+    let scores = match inference_port
+        .rerank(&rerank_model, query, &documents)
+        .await
+    {
+        Ok(scores) => scores,
+        Err(error) => {
+            return RerankOutcome {
+                scored: 0,
+                failed: total,
+                first_error: Some(format!("inference: {error}")),
+            };
+        }
+    };
 
-    // Bounded fanout: up to `max_concurrency` scoring calls in flight at
-    // once; the rest queue as permits free up.
-    let scored: Vec<(usize, Result<u64, String>)> = futures_util::stream::iter(prompts)
-        .map(|(index, prompt)| {
-            let rerank_model = &rerank_model;
-            let parameters = &parameters;
-            async move {
-                let outcome =
-                    score_candidate(inference_port, &prompt, rerank_model, parameters).await;
-                (index, outcome)
-            }
-        })
-        .buffer_unordered(max_concurrency.max(1))
-        .collect()
-        .await;
-
-    let mut scores: Vec<Option<u64>> = vec![None; total];
-    let mut failed = 0;
-    let mut first_error: Option<String> = None;
-    for (index, outcome) in scored {
-        match outcome {
-            Ok(score) => scores[index] = Some(score),
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.web",
-                    index,
-                    error = %error,
-                    "rerank scoring call failed — candidate keeps heuristic order"
-                );
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-                failed += 1;
-            }
+    let mut score_map: Vec<Option<f64>> = vec![None; total];
+    for entry in scores {
+        if entry.index < total {
+            score_map[entry.index] = Some(entry.relevance_score);
+        } else {
+            tracing::warn!(
+                target: "hkask.web",
+                index = entry.index,
+                total,
+                "rerank response carried an out-of-range document index — ignoring it"
+            );
         }
     }
 
-    let scored_count = total - failed;
-    if scored_count > 0 {
-        // Stable sort: scored before unscored, descending score, ties and
-        // unscored candidates keep their heuristic relative order.
-        let mut order: Vec<usize> = (0..total).collect();
-        order.sort_by_key(|&index| {
-            (
-                scores[index].is_none(),
-                std::cmp::Reverse(scores[index].unwrap_or(0)),
-            )
-        });
-        let original = std::mem::take(results);
-        *results = order
-            .into_iter()
-            .map(|index| original[index].clone())
-            .collect();
+    let scored = score_map.iter().filter(|score| score.is_some()).count();
+    if scored == 0 {
+        return RerankOutcome {
+            scored: 0,
+            failed: total,
+            first_error: Some("rerank returned no valid document scores".to_string()),
+        };
     }
+
+    let failed = total - scored;
+    // Stable sort: scored before unscored, descending score, ties and
+    // unscored candidates keep their heuristic relative order.
+    let mut order: Vec<usize> = (0..total).collect();
+    order.sort_by(|&a, &b| {
+        score_map[a]
+            .is_none()
+            .cmp(&score_map[b].is_none())
+            .then_with(|| {
+                score_map[b]
+                    .unwrap_or(0.0)
+                    .total_cmp(&score_map[a].unwrap_or(0.0))
+            })
+    });
+    let original = std::mem::take(results);
+    *results = order
+        .into_iter()
+        .map(|index| original[index].clone())
+        .collect();
 
     RerankOutcome {
-        scored: scored_count,
+        scored,
         failed,
-        first_error,
+        first_error: if failed > 0 {
+            Some(format!(
+                "{failed} of {total} documents missing from the rerank response"
+            ))
+        } else {
+            None
+        },
     }
 }
 
-/// `llm_rerank_with_limit` with the fanout cap resolved from
-/// `HKASK_RERANK_MAX_CONCURRENCY` (per call, so an operator override takes
-/// effect without a server restart).
-pub(crate) async fn llm_rerank(
-    inference_port: &dyn InferencePort,
-    query: &str,
-    results: &mut Vec<RankedResult>,
-) -> RerankOutcome {
-    let limit = rerank_max_concurrency();
-    llm_rerank_with_limit(inference_port, query, results, limit).await
-}
-
-// ── Tests: bounded fanout for the deep-strategy rerank ─────────────────────
+// ── Tests: native rerank protocol for the deep-strategy rerank ─────────────
 
 #[cfg(test)]
 mod rerank_tests {
     use super::*;
-    use hkask_types::{InferenceError, InferencePort, InferenceResult, InferenceUsage};
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use hkask_types::RerankFuture;
+    use hkask_types::inference_ipc::RerankScoreEntry;
+    use hkask_types::{InferenceError, InferencePort, InferenceResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn candidate(title: &str, url: &str) -> RankedResult {
@@ -539,32 +451,48 @@ mod rerank_tests {
         ]
     }
 
-    /// Scoring stub: returns a per-URL score, and counts how many calls are
-    /// in flight at once (max tracked) so tests can pin the concurrency cap.
-    struct CountingScoringPort {
-        scores: HashMap<&'static str, u64>,
-        in_flight: AtomicUsize,
-        max_in_flight: AtomicUsize,
+    fn score_entry(index: usize, relevance_score: f64) -> RerankScoreEntry {
+        RerankScoreEntry {
+            index,
+            relevance_score,
+        }
     }
 
-    impl CountingScoringPort {
-        fn new(scores: HashMap<&'static str, u64>) -> Self {
+    /// Native-protocol stub: returns fixed scores and counts calls so tests
+    /// can pin the single-call contract.
+    struct FixedRerankPort {
+        scores: Vec<RerankScoreEntry>,
+        /// Error message — when set, `rerank` fails with it.
+        error: Option<String>,
+        call_count: AtomicUsize,
+    }
+
+    impl FixedRerankPort {
+        fn with_scores(scores: Vec<RerankScoreEntry>) -> Self {
             Self {
                 scores,
-                in_flight: AtomicUsize::new(0),
-                max_in_flight: AtomicUsize::new(0),
+                error: None,
+                call_count: AtomicUsize::new(0),
             }
         }
 
-        fn max_in_flight(&self) -> usize {
-            self.max_in_flight.load(Ordering::SeqCst)
+        fn with_error(error: &str) -> Self {
+            Self {
+                scores: Vec::new(),
+                error: Some(error.to_string()),
+                call_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn call_count(&self) -> usize {
+            self.call_count.load(Ordering::SeqCst)
         }
     }
 
-    impl InferencePort for CountingScoringPort {
+    impl InferencePort for FixedRerankPort {
         fn generate(
             &self,
-            prompt: &str,
+            _prompt: &str,
             _parameters: &hkask_types::template::LLMParameters,
             _tools: Option<&[hkask_types::ChatToolDefinition]>,
         ) -> std::pin::Pin<
@@ -574,45 +502,49 @@ mod rerank_tests {
                     + '_,
             >,
         > {
-            let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            self.max_in_flight.fetch_max(current, Ordering::SeqCst);
-            let score = self
-                .scores
-                .iter()
-                .find(|(url, _)| prompt.contains(*url))
-                .map(|(_, score)| *score)
-                .unwrap_or(50);
-            let counter = &self.in_flight;
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "stub: generate unused in rerank tests".to_string(),
+                ))
+            })
+        }
+
+        fn rerank<'a>(
+            &'a self,
+            _model: &str,
+            _query: &str,
+            documents: &[String],
+        ) -> RerankFuture<'a> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            let scores = self.scores.clone();
+            let error = self.error.clone();
+            let document_count = documents.len();
             Box::pin(async move {
-                // Hold the call open briefly so sibling fanout calls overlap.
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                counter.fetch_sub(1, Ordering::SeqCst);
-                Ok(InferenceResult {
-                    text: format!("{{\"score\": {score}}}"),
-                    model: "stub".to_string(),
-                    usage: InferenceUsage::default(),
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
+                if let Some(error) = error {
+                    return Err(InferenceError::Connection(error));
+                }
+                // Guard: the stub's scores must reference real documents.
+                assert!(
+                    scores.iter().all(|entry| entry.index < document_count),
+                    "stub scores must be in range of the document list"
+                );
+                Ok(scores)
             })
         }
     }
 
-    /// Fanout contract: with a cap ≥ candidate count, all scoring calls run
-    /// concurrently (max in-flight reaches the candidate count) and the
-    /// score ordering reaches the caller.
+    /// Success contract: the provider's relevance ordering reaches the caller
+    /// via exactly ONE rerank call carrying all candidates.
     #[tokio::test]
-    async fn rerank_fanout_runs_candidates_concurrently() {
-        let mut scores = HashMap::new();
-        scores.insert("alpha", 50u64);
-        scores.insert("beta", 10u64);
-        scores.insert("gamma", 90u64);
-        let port = Arc::new(CountingScoringPort::new(scores));
+    async fn rerank_single_call_orders_by_score() {
+        let port = FixedRerankPort::with_scores(vec![
+            score_entry(0, 0.50),
+            score_entry(1, 0.10),
+            score_entry(2, 0.90),
+        ]);
         let mut results = three_candidates();
 
-        let outcome = llm_rerank_with_limit(port.as_ref(), "test", &mut results, 8).await;
+        let outcome = llm_rerank(&port, "test", &mut results).await;
 
         assert_eq!(outcome.scored, 3);
         assert_eq!(outcome.failed, 0);
@@ -624,83 +556,24 @@ mod rerank_tests {
                 "https://example.com/alpha",
                 "https://example.com/beta",
             ],
-            "descending score order must reach the caller"
+            "descending relevance order must reach the caller"
         );
         assert_eq!(
-            port.max_in_flight(),
-            3,
-            "with cap 8 and 3 candidates, all 3 scoring calls must be in flight at once"
+            port.call_count(),
+            1,
+            "the native protocol is ONE call carrying all documents"
         );
     }
 
-    /// Cap contract: with a cap of 1, calls serialize — max in-flight is
-    /// pinned at exactly 1 (deterministic: the permit count enforces it).
+    /// Partial-response contract: a document missing from the response keeps
+    /// its heuristic order at the end, and the gap is counted and named.
     #[tokio::test]
-    async fn rerank_cap_one_serializes_scoring_calls() {
-        let mut scores = HashMap::new();
-        scores.insert("alpha", 50u64);
-        scores.insert("beta", 10u64);
-        scores.insert("gamma", 90u64);
-        let port = Arc::new(CountingScoringPort::new(scores));
+    async fn rerank_partial_response_keeps_unscored_at_end() {
+        // Index 1 (Beta) missing from the response.
+        let port = FixedRerankPort::with_scores(vec![score_entry(0, 0.50), score_entry(2, 0.90)]);
         let mut results = three_candidates();
 
-        let outcome = llm_rerank_with_limit(port.as_ref(), "test", &mut results, 1).await;
-
-        assert_eq!(outcome.scored, 3);
-        assert_eq!(outcome.failed, 0);
-        assert_eq!(
-            port.max_in_flight(),
-            1,
-            "cap 1 must serialize scoring calls — max in-flight is exactly 1"
-        );
-    }
-
-    /// Partial-failure contract: a failed scoring call keeps its candidate
-    /// in heuristic order at the end, and the failure is counted and named.
-    #[tokio::test]
-    async fn rerank_partial_failure_keeps_unscored_at_end() {
-        let mut results = vec![
-            candidate("Alpha", "https://example.com/alpha"),
-            candidate("Beta", "https://example.com/beta"),
-            candidate("Broken", "https://example.com/broken"),
-        ];
-
-        struct PartialFailPort;
-        impl InferencePort for PartialFailPort {
-            fn generate(
-                &self,
-                prompt: &str,
-                _parameters: &hkask_types::template::LLMParameters,
-                _tools: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
-                        + Send
-                        + '_,
-                >,
-            > {
-                let fails = prompt.contains("broken");
-                let score = if prompt.contains("alpha") { 50 } else { 10 };
-                Box::pin(async move {
-                    if fails {
-                        Err(InferenceError::Connection("stub: broken".to_string()))
-                    } else {
-                        Ok(InferenceResult {
-                            text: format!("{{\"score\": {score}}}"),
-                            model: "stub".to_string(),
-                            usage: InferenceUsage::default(),
-                            finish_reason: "stop".to_string(),
-                            tool_calls: Vec::new(),
-                            reasoning: None,
-                            cost_usd: None,
-                        })
-                    }
-                })
-            }
-        }
-
-        let inference_port: &dyn InferencePort = &PartialFailPort;
-        let outcome = llm_rerank_with_limit(inference_port, "test", &mut results, 8).await;
+        let outcome = llm_rerank(&port, "test", &mut results).await;
 
         assert_eq!(outcome.scored, 2);
         assert_eq!(outcome.failed, 1);
@@ -708,8 +581,38 @@ mod rerank_tests {
             outcome
                 .first_error
                 .as_deref()
-                .is_some_and(|error| error.contains("stub: broken")),
-            "partial failure must name its cause; got {:?}",
+                .is_some_and(|error| error.contains("missing from the rerank response")),
+            "partial response must name its cause; got {:?}",
+            outcome.first_error
+        );
+        assert_eq!(
+            results.iter().map(|r| r.url.as_str()).collect::<Vec<_>>(),
+            vec![
+                "https://example.com/gamma",
+                "https://example.com/alpha",
+                "https://example.com/beta",
+            ],
+            "scored candidates sort by score; the unscored one keeps heuristic order at the end"
+        );
+    }
+
+    /// Total-failure contract: the heuristic order is kept untouched and the
+    /// inference error is surfaced.
+    #[tokio::test]
+    async fn rerank_total_failure_keeps_heuristic_order() {
+        let port = FixedRerankPort::with_error("stub: rerank endpoint down");
+        let mut results = three_candidates();
+
+        let outcome = llm_rerank(&port, "test", &mut results).await;
+
+        assert_eq!(outcome.scored, 0);
+        assert_eq!(outcome.failed, 3);
+        assert!(
+            outcome
+                .first_error
+                .as_deref()
+                .is_some_and(|error| error.contains("stub: rerank endpoint down")),
+            "total failure must name the inference error; got {:?}",
             outcome.first_error
         );
         assert_eq!(
@@ -717,9 +620,9 @@ mod rerank_tests {
             vec![
                 "https://example.com/alpha",
                 "https://example.com/beta",
-                "https://example.com/broken",
+                "https://example.com/gamma",
             ],
-            "scored candidates sort by score; the unscored one keeps heuristic order at the end"
+            "heuristic order must be kept untouched on total failure"
         );
     }
 }

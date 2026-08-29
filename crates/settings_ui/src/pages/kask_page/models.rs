@@ -157,7 +157,7 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Provider-prefixed model for the research server's deep-search \
                          rerank stage (per-candidate relevance scoring). Leave empty to \
-                         use the kask default (DeepInfra/Qwen/Qwen3-Reranker-8B).",
+                         use the kask default (OpenRouter/qwen/qwen3-reranker-8b).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

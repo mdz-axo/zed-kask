@@ -290,12 +290,13 @@ impl ResearchServer {
 
                 compound.results.truncate(num_results as usize);
 
-                // Deep strategy rerank stage: one templated LLM scoring call
-                // per candidate, fanned out concurrently up to
-                // `HKASK_RERANK_MAX_CONCURRENCY` (default 8) — the functional
-                // driver is responsiveness: scoring must not serialize.
-                // Every degraded outcome (all calls failed, or some failed)
-                // is surfaced in `rerank` — never a silent fallback.
+                // Deep strategy rerank stage: ONE templated rerank call
+                // carrying all candidates as documents, routed through the
+                // inference IPC bridge to the provider's rerank endpoint
+                // (default `OpenRouter/qwen/qwen3-reranker-8b`, override via
+                // `HKASK_RERANK_MODEL`). Every degraded outcome (call failed,
+                // or documents missing from the response) is surfaced in
+                // `rerank` — never a silent fallback.
                 let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
                     let outcome = llm_rerank(
                         self.inference_port.as_ref(),
