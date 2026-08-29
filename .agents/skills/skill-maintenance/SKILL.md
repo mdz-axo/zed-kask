@@ -13,13 +13,19 @@ coverage gaps, and quality. Validate, build, translate, and prune skills.
 
 ## The skill model
 
-A kask skill has two artifacts:
+A kask skill has two artifacts, in **two different locations**:
 
 ```
 .agents/skills/<name>/
-├── SKILL.md              # Process instructions (source of truth)
-├── <phase>.j2            # Prompt templates (companion resources)
+└── SKILL.md              # Process instructions (source of truth)
+
+kask/registry/templates/<name>/
+└── <phase>.j2            # Prompt templates (companion resources)
 ```
+
+Templates do NOT live next to the SKILL.md — `render_template` resolves
+refs against the registry base path (`kask/registry/templates/`), so a
+template placed in `.agents/skills/<name>/` is unreachable (see check T5).
 
 The agent reads the SKILL.md, follows its instructions, and calls tools
 (`lisp_eval`, MCP tools, `read_file`, `skill`) as directed.
@@ -55,7 +61,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **S11**: If `core: true` is declared, the name must be in
      `CORE_SKILL_NAMES` (enforced by `agent_skills` at load time)
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
-     in the skill directory
+     in the skill's registry template crate
+     (`kask/registry/templates/<name>/`)
    - **T2**: Each `.j2` template has a comment header describing its purpose
    - **T3**: Each `.j2` template defines expected output fields (as comments
      or schema description)

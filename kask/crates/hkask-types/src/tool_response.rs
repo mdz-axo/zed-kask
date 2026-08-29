@@ -108,15 +108,16 @@ pub fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope> {
 }
 
 /// Extract the typed error kind from a `[kind] message` display string —
-/// the `McpToolError` Display convention, reproduced by the in-band
-/// envelope detection in the MCP dispatch paths (`ContextServerTool::run`,
-/// `McpRuntime::dispatch`) so the typed kind survives to consumers that
-/// only see the error text. The marker is searched anywhere in the text
-/// because error Display impls often prefix their own context (e.g.
-/// `"Invocation failed: [unavailable] …"`). Returns the kind's Display
-/// string (e.g. `"unavailable"`) when a `[kind] ` marker carries a known
-/// kind; otherwise returns the full text unchanged (the ledger treats
-/// `error_kind` as a free-form classification hint).
+/// the `McpToolError` Display convention. The single producer on the
+/// governed dispatch path is `McpRuntime::dispatch`, which formats failed
+/// tool details this way (from the server's `structured_content`) so
+/// `invoke` can recover the typed kind for the ledger's per-kind breakdown
+/// after `ToolPortError` flattens the detail to a string. The marker is
+/// searched anywhere in the text because error Display impls prefix their
+/// own context (e.g. `"Invocation failed: [unavailable] …"`). Returns the
+/// kind's Display string (e.g. `"unavailable"`) when a `[kind] ` marker
+/// carries a known kind; otherwise returns the full text unchanged (the
+/// ledger treats `error_kind` as a free-form classification hint).
 #[must_use]
 pub fn error_kind_from_display(text: &str) -> String {
     let mut search_from = 0;

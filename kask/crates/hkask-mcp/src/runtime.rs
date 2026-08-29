@@ -1373,10 +1373,11 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 // `.rules` `unwrap_or(0)` trap on sense inputs).
                 let error_kind = result.as_ref().err().map(|e| {
                     // zed-kask: extract the typed kind from the `[kind] `
-                    // prefix (set by dispatch's in-band envelope detection)
-                    // so the ledger's per-kind breakdown classifies config
-                    // gaps (unavailable / permission_denied) instead of
-                    // recording the full message text as a "kind".
+                    // marker (dispatch formats failed-tool details this way
+                    // from the server's `structured_content`) so the ledger's
+                    // per-kind breakdown classifies config gaps (unavailable /
+                    // permission_denied) instead of recording the full
+                    // message text as a "kind".
                     hkask_types::tool_response::error_kind_from_display(&e.to_string())
                 });
                 let cyber_lock = cyber.read().await;
