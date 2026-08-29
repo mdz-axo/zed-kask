@@ -49,9 +49,10 @@ pub(crate) fn render_security_page(
             .child(
                 v_flex().gap_0p5().child(
                     Label::new(
-                        "The DB passphrase encrypts the curator, corpus, and kata-kanban \
-                         SQLCipher databases. It is provisioned on first run with the \
-                         default 'allostery'. To change it, enter a new passphrase below \
+                        "The DB passphrase encrypts every kask SQLCipher database \
+                         (curator, swarm memory, kata-kanban, research, training). \
+                         It is provisioned on first run with the default \
+                         'allostery'. To change it, enter a new passphrase below \
                          (>=8 chars) — the DB will be re-encrypted atomically before the \
                          new passphrase is saved. If rotation fails, the old passphrase \
                          remains in effect.",
@@ -79,9 +80,10 @@ pub(crate) fn render_security_page(
             .child(
                 v_flex().gap_0p5().child(Label::new("DB Passphrase")).child(
                     Label::new(
-                        "The DB passphrase encrypts the curator, corpus, and kata-kanban \
-                         SQLCipher databases. It is provisioned on first run with the \
-                         default 'allostery'. If no passphrase is configured, set one \
+                        "The DB passphrase encrypts every kask SQLCipher database \
+                         (curator, swarm memory, kata-kanban, research, training). \
+                         It is provisioned on first run with the default \
+                         'allostery'. If no passphrase is configured, set one \
                          below (>=8 chars). The DB will be re-encrypted atomically before \
                          the new passphrase is saved. If rotation fails, the old passphrase \
                          remains in effect. Or set HKASK_DB_PASSPHRASE and restart Zed.",

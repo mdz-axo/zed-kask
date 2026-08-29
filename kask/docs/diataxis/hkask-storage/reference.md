@@ -382,11 +382,10 @@ salt file on success. Pinned by `migrate_legacy_kdf_preserves_data_and_deletes_s
 and `migrate_legacy_kdf_wrong_passphrase_preserves_original`
 (`rotation.rs:972,997`).
 
-The bridge layer wraps rotation in `rotate_curator_db_passphrase`
-(`kask_bridge/src/identity.rs:321`) and
-`rotate_swarm_memory_db_passphrase` (`kask_bridge/src/identity.rs:366`),
-which resolve the old passphrase from the keychain and the DB path from
-env/data-dir.
+The bridge layer wraps rotation in `rotate_all_kask_db_passphrases`
+(`kask_bridge/src/identity.rs`), which rotates every kask SQLCipher DB
+(curator, swarm memory, kata-kanban, research, training) with rollback
+on failure.
 
 ## See also
 

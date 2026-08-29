@@ -88,8 +88,8 @@ returns `McpError::MissingCredentials` and the server never starts
 (`transport.rs:58-71`).
 
 Resolution is env-var-first: `resolve_credential` routes
-`HKASK_DB_PASSPHRASE` / `HKASK_SWARM_MEMORY_PASSPHRASE` through dedicated
-hkask-keystore resolvers and reads every other env var from the process
+`HKASK_DB_PASSPHRASE` (the ONE kask passphrase) through a dedicated
+hkask-keystore resolver and reads every other env var from the process
 environment only (`credentials.rs:25-63`).
 
 ## Step 3: Define the server struct

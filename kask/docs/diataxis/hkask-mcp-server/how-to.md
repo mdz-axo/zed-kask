@@ -52,8 +52,8 @@ let credentials = vec![
 ```
 
 Resolution order: `resolve_credential` (`credentials.rs:25-63`) routes
-`HKASK_DB_PASSPHRASE` and `HKASK_SWARM_MEMORY_PASSPHRASE` through their
-dedicated hkask-keystore resolvers; every other env var is read from the
+`HKASK_DB_PASSPHRASE` (the ONE kask passphrase) through its
+dedicated hkask-keystore resolver; every other env var is read from the
 process environment only — there is no keychain fallback for API keys
 (`credentials.rs:36-61`). API keys arrive via env injection performed by
 `build_mcp_server_env` in `kask_bridge` (see the kask_bridge reference doc).

@@ -457,7 +457,7 @@ injected by `mcp_env_with_credentials` — it never appears in the config env ma
 | `kask.swarm.skills_dir`               | `HKASK_SKILLS_DIR`                  | (empty = skill-blind)            | Skill corpus dir for local agent skill-awareness (Slice 6)   |
 | `kask.swarm.default_agent_model`      | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | `claude-haiku-4-5-20251001`      | Default model for new ABW agents (KA-05)                      |
 | `kask.swarm.a2a_http_enabled`         | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
-| `kask.swarm.memory_passphrase`        | `HKASK_SWARM_MEMORY_PASSPHRASE`     | `allostery`                      | SQLCipher passphrase for local swarm semantic-memory store   |
+| —                                     | `HKASK_DB_PASSPHRASE`               | `allostery`                      | The ONE shared SQLCipher passphrase (credential; the swarm memory DB opens with it) |
 | `kask.swarm.embedding_dim`            | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store          |
 | —                                     | `HKASK_LOCAL_AGENTS_DIR`            | `mcp/swarm/agents/curated`       | Local agent cards directory (derived from global `data_dir`) |
 | —                                     | `HKASK_LOCAL_SWARMS_DIR`            | `mcp/swarm/swarms`               | Local swarms directory (derived from global `data_dir`)      |
@@ -493,9 +493,9 @@ plan's §14.
 
 ## Cross-links
 
-- [Integration plan](../../plans/abw-swarm-intelligence.md) — ABW swarm semantics, API surface, build sequence
-- [Cybernetic Swarm Plan](../../plans/cybernetic-swarm-plan.md) — components C0–C8, the 10-step cascade, steering modes
-- [Cybernetic Swarm Plan](../../plans/cybernetic-swarm-plan.md) — the swarm-intelligence skill design, C0–C8 components, steering modes, implementation record (Appendix C)
+- [Swarm system docs](../../diataxis/swarm_system/reference.md) — ABW semantics, API surface, tool tables
+- [Swarm system explanation](../../diataxis/swarm_system/explanation.md) — components C0–C8, the cascade, steering modes
+- [Swarm system how-to](../../diataxis/swarm_system/how-to.md) — the swarm-intelligence skill process
 - [Swarm diagrams](../../diagrams/swarm.md) — server topology, the 10-step PDCA cascade, and the advisory-vs-steering loop (consolidated)
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
 

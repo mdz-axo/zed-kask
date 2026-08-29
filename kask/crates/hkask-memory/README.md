@@ -58,8 +58,4 @@ Decoupled from ingestion — runs on the timer, not in the `ingest_turn` path.
 
 ## Documentation
 
-- [Memory System Specification](../../docs/architecture/memory-system-specification.md) — the architecture spec
-- [Memory System — Why It Works This Way](../../docs/explanation/memory-system.md) — the explanation
-- [Memory Ingest Sequence](../../docs/diagrams/sequence-memory-ingest.md) — write-side diagram
-- [Memory Recall Flow](../../docs/diagrams/flowchart-memory-recall.md) — read-side diagram
-- [Memory Store ERD](../../docs/diagrams/erd-memory-store.md) — storage schema
+- [Memory System Specification](../../docs/architecture/memory-system-specification.md) — the architecture spec, design rationale, and embedded diagrams (ERD, ingest sequence, recall flow)

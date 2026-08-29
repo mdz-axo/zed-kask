@@ -69,9 +69,7 @@ the model-coordinated PDCA loops the SKILL.md bodies describe.
 | `agent_name_from_username` | `kask/crates/kask_bridge/src/identity.rs:51` |
 | `ProvisionedAgent` | `kask/crates/kask_bridge/src/identity.rs:62` |
 | `ProvisionError` | `kask/crates/kask_bridge/src/identity.rs:32` |
-| `provision_swarm_memory_passphrase` | `kask/crates/kask_bridge/src/identity.rs:208` |
-| `rotate_curator_db_passphrase` | `kask/crates/kask_bridge/src/identity.rs:321` |
-| `rotate_swarm_memory_db_passphrase` | `kask/crates/kask_bridge/src/identity.rs:366` |
+| `rotate_all_kask_db_passphrases` | `kask/crates/kask_bridge/src/identity.rs` |
 | `BridgeRotationError` | `kask/crates/kask_bridge/src/identity.rs:251` |
 | `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:74` |
 | `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:130` |

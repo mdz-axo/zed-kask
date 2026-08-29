@@ -738,7 +738,7 @@ status: VERIFIED
 Templates do NOT make tool calls — they are prompt structures rendered by
 `render_template` that guide the agent on what to call. The therapy process
 itself (scan → classify → propose → user approval → execute → report) is
-specified in the [Therapy Skill](../../.agents/skills/therapy/SKILL.md).
+specified in the [Therapy Skill](../../../.agents/skills/therapy/SKILL.md).
 The curator remembers the therapy session because curator turns are
 ingested to `curator.db` with the curator's perspective (`ingest.rs:100-130`,
 curator-turn detection at `:68`) — the cybernetic loop closes: the curator
@@ -933,7 +933,7 @@ without a DB open, passphrase, or consolidation timer.
 
 ## 15. Related
 
-- [Therapy Skill](../../.agents/skills/therapy/SKILL.md) — the therapy process document
+- [Therapy Skill](../../../.agents/skills/therapy/SKILL.md) — the therapy process document
 - [D6: Thread → memory](../../../DIVERGENCE.md) — the divergence seam
 - [hkask-memory README](../../crates/hkask-memory/README.md) — crate-level docs
 - [hkask-storage Diataxis Reference](../diataxis/hkask-storage/reference.md) — the full schema (includes regulation, audit, kata tables)

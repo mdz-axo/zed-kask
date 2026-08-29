@@ -72,23 +72,23 @@ impl ToolSpanGuard {
         output
     }
 
-    /// Mark span as error and return output.
+    /// Mark span as error, emit it, and return the error for propagation.
     ///
     /// post: Regulation tool span emitted with "error" status and error kind
-    /// post: returns output unchanged
+    /// post: returns the error unchanged — callers `return Err(span.error(e))`
     #[must_use]
-    pub fn error(mut self, kind: McpErrorKind, output: String) -> String {
+    pub fn error(mut self, e: McpToolError) -> McpToolError {
         self.emitted = true;
         let duration_ms = self.start.elapsed().as_millis() as u64;
         emit_tool_span(
             &self.tool_name,
             "error",
             duration_ms,
-            Some(&kind),
+            Some(&e.kind),
             Some(&self.caller),
             self.ontology,
         );
-        output
+        e
     }
 
     /// Finish span with Ok, serializing `value` as the MCP `{"content": ...}`
@@ -106,15 +106,17 @@ impl ToolSpanGuard {
     }
 
     /// Consume a `Result<Value, McpToolError>` — ok→`ok_json`, err→`error(…)`.
-    /// Finish span with a Result.
+    /// Finish span with a Result, propagating the typed error for the wire.
     ///
     /// post: Regulation tool span emitted with appropriate status
-    /// post: returns JSON string of Ok value or error
+    /// post: returns Ok(envelope string) or Err(the typed tool error —
+    ///       rmcp marks the wire result `is_error` and carries the kind in
+    ///       `structured_content` via the `IntoCallToolResult` impl)
     #[must_use]
-    pub fn finish(self, result: Result<Value, McpToolError>) -> String {
+    pub fn finish(self, result: Result<Value, McpToolError>) -> Result<String, McpToolError> {
         match result {
-            Ok(value) => self.ok_json(value),
-            Err(e) => self.error(e.kind, e.to_json_string()),
+            Ok(value) => Ok(self.ok_json(value)),
+            Err(e) => Err(self.error(e)),
         }
     }
 }
@@ -198,7 +200,14 @@ pub async fn execute_tool<C: ToolContext>(
 ) -> String {
     let span = ToolSpanGuard::new(tool_name, ctx.webid());
     let result = fut.await;
-    span.finish(result)
+    // The span layer propagates the typed error; this boundary keeps the
+    // historical `String` tool signature (every server's `#[tool]` method),
+    // mapping an error to the `{"error", "kind"}` envelope the client
+    // already parses (`hkask_types::tool_response::parse_tool_error`).
+    match span.finish(result) {
+        Ok(output) => output,
+        Err(e) => e.to_json_string(),
+    }
 }
 
 /// Like `execute_tool` but tags the Regulation span with a domain ontology concept
@@ -228,5 +237,8 @@ pub async fn execute_tool_semantic<C: ToolContext>(
         );
     }
     let result = fut.await;
-    span.finish(result)
+    match span.finish(result) {
+        Ok(output) => output,
+        Err(e) => e.to_json_string(),
+    }
 }

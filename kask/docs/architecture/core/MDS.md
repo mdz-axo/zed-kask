@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via `SkillTool::run` → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:266`), and in-process wallet primitives (no service layer). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 10 MCP servers are listed in the architecture plan §2.2/§2.4.
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via `SkillTool::run` → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:266`), and in-process wallet primitives (no service layer). The 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) and 11 MCP servers are listed in the architecture plan §2.2/§2.4.
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -485,7 +485,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.37.0 — five categories. Re-anchored to the 20 surviving hKask crates (19 `hkask-*` + `kask_bridge`, compiled in-process inside zed-kask) and 10 MCP servers launched as child processes over stdio by zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
+*MDS v0.37.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`, compiled in-process inside zed-kask) and 11 MCP servers launched as child processes over stdio by zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
 
 ---
 
@@ -507,7 +507,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 10 MCP servers (no capability gating — RR-0056) |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 11 MCP servers (no capability gating — RR-0056) |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, ESO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
@@ -517,7 +517,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation, training-data generation, and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | `hkask-services-core` | Domain | Foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Kept (genuinely shared by 6 crates). |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
-| 10 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training. |
+| 11 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training. |
 
 > **Deleted crates:** see git history.
 
@@ -529,7 +529,7 @@ graph TD
     subgraph BRIDGE["kask_bridge D8"]
         ADAPT["Port adapters"]
     end
-    subgraph MCP["10 MCP servers"]
+    subgraph MCP["11 MCP servers"]
         MSRV[servers]
     end
     subgraph HKASK["hKask domain crates"]

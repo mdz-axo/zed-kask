@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 62 skills ship. 60 template crates remain under
+> plus a markdown body of process instructions. 65 skills ship. 61 template crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -46,8 +46,8 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **62** | Every directory contains a `SKILL.md` |
-| Template crates (`kask/registry/templates/*/`) | **60** | Companion Jinja2 resources for `render_template` |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **65** | Every directory contains a `SKILL.md` |
+| Template crates (`kask/registry/templates/*/`) | **61** | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -184,8 +184,8 @@ read-only resources the skill body may reference via `render_template`.
 | Specialized | 15 |
 | Research & Corpus | 5 |
 | Cross-Cutting & Audit | 8 |
-| **Total** | **62** |
+| **Total** | **65** |
 
-> **Filesystem reality (verified 2026-08-24):** `.agents/skills/` (repo root) contains 62 SKILL.md
-> directories. `kask/registry/templates/` contains 60 template crates (companion Jinja2 resources
+> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 65 SKILL.md
+> directories. `kask/registry/templates/` contains 61 template crates (companion Jinja2 resources
 > for `render_template`).

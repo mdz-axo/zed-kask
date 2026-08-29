@@ -140,16 +140,17 @@ impl rmcp::handler::server::tool::IntoCallToolResult for McpToolError {
     fn into_call_tool_result(
         self,
     ) -> std::result::Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
-        Ok(rmcp::model::CallToolResult {
-            is_error: Some(true),
-            content: vec![rmcp::model::ContentBlock::text(self.message.clone())],
-            structured_content: Some(serde_json::json!({
-                "error": self.message,
-                "kind": self.kind.to_string(),
-            })),
-            ..Default::default()
-        }
-        .into())
+        // `CallToolResult` is `#[non_exhaustive]` in this rmcp version — it
+        // cannot be built with a struct expression outside the rmcp crate,
+        // so build from `Default` and assign fields.
+        let mut result = rmcp::model::CallToolResult::default();
+        result.is_error = Some(true);
+        result.content = vec![rmcp::model::ContentBlock::text(self.message.clone())];
+        result.structured_content = Some(serde_json::json!({
+            "error": self.message,
+            "kind": self.kind.to_string(),
+        }));
+        Ok(result.into())
     }
 }
 

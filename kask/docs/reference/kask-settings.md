@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-20
+last_updated: 2026-08-28
 version: "0.37.0"
 status: "Active"
 domain: "Composition"
@@ -301,18 +301,20 @@ keychain) without changing serde-default signatures.
 ### First-run provisioning
 
 `provision_agent` writes the passphrase to the hKask keychain entry
-`hkask-db-passphrase`. `kask_bridge::identity::mirror_provisioned_db_passphrase`
-mirrors it to `kask://credentials/hkask_db_passphrase` via
-`CredentialsProvider::write_credentials`. The mirror is `.await`ed in the
-deferred post-login task before governed MCP server launch, so the primary
-`ctx.credentials` tier works on first run (no longer relies on the env/keychain
+`hkask-db-passphrase`. `kask_bridge::identity::provision_db_passphrase`
+(`kask/crates/kask_bridge/src/identity.rs:145-147`) writes it directly to the
+unified `kask://credentials/hkask_db_passphrase` namespace via
+`CredentialsProvider::write_credentials` — no mirror step is needed
+(`identity.rs:200-201`). It is called at governed MCP server launch
+(`kask/crates/kask_bridge/src/mcp_servers.rs:684-688`), so the primary
+`ctx.credentials` tier works on first run (no reliance on the env/keychain
 fallback). The ordering dependency is explicit.
 
-On first run, the DB passphrase defaults to `"allostery"` (matching
-`SwarmConfig::default()` and `KaskSwarmSettings::default()`). The user can
-change it later via the settings UI (Security page), which triggers atomic
-DB rotation before saving the new passphrase. The swarm memory passphrase
-is provisioned the same way via `provision_swarm_memory_passphrase`.
+On first run, the DB passphrase defaults to `"allostery"`. There is ONE
+passphrase for every SQLCipher database (curator, swarm memory, kata-kanban,
+research, training) — no per-DB passphrases. The user can change it later
+via the settings UI (Security page), which triggers atomic DB rotation
+before saving the new passphrase.
 
 ### Passphrase rotation
 
@@ -323,23 +325,24 @@ handled by `hkask_storage::rotate_passphrase` (`rotation.rs:121`), which:
 1. Opens the source DB with the old passphrase (verifies it).
 2. Creates `<db>.new` encrypted with the new passphrase.
 3. Copies all user tables + `sqlite_sequence` in a single transaction.
-4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`, same for
-   `.salt` files. Deletes `.old` on success.
+4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`.
+   Deletes `.old` on success.
 
 If any step fails, the original DB is untouched — the old passphrase remains
 in effect. The caller writes the new passphrase to the keychain ONLY after
 rotation returns `Ok(())`.
 
-The bridge layer wraps this in two functions (`kask_bridge/src/identity.rs`):
+The bridge layer wraps this in one function
+(`kask_bridge/src/identity.rs`):
 
-- `rotate_curator_db_passphrase(new_passphrase)` — rotates the curator DB
-  (also covers corpus and kata-kanban, which share the same
-  `HKASK_DB_PASSPHRASE`).
-- `rotate_swarm_memory_db_passphrase(new_passphrase)` — rotates the swarm
-  memory DB (`mcp/swarm/memory.db`).
+- `rotate_all_kask_db_passphrases(new_passphrase)` — rotates EVERY kask
+  SQLCipher DB that exists at its resolved path (curator, swarm memory,
+  kata-kanban, research, training), rolling back the already-rotated DBs
+  if any rotation fails. Corpus DBs are caller-supplied per-workflow paths
+  and are not covered.
 
-Both resolve the old passphrase from the keychain and the DB path from
-env/data-dir. The settings UI calls these on a background spawn before
+It resolves the old passphrase from the keychain and each DB path from
+env/data-dir. The settings UI calls it on a background spawn before
 writing the new passphrase to the keychain and nudging MCP servers to
 restart.
 

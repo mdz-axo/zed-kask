@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-20
-version: "1.1.0"
+last_updated: 2026-08-28
+version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -53,7 +53,7 @@ Every artifact cites concrete file:line references in the current tree.
 
 - [`architecture/DOCUMENTATION_STANDARDS.md`](../architecture/DOCUMENTATION_STANDARDS.md): documentation standards (frontmatter, Mermaid-First, Sourced-Ideas, Writing Excellence).
 - [`architecture/core/MDS.md`](../architecture/core/MDS.md): Minimal Domain Specification (5-category taxonomy).
-- [`../../docs/.conventions/brand-voice/`](../../../docs/.conventions/brand-voice/): brand voice rubric and taboo phrases.
+- [`docs/.conventions/brand-writer/`](../../../docs/.conventions/brand-writer/): brand voice rubric and taboo phrases.
 
 ## See also
 

@@ -399,7 +399,6 @@ Env-var-first lookup with keychain fallback for internal passphrases **only**:
 | `env_var` | Resolution | File:line |
 |-----------|-----------|-----------|
 | `HKASK_DB_PASSPHRASE` | `hkask_keystore::keychain::resolve_db_passphrase_string` | `credentials.rs:27-30` |
-| `HKASK_SWARM_MEMORY_PASSPHRASE` | `hkask_keystore::keychain::resolve_swarm_memory_passphrase_string` | `credentials.rs:31-34` |
 | any other | `std::env::var` only — no keychain fallback | `credentials.rs:36-61` |
 
 API keys are injected as env vars by `build_mcp_server_env` (which reads

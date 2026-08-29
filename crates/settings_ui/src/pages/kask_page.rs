@@ -646,9 +646,9 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: None,
             description: Some(
-                "Change the SQLCipher passphrase for kask memory databases \
-                 (curator, corpus, kata-kanban). Re-encrypts the DB atomically \
-                 — no data loss on failure.".into(),
+                "Change the SQLCipher passphrase for every kask memory database \
+                 (curator, swarm memory, kata-kanban, research, training). \
+                 Re-encrypts each DB atomically — no data loss on failure.".into(),
             ),
             search_aliases: &["security", "passphrase", "encryption", "rotate", "key"],
             in_json: false,
