@@ -18,7 +18,7 @@ pub(crate) fn render_research_page(
     let rss_db_input = kask_string_input(
         "kask-research-rss-db",
         "RSS Database Path",
-        "(server default: <data-dir>/rss.db)",
+        "(server default: <data-dir>/mcp/research/rss.db)",
         rss_db,
         "research",
         "rss_db",
@@ -42,7 +42,9 @@ pub(crate) fn render_research_page(
                         "The research server provides web search, extraction, and RSS feed \
                          management. Configure the RSS database path for persistent feed \
                          storage. When empty, the server defaults to \
-                         <hkask-data-dir>/rss.db.",
+                         <data-dir>/mcp/research/rss.db (databases stay in the \
+                         internal data dir; artifact files go to \
+                         ~/Documents/zk-data/).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -56,7 +58,8 @@ pub(crate) fn render_research_page(
                 .child(
                     Label::new(
                         "SQLite database path for persistent RSS feed storage. Leave empty \
-                         to use the server default (<hkask-data-dir>/rss.db).",
+                         to use the server default \
+                         (<data-dir>/mcp/research/rss.db).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

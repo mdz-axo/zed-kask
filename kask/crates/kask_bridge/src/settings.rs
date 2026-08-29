@@ -682,13 +682,17 @@ impl KaskSettings {
             })
         };
         crate::mcp_env::emit_data_dir_env(&data_dir, &mut env);
+        // Always inject the resolved artifacts dir so the content servers
+        // (research, companies, portfolio, corpus) resolve their
+        // `{server}-mcp/` routes under the same visible root as the parent.
+        crate::mcp_env::emit_artifacts_dir_env(&mut env);
         crate::mcp_env::emit_general_env(&self.general, &mut env);
         crate::mcp_env::emit_curator_webid_env(&mut env);
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
         crate::mcp_env::emit_condenser_env(&self.condenser, &mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         crate::mcp_env::emit_companies_env(&self.companies, &mut env);
-        crate::mcp_env::emit_portfolio_env(&data_dir, &mut env);
+        crate::mcp_env::emit_portfolio_env(&mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_ocr_env(&self.corpus, &mut env);

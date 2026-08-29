@@ -38,14 +38,16 @@ Web search, extraction, and feed-based research MCP server.
 | `HKASK_BRAVE_API_KEY`         | Brave search API key                              |
 | `HKASK_SERPAPI_API_KEY`       | SerpAPI key (YouTube transcript search)           |
 | `HKASK_FIRECRAWL_API_KEY`     | Firecrawl extraction API key                      |
-| `HKASK_RSS_DB`                | RSS SQLite DB path (required for RSS tools)       |
+| `HKASK_RSS_DB`                | RSS SQLite DB path (optional — defaults to `<data-dir>/mcp/research/rss.db`) |
 | `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS tools) |
 | `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 50)          |
 
 Free providers (Semantic Scholar, arXiv) are always available — no API key
-required for basic web search. RSS tools require `HKASK_RSS_DB` and
-`HKASK_DB_PASSPHRASE`.
+required for basic web search. RSS tools require `HKASK_DB_PASSPHRASE`;
+the DB path defaults to `<data-dir>/mcp/research/rss.db` (databases are
+infrastructure and stay in the internal data dir — artifact files and
+outputs go to the visible artifacts dir under `{server}-mcp/`).
 
 ## Quick Start
 

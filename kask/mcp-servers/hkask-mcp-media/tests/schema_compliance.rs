@@ -20,17 +20,18 @@ use hkask_mcp_media::types::{
     GalleryAddAudioRequest, GalleryAddVideoRequest, GalleryAnalyzeRequest,
     GalleryAssetDetailRequest, GalleryCreateAlbumRequest, GalleryDeleteAlbumRequest,
     GalleryDeleteImageRequest, GalleryFindSimilarRequest, GalleryLineageRequest,
-    GalleryListAlbumMembersRequest, GalleryMoveToAlbumRequest, GalleryNameFaceRequest,
-    GalleryOrganizeRequest, GalleryRecordGenerationRequest, GalleryRefreshRequest,
-    GalleryRemoveFromAlbumRequest, GalleryReproduceRequest, GallerySearchRequest,
-    GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest, GenerateVariantsRequest,
-    GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest, JobCancelRequest,
-    JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
-    RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest, TransformImageRequest,
-    UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest,
-    VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest, VideoFromImagesRequest,
-    VideoInfoRequest, VideoMemeRequest, VideoRemixRequest, VideoToGifRequest, VoiceDesignRequest,
-    WorkflowDeleteRequest, WorkflowLoadRequest, WorkflowSaveRequest,
+    GalleryListAlbumMembersRequest, GalleryListAssetsRequest, GalleryMoveToAlbumRequest,
+    GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRecordGenerationRequest,
+    GalleryRefreshRequest, GalleryRemoveFromAlbumRequest, GalleryReproduceRequest,
+    GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest,
+    GenerateVariantsRequest, GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest,
+    JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest,
+    ModelListRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest,
+    TransformImageRequest, UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest,
+    VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest,
+    VideoFromImagesRequest, VideoInfoRequest, VideoMemeRequest, VideoRemixRequest,
+    VideoToGifRequest, VoiceDesignRequest, WorkflowDeleteRequest, WorkflowLoadRequest,
+    WorkflowSaveRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -104,6 +105,7 @@ schema_clean_test!(job_list_request_schema, JobListRequest);
 schema_clean_test!(job_status_request_schema, JobStatusRequest);
 schema_clean_test!(job_cancel_request_schema, JobCancelRequest);
 schema_clean_test!(gallery_add_video_request_schema, GalleryAddVideoRequest);
+schema_clean_test!(gallery_list_assets_request_schema, GalleryListAssetsRequest);
 schema_clean_test!(gallery_add_audio_request_schema, GalleryAddAudioRequest);
 schema_clean_test!(
     gallery_asset_detail_request_schema,

@@ -150,8 +150,8 @@ against `Default` is the drift class that silently disabled all kask MCP
 servers once before.
 
 D28 example: `HKASK_TRANSACTIONS_DIR` is always emitted (default
-`mcp/portfolio/transactions/` under the kask data root) so the portfolio
-server can auto-load transaction files (`mcp_env.rs:127-138`).
+`portfolio-mcp/transactions/` under the visible artifacts dir) so the portfolio
+server can auto-load transaction files (`mcp_env.rs`).
 
 ### Step 5 — Add an allowlist-alignment test
 

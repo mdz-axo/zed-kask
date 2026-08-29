@@ -330,7 +330,8 @@ pub fn rotate_all_kask_db_passphrases(new_passphrase: &str) -> Result<(), Bridge
 /// The fixed-path SQLCipher databases that share `HKASK_DB_PASSPHRASE`,
 /// each resolved the same way its owning MCP server resolves it (env-var
 /// override, else the Standardized Artifact Storage default under the
-/// hKask data dir).
+/// hKask data dir — databases are the one artifact class that stays in
+/// the internal data dir).
 fn kask_db_paths() -> Vec<(&'static str, String)> {
     let resolve = |env_var: &str, default: &str| -> String {
         let raw = std::env::var(env_var)

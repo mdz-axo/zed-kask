@@ -305,9 +305,9 @@ The D28 divergence surface touches this crate in four places:
    settings UI compatibility; the swarm server no longer reads it (skill
    cascade cleanup removed the read site).
 3. **`HKASK_TRANSACTIONS_DIR` emission** — always emitted, default
-   `mcp/portfolio/transactions/` under the kask data root
-   (`mcp_env.rs:127-138`); allowlisted for the portfolio server
-   (`mcp_servers.rs:72`).
+   `portfolio-mcp/transactions/` under the visible artifacts dir
+   (`mcp_env.rs`); allowlisted for the portfolio server
+   (`mcp_servers.rs`).
 4. **MCP server DB paths under `mcp/{server_id}/`** — the transactions dir
    follows the `mcp/<server>/` convention; the curator DB lives at
    `agents/curator/curator.db` (renamed from the former `pod.db`).

@@ -468,8 +468,8 @@ pub(crate) fn kask_string_input(
                             }
                             ("portfolio", "transactions_dir") => {
                                 // No-op — portfolio has no per-server path field.
-                                // The transactions dir is derived from the global
-                                // `data_dir` as `mcp/portfolio/transactions/`.
+                                // The transactions dir is derived from the
+                                // artifacts dir as `portfolio-mcp/transactions/`.
                             }
                             ("corpus", "embedding_dim") => {
                                 if let Ok(v) = parsed.parse::<u32>() {

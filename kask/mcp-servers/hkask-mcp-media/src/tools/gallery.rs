@@ -1102,12 +1102,65 @@ impl MediaServer {
     /// record (path, dimensions, format, media_type), all AI-generated tags,
     /// generation lineage (if recorded), and face registry entries. This is
     /// the inspector-panel data source.
+    /// List gallery assets in index order — the library/panel data source.
+    #[tool(
+        description = "List gallery assets in index order (0-based — index `offset + i` in the result is the image_index other gallery tools accept), paginated. Returns each asset's index, path, media type, and dimensions. Requires gallery_organize first."
+    )]
+    pub async fn gallery_list_assets(
+        &self,
+        Parameters(GalleryListAssetsRequest { offset, limit }): Parameters<
+            GalleryListAssetsRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool_semantic(
+            self,
+            "gallery_list_assets",
+            Self::ontology_anchor("gallery_list_assets"),
+            async {
+                let ga = self.access_gallery().map_err(map_media_error)?;
+                let limit = limit.clamp(1, 500);
+                let assets = self
+                    .gallery_store
+                    .list_assets(&ga.gallery_id, offset, limit)
+                    .map_err(|e| map_media_error(e.into()))?;
+                let total = self
+                    .gallery_store
+                    .count_assets(&ga.gallery_id)
+                    .map_err(|e| map_media_error(e.into()))?;
+                let records: Vec<serde_json::Value> = assets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, image)| {
+                        serde_json::json!({
+                            "index": offset + i,
+                            "path": image.absolute_path,
+                            "media_type": image.media_type,
+                            "width": image.width,
+                            "height": image.height,
+                            "format": image.format,
+                            "added_at": image.added_at,
+                        })
+                    })
+                    .collect();
+                Ok(serde_json::json!({
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit,
+                    "assets": records,
+                }))
+            },
+        )
+        .await
+    }
+
     #[tool(
         description = "Get complete details for a gallery asset — record, tags, lineage, and face associations in a single call. The inspector-panel data source."
     )]
     pub async fn gallery_asset_detail(
         &self,
-        Parameters(GalleryAssetDetailRequest { image_index }): Parameters<GalleryAssetDetailRequest>,
+        Parameters(GalleryAssetDetailRequest { image_index }): Parameters<
+            GalleryAssetDetailRequest,
+        >,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
@@ -1255,7 +1308,11 @@ impl MediaServer {
     )]
     pub async fn gallery_add_video(
         &self,
-        Parameters(GalleryAddVideoRequest { path, width, height }): Parameters<GalleryAddVideoRequest>,
+        Parameters(GalleryAddVideoRequest {
+            path,
+            width,
+            height,
+        }): Parameters<GalleryAddVideoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
@@ -1374,7 +1431,9 @@ impl MediaServer {
     )]
     pub async fn gallery_create_album(
         &self,
-        Parameters(GalleryCreateAlbumRequest { name, parent_id }): Parameters<GalleryCreateAlbumRequest>,
+        Parameters(GalleryCreateAlbumRequest { name, parent_id }): Parameters<
+            GalleryCreateAlbumRequest,
+        >,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
@@ -1382,7 +1441,9 @@ impl MediaServer {
             Self::ontology_anchor("gallery_create_album"),
             async {
                 if name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument("album name must not be empty"));
+                    return Err(McpToolError::invalid_argument(
+                        "album name must not be empty",
+                    ));
                 }
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let record = self
@@ -1420,7 +1481,10 @@ impl MediaServer {
     #[tool(description = "Add a gallery asset to an album. Idempotent — re-adding is a no-op.")]
     pub async fn gallery_move_to_album(
         &self,
-        Parameters(GalleryMoveToAlbumRequest { image_index, album_id }): Parameters<GalleryMoveToAlbumRequest>,
+        Parameters(GalleryMoveToAlbumRequest {
+            image_index,
+            album_id,
+        }): Parameters<GalleryMoveToAlbumRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
@@ -1444,10 +1508,15 @@ impl MediaServer {
     }
 
     /// Remove a gallery asset from an album.
-    #[tool(description = "Remove a gallery asset from an album. Idempotent — removing a non-member is a no-op.")]
+    #[tool(
+        description = "Remove a gallery asset from an album. Idempotent — removing a non-member is a no-op."
+    )]
     pub async fn gallery_remove_from_album(
         &self,
-        Parameters(GalleryRemoveFromAlbumRequest { image_index, album_id }): Parameters<GalleryRemoveFromAlbumRequest>,
+        Parameters(GalleryRemoveFromAlbumRequest {
+            image_index,
+            album_id,
+        }): Parameters<GalleryRemoveFromAlbumRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
@@ -1472,7 +1541,9 @@ impl MediaServer {
 
     /// Delete an album. Assets remain in the gallery — only the album
     /// grouping and its memberships are removed.
-    #[tool(description = "Delete an album. Assets remain in the gallery — only the album grouping and its memberships are removed.")]
+    #[tool(
+        description = "Delete an album. Assets remain in the gallery — only the album grouping and its memberships are removed."
+    )]
     pub async fn gallery_delete_album(
         &self,
         Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
@@ -1498,7 +1569,9 @@ impl MediaServer {
     #[tool(description = "List all image indices in an album.")]
     pub async fn gallery_list_album_members(
         &self,
-        Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<GalleryListAlbumMembersRequest>,
+        Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<
+            GalleryListAlbumMembersRequest,
+        >,
     ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,

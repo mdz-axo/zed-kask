@@ -182,6 +182,7 @@ fn steer_system_prompt() -> SharedString {
          `gallery_timeline`, `gallery_analyze`, `gallery_record_generation`, \
          `gallery_lineage`, `gallery_asset_detail`, `gallery_reproduce`, \
          `gallery_delete_image`, `gallery_add_video`, `gallery_add_audio`, \
+         `gallery_list_assets`, \
          `gallery_create_album`, `gallery_list_albums`, \
          `gallery_move_to_album`, `gallery_remove_from_album`, \
          `gallery_delete_album`, `gallery_list_album_members`.\n\

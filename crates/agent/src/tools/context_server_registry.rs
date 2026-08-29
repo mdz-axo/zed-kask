@@ -922,10 +922,10 @@ mod tests {
         // `run_inner`) — the regulation ledger classifies structurally,
         // never by parsing error text.
         let output = AgentToolOutput {
-            raw_output: Some(serde_json::json!({
+            raw_output: serde_json::json!({
                 "error": "yt-dlp not found on system PATH",
                 "kind": "unavailable"
-            })),
+            }),
             llm_output: vec![LanguageModelToolResultContent::Text(
                 "yt-dlp not found on system PATH".into(),
             )],

@@ -10,7 +10,7 @@ use serde::Deserialize;
 #[tool_router(router = storage_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Cache processed document text for reference. Stores content keyed by label in the corpus cache directory (mcp/corpus/cache/)."
+        description = "Cache processed document text for reference. Stores content keyed by label in the corpus cache directory (corpus-mcp/cache/ under the visible artifacts dir, ~/Documents/zk-data/)."
     )]
     pub async fn corpus_cache(
         &self,
@@ -29,10 +29,11 @@ impl CorpusServer {
                     return Err(McpToolError::invalid_argument("label must not be empty"));
                 }
 
-                // D28 — Standardized Artifact Storage. Cache directory lives at
-                // `mcp/corpus/cache/`.
-                let cache_dir = hkask_types::agent_paths::resolve_under_data_dir(
-                    std::path::Path::new("mcp/corpus/cache"),
+                // Canonical storage route. Cache directory lives at
+                // `{artifacts_dir}/corpus-mcp/cache/` (visible under
+                // ~/Documents/zk-data/).
+                let cache_dir = hkask_types::agent_paths::resolve_under_artifacts_dir(
+                    &hkask_types::agent_paths::mcp_artifacts_subdir("corpus", "cache"),
                 );
 
                 if let Err(e) = std::fs::create_dir_all(&cache_dir) {
@@ -324,7 +325,10 @@ impl CorpusServer {
     #[tool(
         description = "Purge QA embeddings and h_mems by entity-ref prefix. Deletes embeddings matching the prefix, then deletes h_mems with matching entity or attribute. Useful for clearing old training data before re-ingesting."
     )]
-    pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> Result<String, McpToolError> {
+    pub async fn corpus_purge_qa(
+        &self,
+        Parameters(req): Parameters<PurgeQaRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
             if req.passphrase.is_empty() {
                 return Err(McpToolError::permission_denied(

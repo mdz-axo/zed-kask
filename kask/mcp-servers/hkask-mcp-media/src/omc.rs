@@ -46,6 +46,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "gallery_add_video"
         | "gallery_add_audio"
         | "gallery_asset_detail"
+        | "gallery_list_assets"
         | "gallery_create_album"
         | "gallery_list_albums"
         | "gallery_move_to_album"

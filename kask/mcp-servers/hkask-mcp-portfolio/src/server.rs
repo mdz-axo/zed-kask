@@ -605,16 +605,17 @@ impl rmcp::ServerHandler for PortfolioServer {}
 
 /// Run the portfolio MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // D28 — Standardized Artifact Storage. Read the transactions directory
-    // (default `mcp/portfolio/transactions/`). The portfolio dashboard
-    // auto-loads new transaction files from this directory.
+    // Canonical storage route. Read the transactions directory (default
+    // `{artifacts_dir}/portfolio-mcp/transactions/`, visible under
+    // ~/Documents/zk-data/). The portfolio dashboard auto-loads new
+    // transaction files from this directory.
     let _transactions_dir = std::env::var("HKASK_TRANSACTIONS_DIR")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-                "mcp/portfolio/transactions",
-            ))
+            hkask_types::agent_paths::resolve_under_artifacts_dir(
+                &hkask_types::agent_paths::mcp_artifacts_subdir("portfolio", "transactions"),
+            )
             .to_string_lossy()
             .to_string()
         });

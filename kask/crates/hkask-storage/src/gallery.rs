@@ -412,6 +412,50 @@ impl GalleryStore {
             media_type: media_type.to_string(),
         })
     }
+    /// List gallery assets in index order — 0-based position matching
+    /// `get_image`'s `ORDER BY added_at ASC` index semantics, so index
+    /// `offset + i` in the result is the `image_index` every other gallery
+    /// tool accepts. Paginated; no filter (callers filter client-side by
+    /// `media_type` — a filtered query would renumber positions and break
+    /// the index contract).
+    #[must_use = "result must be used"]
+    pub fn list_assets(
+        &self,
+        gallery_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> std::result::Result<Vec<ImageRecord>, GalleryStoreError> {
+        Ok(query_map(
+            &*self.driver,
+            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
+             FROM gallery_images WHERE gallery_id = ?1
+             ORDER BY added_at ASC LIMIT ?3 OFFSET ?2",
+            &[
+                DbValue::Text(gallery_id.to_string()),
+                DbValue::Integer(offset as i64),
+                DbValue::Integer(limit as i64),
+            ],
+            Self::image_from_row,
+        )?)
+    }
+
+    /// Count all assets in a gallery.
+    #[must_use = "result must be used"]
+    pub fn count_assets(&self, gallery_id: &str) -> std::result::Result<u64, GalleryStoreError> {
+        query_row(
+            &*self.driver,
+            "SELECT COUNT(*) FROM gallery_images WHERE gallery_id = ?1",
+            &[DbValue::Text(gallery_id.to_string())],
+            |row| row.get_int(0).map(|count| count as u64),
+        )?
+        .ok_or_else(|| {
+            GalleryStoreError::NotFound(NotFound {
+                entity_type: "gallery".to_string(),
+                id: gallery_id.to_string(),
+            })
+        })
+    }
+
     /// Get an image by index (0-based position in gallery) or by hash.
     ///
     /// expect: "The system provides durable storage for gallery data"

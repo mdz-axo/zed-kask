@@ -207,7 +207,10 @@ impl ResearchServer {
          to pick deliberately. When `provider` is None, `strategy` selects: \
          quick (best-scored single keyword provider), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction).")]
-    pub async fn web_search(&self, Parameters(req): Parameters<SearchRequest>) -> Result<String, McpToolError> {
+    pub async fn web_search(
+        &self,
+        Parameters(req): Parameters<SearchRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "web_search",
@@ -973,7 +976,10 @@ impl ResearchServer {
     }
 
     #[tool(description = "Edit tags on entries: mark read/unread, star/unstar, add/remove labels")]
-    pub async fn rss_edit_tag(&self, Parameters(req): Parameters<EditTagRequest>) -> Result<String, McpToolError> {
+    pub async fn rss_edit_tag(
+        &self,
+        Parameters(req): Parameters<EditTagRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "rss_edit_tag",
@@ -992,7 +998,10 @@ impl ResearchServer {
     #[tool(
         description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
     )]
-    pub async fn rss_synthesize(&self, Parameters(req): Parameters<SynthesizeRequest>) -> Result<String, McpToolError> {
+    pub async fn rss_synthesize(
+        &self,
+        Parameters(req): Parameters<SynthesizeRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(self, "rss_synthesize", Self::ontology_anchor("rss_synthesize"), async {
             self.rate_limiter.check("rss_synthesize")?;
             let db = require_rss_db!(self);
@@ -1724,9 +1733,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             })?;
 
             let rss_db = {
-                // D28 — Standardized Artifact Storage. Default DB path is
-                // `{kask_data_dir}/mcp/research/rss.db`, resolved via
-                // `resolve_under_data_dir`. Override via `HKASK_RSS_DB`.
+                // Databases live in the internal data dir (the ONLY thing that
+                // lives there — artifact files and outputs go to the visible
+                // artifacts dir under {server}-mcp/{artifact-type}/). Default
+                // DB path is `{kask_data_dir}/mcp/research/rss.db`, resolved
+                // via `resolve_under_data_dir`. Override via `HKASK_RSS_DB`.
                 let rss_db_path = std::env::var("HKASK_RSS_DB").ok().unwrap_or_else(|| {
                     let default_path = hkask_types::agent_paths::resolve_under_data_dir(
                         &hkask_types::agent_paths::mcp_server_db("research", "rss"),

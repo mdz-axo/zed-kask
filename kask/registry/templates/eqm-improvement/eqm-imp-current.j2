@@ -1,0 +1,131 @@
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+contract:
+  input:
+    rationale: string
+    forecast_probability: number
+    question: string
+    direction: string
+  output:
+    current_composite: number
+    current_scores: array
+    failing_markers: array
+    red_flag_screen: array
+    green_flag_endorsement: array
+visibility: Public
+---
+{# hKask v0.39.0 — EQM Improvement Instrument #}
+{# Phase 2 — GRASP CURRENT (PLAN: measure current EQM scores) #}
+{#
+  This step calls the `market_score_rationale` MCP tool
+  (hkask-mcp-prediction-markets) to score the current rationale.
+  The MCP tool is the single source of truth for EQM scoring.
+#}
+
+You are an EQM improvement analyst. Call the `market_score_rationale` MCP tool to score the current rationale, then collect the results and identify failing markers.
+
+## Rationale
+
+{{ rationale }}
+
+## Forecast Probability
+
+{{ forecast_probability }}
+
+## Question
+
+{{ question }}
+
+## Direction
+
+{{ direction }}
+
+## Current EQM Scores
+
+The `market_score_rationale` tool returns an `EqmResult`:
+
+```json
+{
+  "composite_score": 4.0,
+  "scores": [
+    {"id": "statistical_reasoning", "name": "Statistical Reasoning", "score": 0, "direction": "helps"},
+    {"id": "fact_based", "name": "Fact Based", "score": 1, "direction": "helps"},
+    {"id": "gut_based", "name": "Gut Based", "score": 2, "direction": "hurts"},
+    ...
+  ],
+  "red_flags": ["Gut Based", "Extreme Confidence"],
+  "green_flags": ["Statistical Reasoning"],
+  "interpretation": "...",
+  "caveat": "EQMs are a red-flag screen, not a green-flag detector...",
+  "missing_eqms": []
+}
+```
+
+If `missing_eqms` is non-empty, the LLM omitted those dimensions — the current condition is an incomplete assessment. Note this in the output so the improvement loop does not over-correct for dimensions that were never measured.
+
+## Step 1 — Collect Current Scores
+
+Report the current composite_score and per-marker scores.
+
+## Step 2 — Identify Failing Markers
+
+For each marker, determine if it is failing:
+
+- **Helps markers** (good habits): failing if `score < 2`. Gap = `2 - score`.
+- **Hurts markers** (warning signs): failing if `score > 0`. Gap = `score` (target is 0).
+
+For each failing marker, include the EQM description — this is the spec for what a 2 looks like (for Helps) or what a 0 looks like (for Hurts). The experiment phase uses this description as the target.
+
+## Step 3 — Classify Red Flags vs Green Flags
+
+- **Red flag screen (high confidence):** Hurts markers with score ≥ 2. These are the priority — the paper's strong signal.
+- **Green flag endorsement (weak):** Helps markers with score = 2. These are already passing — low priority for improvement.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "current_composite": 4.0,
+  "current_scores": [
+    {"id": "statistical_reasoning", "name": "Statistical Reasoning", "score": 0, "direction": "helps", "gap": 2, "description": "The rationale explicitly uses statistical concepts..."},
+    {"id": "gut_based", "name": "Gut Based", "score": 2, "direction": "hurts", "gap": 2, "description": "The rationale relies on intuition..."}
+  ],
+  "failing_markers": [
+    {
+      "id": "statistical_reasoning",
+      "name": "Statistical Reasoning",
+      "direction": "helps",
+      "current_score": 0,
+      "target_score": 2,
+      "gap": 2,
+      "description": "The rationale explicitly uses statistical concepts such as base rates, probability distributions, sample sizes, confidence intervals, or quantitative comparisons. A score of 2 means the rationale clearly applies statistical thinking (e.g., citing a base rate or computing a probability). A score of 0 means no statistical reasoning is present."
+    },
+    {
+      "id": "gut_based",
+      "name": "Gut Based",
+      "direction": "hurts",
+      "current_score": 2,
+      "target_score": 0,
+      "gap": 2,
+      "description": "The rationale relies on intuition, gut feeling, or personal conviction rather than evidence or analysis. A score of 2 means the rationale is primarily gut-based. A score of 0 means no gut-based reasoning is present."
+    }
+  ],
+  "red_flag_screen": [
+    {"id": "gut_based", "name": "Gut Based", "severity": "high"}
+  ],
+  "green_flag_endorsement": []
+}
+```
+
+## Constraints
+
+- Do not fabricate EQM scores — only report what the MCP tool returned.
+- The failing_markers must include the full EQM description (the experiment phase uses it as the spec).
+- Red flags (Hurts with score ≥ 2) are the priority; green flags (Helps with score = 2) are already passing.
+- The caveat from the tool must be preserved — it carries the paper's asymmetry warning.
+- If `missing_eqms` is non-empty, note it in the output — do not treat missing dimensions as failing (they were never measured).

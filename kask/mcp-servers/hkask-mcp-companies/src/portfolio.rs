@@ -68,7 +68,7 @@ const MAX_DECODED_ATTACHMENT_BYTES: usize = 6 * 1024 * 1024;
 /// `PortfolioStore::new` path resolution. The companies module opens its
 /// own connection to the same DB for notes/files/forecasts tables.
 ///
-/// D28 — Standardized Artifact Storage. Path is
+/// Databases live in the internal data dir. Path is
 /// `{kask_data_dir}/mcp/portfolio/{owner}/master.db`.
 fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
     let mut path = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(

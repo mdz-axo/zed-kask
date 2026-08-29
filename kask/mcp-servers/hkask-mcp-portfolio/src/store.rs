@@ -112,9 +112,11 @@ impl PortfolioStore {
     /// from scratch. No backward-compatibility/migration path is maintained —
     /// portfolio data is treated as disposable across schema changes.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
-        // D28 — Standardized Artifact Storage. Portfolio DB lives at
-        // `{kask_data_dir}/mcp/portfolio/{owner}/master.db`, resolved via
-        // `resolve_under_data_dir`.
+        // Databases live in the internal data dir (the ONLY thing that lives
+        // there — artifact files like transactions go to the visible
+        // artifacts dir under {server}-mcp/{artifact-type}/). Portfolio DB
+        // lives at `{kask_data_dir}/mcp/portfolio/{owner}/master.db`,
+        // resolved via `resolve_under_data_dir`.
         let mut path = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
             hkask_types::agent_paths::MCP_DIR,
         ))

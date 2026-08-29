@@ -18,8 +18,9 @@
 //! populated opportunistically — if extraction fails, the raw cache still
 //! serves the response.
 //!
-//! Path: `{kask_data_dir}/mcp/fibo-cache/{owner}/master.db` (D28 standardized
-//! artifact storage).
+//! Path: `{kask_data_dir}/mcp/companies/fibo-cache/{owner}/master.db`
+//! (databases live in the internal data dir — only artifact files and
+//! outputs go to the visible artifacts dir under {server}-mcp/).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -429,11 +430,9 @@ pub(crate) fn hash_params(extra: &[(&str, &str)]) -> String {
 /// Resolve the FIBO cache DB path for an owner.
 /// `{kask_data_dir}/mcp/companies/fibo-cache/{owner}/master.db`
 ///
-/// The FIBO cache is owned by the companies server, so it lives under
-/// `mcp/companies/` per the Standardized Artifact Storage layout. Previously
-/// this resolved to `mcp/fibo-cache/` — a top-level `mcp/` entry that broke
-/// the per-server subtree invariant (an operator `ls mcp/` saw `fibo-cache/`
-/// alongside `portfolio/`, `scenarios/`, etc. instead of under `companies/`).
+/// The FIBO cache is a database, so it lives under `mcp/companies/` in the
+/// internal data dir — databases are the one artifact class that stays
+/// hidden; artifact files and outputs go to the visible artifacts dir.
 pub(crate) fn resolve_cache_db_path(owner: &str) -> Result<PathBuf, String> {
     let mut path = hkask_types::agent_paths::resolve_under_data_dir(
         &hkask_types::agent_paths::mcp_server_subdir("companies", "fibo-cache"),

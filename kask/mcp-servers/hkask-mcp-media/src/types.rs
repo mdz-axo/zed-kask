@@ -633,6 +633,22 @@ pub struct GalleryAssetDetailRequest {
     pub image_index: usize,
 }
 
+/// Request for `gallery_list_assets` — the panel/library data source.
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct GalleryListAssetsRequest {
+    /// 0-based offset (matches gallery index semantics — index `offset + i`
+    /// in the result is the `image_index` other gallery tools accept).
+    #[serde(default)]
+    pub offset: usize,
+    /// Page size (1–500, default 100).
+    #[serde(default = "default_asset_list_limit")]
+    pub limit: usize,
+}
+
+fn default_asset_list_limit() -> usize {
+    100
+}
+
 // ── Album request types ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

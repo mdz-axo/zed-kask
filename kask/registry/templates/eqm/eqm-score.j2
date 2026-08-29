@@ -1,0 +1,92 @@
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+contract:
+  input:
+    scoring_batch: array
+    selected_subset: string
+  output:
+    per_rationale_scores: array
+    scoring_notes: string
+visibility: Public
+---
+{# hKask v0.39.0 — EQM Measurement Instrument #}
+{# Phase 2 — SCORE (DO: call market_score_rationale per rationale) #}
+{#
+  This step calls the `market_score_rationale` MCP tool
+  (hkask-mcp-prediction-markets) for each rationale in the scoring_batch.
+  The MCP tool is the single source of truth for 12-EQM LLM scoring. This
+  skill does NOT re-implement the scoring logic.
+#}
+
+You are an EQM scoring orchestrator. Call the `market_score_rationale` MCP tool for each rationale in the scoring batch, then collect the results and prepare them for aggregation.
+
+## Scoring Batch
+
+```json
+{{ scoring_batch | tojson }}
+```
+
+## Selected EQM Subset
+
+{{ selected_subset | default('predictive_12') }}
+
+## Per-Rationale Results
+
+For each rationale in the batch, the `market_score_rationale` tool returns an `EqmResult`:
+
+```json
+{
+  "composite_score": 4.0,
+  "scores": [
+    {"id": "statistical_reasoning", "name": "Statistical Reasoning", "score": 2, "direction": "helps"},
+    {"id": "fact_based", "name": "Fact Based", "score": 1, "direction": "helps"},
+    ...
+  ],
+  "red_flags": ["Gut Based", "Extreme Confidence"],
+  "green_flags": ["Statistical Reasoning"],
+  "interpretation": "Adequate rationale; strengths: Statistical Reasoning; red flags: Gut Based, Extreme Confidence",
+  "model": "glm-5.2",
+  "caveat": "EQMs are a red-flag screen, not a green-flag detector...",
+  "missing_eqms": []
+}
+```
+
+If `missing_eqms` is non-empty, the LLM omitted those dimensions from its response — the composite is pulled toward 0 for those dimensions. Flag this in `scoring_notes` so the operator treats the result as an incomplete assessment, not a low-quality score.
+
+## Output
+
+Collect all per-rationale results into `per_rationale_scores`. Each entry should carry the forecaster_id (if present) for forecaster-level aggregation:
+
+```json
+{
+  "per_rationale_scores": [
+    {
+      "forecaster_id": "forecaster_a",
+      "question": "...",
+      "rationale_index": 0,
+      "eqm_result": {
+        "composite_score": 4.0,
+        "scores": [...],
+        "red_flags": [...],
+        "green_flags": [...],
+        "interpretation": "...",
+        "model": "...",
+        "caveat": "...",
+        "missing_eqms": []
+      }
+    }
+  ],
+  "scoring_notes": "All rationales scored successfully. 3 red flags detected across the corpus."
+}
+```
+
+## Constraints
+
+- Do not fabricate EQM scores — only report what the MCP tool returned.
+- If a tool call failed, note it in scoring_notes and exclude that rationale from per_rationale_scores (do not default to 0).
+- Preserve the forecaster_id grouping for the aggregation step.
+- The caveat field from the tool must be preserved verbatim — it carries the paper's asymmetry warning.
+- If `missing_eqms` is non-empty, note it in scoring_notes — the composite for that rationale is an incomplete assessment.

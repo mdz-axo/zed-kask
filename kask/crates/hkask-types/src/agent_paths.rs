@@ -21,9 +21,16 @@
 //! - `skills/`  — user skills (`skills/{skill_name}/`)
 //! - `threads/` — archived chat threads (`threads/threads.db`)
 //!
-//! Artifacts dir (`~/Documents/zk-data/`):
+//! Artifacts dir (`~/Documents/zk-data/`) — the canonical storage route for
+//! ALL artifact files and outputs of the MCP servers. Every artifact a
+//! server produces for the user lives at `{server}-mcp/{artifact-type}/`
+//! under this visible root, NOT under the hidden internal data dir.
+//! Databases are infrastructure — they are the ONE artifact class that
+//! stays in the internal data dir:
 //! - `companies-mcp/reports/` — company research reports
 //! - `companies-mcp/screens/` — company screens
+//! - `portfolio-mcp/transactions/` — transaction files
+//! - `corpus-mcp/cache/` — corpus cache files
 
 use std::path::PathBuf;
 
@@ -166,16 +173,43 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 }
 
 /// Returns the relative path `mcp/{server_id}/{subdir}` for a server's
-/// non-DB artifact directory (e.g. `mcp/portfolio/transactions`,
-/// `mcp/swarm/agents/curated`, `mcp/companies/screens`). The caller
+/// internal directory (e.g. `mcp/swarm/agents/curated`,
+/// `mcp/companies/fibo-cache`, `mcp/training/adapters`). The caller
 /// resolves this against the data dir via `resolve_under_data_dir`.
 ///
 /// This is the directory equivalent of [`mcp_server_db`] — use it for any
 /// server-owned artifact that is not a `.db` file. Centralizing the path
 /// construction here means a layout change (e.g. renaming `mcp/` to
 /// `servers/`) touches one helper, not 10+ call sites.
+///
+/// Internal-system servers only (kata-kanban, swarm, training, ...). The
+/// content servers (research, companies, portfolio, corpus) use
+/// [`mcp_artifacts_subdir`] under the visible artifacts dir instead.
 pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
     let base = PathBuf::from(MCP_DIR).join(sanitize_name(server_id));
+    if subdir.is_empty() {
+        base
+    } else {
+        base.join(subdir)
+    }
+}
+
+// ── MCP content-server paths (artifacts dir route) ───────────────────────────
+
+/// Returns the relative path `{server_id}-mcp/{subdir}` — the canonical
+/// storage route for artifact files and outputs owned by the MCP servers.
+/// The caller resolves this against the user-visible artifacts dir via
+/// `resolve_under_artifacts_dir`, so the artifact lands under
+/// `~/Documents/zk-data/{server}-mcp/{artifact-type}/` — NOT under the
+/// hidden internal data dir. Databases are infrastructure and stay in the
+/// internal data dir (`mcp_server_db`); everything the user is meant to
+/// see, use, or take elsewhere goes through this route.
+///
+/// `subdir` is the artifact type (e.g. `reports`, `screens`,
+/// `transactions`, `cache`). An empty `subdir` yields the bare
+/// `{server}-mcp/` root.
+pub fn mcp_artifacts_subdir(server_id: &str, subdir: &str) -> PathBuf {
+    let base = PathBuf::from(format!("{}-mcp", sanitize_name(server_id)));
     if subdir.is_empty() {
         base
     } else {
@@ -266,8 +300,8 @@ mod tests {
     #[test]
     fn mcp_server_subdir_handles_empty_and_nested() {
         assert_eq!(
-            mcp_server_subdir("portfolio", "transactions"),
-            PathBuf::from("mcp/portfolio/transactions")
+            mcp_server_subdir("companies", "fibo-cache"),
+            PathBuf::from("mcp/companies/fibo-cache")
         );
         assert_eq!(mcp_server_subdir("swarm", ""), PathBuf::from("mcp/swarm"));
     }
@@ -285,6 +319,40 @@ mod tests {
             let resolved = resolve_under_data_dir(&relative);
             assert!(resolved.starts_with(resolve_data_dir()));
         }
+    }
+
+    #[test]
+    fn mcp_artifacts_subdir_follows_canonical_route() {
+        // The canonical storage route for the content MCP servers:
+        // {artifacts_dir}/{server}-mcp/{artifact-type}/ — visible under
+        // ~/Documents/zk-data/, never under the hidden internal data dir.
+        assert_eq!(
+            mcp_artifacts_subdir("companies", "reports"),
+            PathBuf::from("companies-mcp/reports")
+        );
+        assert_eq!(
+            mcp_artifacts_subdir("portfolio", "transactions"),
+            PathBuf::from("portfolio-mcp/transactions")
+        );
+        assert_eq!(
+            mcp_artifacts_subdir("corpus", "cache"),
+            PathBuf::from("corpus-mcp/cache")
+        );
+        assert_eq!(
+            mcp_artifacts_subdir("corpus", ""),
+            PathBuf::from("corpus-mcp")
+        );
+    }
+
+    #[test]
+    fn mcp_artifacts_route_resolves_under_artifacts_dir_not_data_dir() {
+        // The route must resolve under the artifacts dir (Documents-anchored)
+        // and must NOT resolve under the internal data dir — the whole point
+        // of the route is user visibility.
+        let relative = mcp_artifacts_subdir("companies", "reports");
+        let resolved = resolve_under_artifacts_dir(&relative);
+        assert!(resolved.starts_with(resolve_artifacts_dir()));
+        assert!(!resolved.starts_with(resolve_data_dir()));
     }
 
     #[test]

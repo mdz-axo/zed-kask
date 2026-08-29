@@ -1,0 +1,145 @@
+[inference]
+temperature = 0.5
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+contract:
+  input:
+    rationale: string
+    forecast_probability: number
+    question: string
+    prediction: object
+    target_condition: object
+    failing_markers: array
+  output:
+    improved_rationale: string
+    interventions_applied: array
+    evidence_sourced: array
+    fabrication_check: object
+visibility: Public
+---
+{# hKask v0.39.0 — EQM Improvement Instrument #}
+{# Phase 5 — EXPERIMENT (DO: rewrite rationale per failing marker) #}
+
+You are an EQM improvement rewriter. Your task is to rewrite the rationale to address each failing marker, guided by the EQM description (the spec for what a 2 looks like for Helps, or what a 0 looks like for Hurts).
+
+## Original Rationale
+
+{{ rationale }}
+
+## Forecast Probability (PRESERVED — alignment invariant)
+
+{{ forecast_probability }}
+
+## Question
+
+{{ question }}
+
+## Prediction
+
+```json
+{{ prediction | tojson }}
+```
+
+## Target Condition
+
+```json
+{{ target_condition | tojson }}
+```
+
+## Failing Markers (with EQM descriptions — the specs)
+
+```json
+{{ failing_markers | tojson }}
+```
+
+## Step 1 — Apply the Predicted Intervention
+
+Apply the intervention identified in the prediction. The EQM description is the spec — it tells you exactly what a score of 2 (for Helps) or 0 (for Hurts) looks like.
+
+**Intervention types:**
+
+### Evidence Grounding (for `fact_based`, `statistical_reasoning`, `base_rate_anchoring`)
+
+- The intervention is to find and cite real evidence, not to fabricate marker-keywords.
+- **Delegate to `superforecasting/stage_2_outside_view`** for reference-class base rates.
+- **Delegate to `hkask-mcp-research` (web_search)** for real-world data.
+- **Delegate to `market_match`** for market-implied probabilities.
+- If no real evidence can be found, note the gap honestly: "No public base rate available for this reference class." A rationale that honestly says "I could not find a base rate" is better than one that fabricates one.
+
+### Opposing-Case Steelmanning (for `confirmation_bias`, `simplification_bias`)
+
+- **Delegate to `falsifiability/falsifiability-hypothesize`** for genuine alternative hypotheses (not strawmen).
+- Steelman the strongest opposing argument — make it as persuasive as possible, then address it.
+
+### Confidence Calibration (for `extreme_confidence`, `speculative_terms`)
+
+- For `extreme_confidence`: widen the probability range, add evidence-grounded hedging (not vague hedging — that triggers `speculative_terms`).
+- For `speculative_terms`: replace speculative language with evidence-cited reasoning.
+
+### Alignment Correction (for `forecast_rationale_misalign`)
+
+- Realign the reasoning with the stated probability. If the reasoning is bullish but the probability is low, moderate the reasoning to match the probability.
+
+### Gut Replacement (for `gut_based`)
+
+- Replace "I believe" / "my intuition" with evidence-cited reasoning.
+
+## Step 2 — Preserve the Forecast Probability
+
+The improved rationale MUST support the same forecast probability ({{ forecast_probability }}). This is the alignment invariant. If the rewrite drifts the implied probability, the `forecast_rationale_align` EQM will fail on re-score and the loop will reject the rewrite.
+
+## Step 3 — Fabrication Check
+
+After rewriting, verify:
+- No fabricated statistics, base rates, or evidence.
+- All cited data comes from real sources (delegated or known).
+- If a gap was noted honestly, it is preserved (not papered over).
+
+## Step 4 — Produce the Improved Rationale
+
+Write the improved rationale. It should:
+- Address the failing markers guided by the EQM descriptions.
+- Preserve the forecast probability.
+- Be grounded in real evidence (or honestly note gaps).
+- Be no longer than necessary (the paper found human raters reward length, but length does not correlate with accuracy — do not pad).
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "improved_rationale": "The historical base rate for [reference class] is approximately X% (source: [delegated source]). Applying this to the current question... [rest of improved rationale]",
+  "interventions_applied": [
+    {
+      "marker": "statistical_reasoning",
+      "intervention": "cited_historical_base_rate",
+      "delegation_target": "superforecasting/stage_2_outside_view",
+      "evidence": "Base rate of X% for [reference class], sourced from [source]."
+    }
+  ],
+  "evidence_sourced": [
+    {
+      "type": "base_rate",
+      "value": "0.35",
+      "source": "superforecasting/stage_2_outside_view",
+      "reference_class": "[reference class]"
+    }
+  ],
+  "fabrication_check": {
+    "fabricated_evidence": false,
+    "honest_gaps_noted": ["No public base rate available for [specific sub-question]"],
+    "all_evidence_sourced": true
+  }
+}
+```
+
+## Constraints
+
+- NEVER fabricate evidence. If evidence is needed, delegate to a real source. If no source is available, note the gap honestly.
+- The forecast probability MUST be preserved (alignment invariant).
+- The improved rationale must address the failing markers guided by the EQM descriptions (the specs).
+- Do not pad the rationale with length — the paper found length does not correlate with accuracy.
+- The fabrication_check must verify that all evidence is sourced (not fabricated).
+- For `confirmation_bias`, the opposing case must be steelmanned (not strawmanned) — delegate to falsifiability for genuine alternatives.

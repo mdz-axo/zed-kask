@@ -31,6 +31,20 @@ pub(crate) fn emit_data_dir_env(
     env.insert("HKASK_DATA_DIR".to_string(), data_dir.to_string());
 }
 
+/// Emit the resolved artifacts dir so content MCP servers (research,
+/// companies, portfolio, corpus) resolve their `{server}-mcp/` routes
+/// under the same root as the parent process. Without this, an operator
+/// `HKASK_ARTIFACTS_DIR` override is silently dropped by
+/// `filter_config_env_for_server` and the child falls back to the
+/// Documents default, diverging from the parent when the override is set.
+pub(crate) fn emit_artifacts_dir_env(env: &mut std::collections::HashMap<String, String>) {
+    let artifacts_dir = hkask_types::agent_paths::resolve_artifacts_dir();
+    env.insert(
+        "HKASK_ARTIFACTS_DIR".to_string(),
+        artifacts_dir.to_string_lossy().to_string(),
+    );
+}
+
 /// Emit general settings that MCP servers consume — the process-wide
 /// concurrency ceiling from `KaskGeneralSettings.max_concurrency`.
 /// MCP servers use this as the default for their own concurrency limits
@@ -122,19 +136,14 @@ pub(crate) fn emit_companies_env(
 /// Portfolio MCP server env emission.
 ///
 /// No per-server path field — the transactions dir is derived from the
-/// global `data_dir` as `mcp/portfolio/transactions/` per the Standardized
-/// Artifact Storage layout. The server reads it via `HKASK_TRANSACTIONS_DIR`.
-pub(crate) fn emit_portfolio_env(
-    data_dir: &str,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    let transactions_dir = std::path::Path::new(data_dir)
-        .join(hkask_types::agent_paths::mcp_server_subdir(
-            "portfolio",
-            "transactions",
-        ))
-        .to_string_lossy()
-        .to_string();
+/// artifacts dir as `portfolio-mcp/transactions/` per the canonical
+/// storage route. The server reads it via `HKASK_TRANSACTIONS_DIR`.
+pub(crate) fn emit_portfolio_env(env: &mut std::collections::HashMap<String, String>) {
+    let transactions_dir = hkask_types::agent_paths::resolve_under_artifacts_dir(
+        &hkask_types::agent_paths::mcp_artifacts_subdir("portfolio", "transactions"),
+    )
+    .to_string_lossy()
+    .to_string();
     env.insert("HKASK_TRANSACTIONS_DIR".to_string(), transactions_dir);
 }
 
@@ -483,12 +492,12 @@ mod tests {
     // default case. Now `mcp_env()` reads from `Default::default()`, so changing
     // `Default` automatically updates the comparison. This test pins that: a
     // `KaskSettings::default()` (all defaults) does not emit per-server config
-    // vars. The always-emitted vars (`HKASK_DATA_DIR`, `HKASK_TEMPLATE_ROOT`,
-    // `HKASK_TRANSACTIONS_DIR`, `HKASK_SCENARIOS_DATA`,
-    // `HKASK_PREDICTION_MARKETS_DATA`) are kask-wide critical paths resolved
-    // from `data_dir` per the Standardized Artifact Storage layout — they are
-    // NOT suppressed for default settings. See the `mcp_env_always_emits_*`
-    // tests for those.
+    // vars. The always-emitted vars (`HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`,
+    // `HKASK_TEMPLATE_ROOT`, `HKASK_TRANSACTIONS_DIR`,
+    // `HKASK_SCENARIOS_DATA`, `HKASK_PREDICTION_MARKETS_DATA`) are kask-wide
+    // critical paths resolved from `data_dir` / the artifacts dir per the
+    // Standardized Artifact Storage layout — they are NOT suppressed for
+    // default settings. See the `mcp_env_always_emits_*` tests for those.
     #[test]
     fn mcp_env_emits_nothing_for_default_settings() {
         let settings = KaskSettings::default();
@@ -535,13 +544,14 @@ mod tests {
 
     // The per-server data-dir env vars (`HKASK_TRANSACTIONS_DIR`,
     // `HKASK_SCENARIOS_DATA`, `HKASK_PREDICTION_MARKETS_DATA`) must ALWAYS be
-    // emitted by `mcp_env()`, resolved from `data_dir` per the Standardized
-    // Artifact Storage layout. Without this, an operator `data_dir` override
-    // is silently dropped for those servers — the server falls back to
-    // `resolve_under_data_dir` which reads `HKASK_DATA_DIR` from its own env,
-    // but the per-server env var is the canonical delivery path and the
-    // server's fallback only works when `HKASK_DATA_DIR` is also allowlisted
-    // (which it now is for portfolio/scenarios/prediction-markets/companies).
+    // emitted by `mcp_env()`. `HKASK_TRANSACTIONS_DIR` resolves from the
+    // artifacts dir per the canonical storage route
+    // (`portfolio-mcp/transactions/`); the rest resolve from `data_dir` per
+    // the Standardized Artifact Storage layout. Without this, an operator
+    // override is silently dropped for those servers — the per-server env
+    // var is the canonical delivery path and the server's fallback only
+    // works when the root env var is also allowlisted (which it now is for
+    // portfolio/scenarios/prediction-markets).
     #[test]
     fn mcp_env_always_emits_per_server_data_dirs() {
         let settings = KaskSettings::default();
@@ -549,17 +559,20 @@ mod tests {
         let data_dir = env
             .get("HKASK_DATA_DIR")
             .expect("HKASK_DATA_DIR must be emitted");
-        // Transactions dir resolves under the portfolio server's subtree.
-        let expected_transactions = std::path::Path::new(data_dir)
-            .join("mcp")
-            .join("portfolio")
+        // Transactions dir resolves under the portfolio server's subtree
+        // in the visible artifacts dir (canonical storage route).
+        let artifacts_dir = env
+            .get("HKASK_ARTIFACTS_DIR")
+            .expect("HKASK_ARTIFACTS_DIR must be emitted");
+        let expected_transactions = std::path::Path::new(artifacts_dir)
+            .join("portfolio-mcp")
             .join("transactions")
             .to_string_lossy()
             .to_string();
         assert_eq!(
             env.get("HKASK_TRANSACTIONS_DIR").map(String::as_str),
             Some(expected_transactions.as_str()),
-            "default transactions_dir must resolve to `{{data_dir}}/mcp/portfolio/transactions`"
+            "default transactions_dir must resolve to `{{artifacts_dir}}/portfolio-mcp/transactions`"
         );
         // Scenarios data dir resolves under the scenarios server's subtree.
         let expected_scenarios = std::path::Path::new(data_dir)

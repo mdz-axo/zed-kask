@@ -6,7 +6,7 @@
 //! digging through `~/.local/share/zed-kask/`.
 use crate::CompaniesServer;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_types::agent_paths::resolve_under_artifacts_dir;
+use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir};
 use rmcp::{handler::server::wrapper::Parameters, schemars::JsonSchema, tool, tool_router};
 use serde::Deserialize;
 
@@ -23,8 +23,7 @@ fn validate_kind(kind: &str) -> Result<&'static str, McpToolError> {
 
 /// Resolve the artifact directory for a given kind, creating it if needed.
 fn artifact_dir(kind_label: &str) -> Result<std::path::PathBuf, McpToolError> {
-    let dir =
-        resolve_under_artifacts_dir(std::path::Path::new(&format!("companies-mcp/{kind_label}")));
+    let dir = resolve_under_artifacts_dir(&mcp_artifacts_subdir("companies", kind_label));
     std::fs::create_dir_all(&dir).map_err(|e| {
         McpToolError::internal(format!(
             "Failed to create artifact directory {}: {e}",
@@ -86,7 +85,10 @@ impl CompaniesServer {
     #[tool(
         description = "Persist a JSON artifact (screen or report) produced by the companies server or a skill."
     )]
-    pub async fn report_save(&self, Parameters(req): Parameters<ReportSaveRequest>) -> Result<String, McpToolError> {
+    pub async fn report_save(
+        &self,
+        Parameters(req): Parameters<ReportSaveRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_save",
@@ -119,7 +121,10 @@ impl CompaniesServer {
     #[tool(
         description = "Load a previously saved JSON artifact (screen or report) by name. Returns the full JSON payload. Returns a not-found error if no artifact with that name exists."
     )]
-    pub async fn report_load(&self, Parameters(req): Parameters<ReportLoadRequest>) -> Result<String, McpToolError> {
+    pub async fn report_load(
+        &self,
+        Parameters(req): Parameters<ReportLoadRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_load",
@@ -152,7 +157,10 @@ impl CompaniesServer {
     #[tool(
         description = "List saved artifact names (without extension) for a kind. Use kind='screen' or kind='report'. Returns a JSON array of names sorted alphabetically."
     )]
-    pub async fn report_list(&self, Parameters(req): Parameters<ReportListRequest>) -> Result<String, McpToolError> {
+    pub async fn report_list(
+        &self,
+        Parameters(req): Parameters<ReportListRequest>,
+    ) -> Result<String, McpToolError> {
         execute_tool_semantic(
             self,
             "report_list",

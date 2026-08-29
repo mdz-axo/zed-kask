@@ -39,8 +39,9 @@ All kask internal data (databases, traces, MCP state, skills, threads) lives und
 
 macOS: `~/Library/Application Support/zed-kask`. Windows: `%LOCALAPPDATA%\zed-kask`.
 
-User-facing artifacts (reports, screens, exports) are stored separately in a
-visible directory via `resolve_artifacts_dir()`:
+User-facing artifacts (reports, screens, exports, transaction files,
+corpus cache files) are stored separately in a visible directory via
+`resolve_artifacts_dir()`:
 
 | Precedence | Path (Linux) |
 |---|---|
@@ -50,7 +51,14 @@ visible directory via `resolve_artifacts_dir()`:
 | 4 | `$HOME/zk-data` (fallback) |
 
 This separation keeps internal app data hidden (XDG convention) while making
-user-facing output visible and intuitive.
+user-facing output visible and intuitive. **The rule is fixed:** the hidden
+internal data dir holds ONLY infrastructure — the databases. Every artifact
+file and output an MCP server produces for the user (reports, screens,
+transaction files, cache files, exports) lives under the visible artifacts
+dir at `{server}-mcp/{artifact-type}/` (e.g. `companies-mcp/reports/`,
+`portfolio-mcp/transactions/`, `corpus-mcp/cache/`), constructed via
+`mcp_artifacts_subdir(server_id, artifact_type)` (`agent_paths.rs`) and
+resolved via `resolve_under_artifacts_dir`.
 
 This root is injected as `HKASK_DATA_DIR` into every MCP server child process
 by `KaskSettings::mcp_env()`
@@ -147,16 +155,19 @@ is for, not its format.
 
 ### Binary artifacts
 
-Binary artifacts (LoRA adapter weights, ingested corpus documents, cached
-web content) are owned by the MCP server that produces them. They live
-under `mcp/{server_id}/{purpose}/`:
+Binary and file artifacts (transaction files, cached corpus text) are owned
+by the MCP server that produces them. They are user-facing outputs and live
+under the visible artifacts dir at `{server}-mcp/{artifact-type}/`:
 
-| Binary artifact | Owner | Path |
+| File artifact | Owner | Path |
 |---|---|---|
-| LoRA adapter weights | training server | `mcp/training/adapters/` |
-| Corpus ingested documents | corpus server | `mcp/corpus/sources/` |
-| Corpus cache files | corpus server | `mcp/corpus/cache/` |
-| Portfolio transaction files | portfolio server | `mcp/portfolio/transactions/` |
+| Portfolio transaction files | portfolio server | `portfolio-mcp/transactions/` (artifacts dir) |
+| Corpus cache files | corpus server | `corpus-mcp/cache/` (artifacts dir) |
+| Company research reports | companies server | `companies-mcp/reports/` (artifacts dir) |
+| Company screens | companies server | `companies-mcp/screens/` (artifacts dir) |
+
+LoRA adapter weights are hosted on HuggingFace (`AdapterSource::HuggingFace`);
+only SQLite metadata is local (`mcp/training/training.db`).
 
 ### Agent DBs that MCP servers read
 

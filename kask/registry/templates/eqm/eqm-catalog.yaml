@@ -1,0 +1,591 @@
+# EQM Catalog — Full 60 Explanation Quality Markers
+# Reference document (RenderAct) for the eqm and eqm-improvement skills.
+#
+# Source: Karvetski, Huang, Kučinskas et al. (2026), "Measuring Judgment
+# Quality in Natural-Language Explanations: Evidence from Forecasting
+# Tournaments" — Forecasting Research Institute.
+#
+# The paper defined 60 EQMs across four categories. The 12 most predictive
+# (highlighted in the paper's key findings) are marked `predictive: true`
+# and are the default subset implemented in the market_score_rationale
+# MCP tool (hkask-mcp-prediction-markets/src/eqm.rs::KEY_EQMS).
+#
+# Directional hypothesis:
+#   helps — positively correlated with forecasting accuracy (a "good habit")
+#   hurts — negatively correlated with forecasting accuracy (a "warning sign")
+#
+# The paper's key asymmetry finding: EQMs flag bad forecasts more reliably
+# than they identify excellent ones. Red-flag screening is the strong signal;
+# green-flag endorsement is the weak signal.
+#
+# Scoring: 0/1/2 per marker (0 = absent, 1 = partial, 2 = clearly present).
+# Composite = Σ(helps scores) − Σ(hurts scores), range [-N_hurts×2, +N_helps×2].
+#
+# This catalog is the single source of truth for EQM definitions. The MCP
+# tool's KEY_EQMS const carries the predictive 12; this file carries all 60
+# for skills that need the full catalog (research, validation, domain-tuning).
+
+categories:
+  - id: good_habits
+    name: "Good Habits (positively correlated with accuracy)"
+    direction: helps
+    markers:
+      - id: statistical_reasoning
+        name: "Statistical Reasoning"
+        predictive: true
+        description: >
+          The rationale explicitly uses statistical concepts such as base
+          rates, probability distributions, sample sizes, confidence
+          intervals, or quantitative comparisons. A score of 2 means the
+          rationale clearly applies statistical thinking (e.g., citing a
+          base rate or computing a probability). A score of 0 means no
+          statistical reasoning is present.
+
+      - id: fact_based
+        name: "Fact Based"
+        predictive: true
+        description: >
+          The rationale cites specific, verifiable facts, data, or evidence
+          rather than opinions or speculation. A score of 2 means the
+          rationale is grounded in concrete facts. A score of 0 means the
+          rationale relies on opinion or assertion without evidence.
+
+      - id: concrete_reasoning
+        name: "Concrete Reasoning"
+        predictive: true
+        description: >
+          The rationale uses specific, concrete details rather than abstract
+          or vague generalizations. A score of 2 means the reasoning is
+          grounded in specific examples, numbers, or events. A score of 0
+          means the reasoning is abstract and non-specific.
+
+      - id: forecast_rationale_align
+        name: "Forecast and Rationale Align"
+        predictive: true
+        description: >
+          The rationale's stated reasoning is consistent with the forecast
+          probability. A score of 2 means the attitude expressed in the
+          rationale clearly matches the quantitative forecast. A score of 0
+          means the rationale contradicts the forecast (e.g., bullish
+          reasoning with a low probability).
+
+      - id: best_practices
+        name: "Best Practices"
+        predictive: true
+        description: >
+          The rationale follows forecasting best practices: considering
+          multiple hypotheses, seeking disconfirming evidence, using
+          structured decomposition, or applying probabilistic thinking. A
+          score of 2 means the rationale clearly follows best practices. A
+          score of 0 means no best practices are evident.
+
+      - id: statistical_causal_blend
+        name: "Statistical Causal Blend"
+        predictive: true
+        description: >
+          The rationale combines statistical reasoning with causal analysis,
+          using data to support causal claims or using causal models to
+          interpret statistics. A score of 2 means both statistical and
+          causal reasoning are present and integrated. A score of 0 means
+          neither is present or they are not integrated.
+
+      - id: considers_alternatives
+        name: "Considers Alternatives"
+        predictive: false
+        description: >
+          The rationale explicitly considers alternative outcomes,
+          explanations, or scenarios rather than fixating on a single
+          narrative. A score of 2 means multiple alternatives are weighed.
+          A score of 0 means no alternatives are considered.
+
+      - id: reference_class_reasoning
+        name: "Reference Class Reasoning"
+        predictive: false
+        description: >
+          The rationale identifies a relevant reference class and uses its
+          historical frequency as an anchor. A score of 2 means a specific
+          reference class is named and its base rate cited. A score of 0
+          means no reference class is identified.
+
+      - id: decomposition
+        name: "Decomposition"
+        predictive: false
+        description: >
+          The rationale breaks the question into sub-components and reasons
+          about each separately. A score of 2 means a clear decomposition is
+          present and each part is addressed. A score of 0 means the
+          rationale treats the question as monolithic.
+
+      - id: uncertainty_acknowledgment
+        name: "Uncertainty Acknowledgment"
+        predictive: false
+        description: >
+          The rationale explicitly acknowledges uncertainty in the forecast,
+          citing sources of uncertainty and their magnitude. A score of 2
+          means uncertainty is quantified or clearly characterized. A score
+          of 0 means uncertainty is ignored or dismissed.
+
+      - id: evidence_weighting
+        name: "Evidence Weighting"
+        predictive: false
+        description: >
+          The rationale weighs different pieces of evidence by strength or
+          relevance rather than treating all evidence equally. A score of 2
+          means evidence is explicitly weighted. A score of 0 means evidence
+          is undifferentiated.
+
+      - id: temporal_reasoning
+        name: "Temporal Reasoning"
+        predictive: false
+        description: >
+          The rationale considers time dynamics — trends, rates of change,
+          or time lags between cause and effect. A score of 2 means temporal
+          dynamics are explicitly modeled. A score of 0 means time is
+          ignored.
+
+      - id: counterfactual_reasoning
+        name: "Counterfactual Reasoning"
+        predictive: false
+        description: >
+          The rationale considers what would happen under different
+          conditions (the do-operator). A score of 2 means explicit
+          counterfactuals are constructed. A score of 0 means no
+          counterfactual reasoning.
+
+      - id: base_rate_anchoring
+        name: "Base Rate Anchoring"
+        predictive: false
+        description: >
+          The rationale starts from a base rate and adjusts from there,
+          rather than reasoning from a single case. A score of 2 means a
+          base rate is cited and the adjustment is justified. A score of 0
+          means no base rate is used.
+
+      - id: precision_appropriate
+        name: "Precision Appropriate"
+        predictive: false
+        description: >
+          The rationale's precision (specificity of the probability) matches
+          the evidence quality — not false precision, not false vagueness.
+          A score of 2 means precision is well-matched. A score of 0 means
+          precision is mismatched (too precise or too vague).
+
+      - id: multiple_data_sources
+        name: "Multiple Data Sources"
+        predictive: false
+        description: >
+          The rationale draws on more than one independent data source.
+          A score of 2 means multiple independent sources are cited and
+          their agreement or disagreement is noted. A score of 0 means a
+          single source or no source.
+
+      - id: causal_mechanism
+        name: "Causal Mechanism"
+        predictive: false
+        description: >
+          The rationale identifies a specific causal mechanism connecting
+          cause to effect, not just a correlation. A score of 2 means a
+          mechanism is articulated. A score of 0 means only correlation is
+          asserted.
+
+      - id: disconfirming_evidence
+        name: "Disconfirming Evidence Sought"
+        predictive: false
+        description: >
+          The rationale actively seeks evidence that would disconfirm the
+          forecast, not just evidence that supports it. A score of 2 means
+          disconfirming evidence is explicitly sought and addressed. A score
+          of 0 means only confirming evidence is considered.
+
+      - id: structured_framework
+        name: "Structured Framework"
+        predictive: false
+        description: >
+          The rationale applies a named structured framework (Bayesian,
+          Fermi, decision tree, scenario analysis). A score of 2 means a
+          framework is explicitly applied. A score of 0 means ad hoc
+          reasoning.
+
+      - id: calibration_awareness
+        name: "Calibration Awareness"
+        predictive: false
+        description: >
+          The rationale references past calibration performance or known
+          calibration biases. A score of 2 means calibration is explicitly
+          considered. A score of 0 means no calibration awareness.
+
+      - id: question_decomposition
+        name: "Question Decomposition"
+        predictive: false
+        description: >
+          The rationale decomposes the forecasting question itself into
+          sub-questions before answering. A score of 2 means the question
+          is decomposed. A score of 0 means the question is answered
+          directly.
+
+      - id: probability_calibration
+        name: "Probability Calibration"
+        predictive: false
+        description: >
+          The rationale's probability reflects appropriate calibration — not
+          overconfident, not underconfident. A score of 2 means calibration
+          is well-justified. A score of 0 means calibration is poor or
+          unjustified.
+
+      - id: meta_reasoning
+        name: "Meta-Reasoning"
+        predictive: false
+        description: >
+          The rationale reflects on its own reasoning process — noting
+          assumptions, gaps, or limitations. A score of 2 means the reasoning
+          process itself is examined. A score of 0 means no meta-reflection.
+
+      - id: external_validity
+        name: "External Validity"
+        predictive: false
+        description: >
+          The rationale considers whether its reasoning generalizes beyond
+          the specific case. A score of 2 means external validity is
+          explicitly addressed. A score of 0 means generalization is
+          assumed without examination.
+
+      - id: source_quality
+        name: "Source Quality Assessment"
+        predictive: false
+        description: >
+          The rationale assesses the quality of its sources (methodology,
+          sample size, potential bias) rather than citing them uncritically.
+          A score of 2 means source quality is assessed. A score of 0 means
+          sources are cited without assessment.
+
+      - id: aggregation_reasoning
+        name: "Aggregation Reasoning"
+        predictive: false
+        description: >
+          The rationale considers how to aggregate multiple estimates or
+          viewpoints (mean, median, weighted). A score of 2 means an
+          aggregation method is chosen and justified. A score of 0 means
+          no aggregation reasoning.
+
+      - id: sensitivity_analysis
+        name: "Sensitivity Analysis"
+        predictive: false
+        description: >
+          The rationale tests how sensitive the forecast is to changes in
+          key assumptions. A score of 2 means sensitivity is explicitly
+          tested. A score of 0 means no sensitivity analysis.
+
+      - id: scenario_planning
+        name: "Scenario Planning"
+        predictive: false
+        description: >
+          The rationale constructs multiple scenarios (best case, worst
+          case, base case) and assigns probabilities to each. A score of 2
+          means scenarios are constructed and weighted. A score of 0 means
+          no scenario planning.
+
+      - id: information_foraging
+        name: "Information Foraging"
+        predictive: false
+        description: >
+          The rationale describes what information was sought, what was
+          found, and what remains unknown. A score of 2 means the
+          information search is documented. A score of 0 means no
+          information search is described.
+
+      - id: model_awareness
+        name: "Model Awareness"
+        predictive: false
+        description: >
+          The rationale identifies the mental model or framework being used
+          and acknowledges it is a model, not reality. A score of 2 means
+          the model is named and its limitations acknowledged. A score of 0
+          means no model awareness.
+
+  - id: warning_signs
+    name: "Warning Signs (negatively correlated with accuracy)"
+    direction: hurts
+    markers:
+      - id: gut_based
+        name: "Gut Based"
+        predictive: true
+        description: >
+          The rationale relies on intuition, gut feeling, or personal
+          conviction rather than evidence or analysis. A score of 2 means
+          the rationale is primarily gut-based. A score of 0 means no
+          gut-based reasoning is present.
+
+      - id: simplification_bias
+        name: "Simplification Bias"
+        predictive: true
+        description: >
+          The rationale oversimplifies a complex situation, ignoring
+          important nuances, uncertainties, or alternative explanations.
+          A score of 2 means the rationale is notably oversimplified. A
+          score of 0 means the rationale adequately captures complexity.
+
+      - id: confirmation_bias
+        name: "Confirmation Bias"
+        predictive: true
+        description: >
+          The rationale primarily seeks or cites evidence that supports
+          the forecast while ignoring or dismissing disconfirming evidence.
+          A score of 2 means clear confirmation bias. A score of 0 means
+          the rationale considers evidence on both sides.
+
+      - id: extreme_confidence
+        name: "Extreme Confidence"
+        predictive: true
+        description: >
+          The rationale expresses unwarranted certainty, using language
+          like 'certainly', 'definitely', 'guaranteed', or assigning very
+          high/low probabilities without adequate justification. A score of
+          2 means extreme confidence is clearly present. A score of 0 means
+          the confidence level is appropriately calibrated.
+
+      - id: forecast_rationale_misalign
+        name: "Forecast and Rationale Misalign"
+        predictive: true
+        description: >
+          The rationale's stated reasoning contradicts or does not support
+          the forecast probability. A score of 2 means clear misalignment
+          between reasoning and forecast. A score of 0 means the rationale
+          and forecast are aligned.
+
+      - id: speculative_terms
+        name: "Speculative Terms"
+        predictive: true
+        description: >
+          The rationale uses speculative language ('maybe', 'could',
+          'might', 'possibly') without grounding in evidence or analysis.
+          A score of 2 means the rationale is primarily speculative. A
+          score of 0 means the rationale is grounded in evidence.
+
+      - id: anecdotal_evidence
+        name: "Anecdotal Evidence"
+        predictive: false
+        description: >
+          The rationale relies on a single anecdote or isolated example
+          rather than systematic evidence. A score of 2 means the rationale
+          is primarily anecdotal. A score of 0 means no anecdotal reliance.
+
+      - id: authority_reliance
+        name: "Authority Reliance"
+        predictive: false
+        description: >
+          The rationale cites authority figures or institutions without
+          examining the underlying evidence. A score of 2 means the
+          rationale is primarily authority-based. A score of 0 means
+          authority is not the basis.
+
+      - id: recency_bias
+        name: "Recency Bias"
+        predictive: false
+        description: >
+          The rationale overweights recent events relative to historical
+          base rates. A score of 2 means recency dominates. A score of 0
+          means recency is appropriately weighted.
+
+      - id: availability_bias
+        name: "Availability Bias"
+        predictive: false
+        description: >
+          The rationale overweights easily-recalled or vivid examples.
+          A score of 2 means availability dominates. A score of 0 means
+          availability is appropriately weighted.
+
+      - id: anchoring_bias
+        name: "Anchoring Bias"
+        predictive: false
+        description: >
+          The rationale is anchored to an initial value and insufficiently
+          adjusts. A score of 2 means anchoring is evident. A score of 0
+          means adjustment is adequate.
+
+      - id: overconfidence_quantification
+        name: "Overconfidence in Quantification"
+        predictive: false
+        description: >
+          The rationale assigns overly precise probabilities (e.g., 73.2%)
+          without sufficient evidence for that precision. A score of 2
+          means false precision is evident. A score of 0 means precision is
+          appropriate.
+
+      - id: narrative_fallacy
+        name: "Narrative Fallacy"
+        predictive: false
+        description: >
+          The rationale constructs a compelling story that imposes causal
+          structure on random events. A score of 2 means narrative
+          construction dominates. A score of 0 means no narrative
+          imposition.
+
+      - id: hindsight_bias
+        name: "Hindsight Bias"
+        predictive: false
+        description: >
+          The rationale treats past outcomes as having been more
+          predictable than they were. A score of 2 means hindsight is
+          evident. A score of 0 means no hindsight bias.
+
+      - id: status_quo_bias
+        name: "Status Quo Bias"
+        predictive: false
+        description: >
+          The rationale assumes the future will resemble the present
+          without justification. A score of 2 means status quo is assumed.
+          A score of 0 means change is considered.
+
+      - id: optimism_bias
+        name: "Optimism Bias"
+        predictive: false
+        description: >
+          The rationale is systematically optimistic relative to evidence.
+          A score of 2 means optimism is evident. A score of 0 means the
+          rationale is evidence-calibrated.
+
+      - id: pessimism_bias
+        name: "Pessimism Bias"
+        predictive: false
+        description: >
+          The rationale is systematically pessimistic relative to evidence.
+          A score of 2 means pessimism is evident. A score of 0 means the
+          rationale is evidence-calibrated.
+
+      - id: framing_effect
+        name: "Framing Effect"
+        predictive: false
+        description: >
+          The rationale is influenced by how the question is framed rather
+          than its substance. A score of 2 means framing dominates. A score
+          of 0 means the rationale looks past framing.
+
+      - id: sunk_cost
+        name: "Sunk Cost Reasoning"
+        predictive: false
+        description: >
+          The rationale is influenced by prior investment in a position.
+          A score of 2 means sunk cost is evident. A score of 0 means no
+          sunk cost influence.
+
+      - id: groupthink
+        name: "Groupthink"
+        predictive: false
+        description: >
+          The rationale conforms to a consensus without independent
+          analysis. A score of 2 means groupthink is evident. A score of 0
+          means independent analysis.
+
+      - id: false_dichotomy
+        name: "False Dichotomy"
+        predictive: false
+        description: >
+          The rationale presents only two options when more exist. A score
+          of 2 means a false dichotomy is evident. A score of 0 means the
+          option space is appropriately broad.
+
+      - id: strawman
+        name: "Strawman Argument"
+        predictive: false
+        description: >
+          The rationale attacks a weak version of an opposing view. A score
+          of 2 means strawman is evident. A score of 0 means opposing views
+          are steelmanned.
+
+      - id: ad_hominem
+        name: "Ad Hominem"
+        predictive: false
+        description: >
+          The rationale attacks the source rather than the argument. A score
+          of 2 means ad hominem is evident. A score of 0 means arguments are
+          addressed on merits.
+
+      - id: circular_reasoning
+        name: "Circular Reasoning"
+        predictive: false
+        description: >
+          The rationale's conclusion is assumed in its premises. A score of
+          2 means circularity is evident. A score of 0 means reasoning is
+          non-circular.
+
+      - id: false_analogy
+        name: "False Analogy"
+        predictive: false
+        description: >
+          The rationale relies on an analogy that breaks down in relevant
+          ways. A score of 2 means a false analogy is central. A score of 0
+          means no false analogy.
+
+      - id: hasty_generalization
+        name: "Hasty Generalization"
+        predictive: false
+        description: >
+          The rationale generalizes from an insufficient sample. A score of
+          2 means hasty generalization is evident. A score of 0 means
+          generalization is appropriately scoped.
+
+      - id: slippery_slope
+        name: "Slippery Slope"
+        predictive: false
+        description: >
+          The rationale claims a chain of events without establishing each
+          link. A score of 2 means slippery slope is evident. A score of 0
+          means causal chains are established.
+
+      - id: appeal_to_nature
+        name: "Appeal to Nature"
+        predictive: false
+        description: >
+          The rationale assumes natural = good or unnatural = bad. A score
+          of 2 means appeal to nature is evident. A score of 0 means no
+          such appeal.
+
+      - id: correlation_causation
+        name: "Correlation as Causation"
+        predictive: false
+        description: >
+          The rationale infers causation from correlation without
+          establishing mechanism. A score of 2 means the conflation is
+          evident. A score of 0 means correlation and causation are
+          distinguished.
+
+      - id: unsupported_assertion
+        name: "Unsupported Assertion"
+        predictive: false
+        description: >
+          The rationale makes claims without evidence or reasoning. A score
+          of 2 means assertions are unsupported. A score of 0 means claims
+          are supported.
+
+      - id: vague_language
+        name: "Vague Language"
+        predictive: false
+        description: >
+          The rationale uses vague terms ('a lot', 'many', 'significant')
+          without quantification. A score of 2 means vagueness dominates.
+          A score of 0 means terms are quantified.
+
+      - id: irrelevant_evidence
+        name: "Irrelevant Evidence"
+        predictive: false
+        description: >
+          The rationale cites evidence that does not bear on the question.
+          A score of 2 means irrelevance is evident. A score of 0 means
+          evidence is relevant.
+
+      - id: emotional_language
+        name: "Emotional Language"
+        predictive: false
+        description: >
+          The rationale uses emotionally charged language in place of
+          evidence. A score of 2 means emotion dominates. A score of 0
+          means language is neutral.
+
+      - id: length_substitution
+        name: "Length Substitution"
+        predictive: false
+        description: >
+          The rationale substitutes verbosity for substance. The paper found
+          human raters reward length, but length does not correlate with
+          accuracy. A score of 2 means length substitutes for substance.
+          A score of 0 means length is proportionate to substance.

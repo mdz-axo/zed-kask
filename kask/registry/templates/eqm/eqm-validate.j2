@@ -1,0 +1,124 @@
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+contract:
+  input:
+    forecaster_level_composite: object
+    realized_outcomes: array
+    per_rationale_scores: array
+  output:
+    validation_verdict: string
+    correlation_r: number|null
+    directional_match_pct: number|null
+    gaming_suspected: boolean
+    validation_findings: array
+visibility: Public
+---
+{# hKask v0.39.0 — EQM Measurement Instrument #}
+{# Phase 4 — VALIDATE (CHECK: correlate EQM composite with accuracy) #}
+{#
+  The paper validated EQMs against realized outcomes (Brier scores). This
+  step replicates that validation: if realized_outcomes are present, correlate
+  EQM composite with accuracy. If scores rose but accuracy didn't improve →
+  gaming_suspected (halts eqm-improvement's loop).
+
+  If realized_outcomes are absent, return verdict=Undetermined with an Info
+  finding — NOT Ready-with-empty-findings. Per the advertised-invariants rule,
+  a gate that returns Ready/Success with empty findings when it could not
+  perform the check advertises a check that didn't happen.
+#}
+
+You are an EQM validation analyst. Your task is to validate EQM scores against realized outcomes and detect gaming.
+
+## Forecaster-Level Composite
+
+```json
+{{ forecaster_level_composite | tojson }}
+```
+
+## Per-Rationale Scores
+
+```json
+{{ per_rationale_scores | tojson }}
+```
+
+## Realized Outcomes
+
+```json
+{{ realized_outcomes | default([]) | tojson }}
+```
+
+## Step 1 — Check Outcome Availability
+
+If `realized_outcomes` is empty or absent:
+
+- Return `validation_verdict: "undetermined"`.
+- Return `gaming_suspected: false` (cannot detect gaming without outcomes).
+- Add an Info finding: `"check": "outcome_correlation", "status": "skipped", "note": "No realized outcomes available. EQM scores are not validated against accuracy. Gaming cannot be detected."`
+- Do NOT return "validated" or "ready" — that would advertise a check that didn't happen.
+
+## Step 2 — Correlate EQM Composite with Accuracy (if outcomes present)
+
+For each forecaster with realized outcomes:
+
+1. Match the forecaster's rationales to their realized outcomes (by question).
+2. Compute the forecaster's accuracy: Brier score = (forecast_probability - outcome)². Lower Brier = better accuracy.
+3. Correlate EQM composite_score with accuracy (inverse Brier) across forecasters.
+
+The paper found r=0.51 at the forecaster level. Report the observed correlation.
+
+## Step 3 — Directional Hypothesis Match
+
+The paper found >90% of statistically significant EQM-accuracy correlations match the directional hypotheses (Helps = positive correlation, Hurts = negative correlation).
+
+For each EQM marker:
+- Compute its correlation with accuracy.
+- Check if the sign matches the directional hypothesis (Helps → positive, Hurts → negative).
+- Report the percentage of markers that match.
+
+## Step 4 — Gaming Detection
+
+Gaming is suspected when:
+- EQM composite scores rose (across iterations or across forecasters), BUT
+- Accuracy (Brier) did not improve correspondingly.
+
+This is the core gaming detection: if the rewriter learned to emit marker-keywords the scorer rewards (without genuine reasoning improvement), scores rise but accuracy stays flat. If gaming is suspected, emit `gaming_suspected: true` — this halts eqm-improvement's loop.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "validation_verdict": "validated|undetermined|gaming_suspected",
+  "correlation_r": 0.51,
+  "directional_match_pct": 92.0,
+  "gaming_suspected": false,
+  "validation_findings": [
+    {
+      "check": "outcome_correlation",
+      "status": "passed",
+      "detail": "EQM composite correlates with accuracy at r=0.51, matching the paper's finding."
+    },
+    {
+      "check": "directional_hypothesis",
+      "status": "passed",
+      "detail": "92% of markers match the directional hypothesis."
+    },
+    {
+      "check": "gaming_detection",
+      "status": "passed",
+      "detail": "No gaming detected — scores and accuracy moved together."
+    }
+  ]
+}
+```
+
+## Constraints
+
+- If realized_outcomes are absent, return `validation_verdict: "undetermined"` — do NOT return "validated" or "ready".
+- Gaming detection requires realized outcomes — without them, `gaming_suspected: false` is the honest answer (not "undetermined").
+- The correlation_r and directional_match_pct are null when outcomes are absent.
+- Do not fabricate validation results — if the data is insufficient, return "undetermined".

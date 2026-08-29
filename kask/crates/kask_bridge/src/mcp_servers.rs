@@ -60,15 +60,20 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         credentials: Some(&[]),
         config_env: Some(&[
             // Data dir — needed so `resolve_under_data_dir` in `store.rs`
-            // resolves the portfolio DB under the same root as the parent
-            // process. Without this, an operator `HKASK_DATA_DIR` override is
-            // silently dropped by `filter_config_env_for_server` and the
-            // server falls back to the XDG/HOME default, diverging from the
-            // parent process when the override is set.
+            // resolves the portfolio DB (databases stay internal) under the
+            // same root as the parent process. Without this, an operator
+            // `HKASK_DATA_DIR` override is silently dropped by
+            // `filter_config_env_for_server`.
             "HKASK_DATA_DIR",
-            // Transactions directory — emitted by `emit_portfolio_env`
-            // from the global `data_dir` as `mcp/portfolio/transactions/`;
-            // read by the portfolio server's auto-loader (`server.rs:611`).
+            // Artifacts dir — needed so the transactions-dir fallback in
+            // `run()` resolves `portfolio-mcp/transactions/` under the same
+            // visible root as the parent when `HKASK_TRANSACTIONS_DIR` is
+            // unset. Artifact files and outputs live in the artifacts dir;
+            // databases do not.
+            "HKASK_ARTIFACTS_DIR",
+            // Transactions directory — emitted by `emit_portfolio_env` from
+            // the artifacts dir as `portfolio-mcp/transactions/`; read by
+            // the portfolio server's auto-loader (`server.rs:611`).
             "HKASK_TRANSACTIONS_DIR",
         ]),
     },
@@ -91,12 +96,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
-            // Data dir — needed so the companies server can resolve
-            // `mcp/companies/` artifacts (screens, fibo-cache, portfolio
-            // snapshots) under the same root as the parent process. Without
-            // this, an operator `HKASK_DATA_DIR` override is silently
-            // dropped by `filter_config_env_for_server`.
+            // Data dir — needed so the companies server resolves its
+            // databases (fibo-cache, portfolio snapshot) under the same
+            // root as the parent process. Databases stay internal.
             "HKASK_DATA_DIR",
+            // Artifacts dir — needed so the companies server resolves its
+            // `companies-mcp/` artifact files (reports, screens) under the
+            // same visible root as the parent process. Without this, an
+            // operator `HKASK_ARTIFACTS_DIR` override is silently dropped
+            // by `filter_config_env_for_server`.
+            "HKASK_ARTIFACTS_DIR",
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
         ]),
@@ -112,11 +121,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
-            // Data dir — needed so the corpus server resolves its cache
-            // (`mcp/corpus/cache/`) and semantic DB under the same root as
-            // the parent process. Without this, an operator `HKASK_DATA_DIR`
-            // override is silently dropped by `filter_config_env_for_server`.
+            // Data dir — still needed for the skills-registry manifest
+            // (`skills/registry/company-sources/`, read via
+            // `resolve_under_data_dir` in `gather.rs`).
             "HKASK_DATA_DIR",
+            // Artifacts dir — needed so the corpus server resolves its
+            // `corpus-mcp/` artifacts (cache) under the same visible root
+            // as the parent process. Without this, an operator
+            // `HKASK_ARTIFACTS_DIR` override is silently dropped by
+            // `filter_config_env_for_server`.
+            "HKASK_ARTIFACTS_DIR",
             "HKASK_EMBEDDING_DIM",
             "HKASK_EMBEDDING_MODEL",
             // Process-wide concurrency ceiling from KaskGeneralSettings —
@@ -248,8 +262,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Data dir — needed so the research server's fallback
             // (`resolve_under_data_dir(mcp_server_db("research", "rss"))`)
             // resolves under the same root as the parent process when
-            // `HKASK_RSS_DB` is unset. Without this, an operator
-            // `HKASK_DATA_DIR` override is silently dropped.
+            // `HKASK_RSS_DB` is unset. The RSS DB is a database — it stays
+            // in the internal data dir; only artifact files and outputs
+            // go to the visible artifacts dir.
             "HKASK_DATA_DIR",
             "HKASK_WEB_CACHE_TTL_SECS",
             "HKASK_WEB_CACHE_MAX_ENTRIES",
@@ -814,19 +829,25 @@ mod tests {
              provider-agnostic; add a credential only with a read site in \
              hkask-mcp-portfolio"
         );
-        // D28 — HKASK_TRANSACTIONS_DIR is read in `run()` to resolve the
-        // transactions directory (default `mcp/portfolio/transactions/`).
-        // HKASK_DATA_DIR is read transitively via `resolve_under_data_dir`
-        // → `resolve_data_dir` in hkask-types (the server's fallback when
-        // HKASK_TRANSACTIONS_DIR is unset, and for the portfolio DB path in
-        // store.rs). Allowlisted so an operator `HKASK_DATA_DIR` override
-        // is not silently dropped by `filter_config_env_for_server`.
+        // Canonical storage route — HKASK_TRANSACTIONS_DIR is read in `run()`
+        // to resolve the transactions directory (default
+        // `portfolio-mcp/transactions/` under the artifacts dir).
+        // HKASK_ARTIFACTS_DIR is read transitively via
+        // `resolve_under_artifacts_dir` → `resolve_artifacts_dir` in
+        // hkask-types (the server's fallback when HKASK_TRANSACTIONS_DIR is
+        // unset). HKASK_DATA_DIR is read transitively via
+        // `resolve_under_data_dir` for the portfolio DB in store.rs
+        // (databases stay internal). Allowlisted so operator overrides are
+        // not silently dropped by `filter_config_env_for_server`.
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            vec!["HKASK_DATA_DIR", "HKASK_TRANSACTIONS_DIR"],
+            vec![
+                "HKASK_DATA_DIR",
+                "HKASK_ARTIFACTS_DIR",
+                "HKASK_TRANSACTIONS_DIR"
+            ],
             "portfolio config_env allowlist drifted — add an entry only with \
-             a read site in hkask-mcp-portfolio (HKASK_DATA_DIR is read \
-             transitively via resolve_under_data_dir)"
+             a read site in hkask-mcp-portfolio"
         );
     }
 
@@ -1115,6 +1136,12 @@ mod tests {
         assert!(
             s.config_env.unwrap().contains(&"HKASK_RSS_DB"),
             "research reads HKASK_RSS_DB via std::env::var but it is not allowlisted"
+        );
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_DATA_DIR"),
+            "research resolves its default RSS DB via resolve_under_data_dir \
+             but HKASK_DATA_DIR is not allowlisted — an operator override \
+             would be silently dropped"
         );
     }
 
