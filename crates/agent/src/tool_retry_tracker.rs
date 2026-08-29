@@ -40,10 +40,7 @@ use crate::AgentToolOutput;
 /// restarting), and stopping an agent from hammering an unavailable tool is
 /// the tracker's job.
 pub fn is_authorization_error(output: &AgentToolOutput) -> bool {
-    output
-        .raw_output
-        .as_ref()
-        .and_then(hkask_types::tool_response::parse_tool_error_value)
+    hkask_types::tool_response::parse_tool_error_value(&output.raw_output)
         .and_then(|envelope| envelope.kind)
         .is_some_and(|kind| matches!(kind, hkask_types::McpErrorKind::PermissionDenied))
 }

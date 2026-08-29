@@ -56,10 +56,10 @@ use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
-/// User-facing message for a `PaymentRequired` rejection. Only Zed's own
-/// backend bills against the user's Zed plan; every other provider returning
-/// 402/billing codes is reporting that its own account is out of credit, so
-/// the message must name that provider instead of offering a Zed upgrade.
+// zed-kask: D39 — provider-aware PaymentRequired copy. Only Zed's own
+// backend bills against the user's Zed plan; every other provider returning
+// 402/billing codes is reporting that its own account is out of credit, so
+// the message must name that provider instead of offering a Zed upgrade.
 fn payment_required_message(provider: &SharedString) -> String {
     if provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref() {
         "You reached your free usage limit. Upgrade to Zed Pro for more prompts.".to_string()
@@ -68,6 +68,33 @@ fn payment_required_message(provider: &SharedString) -> String {
             "{provider} rejected the request because your {provider} account is out of credit \
              or over its spend limit. Add credit to your {provider} account to continue."
         )
+    }
+}
+
+// zed-kask: D39 — pins the provider-aware PaymentRequired copy.
+#[cfg(test)]
+mod payment_required_message_tests {
+    use super::*;
+
+    #[test]
+    fn zed_cloud_provider_keeps_upgrade_copy() {
+        let message = payment_required_message(&ZED_CLOUD_PROVIDER_NAME.0);
+        assert_eq!(
+            message,
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+        );
+    }
+
+    #[test]
+    fn third_party_provider_names_its_credit_balance() {
+        let provider: SharedString = "OpenRouter".into();
+        let message = payment_required_message(&provider);
+        assert!(message.contains("OpenRouter"), "{message}");
+        assert!(message.contains("out of credit"), "{message}");
+        assert!(
+            !message.contains("Zed Pro"),
+            "third-party billing failure must not offer a Zed upgrade: {message}"
+        );
     }
 }
 
@@ -1900,6 +1927,7 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
+                // zed-kask: D39 — telemetry carries the provider-aware message.
                 ThreadError::PaymentRequired { provider } => (
                     "payment_required",
                     None,
@@ -11087,8 +11115,9 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
+            // zed-kask: D39 — pass the provider through to the renderer.
             ThreadError::PaymentRequired { provider } => {
-                self.render_payment_required_error(provider, cx)
+                self.render_payment_required_error(provider.clone(), cx)
             }
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
@@ -11222,16 +11251,15 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
+    // zed-kask: D39 — render PaymentRequired with provider-aware copy. The
+    // upgrade button only makes sense when Zed's own backend rejected the
+    // request; a third-party 402 (OpenRouter credits, Anthropic billing, …)
+    // must not be presented as a Zed free-tier cap.
     fn render_payment_required_error(
         &self,
         provider: SharedString,
         cx: &mut Context<Self>,
     ) -> Callout {
-        // Only Zed's own backend bills against the user's Zed plan. Any other
-        // provider returning 402/billing codes is reporting that *its* account
-        // is out of credit — rendering a Zed Pro upsell there misattributes the
-        // failure (e.g. an exhausted OpenRouter key looks like a Zed free-tier
-        // cap).
         let is_zed_cloud = provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref();
         let message: SharedString = payment_required_message(&provider).into();
 

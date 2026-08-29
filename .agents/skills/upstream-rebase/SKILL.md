@@ -120,7 +120,7 @@ list updates independently of this skill.
 
 ## Process Document
 
-The full process, with the `main.rs` functional inventory (28 units), DAG, and constraint-force classification, is in `kask/docs/upstream-rebase-process.md`.
+The full process, with the `main.rs` functional inventory (28 units), DAG, and constraint-force classification, is in `kask/docs/reference/upstream-rebase-process.md`.
 
 ## Registry Templates
 

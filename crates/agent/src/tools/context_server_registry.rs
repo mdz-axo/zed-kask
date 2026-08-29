@@ -296,10 +296,7 @@ fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, 
     match result {
         Ok(_) => (true, None),
         Err(output) => {
-            let kind = output
-                .raw_output
-                .as_ref()
-                .and_then(hkask_types::tool_response::parse_tool_error_value)
+            let kind = hkask_types::tool_response::parse_tool_error_value(&output.raw_output)
                 .and_then(|envelope| envelope.kind)
                 .map(|kind| kind.to_string());
             (false, Some(kind.unwrap_or_else(|| mcp_error_text(output))))
@@ -609,7 +606,7 @@ impl ContextServerTool {
                 // outcome recording, retry tracker) classify from the typed
                 // field instead of parsing error text.
                 return Err(AgentToolOutput {
-                    raw_output: response.structured_content.clone(),
+                    raw_output: response.structured_content.clone().unwrap_or_default(),
                     llm_output: vec![LanguageModelToolResultContent::Text(
                         error_message.into(),
                     )],

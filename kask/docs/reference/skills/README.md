@@ -161,7 +161,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Cross-Cutting & Audit (9 skills)
+## Cross-Cutting & Audit (8 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -170,7 +170,7 @@ read-only resources the skill body may reference via `render_template`.
 | `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast: inventory ontologies, build prior, map recombination field, detect gradients, select seeds |
 | `principle-constraints` | Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D32) |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D38) |
 | `swarm-compose-guide` | Agent/swarm composition authoring aid: renders guidance templates, returns suggested completions or validation verdict |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 
@@ -181,11 +181,11 @@ read-only resources the skill body may reference via `render_template`.
 | Category | Count |
 |----------|-------|
 | Guardrails | 1 |
-| Core Development | 12 |
+| Core Development | 13 |
 | Reasoning & Analysis | 10 |
 | Kata & Coaching | 3 |
-| Meta & Maintenance | 8 |
-| Specialized | 15 |
+| Meta & Maintenance | 10 |
+| Specialized | 16 |
 | Research & Corpus | 5 |
 | Cross-Cutting & Audit | 8 |
 | **Total** | **66** |

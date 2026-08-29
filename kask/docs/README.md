@@ -53,7 +53,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry (31 diagram IDs across 5 consolidated files + inline diagrams). |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry — 101 diagram IDs: 31 in the 5 consolidated files + 70 inline in per-crate and reference docs. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture: CMP research pipeline, constraint-forces skills, ontology bridge, skill/MCP/Lisp seam, credential resolution, tool port, event store, viz core. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban: task status and move-controller state machines. |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm: architecture, feedback loops, PDCA cascade, steering sequence, panel modes, server class. |

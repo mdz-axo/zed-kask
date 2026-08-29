@@ -19,12 +19,12 @@ Tool count and every tool name below were verified against `#[tool(...)]`-annota
 
 ## Architecture
 
-The server is a thin binary over a library: `src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`src/hkask_mcp_media.rs:457-556`). All LLM and media-generation calls route through a single `InferencePort` — through zed's `LanguageModelRegistry` via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to a standalone router with env-var keys otherwise (`src/hkask_mcp_media.rs:462-468`).
+The server is a thin binary over a library: `src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`src/hkask_mcp_media.rs:459-556`). All LLM and media-generation calls route through a single `InferencePort` — through zed's `LanguageModelRegistry` via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to a standalone router with env-var keys otherwise (`src/hkask_mcp_media.rs:462-468`).
 
 ```mermaid
 flowchart TD
     binary["main.rs binary<br/>#[tokio::main] → run()"]
-    run["run()<br/>hkask_mcp_media.rs:457"]
+    run["run()<br/>hkask_mcp_media.rs:459"]
     port["resolve_inference_port<br/>IPC bridge or standalone router"]
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
@@ -70,7 +70,7 @@ status: VERIFIED
 
 ## Bootstrap and configuration
 
-**Bootstrap pattern:** `src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `src/hkask_mcp_media.rs:457` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `src/hkask_mcp_media.rs:535-554`. `run()` deliberately does not call `dotenvy::dotenv()` — `run_server` calls `load_dotenv` internally (`src/hkask_mcp_media.rs:458-460`).
+**Bootstrap pattern:** `src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `src/hkask_mcp_media.rs:459` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `src/hkask_mcp_media.rs:535-554`. `run()` deliberately does not call `dotenvy::dotenv()` — `run_server` calls `load_dotenv` internally (`src/hkask_mcp_media.rs:460-462`).
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB` (`src/hkask_mcp_media.rs:470-489`). There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback silently degraded every subsequent tool call to "gallery empty" — a broken feedback loop (`src/hkask_mcp_media.rs:473-479`). The file DB is unencrypted (gallery metadata is not a secret) and therefore does **not** use `HKASK_DB_PASSPHRASE` (`src/hkask_mcp_media.rs:479-480`).
 

@@ -96,3 +96,53 @@ Diagram format, `DIAGRAM_ALIGNMENT` metadata, and lifecycle are governed by
 §2, §4. The `id` is globally unique across the corpus and registered here.
 The `verified_against` field must cite a code file, a shipping configuration,
 or an external canonical reference — never another prose document.
+## Inline diagrams by owning document
+
+Diagrams embedded in per-crate and reference documents (not in `diagrams/`).
+Each carries its own `DIAGRAM_ALIGNMENT` block at the diagram site; this
+section is the registry map to them.
+
+- `architecture/DOCUMENTATION_STANDARDS.md` — `DIAG-STD-001`
+- `architecture/core/MDS.md` — `DIAG-MDS-001`
+- `architecture/memory-system-specification.md` — `DIAG-MEM-ARCH`, `DIAG-MEM-THERAPY-TOOLS`, `DIAG-MEM-WHO`, `DIAG-PL-MEMORY-ERD`, `DIAG-PL-MEMORY-INGEST`, `DIAG-PL-MEMORY-RECALL`
+- `architecture/skills-and-composition.md` — `DIAG-PROMPT-001`
+- `architecture/standardized-artifact-storage.md` — `DIAG-ARTIFACT-001`
+- `diataxis/hkask-condenser/explanation.md` — `DIAG-COND-004`
+- `diataxis/hkask-condenser/how-to.md` — `DIAG-COND-002`
+- `diataxis/hkask-condenser/reference.md` — `DIAG-COND-003`
+- `diataxis/hkask-condenser/tutorial.md` — `DIAG-COND-001`
+- `diataxis/hkask-inference/explanation.md` — `DIAG-INF-004`, `DIAG-INF-005`
+- `diataxis/hkask-inference/how-to.md` — `DIAG-INF-PROVIDER`, `DIAG-INF-WIRE`
+- `diataxis/hkask-inference/reference.md` — `DIAG-INF-REF`
+- `diataxis/hkask-inference/tutorial.md` — `DIAG-INF-001`
+- `diataxis/hkask-mcp-server/explanation.md` — `DIAG-MCPSRV-030`, `DIAG-MCPSRV-031`
+- `diataxis/hkask-mcp-server/how-to.md` — `DIAG-MCPSRV-010`
+- `diataxis/hkask-mcp-server/reference.md` — `DIAG-MCPSRV-020`
+- `diataxis/hkask-mcp-server/tutorial.md` — `DIAG-MCPSRV-001`
+- `diataxis/hkask-regulation/explanation.md` — `DIAG-REG-005`, `DIAG-REG-006`
+- `diataxis/hkask-regulation/how-to.md` — `DIAG-REG-002`
+- `diataxis/hkask-regulation/reference.md` — `DIAG-REG-003`, `DIAG-REG-004`
+- `diataxis/hkask-regulation/tutorial.md` — `DIAG-REG-001`
+- `diataxis/hkask-storage/explanation.md` — `DIAG-STOR-005`, `DIAG-STOR-006`
+- `diataxis/hkask-storage/how-to.md` — `DIAG-STOR-002`
+- `diataxis/hkask-storage/reference.md` — `DIAG-STOR-003`, `DIAG-STOR-004`
+- `diataxis/hkask-storage/tutorial.md` — `DIAG-STOR-001`
+- `diataxis/hkask-tool-port/explanation.md` — `DIAG-CAP-004`, `DIAG-CAP-005`
+- `diataxis/hkask-tool-port/reference.md` — `DIAG-CAP-003`
+- `diataxis/hkask-types/explanation.md` — `DIAG-TYPES-008`, `DIAG-TYPES-009`
+- `diataxis/hkask-types/how-to.md` — `DIAG-TYPES-002`, `DIAG-TYPES-003`
+- `diataxis/hkask-types/reference.md` — `DIAG-TYPES-004`, `DIAG-TYPES-005`, `DIAG-TYPES-006`, `DIAG-TYPES-007`
+- `diataxis/hkask-types/tutorial.md` — `DIAG-TYPES-001`
+- `diataxis/kask_bridge/explanation.md` — `DIAG-BRIDGE-006`, `DIAG-BRIDGE-007`
+- `diataxis/kask_bridge/how-to.md` — `DIAG-BRIDGE-002`
+- `diataxis/kask_bridge/reference.md` — `DIAG-BRIDGE-003`, `DIAG-BRIDGE-004`, `DIAG-BRIDGE-005`
+- `diataxis/kask_bridge/tutorial.md` — `DIAG-BRIDGE-001`
+- `diataxis/swarm_system/explanation.md` — `DIAG-SWARM-030`, `DIAG-SWARM-031`
+- `diataxis/swarm_system/how-to.md` — `DIAG-SWARM-010`, `DIAG-SWARM-011`
+- `diataxis/swarm_system/reference.md` — `DIAG-SWARM-020`, `DIAG-SWARM-021`
+- `diataxis/swarm_system/tutorial.md` — `DIAG-SWARM-001`, `DIAG-SWARM-002`, `DIAG-SWARM-003`
+- `reference/mcp-servers/README.md` — `DIAG-IC-017`
+- `reference/mcp-servers/companies.md` — `DIAG-RF-004`
+- `reference/mcp-servers/media.md` — `DIAG-RF-006`
+- `reference/mcp-servers/scenarios.md` — `DIAG-RF-005`
+- `reference/mcp-servers/swarm.md` — `DIAG-RF-SWARM-001`

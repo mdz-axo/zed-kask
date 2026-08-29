@@ -122,6 +122,8 @@ enum ThreadFeedback {
 
 #[derive(Debug)]
 pub(crate) enum ThreadError {
+    // zed-kask: D39 — carries the provider so the UI can distinguish Zed plan
+    // billing from third-party credit exhaustion (e.g. an OpenRouter 402).
     PaymentRequired {
         provider: SharedString,
     },
@@ -188,6 +190,7 @@ impl From<anyhow::Error> for ThreadError {
                         provider: provider.to_string().into(),
                     },
                     ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
+                    // zed-kask: D39 — preserve the rejecting provider's name.
                     ProviderErrorCategory::PaymentRequired => Self::PaymentRequired {
                         provider: provider.to_string().into(),
                     },
@@ -3801,6 +3804,32 @@ pub(crate) mod tests {
             ThreadError::ProviderRejection { message }
                 if message == "This content was flagged as potentially violating our terms of use."
         ));
+    }
+
+    // zed-kask: D39 — pins that a PaymentRequired rejection preserves the
+    // rejecting provider's name, so the UI can distinguish Zed plan billing
+    // from third-party credit exhaustion.
+    #[test]
+    fn test_payment_required_preserves_provider() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::LanguageModelProviderName::new("OpenRouter"),
+            None,
+            Some("402".to_string()),
+            "Insufficient credits".to_string(),
+            None,
+            ProviderErrorCategory::PaymentRequired,
+        );
+
+        let error = ThreadError::from(anyhow!(provider_error));
+
+        assert!(
+            matches!(
+                error,
+                ThreadError::PaymentRequired { ref provider }
+                    if provider.as_ref() == "OpenRouter"
+            ),
+            "expected ThreadError::PaymentRequired with provider OpenRouter, got: {error:?}"
+        );
     }
 
     #[gpui::test]

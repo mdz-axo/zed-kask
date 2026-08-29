@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-08-24
+last_updated: 2026-08-28
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"
