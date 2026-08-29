@@ -311,8 +311,13 @@ mod tests {
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
-            rendered.contains("Lead with the functional outcome"),
+            rendered.contains("lead with the functional outcome"),
             "the Final Message section must require the functional outcome first"
+        );
+        assert!(
+            !rendered.contains("briefly summarize what changed, reference the relevant files, and state what validation you ran"),
+            "the old file-list-first bullet must not coexist with the functional-first \
+             bullet — two \"what comes first\" instructions resolve unpredictably (§7.3)"
         );
     }
 

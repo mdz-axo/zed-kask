@@ -1705,4 +1705,76 @@ mod tests {
              to the missing-credential warning, not be silently provisioned"
         );
     }
+
+    fn stdio_entry() -> settings_content::ContextServerSettingsContent {
+        use settings_content::ContextServerCommand;
+        settings_content::ContextServerSettingsContent::Stdio {
+            enabled: true,
+            remote: false,
+            command: ContextServerCommand {
+                path: "/bin/true".into(),
+                args: Vec::new(),
+                env: None,
+                timeout: None,
+            },
+        }
+    }
+
+    /// The shadowing fix: a raw `context_servers` entry whose ID matches a
+    /// kask built-in server is removed (and reported), because it silently
+    /// overrides the managed registration that injects credentials and the
+    /// inference socket. This is the exact pattern that shipped the
+    /// keyless research server: a stale `env: {}` entry shadowed the
+    /// keyed registration with no warning anywhere.
+    #[test]
+    fn remove_shadowing_context_server_entries_removes_builtins_and_keeps_others() {
+        let mut content = settings_content::SettingsContent::default();
+        content
+            .project
+            .context_servers
+            .insert("research".into(), stdio_entry());
+        content
+            .project
+            .context_servers
+            .insert("some-other-server".into(), stdio_entry());
+
+        let removed = remove_shadowing_context_server_entries(&mut content);
+
+        assert_eq!(
+            removed.iter().map(|id| id.as_ref()).collect::<Vec<_>>(),
+            vec!["research"],
+            "only the kask built-in entry is removed — the caller warns per ID"
+        );
+        assert!(
+            !content.project.context_servers.contains_key("research"),
+            "the shadowing entry must be gone so the managed registration wins"
+        );
+        assert!(
+            content
+                .project
+                .context_servers
+                .contains_key("some-other-server"),
+            "non-kask entries are the user's own servers — never touched"
+        );
+    }
+
+    /// No shadowing entries → nothing removed, nothing to warn about. Pins
+    /// that the removal is a no-op on a clean configuration (the common
+    /// case on every settings change).
+    #[test]
+    fn remove_shadowing_context_server_entries_is_noop_without_builtins() {
+        let mut content = settings_content::SettingsContent::default();
+        content
+            .project
+            .context_servers
+            .insert("some-other-server".into(), stdio_entry());
+
+        let removed = remove_shadowing_context_server_entries(&mut content);
+
+        assert!(
+            removed.is_empty(),
+            "a clean configuration must not produce removals or warnings"
+        );
+        assert_eq!(content.project.context_servers.len(), 1);
+    }
 }

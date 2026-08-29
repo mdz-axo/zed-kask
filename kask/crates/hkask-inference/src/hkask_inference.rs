@@ -867,20 +867,22 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::InferencePort;
     use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
 
     /// The research server resolves its inference port via
     /// `resolve_inference_port()` and routes the deep-strategy rerank through
     /// it. Two layers once silently dropped the capability, each inheriting
     /// the trait default (`NotConfigured("rerank not supported by this
-    /// InferencePort")`): `LazyInferencePort` had no `rerank` override, and
-    /// the `Arc<dyn InferencePort>` forwarding impl had no `rerank` forwarder
-    /// — so a `.rerank()` call on the Arc resolved to the wrapper's default
-    /// instead of the inner port. Every `llm_rerank` test passed vacuously
-    /// against stub ports that did override `rerank`. This pin exercises the
-    /// REAL consumer path — `resolve_inference_port()` + `.rerank()` on the
-    /// Arc — and fails on the trait-default error.
+    /// InferencePort")`): `LazyInferencePort` had no `rerank` override, and a
+    /// now-deleted `Arc<dyn InferencePort>` forwarding impl (a hand-maintained
+    /// mirror of the trait whose advertised consumer `InferenceLoop` never
+    /// existed) had no `rerank` forwarder — so a `.rerank()` call on the Arc
+    /// resolved to the mirror's default instead of the inner port. The mirror
+    /// is deleted; this pin exercises the REAL consumer path —
+    /// `resolve_inference_port()` + `.rerank()` on the Arc (auto-deref →
+    /// vtable) — and fails on the trait-default error, guarding against both
+    /// a missing override and any reintroduced wrapper that forgets to
+    /// forward.
     ///
     /// Hermetic by construction: the socket env var is pointed at a
     /// guaranteed-nonexistent path for the duration, so the bridge-down

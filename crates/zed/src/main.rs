@@ -3111,6 +3111,37 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
         // re-evaluate and restart servers whose configuration changed.
         cx.notify();
     });
+
+    // zed-kask: raw `context_servers` entries for built-in kask server IDs
+    // shadow the managed registration above — `maintain_servers` merges
+    // registry descriptors with `or_insert`, so a settings entry always
+    // wins, and it carries only the env written in the file (a stale entry
+    // with `env: {}` strips every credential and the inference socket from
+    // the server the agent's tools connect to, silently). Remove such
+    // entries so the managed registration is authoritative, warning per
+    // entry so the operator sees the correction. The write is self-
+    // terminating: the next observer pass finds nothing to remove, and
+    // D32's no-op-write skip covers the boundary. Removal logic pinned by
+    // `remove_shadowing_context_server_entries_*` tests in kask_bridge.
+    let shadowed: Vec<std::sync::Arc<str>> = cx
+        .global::<SettingsStore>()
+        .raw_user_settings()
+        .map(|user| kask_bridge::shadowed_context_server_entry_ids(&user.content))
+        .unwrap_or_default();
+    if !shadowed.is_empty() {
+        for id in &shadowed {
+            log::warn!(
+                "Removing raw context_servers entry '{id}' — it shadows the kask-managed \
+                 registration and silently drops its credentials/inference env. Configure \
+                 kask servers via the kask.mcp settings (or HKASK_MCP_{id_upper}_BIN for \
+                 a custom binary).",
+                id_upper = id.to_uppercase().replace('-', "_"),
+            );
+        }
+        settings::update_settings_file(<dyn Fs>::global(cx), cx, |content, _| {
+            kask_bridge::remove_shadowing_context_server_entries(content);
+        });
+    }
 }
 
 /// Build the env map for a kask MCP server child process via the single
