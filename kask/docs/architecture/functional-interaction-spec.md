@@ -201,11 +201,18 @@ When a user works with the agent:
   goals it is involved with"), shared copy for zed-agent turns (recallable,
   not sovereign). Lessons are learned in `therapy` and `algedonic-review`
   sessions with the curator, not from a persistent goal store.
+
+- **Loop closed (2026-08-29):** the Division section now wires the moves
+  to the native tools — conditionally on `kanban_goal_create` being in
+  the turn's tool registry (Move 1 → `kanban_goal_create` at intake,
+  Move 3 → `kanban_goal_judge` at report, Move 4 → `kanban_goal_score`
+  at resolution). When the kata-kanban server is connected, the loop
+  runs on the native system; when it isn't, the wiring vanishes and the
+  four moves survive as conversational discipline.
+
 - A without B stays per-conversation; B without A changes tracking but
-  not the conversation the user sits in. Both are now landed; the
-  remaining Phase B work is wiring the conversational moves (Phase A's
-  prompt text) to *call* the native tools — so the interpretation round
-  records a goal and the report ends with a recorded verdict.
+  not the conversation the user sits in. Both are landed and wired;
+  the remaining verification is the behavioral probe (§7).
 
 ## 7. Verification
 
