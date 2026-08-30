@@ -1,0 +1,33 @@
+# zed-kask invariant gates. These are the cheap bash guards that were
+# previously convention-enforced only (run by hand or from the DIVERGENCE.md
+# runbook) — an upstream merge that reintroduces a guarded surface used to
+# fail nothing automated. Each script is pure bash/grep and finishes in
+# seconds; no toolchain or build is required.
+#
+# - check-hkask-no-zed-deps.sh: the §13.1 governing invariant (no hKask
+#   crate depends on a zed-kask crate). DIVERGENCE.md advertises this as
+#   "wired into CI" — this workflow is that wiring.
+# - check-zed-isolation.sh: the D7 guards — deleted upstream packaging,
+#   updater, flatpak, and bundler surfaces stay deleted; fail-closed
+#   bundlers stay fail-closed.
+# - check-desktop-no-collision.sh: execs check-zed-isolation.sh; kept as an
+#   explicit step so the .desktop collision guard named in .rules is a
+#   visible, independently-failing CI step.
+name: Kask invariants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: §13.1 — no hKask crate depends on a zed-kask crate
+        run: bash kask/scripts/check-hkask-no-zed-deps.sh
+      - name: Zed isolation — upstream packaging/updater surfaces stay deleted
+        run: bash kask/scripts/build/check-zed-isolation.sh
+      - name: Desktop file — no upstream collision
+        run: bash kask/scripts/build/check-desktop-no-collision.sh
