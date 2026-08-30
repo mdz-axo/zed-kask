@@ -1420,6 +1420,12 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const DEFAULT_CACHE_TTL_SECS: u64 = 60;
 
+// Fail fast before the 60s MCP `tools/call` cap kills and restarts the
+// server: a hung upstream (Kalshi, Polymarket, FRED) surfaces as a request
+// error inside the cap, not a server restart that loses in-flight work.
+const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Construct the inference port before entering the sync server-
     // construction closure. `resolve_inference_port` is async (it constructs
@@ -1511,8 +1517,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // the builder failure (per .rules: opt-in features that fail must
             // log the failure classification, not collapse silently).
             let http_client = reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(20))
+                .connect_timeout(HTTP_CONNECT_TIMEOUT)
+                .timeout(HTTP_REQUEST_TIMEOUT)
                 .build()
                 .unwrap_or_else(|e| {
                     tracing::warn!(
@@ -1620,6 +1626,29 @@ mod smoke {
             .get("content")
             .cloned()
             .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
+    }
+
+    /// Pin: the HTTP client built in `run()` carries explicit connect and
+    /// request timeouts so a hung upstream (Kalshi, Polymarket, FRED) fails
+    /// fast before the 60s MCP `tools/call` cap kills and restarts the
+    /// server. reqwest exposes no client-config inspection, so this pins the
+    /// named consts the construction reads — dropping the timeouts means
+    /// removing or rename-breaking a const this test references. It does NOT
+    /// verify the built client itself carries them (not observable), nor the
+    /// fallback `Client::new()` path taken on builder failure.
+    #[test]
+    fn http_client_timeouts_pinned_below_mcp_cap() {
+        assert_eq!(
+            HTTP_CONNECT_TIMEOUT,
+            std::time::Duration::from_secs(10),
+            "connect timeout changed; re-verify against the 60s MCP tools/call cap"
+        );
+        assert_eq!(
+            HTTP_REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(20),
+            "request timeout changed; must stay well under the 60s MCP tools/call cap \
+             (see the construction-site comment in `run`)"
+        );
     }
 
     #[tokio::test]

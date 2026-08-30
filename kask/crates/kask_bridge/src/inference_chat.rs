@@ -1038,8 +1038,12 @@ impl InferencePort for NoModelInferencePort {
 #[cfg(test)]
 mod tests {
     use hkask_types::ChatMessage;
+    use hkask_types::ChatToolDefinition;
+    use hkask_types::ChatToolFunction;
     use hkask_types::InferencePort;
+    use hkask_types::template::LLMParameters;
     use language_model::fake_provider::FakeLanguageModel;
+    use language_model_core::LanguageModelToolChoice;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1169,6 +1173,56 @@ mod tests {
             "after completing one stream, the next queued request should acquire \
              the released permit — expected 2 open streams, got {}",
             fake.completion_count()
+        );
+    }
+
+    // ── tool_choice: Any only when tools are offered (D25) ─────────────
+    //
+    // When a structured-output tool (emit_result) is offered, the built
+    // request must carry tool_choice: Any ("required" in OpenAI's API) so
+    // the provider enforces a tool call instead of prose — the executor
+    // extracts args from tool_calls[0], and parse_json_response cannot
+    // recover JSON from free text. Without tools, tool_choice must stay
+    // None: forcing a tool call when no tool was offered is an invalid
+    // request.
+    #[gpui::test]
+    async fn tool_choice_any_only_when_tools_offered(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2,
+            cx.to_async(),
+        );
+
+        let messages = [ChatMessage::user(
+            "Execute the instructions above.".to_string(),
+        )];
+        let parameters = LLMParameters::default();
+        let tools = [ChatToolDefinition {
+            tool_type: "function".to_string(),
+            function: ChatToolFunction {
+                name: "emit_result".to_string(),
+                description: "Emit the structured result.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                }),
+            },
+        }];
+
+        let with_tools = port.build_request(&messages, &parameters, Some(&tools));
+        assert!(
+            matches!(with_tools.tool_choice, Some(LanguageModelToolChoice::Any)),
+            "with tools offered, tool_choice must be Any so the provider \
+             enforces the tool call instead of returning prose"
+        );
+
+        let without_tools = port.build_request(&messages, &parameters, None);
+        assert!(
+            without_tools.tool_choice.is_none(),
+            "without tools, tool_choice must be None — forcing a tool call \
+             with no tools offered would make the request invalid"
         );
     }
 }

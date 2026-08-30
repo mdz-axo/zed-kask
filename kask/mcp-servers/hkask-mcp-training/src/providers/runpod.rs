@@ -85,6 +85,15 @@ const DEFAULT_RUNPOD_TEMPLATE_ID: &str = "";
 /// Base URL for the Runpod REST API v2.
 const RUNPOD_API_V2_BASE: &str = "https://api.runpod.io/v2";
 
+/// Fail fast before the 60s MCP `tools/call` cap kills and restarts the
+/// server: a stalled RunPod API call surfaces as a request error inside
+/// the cap, not a server restart that loses in-flight work.
+const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Request cap is 30s (not 20s) because RunPod pod launches can take
+/// longer than typical REST calls — see the construction-site comment in
+/// `RunpodHost::new`.
+const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Bundled construction parameters for `RunpodHost::new`.
 ///
 /// Mirrors the `PodDeploySpec` pattern: keeps `RunpodHost::new` under clippy's
@@ -180,8 +189,8 @@ impl RunpodHost {
         // .rules: opt-in features that fail must log the failure
         // classification, not collapse silently).
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .timeout(HTTP_REQUEST_TIMEOUT)
             .build()
             .unwrap_or_else(|e| {
                 tracing::warn!(
@@ -1228,5 +1237,54 @@ impl TrainingHost for RunpodHost {
             "RunPod pod cancelled"
         );
         Ok(())
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin: the HTTP client built in `RunpodHost::new` carries explicit
+    /// connect and request timeouts so a stalled RunPod API call fails fast
+    /// before the 60s MCP `tools/call` cap kills and restarts the server.
+    /// reqwest exposes no client-config inspection, so this pins the named
+    /// consts the construction reads — dropping the timeouts means removing
+    /// or rename-breaking a const this test references. It does NOT verify
+    /// the built client itself carries them (not observable), nor the
+    /// fallback `Client::new()` path taken on builder failure.
+    #[test]
+    fn http_client_timeouts_pinned_below_mcp_cap() {
+        assert_eq!(
+            HTTP_CONNECT_TIMEOUT,
+            std::time::Duration::from_secs(10),
+            "connect timeout changed; re-verify against the 60s MCP tools/call cap"
+        );
+        assert_eq!(
+            HTTP_REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+            "request timeout changed; pod launches can take longer than typical \
+             REST calls — see the construction-site comment in RunpodHost::new"
+        );
+    }
+
+    /// Smoke: `RunpodHost::new` — the fn that reads the timeout consts to
+    /// build the client — constructs without panicking on a missing pods
+    /// file (the default `data/training-pods.json` need not exist; the
+    /// loader treats a read failure as an empty map).
+    #[test]
+    fn runpod_host_new_constructs_with_timeout_client() {
+        let host = RunpodHost::new(RunpodHostInit {
+            api_key: "test-key".to_string(),
+            template_id: String::new(),
+            gpu_type_id: String::new(),
+            container_disk_gb: 0,
+            docker_image: String::new(),
+        });
+        // reqwest exposes no config inspection; successful construction is
+        // the smoke signal that the builder chain (with the pinned consts)
+        // runs.
+        let _ = host;
     }
 }

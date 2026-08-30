@@ -286,3 +286,91 @@ fn init_panic_hook() {
         tracing::error!(panic = true, ?location, %panic_message, %backtrace, "Server Panic");
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sqlite_test_config(database_url: String) -> Config {
+        Config {
+            http_port: 0,
+            database_url,
+            database_max_connections: 5,
+            livekit_server: None,
+            livekit_key: None,
+            livekit_secret: None,
+            rust_log: None,
+            log_json: None,
+            blob_store_url: None,
+            blob_store_region: None,
+            blob_store_access_key: None,
+            blob_store_secret_key: None,
+            blob_store_bucket: None,
+            kinesis_region: None,
+            kinesis_stream: None,
+            kinesis_access_key: None,
+            kinesis_secret_key: None,
+            zed_environment: "test".into(),
+            zed_cloud_internal_api_key: String::new(),
+            zed_client_checksum_seed: None,
+        }
+    }
+
+    // zed-kask: pins the SQLite bootstrap idempotence guard in
+    // `setup_app_database`. The bootstrap SQL uses `CREATE TABLE "users"`
+    // (no `IF NOT EXISTS`), so without the guard a second `collab serve`
+    // against the same DB file crashes with "table users already exists".
+    // The guard skips re-application when the `users` table — the first
+    // table the bootstrap SQL creates — is already present.
+    #[tokio::test]
+    async fn setup_app_database_is_idempotent_for_sqlite() {
+        let db_path = std::env::temp_dir().join(format!(
+            "collab-bootstrap-idempotence-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database_url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let config = sqlite_test_config(database_url.clone());
+
+        // First run against an empty file: applies the bootstrap schema.
+        setup_app_database(&config)
+            .await
+            .expect("first bootstrap must succeed");
+
+        // Second run against the same file: the guard must skip the
+        // bootstrap SQL instead of crashing on `CREATE TABLE "users"`.
+        setup_app_database(&config)
+            .await
+            .expect("second bootstrap against the same DB must succeed");
+
+        // The `users` table must exist exactly once.
+        let db_options = db::ConnectOptions::new(database_url);
+        let db = Database::new(db_options)
+            .await
+            .expect("must reopen the bootstrapped DB");
+        let row = db
+            .pool
+            .query_one(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS users_table_count FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'users'",
+            ))
+            .await
+            .expect("sqlite_master query must succeed")
+            .expect("COUNT must return a row");
+        let users_table_count: i64 = row
+            .try_get("", "users_table_count")
+            .expect("users_table_count column must be readable");
+        assert_eq!(
+            users_table_count, 1,
+            "the users table must exist exactly once after two bootstraps"
+        );
+
+        std::fs::remove_file(&db_path).log_err();
+        std::fs::remove_file(db_path.with_extension("db-wal")).log_err();
+        std::fs::remove_file(db_path.with_extension("db-shm")).log_err();
+    }
+}

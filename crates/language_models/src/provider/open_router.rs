@@ -1816,4 +1816,131 @@ mod tests {
             }
         }
     }
+
+    // zed-kask: the three D13 caching tests above build requests with
+    // thinking_allowed: false but never assert `result.reasoning`. These
+    // tests pin the zed-kask reasoning branch in `into_open_router`:
+    // thinking explicitly disabled must send the disabled Reasoning form
+    // (effort "none", enabled false) so the model skips reasoning, and
+    // thinking allowed on a Thinking-mode model must send the enabled form
+    // (budget passthrough, enabled true).
+    #[gpui::test]
+    async fn test_reasoning_disabled_when_thinking_not_allowed() {
+        let model = open_router::Model::new(
+            "anthropic/claude-sonnet-4-5",
+            Some("Claude Sonnet"),
+            Some(200000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            reasoning_effort: None,
+            speed: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            compact_at_tokens: None,
+            max_tokens: None,
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result
+            .reasoning
+            .expect("thinking_allowed: false must send an explicit disabled Reasoning");
+        assert_eq!(
+            reasoning.effort.as_deref(),
+            Some("none"),
+            "disabled reasoning must carry effort \"none\""
+        );
+        assert_eq!(
+            reasoning.enabled,
+            Some(false),
+            "disabled reasoning must set enabled: false"
+        );
+        assert_eq!(
+            reasoning.max_tokens, None,
+            "disabled reasoning must not request a reasoning budget"
+        );
+        assert_eq!(
+            reasoning.exclude,
+            Some(false),
+            "disabled reasoning must keep exclude: false (reasoning is disabled \
+             via effort/enabled, not excluded from the response)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reasoning_enabled_when_thinking_allowed_on_thinking_model() {
+        let model = open_router::Model::new(
+            "anthropic/claude-sonnet-4-5",
+            Some("Claude Sonnet"),
+            Some(200000),
+            Some(true),
+            Some(false),
+            Some(OpenRouterModelMode::Thinking {
+                budget_tokens: Some(8192),
+            }),
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            reasoning_effort: None,
+            speed: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            compact_at_tokens: None,
+            max_tokens: None,
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result
+            .reasoning
+            .expect("thinking_allowed: true on a Thinking-mode model must send Reasoning");
+        assert_eq!(
+            reasoning.effort, None,
+            "enabled reasoning must not pin an effort level"
+        );
+        assert_eq!(
+            reasoning.max_tokens,
+            Some(8192),
+            "enabled reasoning must pass the model's budget_tokens through"
+        );
+        assert_eq!(
+            reasoning.enabled,
+            Some(true),
+            "enabled reasoning must set enabled: true"
+        );
+        assert_eq!(
+            reasoning.exclude,
+            Some(false),
+            "enabled reasoning must keep exclude: false so reasoning content \
+             is returned"
+        );
+    }
 }

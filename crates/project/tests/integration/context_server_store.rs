@@ -1175,6 +1175,93 @@ async fn test_http_server_self_heals_after_non_auth_transport_failure(cx: &mut T
     });
 }
 
+// `trigger_server_maintenance` is the zed-kask D-seam the agent-side tool
+// registry calls when a tool call finds the server dead. A deliberate stop
+// must NOT auto-restart (the transport watch only acts on `Running` state),
+// and a maintenance trigger must restart the stopped server so the next
+// tool call succeeds instead of failing with a transport error.
+#[gpui::test]
+async fn test_stopped_server_restarts_on_trigger_server_maintenance(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "stopped-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Ok(notification_accepted_response())
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        // zed-kask D-seam (trigger_server_maintenance): a deliberately stopped
+        // server stays stopped (the transport watch no-ops on `Stopped`
+        // state), and the maintenance trigger restarts it. This pins the
+        // fork behavior: Starting → Running → (deliberate stop) → Stopped
+        // → (trigger_server_maintenance) → Starting → Running.
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(
+                store.read(cx).status_for_server(&server_id),
+                Some(ContextServerStatus::Running),
+                "server should be running after the initial start"
+            );
+        });
+
+        // Deliberate stop, as the MCP settings page performs it.
+        store
+            .update(cx, |store, cx| store.stop_server(&server_id, cx))
+            .unwrap();
+        // Park so the transport watch observes the deliberate shutdown and
+        // (correctly) does nothing: a stopped server must not auto-restart.
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(
+                store.read(cx).status_for_server(&server_id),
+                Some(ContextServerStatus::Stopped),
+                "a deliberately stopped server must stay stopped — the \
+                 transport watch only self-heals servers it still considers \
+                 running"
+            );
+        });
+
+        // The on-demand self-heal path: a tool call found the server dead
+        // and triggered maintenance, which must restart it.
+        store.update(cx, |store, cx| store.trigger_server_maintenance(cx));
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(
+                store.read(cx).status_for_server(&server_id),
+                Some(ContextServerStatus::Running),
+                "trigger_server_maintenance must restart a stopped server \
+                 so the next tool call succeeds"
+            );
+        });
+        // Dropping the events guard asserts no further status change happened.
+    }
+}
+
 // A server may also require authentication on `initialize` itself. The
 // challenge is read from the transport slot rather than the returned error, so
 // the 401 is recognized even if another error (e.g. the request timeout) wins

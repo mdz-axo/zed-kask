@@ -129,3 +129,46 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         .boxed_local()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Pin (zed-kask): the credentials provider is ALWAYS the OS-keychain
+    /// one. Upstream Zed uses a file-backed development provider in dev
+    /// mode; zed-kask's release channel is always "dev", so an upstream
+    /// revert would silently route every `kask://credentials/*` write to a
+    /// JSON file while `build_mcp_server_env` keeps reading the OS keychain
+    /// — every API key invisible to MCP servers while the UI reports
+    /// success. Source-structure pin (mermaid-precedent style): asserts
+    /// `new` constructs the keychain provider and that the file-backed
+    /// provider appears only in comments.
+    #[test]
+    fn new_always_constructs_the_keychain_provider() {
+        let source = include_str!("zed_credentials_provider.rs");
+        let new_body = source
+            .split("fn new(")
+            .nth(1)
+            .expect("fn new must exist in the source");
+        assert!(
+            new_body.contains("Arc::new(KeychainCredentialsProvider)"),
+            "new() must construct the OS-keychain provider"
+        );
+    }
+
+    #[test]
+    fn no_file_backed_provider_construction() {
+        let source = include_str!("zed_credentials_provider.rs");
+        // The needle is built by concat! so this test's own source does
+        // not match itself on non-comment lines.
+        let needle = concat!("DevelopmentCredentials", "Provider");
+        for (index, line) in source.lines().enumerate() {
+            if line.contains(needle) {
+                assert!(
+                    line.trim_start().starts_with("//"),
+                    "the file-backed provider may only appear in comments, \
+                     found a non-comment reference at line {}",
+                    index + 1,
+                );
+            }
+        }
+    }
+}
