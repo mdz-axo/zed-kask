@@ -355,10 +355,13 @@ classDiagram
 render the present sections. `AttributionRow.symbol` is required; other
 attribution fields default.
 
-**FIBO anchors:** displayed metrics are anchored to the FIBO ontology via
-constants (`FIBO_TIME_WEIGHTED_RETURN`, `FIBO_INTERNAL_RATE_OF_RETURN`,
-`FIBO_TRANSACTION_LEDGER`, …) that match the `fibo` map entries the
-`companies` MCP server includes in its responses.
+**Ontology anchors (fallback ladder, P8.3):** displayed metrics are
+anchored via the scope-broadening ladder — IRR has a real FIBO term
+(`FIBO_INTERNAL_RATE_OF_RETURN`, rung 1); every other metric is a quantity
+with no FIBO term, so it falls past the universal axes (which cover
+artifacts and processes, not quantities) to rung 3, the SUMO upper
+ontology (`sumo:Quantity`). The dashboard header anchors on the real
+`FIBO_PORTFOLIO`. Nothing is ever untagged.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-PORTFOLIO
@@ -658,8 +661,10 @@ to empty/`None` so partial bodies render the present sections. A body with
 suggests `scenario_frame`, pending forecasts suggest `scenario_quantify`,
 and resolved forecasts with a calibration suggest `scenario_assess`.
 
-**FIBO / methodology anchors:** `FIBO_FORECAST_ID`, `FIBO_BRIER_SCORE`,
-`FIBO_SCENARIO_PROBABILITY` anchor displayed metrics to the FIBO ontology.
+**Methodology anchors:** the scenarios widget anchors displayed metrics on
+hKask-internal methodology labels, not ontology URIs — FIBO publishes no
+terms for forecast identifiers, Brier scores, or scenario probabilities
+(verified 2026-08-29).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SCENARIOS

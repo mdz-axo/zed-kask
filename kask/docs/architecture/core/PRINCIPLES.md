@@ -162,6 +162,15 @@ The architectural invariant: **hKask never requires knowledge of a full domain o
 
 **P8.2 — Agent Output Grounding (v0.38.0):** LLM-produced agent output is grounded against a field → tool contract per invocation. The contract declares which output fields must be sourced from successful tool calls vs. inferred by the LLM. Unsourced fields are nulled before the response persists; narrative is scanned for leaked removed values. The six-valued provenance vocabulary (Sourced / Inferred / Derived / UncommissionedInference / Narrative / Unsourced) distinguishes commissioned judgment from uncommissioned inference and platform derivations — do not collapse the latter into Unsourced.
 
+**P8.3 — The Fallback Ladder (v0.39.0):** Ontology anchoring is a scope-broadening walk, never a single pick. When a concept has no fit in the narrowest applicable ontology, the anchor falls to progressively broader scopes until one fits:
+
+1. **Domain supplement** — the domain's specific ontology (FIBO, SEPIO, GOLEM, ML-Schema, SDMX), when the concept exists in that ontology's *published* vocabulary. Never force a concept into an ontology that has no place for it in its graph.
+2. **Universal axes** — Dublin Core + BIBO (the state axis: what the artifact *is*) and PKO (the process axis: how it came to be). Always applicable to artifacts and processes.
+3. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition): formal categorization when no domain or axis concept fits — e.g. a financial metric with no FIBO term is a `sumo:Quantity`.
+4. **Interrogative ground** — the 5W1H core (P5.2): the guaranteed final rung.
+
+The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist precisely so the ladder always terminates on a real anchor. Skipping rungs to force a fit, or stopping above a rung that fits (emitting no tag), both violate the ladder.
+
 #### P9 — Homeostatic Self-Regulation
 The system must remain observable and self-correcting through cybernetic feedback loops.
 

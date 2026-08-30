@@ -39,6 +39,26 @@
 //! axis is always DC or PKO, so every artifact has a common mapping in process
 //! or state space regardless of domain.
 //!
+//! ## The fallback ladder (P8.3)
+//!
+//! Ontology anchoring is a scope-broadening walk, never a single pick.
+//! When a concept has no fit in the narrowest applicable ontology, the
+//! anchor falls to progressively broader scopes until one fits:
+//!
+//! 1. **Domain supplement** — the domain's specific ontology, when the
+//!    concept exists in its published vocabulary. Never force a concept
+//!    into an ontology that has no place for it in its graph.
+//! 2. **Universal axes** — DC+BIBO (state: what the artifact is) and PKO
+//!    (process: how it came to be). Always applicable to artifacts and
+//!    processes.
+//! 3. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition):
+//!    formal categorization when no domain or axis concept fits — e.g. a
+//!    financial metric with no FIBO term is a `sumo:Quantity`.
+//! 4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+//!
+//! The invariant: **nothing is ever untagged.** SUMO and the 5W1H core
+//! exist precisely so the ladder always terminates on a real anchor.
+//!
 //! Architectural invariant (user directive 2026-08-05): ontologies are domain
 //! maps; MCP servers are functional-area maps; these are orthogonal. No
 //! ontology vocabulary lives inside an MCP server. Every server that does

@@ -65,7 +65,9 @@ pub enum OntologyNamespace {
 }
 
 impl OntologyNamespace {
-    /// Map this domain supplement namespace to its canonical Dublin Core concept.
+    /// Rung 2 of the fallback ladder (P8.3): this domain supplement's
+    /// canonical Dublin Core concept — the state-axis anchor (what the
+    /// artifact is) when the domain ontology has no fit for the concept.
     pub fn dc_concept(&self) -> DcConcept {
         match self {
             OntologyNamespace::Fibo => dc_bibo::DATASET,
@@ -77,7 +79,9 @@ impl OntologyNamespace {
         }
     }
 
-    /// Map this domain supplement namespace to its canonical PKO concept.
+    /// Rung 2 of the fallback ladder (P8.3): this domain supplement's
+    /// canonical PKO concept — the process-axis anchor (how it came to be)
+    /// when the domain ontology has no fit for the concept.
     pub fn pko_concept(&self) -> PkoConcept {
         match self {
             OntologyNamespace::Fibo => pko::PROCEDURE,
@@ -204,7 +208,28 @@ impl OntologyAnchor {
     }
 }
 
-/// Select the ontology anchoring for a domain.
+/// Select the ontology anchoring for a domain — the fallback ladder (P8.3)
+/// in dispatch form.
+///
+/// The ladder is a scope-broadening walk, never a single pick. When a
+/// concept has no fit in the narrowest applicable ontology, the anchor
+/// falls to progressively broader scopes until one fits:
+///
+/// 1. **Domain supplement** — SDMX, FIBO, SEPIO, GOLEM, ML-Schema: the
+///    domain's specific ontology, when the concept exists in its
+///    published vocabulary. Never force a concept into an ontology that
+///    has no place for it in its graph.
+/// 2. **Universal axes** — DC+BIBO (state: what the artifact is) and PKO
+///    (process: how it came to be). Always applicable to artifacts and
+///    processes.
+/// 3. **Upper ontology** — SUMO: formal categorization (Entity, Process,
+///    Quantity, Proposition) when no domain or axis concept fits.
+/// 4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+///
+/// The invariant: **nothing is ever untagged.** SUMO and the 5W1H core
+/// exist precisely so the ladder always terminates on a real anchor.
+/// Skipping rungs to force a fit, or stopping above a rung that fits
+/// (emitting no tag), both violate the ladder.
 ///
 /// State axis is always Dublin Core. Process axis is the domain ontology when
 /// one applies, PKO otherwise. The invariant: one axis is always DC or PKO.
@@ -247,7 +272,12 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: sdmx::DATASET.to_string(),
         };
     }
-    // Financial / company analysis → FIBO.
+    // Financial / company analysis → FIBO. Only domains FIBO's data space
+    // actually covers (companies, securities, portfolios, financial
+    // instruments). Forecasting, scenarios, and prediction markets are NOT
+    // FIBO concepts — they route to PKO (process) and Dublin Core (state)
+    // respectively (operator decision 2026-08-29: never force a concept into
+    // an ontology that has no place for it in its graph).
     if [
         "finance",
         "financial",
@@ -257,11 +287,6 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         "portfolio",
         "dcf",
         "screener",
-        "forecast",
-        "scenario",
-        "prediction-markets",
-        "prediction_markets",
-        "prediction markets",
     ]
     .iter()
     .any(|kw| matches_kw(kw))
@@ -314,7 +339,9 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::DATASET.to_string(),
         };
     }
-    // Process workflows → PKO dual-axis.
+    // Process workflows → PKO dual-axis. Forecasting and scenario-building
+    // are processes (operator decision 2026-08-29) — a forecast is a
+    // procedure producing a projection, not a financial instrument.
     if [
         "kanban",
         "board",
@@ -325,6 +352,8 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         "curator",
         "kata",
         "condenser",
+        "forecast",
+        "scenario",
     ]
     .iter()
     .any(|kw| matches_kw(kw))
@@ -332,6 +361,23 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         return OntologyAnchor::DualAxis {
             axis: OntologyAxis::Pko,
             concept: pko::PROCEDURE.to_string(),
+        };
+    }
+    // Prediction markets → DC+BIBO dual-axis (state). A market is a general
+    // entity, not a FIBO financial instrument — Dublin Core's data space is
+    // the generalist state axis where it has a place (operator decision
+    // 2026-08-29). Market records/quotes are datasets.
+    if [
+        "prediction-markets",
+        "prediction_markets",
+        "prediction markets",
+    ]
+    .iter()
+    .any(|kw| matches_kw(kw))
+    {
+        return OntologyAnchor::DualAxis {
+            axis: OntologyAxis::DcBibo,
+            concept: dc_bibo::DATASET.to_string(),
         };
     }
     // Entity metadata → DC+BIBO dual-axis.
@@ -356,5 +402,102 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     OntologyAnchor::DomainSupplement {
         namespace: OntologyNamespace::Sumo,
         concept: sumo::ENTITY.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the operator decision (2026-08-29): never force a concept into an
+    /// ontology that has no place for it in its graph. Forecasting and
+    /// scenario-building are processes → PKO; prediction markets are general
+    /// market entities → Dublin Core; only domains FIBO's data space covers
+    /// (companies, securities, portfolios) route to FIBO.
+    #[test]
+    fn dispatch_routes_concepts_to_ontologies_that_have_them() {
+        // Forecasting / scenarios are processes → PKO dual-axis.
+        for domain in ["forecast", "scenario", "scenario_build", "driver_forecast"] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DualAxis {
+                    axis: OntologyAxis::Pko,
+                    concept: pko::PROCEDURE.to_string(),
+                },
+                "domain '{domain}' must anchor on the PKO process axis"
+            );
+        }
+        // Prediction markets are market entities → DC state axis (datasets).
+        for domain in [
+            "prediction-markets",
+            "prediction_markets",
+            "prediction markets",
+        ] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DualAxis {
+                    axis: OntologyAxis::DcBibo,
+                    concept: dc_bibo::DATASET.to_string(),
+                },
+                "domain '{domain}' must anchor on the Dublin Core state axis"
+            );
+        }
+        // Financial domains FIBO actually covers stay on the FIBO supplement.
+        for domain in ["finance", "company", "stock", "portfolio"] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DomainSupplement {
+                    namespace: OntologyNamespace::Fibo,
+                    concept: dc_bibo::DATASET.to_string(),
+                },
+                "domain '{domain}' must stay on the FIBO supplement"
+            );
+        }
+    }
+
+    /// Pin the fallback ladder (P8.3): anchoring is a scope-broadening walk
+    /// that always terminates on a real anchor — nothing is ever untagged.
+    /// Rung 3 (SUMO) catches unknown non-empty domains; rung 4 (the 5W1H
+    /// core) catches the empty hint; rung 2 (universal axes) is reachable
+    /// from every domain supplement via `dc_concept`/`pko_concept`.
+    #[test]
+    fn fallback_ladder_terminates_on_a_real_anchor() {
+        // Rung 3 — unknown domain → SUMO upper ontology, not nothing.
+        for domain in ["quantum", "logistics", "somewhere_new"] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DomainSupplement {
+                    namespace: OntologyNamespace::Sumo,
+                    concept: sumo::ENTITY.to_string(),
+                },
+                "unknown domain '{domain}' must fall to SUMO (rung 3), never untagged"
+            );
+        }
+        // Rung 4 — no domain hint at all → the 5W1H interrogative core.
+        assert_eq!(select_ontology_anchor(""), OntologyAnchor::Core);
+        // Rung 2 — every domain supplement has universal-axis concepts, so a
+        // concept with no domain fit still lands on DC (state) or PKO (process).
+        for namespace in [
+            OntologyNamespace::Fibo,
+            OntologyNamespace::Sepio,
+            OntologyNamespace::Golem,
+            OntologyNamespace::MlSchema,
+            OntologyNamespace::Sdmx,
+            OntologyNamespace::Sumo,
+        ] {
+            assert!(
+                namespace.dc_concept().starts_with("dcmitype:")
+                    || namespace.dc_concept().starts_with("bibo:"),
+                "{namespace:?} rung-2 DC concept must be a real Dublin Core / BIBO term"
+            );
+            assert!(
+                namespace.pko_concept().starts_with("pko:"),
+                "{namespace:?} rung-2 PKO concept must be a real PKO term"
+            );
+        }
     }
 }

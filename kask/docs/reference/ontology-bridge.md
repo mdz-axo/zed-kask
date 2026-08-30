@@ -13,12 +13,39 @@ mds_categories: [domain, curation]
 **Crate:** `hkask-bridge-ontology` (`kask/crates/hkask-bridge-ontology/`)
 
 The single source of truth for ontology vocabulary and the dual-axis
+
 domain-selection logic in hKask. Nine ontologies across ten modules: two
 universal axes, one upper ontology, and six domain supplements
 (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:4-6`).
 No ontology vocabulary lives inside any MCP server; every server that does
 tagging depends on this crate (user directive 2026-08-05, recorded at
 `hkask_bridge_ontology.rs:36-39`).
+
+## The fallback ladder (P8.3)
+
+Ontology anchoring is a scope-broadening walk, never a single pick. When a
+concept has no fit in the narrowest applicable ontology, the anchor falls
+to progressively broader scopes until one fits:
+
+1. **Domain supplement** — the domain's specific ontology (FIBO, SEPIO,
+   GOLEM, ML-Schema, SDMX, OMC), when the concept exists in that
+   ontology's *published* vocabulary. Never force a concept into an
+   ontology that has no place for it in its graph.
+2. **Universal axes** — Dublin Core + BIBO (the state axis: what the
+   artifact *is*) and PKO (the process axis: how it came to be). Always
+   applicable to artifacts and processes. Implemented as
+   `OntologyNamespace::dc_concept` / `pko_concept` (`axis.rs`).
+3. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition):
+   formal categorization when no domain or axis concept fits — e.g. a
+   financial metric with no FIBO term is a `sumo:Quantity`.
+4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+
+The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist
+precisely so the ladder always terminates on a real anchor. Skipping rungs
+to force a fit, or stopping above a rung that fits (emitting no tag), both
+violate the ladder. `select_ontology_anchor` implements the ladder in
+dispatch form (rungs named in its doc comment);
+`fallback_ladder_terminates_on_a_real_anchor` (`axis.rs` tests) pins it.
 
 ## Modules
 
@@ -243,7 +270,9 @@ Verified against `select_ontology_anchor` (`axis.rs:210-347`):
 | Domain hint keywords | Namespace | State axis | Process axis |
 |---------------------|-----------|------------|--------------|
 | `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` | SDMX | DC | SDMX |
-| `finance`, `company`, `stock`, `portfolio`, `dcf`, `screener`, `forecast`, `scenario`, `prediction-markets` | FIBO | DC | FIBO |
+| `finance`, `company`, `stock`, `portfolio`, `dcf`, `screener` | FIBO | DC | FIBO |
+| `forecast`, `scenario` | (PKO) | DC | PKO |
+| `prediction-markets` | (DC+BIBO) | DC | DC+BIBO |
 | `science`, `research`, `hypothesis`, `evidence` | SEPIO | DC | SEPIO |
 | `narrative`, `literature`, `persona`, `author`, `corpus` | GOLEM | DC | GOLEM |
 | `training`, `ml`, `adapter`, `sweep`, `lora` | ML-Schema | DC | ML-Schema |

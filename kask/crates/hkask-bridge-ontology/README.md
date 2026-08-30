@@ -42,8 +42,9 @@ use hkask_bridge_ontology::{dc_bibo, pko, fibo, axis};
 let title = dc_bibo::TITLE;            // "dcterms:title"
 let step = pko::STEP_EXECUTION;        // "pko:StepExecution"
 
-// Domain vocabulary.
-let roic = fibo::RETURN_ON_INVESTED_CAPITAL;  // "fibo-fbc-fct-ra:ReturnOnInvestedCapital"
+// Domain vocabulary (verified FIBO terms, fixture-pinned).
+let corp = fibo::CORPORATION;             // "fibo-be-le-cb:Corporation"
+let mcap = fibo::MARKET_CAPITALIZATION;   // "fibo-ind-mkt-bas:MarketCapitalization"
 
 // Domain selection.
 let anchor = axis::select_ontology_anchor("prediction-markets");

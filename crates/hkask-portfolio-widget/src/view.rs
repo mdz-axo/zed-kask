@@ -27,8 +27,11 @@ use gpui_util::ResultExt as _;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use ui::prelude::*;
 
+use hkask_bridge_ontology::sumo;
+
 use crate::block::{
-    AttributionRow, CharacteristicField, FIBO_INTERNAL_RATE_OF_RETURN, PortfolioBlockBody,
+    AttributionRow, CharacteristicField, FIBO_INTERNAL_RATE_OF_RETURN, FIBO_PORTFOLIO,
+    PortfolioBlockBody,
 };
 
 /// Server that hosts the portfolio tools. Fallback dispatch target when a
@@ -134,25 +137,43 @@ impl PortfolioWidget {
         let border_color = cx.theme().colors().border;
 
         let tiles = [
-            // Total Return has no FIBO concept (verified against the FIBO
-            // master ontology 2026-08-29) — no tag rather than an invented
-            // URI. IRR anchors on the real FIBO term.
-            ("Total Return", format_pct(returns.total_return), None),
+            // Fallback ladder (P8.3): IRR has a real FIBO term (rung 1);
+            // every other displayed metric is a quantity with no FIBO term,
+            // and the universal axes (DC+BIBO, PKO) cover artifacts and
+            // processes — not quantities — so they land on rung 3, the SUMO
+            // upper ontology. Nothing is ever untagged.
+            (
+                "Total Return",
+                format_pct(returns.total_return),
+                Some(sumo::QUANTITY),
+            ),
             (
                 "IRR",
                 format_pct(returns.irr),
                 Some(FIBO_INTERNAL_RATE_OF_RETURN),
             ),
-            ("Modified Dietz", format_pct(returns.modified_dietz), None),
-            ("Start Value", format_currency(returns.start_value), None),
-            ("End Value", format_currency(returns.end_value), None),
+            (
+                "Modified Dietz",
+                format_pct(returns.modified_dietz),
+                Some(sumo::QUANTITY),
+            ),
+            (
+                "Start Value",
+                format_currency(returns.start_value),
+                Some(sumo::QUANTITY),
+            ),
+            (
+                "End Value",
+                format_currency(returns.end_value),
+                Some(sumo::QUANTITY),
+            ),
             (
                 "Positions",
                 format!(
                     "{} → {}",
                     returns.positions_at_start, returns.positions_at_end
                 ),
-                None,
+                Some(sumo::QUANTITY),
             ),
         ];
 
@@ -484,7 +505,11 @@ impl PortfolioWidget {
                     }))
                     .child(Label::new(from_display).size(LabelSize::XSmall)),
             )
-            .child(Label::new("→").size(LabelSize::XSmall).color(Color::Muted))
+            .child(
+                Label::new(FIBO_PORTFOLIO)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
             .child(
                 div()
                     .id("portfolio-scrub-to")
