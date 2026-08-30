@@ -1311,11 +1311,7 @@ impl super::CyberneticsLoop {
             | RegulationReason::AlgedonicLogApproachingCap
             | RegulationReason::GoalsStale
             | RegulationReason::GoalsExpired
-            | RegulationReason::MetacognitionVarietyDeficit
             | RegulationReason::MetacognitionCriticalAlerts
-            | RegulationReason::ActionIneffective
-            | RegulationReason::RegulatoryPlateauDetected
-            | RegulationReason::ActionDecisionBlocked
             | RegulationReason::MemoryLifeLow
             | RegulationReason::CircuitBreakerOpen
             | RegulationReason::InferenceUnavailable
@@ -1592,11 +1588,7 @@ mod tests {
                 (AlgedonicLogApproachingCap, AboveSetPoint, 1.0, 0.0),
                 (GoalStaleCount, AboveSetPoint, 1.0, 0.0),
                 (GoalExpiredCount, AboveSetPoint, 1.0, 0.0),
-                (MetacognitionVarietyDeficit, AboveSetPoint, 1.0, 0.0),
                 (MetacognitionCriticalAlerts, AboveSetPoint, 1.0, 0.0),
-                (ActionIneffective, AboveSetPoint, 1.0, 0.0),
-                (RegulatoryPlateau, AboveSetPoint, 1.0, 0.0),
-                (ActionDecisionBlocked, AboveSetPoint, 1.0, 0.0),
                 // Category C: Domain-specific
                 (MemoryLife, BelowSetPoint, 0.0, 1.0),
                 (CircuitBreakerState, AboveSetPoint, 1.0, 0.0),

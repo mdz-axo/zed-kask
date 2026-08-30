@@ -127,6 +127,13 @@ struct RegisteredContextServer {
     _tools_updated_subscription: Option<NotificationSubscription>,
 }
 
+/// How often the registry re-reads the kask tool source. Kask servers
+/// register with the governed `McpRuntime`, not the per-project
+/// `ContextServerStore`, so their registration never fires a store event —
+/// polling is the only way a registry created before the deferred MCP
+/// launch (window restore) can learn about them.
+const KASK_TOOL_SOURCE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl ContextServerRegistry {
     pub fn new(server_store: Entity<ContextServerStore>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
@@ -141,15 +148,39 @@ impl ContextServerRegistry {
         // zed-kask: kask tools surface from the governed runtime, not the
         // per-project store (single spawn authority, I1).
         this.reload_kask_tools(cx);
+        // zed-kask: the startup race. This registry is created during window
+        // restore, before the deferred MCP launch registers kask tools — and
+        // because kask servers are not in the ContextServerStore, no store
+        // event ever announces the late registration. Without this poll the
+        // merge above is the last one for the whole app session and every
+        // agent-panel conversation runs without kask tools (observed live
+        // 2026-08-30: a fresh session had zero kask tools until a store
+        // event was fired by hand). GPUI-native timer, not tokio — tokio
+        // timers panic on the foreground thread (see the .rules GPUI traps).
+        // The loop exits when this registry is dropped.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(KASK_TOOL_SOURCE_POLL_INTERVAL)
+                    .await;
+                let Ok(()) = this.update(cx, |this, cx| this.reload_kask_tools(cx)) else {
+                    break;
+                };
+            }
+        })
+        .detach();
         this
     }
 
     /// Merge the kask tool surface (from the process-global
     /// [`KaskToolSource`], wired to the governed `McpRuntime` in `main.rs`)
     /// into the registry under each tool's server id. Cache-backed and
-    /// synchronous, so it is cheap enough to re-run on every store event —
-    /// the opportunistic refresh catches kask servers that registered after
-    /// this registry was created.
+    /// synchronous, so it is cheap enough to re-run on every store event and
+    /// on every poll tick. The poll is what catches kask servers that
+    /// registered after this registry was created — store events cannot
+    /// (kask servers are not in the ContextServerStore), so the
+    /// store-event path only re-inserts entries that a colliding raw
+    /// settings id removed.
     fn reload_kask_tools(&mut self, cx: &mut Context<Self>) {
         let Some(source) = kask_tool_source() else {
             if note_kask_tool_source_unwired() {
@@ -171,9 +202,26 @@ impl ContextServerRegistry {
             });
             by_server.entry(server_id).or_default().insert(name, tool);
         }
+        // Re-merge every entry so the wrapped descriptors stay fresh across
+        // kask server restarts (the source's cache is rebuilt on reconnect),
+        // but emit `ToolsChanged` only when the visible surface changed: the
+        // poll re-runs this every tick and store events re-run it on every
+        // server status change, and notifying subscribers for a no-op would
+        // churn every thread's tool list. A kask entry removed by a store
+        // event for a colliding raw settings id counts as changed here and
+        // is re-inserted on the next pass.
+        let mut surface_changed = false;
         for (server_id, tools) in by_server {
+            let server_id = ContextServerId(std::sync::Arc::from(server_id.as_str()));
+            let tool_names_unchanged = self
+                .registered_servers
+                .get(&server_id)
+                .is_some_and(|registered| registered.tools.keys().eq(tools.keys()));
+            if !tool_names_unchanged {
+                surface_changed = true;
+            }
             self.registered_servers.insert(
-                ContextServerId(std::sync::Arc::from(server_id.as_str())),
+                server_id,
                 RegisteredContextServer {
                     tools,
                     prompts: BTreeMap::default(),
@@ -183,7 +231,9 @@ impl ContextServerRegistry {
                 },
             );
         }
-        cx.emit(ContextServerRegistryEvent::ToolsChanged);
+        if surface_changed {
+            cx.emit(ContextServerRegistryEvent::ToolsChanged);
+        }
     }
 
     pub fn tools_for_server(
@@ -1280,11 +1330,13 @@ mod tests {
     ///
     /// NOT covered: the degradation is silent by design (the doc on
     /// `kask_tool_source` says tools "simply do not surface" — there is no
-    /// operator-visible note/status for the unwired state), and the
+    /// operator-visible note/status for the unwired state). The
     /// registry-level merge (`reload_kask_tools` inserting into
-    /// `registered_servers`) is not pinned end-to-end: a source with real
-    /// tools would leak into any registry constructed by a parallel test
-    /// in this process, making that test flaky.
+    /// `registered_servers`) IS pinned end-to-end now, by
+    /// `agent::tests::test_kask_tools_surface_when_source_populates_after_registry_creation`
+    /// (tests/mod.rs): the shared-slot leak hazard this comment once cited
+    /// is handled there with a distinctive server id, a minimal populated
+    /// window, and an empty-source reset.
     #[test]
     fn kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired() {
         // All assertions on the shared slot stay in ONE test (the recorder

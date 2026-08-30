@@ -95,7 +95,9 @@ pub(crate) const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
 /// Default stagnation detection threshold (5 cycles).
 ///
 /// After this many consecutive cycles of the same ineffective (metric, action)
-/// pair, a `RegulatoryPlateau` alert is triggered.
+/// pair, a regulatory-plateau alert is triggered (persisted to the review
+/// queue; the `RegulatoryPlateau` SignalMetric/policy rule was removed
+/// 2026-08-30 as a superseded duplicate of this direct path).
 pub(crate) const DEFAULT_STAGNATION_THRESHOLD: u32 = 5;
 
 /// Default stage threshold for ActionDecision: 5% relative worsening.
@@ -216,7 +218,7 @@ pub struct SetPoints {
     pub max_iterations: u32,
     // ── Stagnation detection (v0.31.0, Fermi pattern) ──
     /// Per-metric stagnation thresholds. Key: metric name (snake_case),
-    /// value: cycles before RegulatoryPlateau alert. Unlisted metrics
+    /// value: cycles before the regulatory-plateau alert. Unlisted metrics
     /// use `DEFAULT_STAGNATION_THRESHOLD` (5).
     pub stagnation_thresholds: std::collections::HashMap<String, u32>,
     /// Action decision stage threshold: max relative worsening before

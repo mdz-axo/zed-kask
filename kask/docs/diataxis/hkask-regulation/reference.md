@@ -380,7 +380,7 @@ When the same pair is rejected for `substitution_after` cycles (default 2,
 `set_points.rs:118`), `try_substitute` (`cycle.rs:31`) walks the
 substitution ladder. When it hits the per-metric stagnation threshold
 (default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:99`), a
-`RegulatoryPlateau` alert fires.
+regulatory-plateau alert fires.
 
 ## Alert sinks
 

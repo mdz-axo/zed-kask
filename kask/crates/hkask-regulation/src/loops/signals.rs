@@ -61,27 +61,16 @@ pub enum SignalMetric {
     GoalStaleCount,
     /// Expired goal count (Curation Loop 5)
     GoalExpiredCount,
-    /// Metacognition variety deficit (Curation Loop 5)
-    MetacognitionVarietyDeficit,
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
 
-    // WalletBalanceRatio / WalletKeyHealth removed 2026-08-30 — residuals
-    // of the deleted wallet module (219c74b180); no sensor ever emitted
-    // them. SeamCoverage removed with them — its "seam watcher" was never
-    // built.
-    /// A regulatory action has been ineffective over multiple cycles.
-    /// 0.0 = all actions effective, 1.0 = all actions ineffective.
-    /// Triggers escalation to Curation for metacognitive override.
-    ActionIneffective,
-    /// The loop has reached a regulatory plateau — same deviation→action
-    /// pattern repeats without metric improvement. Indicates the regulator's
-    /// model has converged to a wrong attractor (Conant-Ashby violation).
-    RegulatoryPlateau,
-    /// An action was blocked because it was severely counterproductive
-    /// (Fermi HardBlock pattern). The (metric, action_type) pair is
-    /// prevented from re-use until Curation intervenes.
-    ActionDecisionBlocked,
+    // MetacognitionVarietyDeficit removed 2026-08-30 — a pure duplicate of
+    // VarietyDeficit (same ledger `overall_deficit`, same Escalate→Curation
+    // rule); wiring it would have double-escalated the same number.
+    // ActionIneffective / RegulatoryPlateau / ActionDecisionBlocked removed
+    // with it — superseded by the loop's direct escalation paths
+    // (`try_substitute` at cycle.rs, plateau/blocked alerts persisted to the
+    // review queue and sensed as PendingEscalations).
     /// Tool reliability: success probability has dropped below threshold.
     /// 0.0 = 0% success rate, 1.0 = 100% success rate.
     /// Set-point: reliability_threshold (default 0.80).
@@ -130,12 +119,7 @@ impl SignalMetric {
             SignalMetric::ConsolidationCandidates => "consolidation_candidates",
             SignalMetric::GoalStaleCount => "goal_stale_count",
             SignalMetric::GoalExpiredCount => "goal_expired_count",
-            SignalMetric::MetacognitionVarietyDeficit => "metacognition_variety_deficit",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
-
-            SignalMetric::ActionIneffective => "action_ineffective",
-            SignalMetric::RegulatoryPlateau => "regulatory_plateau",
-            SignalMetric::ActionDecisionBlocked => "action_decision_blocked",
             SignalMetric::ToolReliability => "tool_reliability",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
@@ -166,11 +150,7 @@ impl SignalMetric {
             SignalMetric::ConsolidationCandidates,
             SignalMetric::GoalStaleCount,
             SignalMetric::GoalExpiredCount,
-            SignalMetric::MetacognitionVarietyDeficit,
             SignalMetric::MetacognitionCriticalAlerts,
-            SignalMetric::ActionIneffective,
-            SignalMetric::RegulatoryPlateau,
-            SignalMetric::ActionDecisionBlocked,
             SignalMetric::ToolReliability,
             SignalMetric::TestCoverage,
             SignalMetric::MutationScore,
@@ -208,11 +188,7 @@ mod tests {
             "consolidation_candidates",
             "goal_stale_count",
             "goal_expired_count",
-            "metacognition_variety_deficit",
             "metacognition_critical_alerts",
-            "action_ineffective",
-            "regulatory_plateau",
-            "action_decision_blocked",
             "tool_reliability",
             "test_coverage",
             "mutation_score",

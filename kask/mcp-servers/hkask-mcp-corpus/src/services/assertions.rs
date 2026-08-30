@@ -306,8 +306,13 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                         // GOLEM-family prefixes (gc/crm/dlp/lrmoo) are stored
                         // under the "golem" key to match the tagging-phase
                         // vocabulary.
+                        //
+                        // State-axis type: SEPIO's published `assertion`
+                        // class — a statement that a proposition is true.
+                        // (The former `dcterms:Assertion` was fabricated;
+                        // Dublin Core publishes no such term.)
                         let mut ontology = HMemOntology::state(
-                            "dcterms:Assertion",
+                            hkask_bridge_ontology::sepio::ASSERTION,
                             vec![subject.to_string()],
                             entity_ref.clone(),
                         )

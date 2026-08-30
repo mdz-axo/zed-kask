@@ -164,7 +164,7 @@ The `StagnationDetector` (`dampener.rs:231`) records each (metric, action)
 pair's outcome. When the same pair is rejected for `substitution_after`
 cycles (default 2), `try_substitute` walks the substitution ladder
 (`regulation_policy.rs:567`). When it hits the per-metric stagnation
-threshold (default 5), a `RegulatoryPlateau` alert fires.
+threshold (default 5), a regulatory-plateau alert fires.
 
 ## Step 6: Record — write the RegulationCycleEntry
 

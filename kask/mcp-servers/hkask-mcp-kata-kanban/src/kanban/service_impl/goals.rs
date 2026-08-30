@@ -80,9 +80,14 @@ impl KanbanService {
         goal.prediction = prediction;
         goal.task_id = task_id;
 
+        // State-axis type: IAO's published `objective specification` —
+        // "a directive information entity that describes an intended
+        // state of the world" — the exact concept for a kata target
+        // condition. (The former `pko:Goal` was fabricated; PKO publishes
+        // no Goal class.)
         let goal_ontology = hkask_types::HMemOntology {
             dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            dc_type: "pko:Goal".to_string(),
+            dc_type: hkask_bridge_ontology::sepio::OBJECTIVE_SPECIFICATION.to_string(),
             dc_source: "kanban".to_string(),
             pko_procedure: Some(goal.id.to_string()),
             ..Default::default()

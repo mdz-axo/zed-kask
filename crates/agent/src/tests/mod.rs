@@ -5395,6 +5395,113 @@ async fn test_scoped_thread_bypasses_tool_router(cx: &mut TestAppContext) {
     crate::set_tool_router(None);
 }
 
+/// A `KaskToolSource` whose descriptor set can change after wiring — the
+/// shape of the real source (a cache refreshed by a background poll of the
+/// governed `McpRuntime`), and the fixture for the startup-race pin below.
+struct MutableKaskToolSource(std::sync::Mutex<Vec<KaskToolDescriptor>>);
+
+impl MutableKaskToolSource {
+    fn set(&self, descriptors: Vec<KaskToolDescriptor>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = descriptors;
+    }
+}
+
+impl KaskToolSource for MutableKaskToolSource {
+    fn tools(&self) -> Vec<KaskToolDescriptor> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn invoke(
+        &self,
+        _server_id: &str,
+        _tool: &str,
+        _args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    > {
+        Box::pin(async { Ok(serde_json::json!({"status": "ok"})) })
+    }
+}
+
+/// Pin: the kask-tool startup race (single spawn authority, I1). The panel
+/// registry is created during window restore, before the deferred MCP launch
+/// registers kask tools — and because kask servers are not in the
+/// ContextServerStore, no store event ever announces the late registration.
+/// The registry's poll must surface tools that appear in the source after
+/// construction, or every agent-panel conversation runs without kask tools
+/// for the whole app session (observed live 2026-08-30: a fresh session had
+/// zero kask tools until a store event was fired by hand).
+///
+/// Shared-slot hazard (see the NOT-covered note on
+/// `kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired`):
+/// while this test's source is populated, a registry constructed by a
+/// parallel test merges this server too. The server id and tool name are
+/// distinctive, the populated window is a single `run_until_parked`, and
+/// the source is reset to empty (the documented inert state) immediately
+/// after the poll has run.
+#[gpui::test]
+async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // The startup window: `setup` constructed the registry above, against an
+    // empty/absent source — exactly the live race (registry created before
+    // the deferred MCP launch). Wire the source empty first so no parallel
+    // test's registry construction can observe a populated source.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    set_kask_tool_source(source.clone());
+
+    // The deferred launch registers tools — no store event fires for this
+    // (kask servers are not in the ContextServerStore).
+    source.set(vec![KaskToolDescriptor {
+        server_id: "kask-poll-test".to_string(),
+        name: "late_registered_tool".to_string(),
+        description: "A kask tool registered after the registry was created".to_string(),
+        input_schema: serde_json::json!({"type": "object", "properties": {}}),
+    }]);
+    // The poll fires — but TestAppContext::run_until_parked is tick-based
+    // and does not advance the clock to pending timers (only
+    // BackgroundExecutor::run_until_parked does), so advance the clock past
+    // the registry's 2s kask-tool poll interval explicitly, then drain.
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+
+    // Reset the source before asserting so the populated window is exactly
+    // one `run_until_parked`. The merged tools stay in the registry.
+    source.set(Vec::new());
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"late_registered_tool".to_string()),
+        "a kask tool registered after registry construction must surface via the poll: {names:?}"
+    );
+    fake_model.end_last_completion_stream();
+}
+
 /// Like [`setup_context_server`], but starts the server with an explicit
 /// request timeout so a never-responding tool call fails with the client's
 /// "Context server request timeout" error on a test-controllable clock.

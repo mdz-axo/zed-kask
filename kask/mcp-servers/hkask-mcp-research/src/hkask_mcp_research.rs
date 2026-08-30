@@ -1535,7 +1535,7 @@ impl ResearchServer {
                 "artifacts_evaluated": total,
                 "average_confidence": (avg_confidence * 100.0).round() / 100.0,
                 "evaluations": evaluations,
-                "pko:stepVerification": "evidence_quality_assessed",
+                "pko:StepVerification": "evidence_quality_assessed",
             }))
         })
         .await
@@ -1638,7 +1638,7 @@ impl ResearchServer {
                     "style": serde_json::to_value(&style).unwrap_or_default(),
                     "count": citations.len(),
                     "citations": citations,
-                    "pko:referencesResource": "citations_generated",
+                    "dcterms:references": "citations_generated",
                 }))
             },
         )

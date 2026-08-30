@@ -40,7 +40,7 @@ pub fn mapping_document() -> serde_json::Value {
             "ontology": "PKO (Procedural Knowledge Ontology)",
             "vocabulary_crate": "hkask-bridge-ontology",
             "record_type": "pko:ProcedureExecution",
-            "probability_role": "pko:StepExecution.output",
+            "probability_role": "prov:wasGeneratedBy",
             "lifecycle_stages": LIFECYCLE_STAGES,
             "stage_note": "distrust prices in the `dispute` stage (arXiv:2604.20421 oracle-risk finding: markets trade within 24h of a dispute anchor)"
         },

@@ -171,7 +171,10 @@ pub(crate) async fn write_turn(
             .unwrap_or("list");
         let goal_ontology = HMemOntology {
             dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            dc_type: "pko:Goal".to_string(),
+            // IAO's published `objective specification` — the anchor for a
+            // kata target condition. (The former `pko:Goal` was fabricated;
+            // PKO publishes no Goal class.)
+            dc_type: hkask_bridge_ontology::sepio::OBJECTIVE_SPECIFICATION.to_string(),
             dc_source: "kanban".to_string(),
             ..Default::default()
         };

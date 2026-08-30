@@ -316,7 +316,7 @@ fn make_ontology(
         process: ProcessAxis {
             r#type: Cow::Borrowed("pko:ProcedureExecution"),
             stage: Cow::Borrowed(stage),
-            probability_role: Cow::Borrowed("pko:StepExecution.output"),
+            probability_role: Cow::Borrowed("prov:wasGeneratedBy"),
         },
         state: StateAxis {
             identifier: format!("{prefix}:{market_id}"),

@@ -193,7 +193,7 @@ the regulator converging to a wrong attractor. When the same (metric,
 action) pair is rejected for `substitution_after` cycles (default 2),
 `try_substitute` (`cycle.rs:31`) walks the substitution ladder
 (`regulation_policy.rs:567`) to find an untried alternative. When it hits
-the per-metric stagnation threshold (default 5), a `RegulatoryPlateau`
+the per-metric stagnation threshold (default 5), a regulatory-plateau
 alert fires — the regulator's model has converged to a wrong attractor,
 which is a Conant-Ashby violation.
 

@@ -623,6 +623,7 @@ pub async fn build_mcp_server_env(
             && let Ok(value) = String::from_utf8(password)
             && !value.is_empty()
         {
+            let value = trim_credential_for_injection(server_id, &env_var, value);
             env.insert(env_var, value);
             continue;
         }
@@ -724,6 +725,32 @@ pub async fn build_mcp_server_env(
 /// All other credentials have NO default — a miss keeps warning so "not
 /// configured" stays visible to the operator.
 const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 1] = ["HKASK_DB_PASSPHRASE"];
+
+/// Trim surrounding whitespace from a keychain-read credential before env
+/// injection. Keychain values are pasted by hand; a trailing newline from a
+/// copy-paste is not part of any credential, and it breaks HTTP header
+/// construction downstream (observed live 2026-08-30: a 36-byte Firecrawl
+/// key whose last byte was `\n`, failing every request from the long-lived
+/// server instance with "failed to parse header value" while fresh spawns
+/// — whose `env -i $(...)` harness shell-word-split the newline away —
+/// succeeded). The DB passphrase is exempt: its exact bytes key the
+/// SQLCipher databases, so trimming it would make every DB unopenable.
+fn trim_credential_for_injection(server_id: &str, env_var: &str, value: String) -> String {
+    if DEFAULT_PASSPHRASE_ENV_VARS.contains(&env_var) {
+        return value;
+    }
+    let trimmed = value.trim().to_string();
+    if trimmed != value {
+        tracing::warn!(
+            target: "reg.mcp",
+            server_id = %server_id,
+            env_var = %env_var,
+            "Keychain credential has surrounding whitespace — trimmed at injection. \
+             Re-set the key via the kask settings UI to fix it at the source."
+        );
+    }
+    trimmed
+}
 
 /// Provision the startup-default passphrase for `env_var`, if it has one.
 ///
@@ -1839,5 +1866,32 @@ mod tests {
                 || new_value["context_servers"].get("research").is_none(),
             "after removal the serialized entry must be gone — the diff drives the file edit"
         );
+    }
+
+    /// A pasted trailing newline must not survive keychain→env injection
+    /// (the live Firecrawl failure), and the DB passphrase must never be
+    /// trimmed — its exact bytes key the SQLCipher databases.
+    #[test]
+    fn credential_trim_strips_whitespace_but_never_the_passphrase() {
+        let dirty_key = trim_credential_for_injection(
+            "research",
+            "HKASK_FIRECRAWL_API_KEY",
+            "fc-0123456789abcdef0123456789abcdef\n".to_string(),
+        );
+        assert_eq!(dirty_key, "fc-0123456789abcdef0123456789abcdef");
+
+        let clean_key = trim_credential_for_injection(
+            "research",
+            "HKASK_FIRECRAWL_API_KEY",
+            "fc-0123456789abcdef0123456789abcdef".to_string(),
+        );
+        assert_eq!(clean_key, "fc-0123456789abcdef0123456789abcdef");
+
+        let passphrase = trim_credential_for_injection(
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            "pass phrase \n".to_string(),
+        );
+        assert_eq!(passphrase, "pass phrase \n");
     }
 }

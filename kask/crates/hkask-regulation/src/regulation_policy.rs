@@ -36,11 +36,7 @@ pub(crate) enum RegulationReason {
     AlgedonicLogApproachingCap,
     GoalsStale,
     GoalsExpired,
-    MetacognitionVarietyDeficit,
     MetacognitionCriticalAlerts,
-    ActionIneffective,
-    RegulatoryPlateauDetected,
-    ActionDecisionBlocked,
     MemoryLifeLow,
     CircuitBreakerOpen,
     InferenceUnavailable,
@@ -69,11 +65,7 @@ impl RegulationReason {
             Self::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             Self::GoalsStale => "goals_stale",
             Self::GoalsExpired => "goals_expired",
-            Self::MetacognitionVarietyDeficit => "metacognition_variety_deficit",
             Self::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
-            Self::ActionIneffective => "action_ineffective",
-            Self::RegulatoryPlateauDetected => "regulatory_plateau_detected",
-            Self::ActionDecisionBlocked => "action_decision_blocked",
             Self::MemoryLifeLow => "memory_life_low",
             Self::CircuitBreakerOpen => "circuit_breaker_open",
             Self::InferenceUnavailable => "inference_unavailable",
@@ -128,14 +120,11 @@ impl RegulationPolicy {
         use ActionType::*;
         use DeviationDirection::*;
         use LoopId::*;
-        // Explicit SignalMetric imports for the 4 names that also exist as
+        // Explicit SignalMetric imports for the names that also exist as
         // RegulationReason variants — explicit imports shadow the glob and
         // resolve the ambiguity.
         use RegulationReason::*;
-        use SignalMetric::{
-            ActionDecisionBlocked, ActionIneffective, AlgedonicLogApproachingCap,
-            MetacognitionCriticalAlerts, MetacognitionVarietyDeficit, *,
-        };
+        use SignalMetric::{AlgedonicLogApproachingCap, MetacognitionCriticalAlerts, *};
 
         Self {
             rules: vec![
@@ -305,15 +294,6 @@ impl RegulationPolicy {
                     }],
                 },
                 RegulationRule {
-                    metric: MetacognitionVarietyDeficit,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: RegulationReason::MetacognitionVarietyDeficit,
-                    }],
-                },
-                RegulationRule {
                     metric: MetacognitionCriticalAlerts,
                     direction: AboveSetPoint,
                     proposed: &[ProposedAction {
@@ -322,33 +302,14 @@ impl RegulationPolicy {
                         reason: RegulationReason::MetacognitionCriticalAlerts,
                     }],
                 },
-                RegulationRule {
-                    metric: ActionIneffective,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: RegulationReason::ActionIneffective,
-                    }],
-                },
-                RegulationRule {
-                    metric: RegulatoryPlateau,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: RegulatoryPlateauDetected,
-                    }],
-                },
-                RegulationRule {
-                    metric: ActionDecisionBlocked,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: RegulationReason::ActionDecisionBlocked,
-                    }],
-                },
+                // MetacognitionVarietyDeficit / ActionIneffective /
+                // RegulatoryPlateau / ActionDecisionBlocked rules removed
+                // 2026-08-30 — superseded duplicates. MetacognitionVarietyDeficit
+                // duplicated VarietyDeficit (same ledger overall_deficit,
+                // same Escalate→Curation rule); the three action metrics were
+                // superseded by the loop's direct escalation paths
+                // (try_substitute; plateau/blocked alerts persisted to the
+                // review queue and sensed as PendingEscalations).
                 // ── Category C: Domain-specific regulation ──
                 // MemoryLife (Memory Loop 2) → Calibrate
                 RegulationRule {
@@ -513,7 +474,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::EnergyRemaining => &[Throttle, AdjustEnergyBudget, Escalate],
         // ── Variety ──
         SignalMetric::VarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],
-        SignalMetric::MetacognitionVarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],
         // ── Error Rate ──
         SignalMetric::ErrorRate => &[CircuitBreak, Calibrate, Escalate],
         SignalMetric::CircuitBreakerState => &[CircuitBreak, Calibrate, Escalate],
@@ -526,9 +486,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::GoalStaleCount => &[Escalate, Calibrate],
         SignalMetric::GoalExpiredCount => &[Escalate, Calibrate],
         SignalMetric::MetacognitionCriticalAlerts => &[Escalate, Calibrate, OverrideEnergyBudget],
-        SignalMetric::ActionIneffective => &[Escalate, Calibrate],
-        SignalMetric::RegulatoryPlateau => &[Escalate, Calibrate],
-        SignalMetric::ActionDecisionBlocked => &[Escalate, Calibrate],
         // ── Domain-specific ──
         SignalMetric::MemoryLife => &[Calibrate, Escalate],
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
