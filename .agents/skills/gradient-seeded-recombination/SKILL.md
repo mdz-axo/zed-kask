@@ -23,7 +23,7 @@ Substrate-analysis process for interdisciplinary concept generation. Finds **whe
 
 - **Substrate**: Parisi spin glass theory (non-ergodicity, frustration, metastable valleys) — the same substrate as gradient-hunter, applied to cross-ontology recombination sites.
 - **Surface**: the gradient-hunter eight-shape taxonomy (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) + the seven-class reason taxonomy (Rubin MCAR/MAR/MNAR + spin glass metastable trap + allostery broken coupling).
-- **Domain supplement**: the project's 5 domain-supplement ontology namespaces (FIBO, ESO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core, extended via OBO Foundry / OntoBee / BioPortal.
+- **Domain supplement**: the project's 5 domain-supplement ontology namespaces (FIBO, SEPIO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core, extended via OBO Foundry / OntoBee / BioPortal.
 
 ## PDCA Shape
 
@@ -54,7 +54,7 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 
 | Template | Purpose |
 |----------|---------|
-| `gsr-inventory.j2` | Enumerate the ontology namespaces in the registry. Each entry carries the namespace id, its axioms, its term signature, and its key concepts. When external sources are configured (OBO Foundry, OntoBee, BioPortal), fetch and parse the registry YAML / OWL, checking per-ontology license before caching. The project's default registry is the 5 domain-supplement namespaces (FIBO, ESO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core. |
+| `gsr-inventory.j2` | Enumerate the ontology namespaces in the registry. Each entry carries the namespace id, its axioms, its term signature, and its key concepts. When external sources are configured (OBO Foundry, OntoBee, BioPortal), fetch and parse the registry YAML / OWL, checking per-ontology license before caching. The project's default registry is the 5 domain-supplement namespaces (FIBO, SEPIO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core. |
 | `gsr-prior.j2` | Build the expected-field model: the complete graph K_n on the n ontologies, where every ontology should have a populated recombination surface with every other. The prior is the gradient-hunter convention prior: "every pair should have a populated recombination surface." Delegates to pragmatic-cybernetics for variety engineering when no convention prior is available. |
 | `gsr-map.j2` | Map the actual recombination field in the registry with the same granularity as the prior. For each ordered pair (A, B), check whether a recombination surface exists — i.e., whether any concept in A has been recast into B's constraint context. Delegates to manual analysis for topology extraction when hunting topology gradients. |
 | `gsr-detect.j2` | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence, populated side, desert side, magnitude. The fractal recurrence check is mandatory. |

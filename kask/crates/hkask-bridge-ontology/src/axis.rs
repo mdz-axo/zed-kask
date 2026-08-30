@@ -145,9 +145,10 @@ pub enum OntologyAnchor {
 
 impl OntologyAnchor {
     /// Return the confidence modifier for this ontology tier.
-    /// FIBO: +0.10 (OMG standard, high adoption)
-    /// SUMO: +0.05 (actively maintained upper ontology, broad coverage)
-    /// Others: ±0.00 (standard baseline)
+    /// These are hKask tuning choices (not values derived from any
+    /// published source): FIBO +0.10 and SUMO +0.05 reflect that a
+    /// domain-verified anchor is stronger evidence than the bare core;
+    /// others get no bonus. Adjust only with condenser-quality evidence.
     pub fn confidence_modifier(&self) -> f64 {
         match self {
             OntologyAnchor::Core => 0.0,
@@ -161,6 +162,11 @@ impl OntologyAnchor {
     }
 
     /// Return the information density expectation for this ontology tier.
+    /// hKask tuning choices (not values derived from any published
+    /// source): FIBO-tagged financial passages and ML-Schema/SDMX-tagged
+    /// statistical passages carry denser extractable content than the
+    /// baseline. Pinned by `ontology_anchor_density_factors` in the
+    /// condenser; adjust only with condenser-quality evidence.
     pub fn density_factor(&self) -> f64 {
         match self {
             OntologyAnchor::Core => 1.0,

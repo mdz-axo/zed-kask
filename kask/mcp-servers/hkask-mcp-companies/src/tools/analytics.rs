@@ -169,9 +169,6 @@ impl CompaniesServer {
                 "to": req.to,
                 "attribution": attribution,
                 "errors": errors,
-                "fibo": {
-                    "attribution_analysis": fibo::ATTRIBUTION_ANALYSIS,
-                },
             }), "portfolio_attribution"))
         }).await
     }
@@ -295,11 +292,11 @@ impl CompaniesServer {
                                         .or_default();
                                     *sub.entry(str_val.to_string()).or_insert(0.0) += weight;
                                 } else if let Some(num) = val.as_f64() {
-                                    let fibo_uri =
-                                        fibo::fmp_field_to_fibo(field).unwrap_or("unknown");
+                                    let metric =
+                                        fibo::fmp_field_to_metric(field).unwrap_or("unknown");
                                     numeric_fields
                                         .entry(field.to_string())
-                                        .or_insert_with(|| (Vec::new(), fibo_uri))
+                                        .or_insert_with(|| (Vec::new(), metric))
                                         .0
                                         .push(crate::aggregation::WeightedValue {
                                             weight,
@@ -329,10 +326,10 @@ impl CompaniesServer {
                             "epsGrowth",
                         ] {
                             if let Some(val) = metrics.get(field).and_then(|v| v.as_f64()) {
-                                let fibo_uri = fibo::fmp_field_to_fibo(field).unwrap_or("unknown");
+                                let metric = fibo::fmp_field_to_metric(field).unwrap_or("unknown");
                                 numeric_fields
                                     .entry(field.to_string())
-                                    .or_insert_with(|| (Vec::new(), fibo_uri))
+                                    .or_insert_with(|| (Vec::new(), metric))
                                     .0
                                     .push(crate::aggregation::WeightedValue { weight, value: val });
                             }
@@ -349,11 +346,11 @@ impl CompaniesServer {
                             && e > 0.0
                         {
                             let lev = a / e;
-                            let fibo_uri =
-                                fibo::fmp_field_to_fibo("financialLeverage").unwrap_or("unknown");
+                            let metric =
+                                fibo::fmp_field_to_metric("financialLeverage").unwrap_or("unknown");
                             numeric_fields
                                 .entry("financialLeverage".to_string())
-                                .or_insert_with(|| (Vec::new(), fibo_uri))
+                                .or_insert_with(|| (Vec::new(), metric))
                                 .0
                                 .push(crate::aggregation::WeightedValue { weight, value: lev });
                         }
@@ -362,13 +359,13 @@ impl CompaniesServer {
 
                 // Aggregate numeric fields using the requested method.
                 let mut characteristics = serde_json::Map::new();
-                for (field, (values, fibo_uri)) in &numeric_fields {
+                for (field, (values, metric)) in &numeric_fields {
                     let aggregated = crate::aggregation::aggregate(values, &req.aggregation);
                     characteristics.insert(
                         field.clone(),
                         serde_json::json!({
                             "value": aggregated,
-                            "fibo": fibo_uri,
+                            "metric": metric,
                             "method": req.aggregation,
                             "holdings": values.len(),
                         }),
@@ -662,13 +659,6 @@ impl CompaniesServer {
                     "stage2_years": assumptions.total_years - assumptions.stage1_years,
                     "discount_rate": assumptions.discount_rate,
                     "terminal_growth": assumptions.terminal_growth,
-                },
-                "fibo": {
-                    "implied_growth_rate": fibo::REVENUE_GROWTH_RATE,
-                    "discount_rate": fibo::DISCOUNT_RATE,
-                    "terminal_growth_rate": fibo::TERMINAL_GROWTH_RATE,
-                    "enterprise_value": fibo::ENTERPRISE_VALUE,
-                    "intrinsic_value_per_share": fibo::INTRINSIC_VALUE_PER_SHARE,
                 },
                 "interpretation": {
                     "implied_growth_pct": format!("{:.1}%", implied_growth * 100.0),
@@ -984,8 +974,8 @@ impl CompaniesServer {
                 "tree_weighted": weighted_output,
                 "tree_warning": tree_warning,
                 "axes": {
-                    "axis1": {"name": matrix.axis1.name, "fibo": matrix.axis1.fibo_concept, "baseline": matrix.axis1.baseline},
-                    "axis2": {"name": matrix.axis2.name, "fibo": matrix.axis2.fibo_concept, "baseline": matrix.axis2.baseline},
+                    "axis1": {"name": matrix.axis1.name, "metric": matrix.axis1.metric, "baseline": matrix.axis1.baseline},
+                    "axis2": {"name": matrix.axis2.name, "metric": matrix.axis2.metric, "baseline": matrix.axis2.baseline},
                 },
                 "scenarios": scenario_output,
                 "summary": {
@@ -995,14 +985,6 @@ impl CompaniesServer {
                     "upside_pct": summary.upside_pct,
                     "downside_pct": summary.downside_pct,
                     "range_spread_pct": summary.range_spread_pct,
-                },
-                "fibo": {
-                    "discount_rate": fibo::DISCOUNT_RATE,
-                    "terminal_growth_rate": fibo::TERMINAL_GROWTH_RATE,
-                    "enterprise_value": fibo::ENTERPRISE_VALUE,
-                    "intrinsic_value_per_share": fibo::INTRINSIC_VALUE_PER_SHARE,
-                    "margin_of_safety": fibo::MARGIN_OF_SAFETY,
-                    "scenario_probability": fibo::SCENARIO_PROBABILITY,
                 },
                 "data_quality": {
                     "overall_confidence": signal_quality.overall_confidence,

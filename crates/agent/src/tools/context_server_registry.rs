@@ -21,6 +21,64 @@ pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
     format!("mcp:{}:{}", server_id, tool_name)
 }
 
+// ── zed-kask: governed-runtime tool source (single spawn authority, I1) ────
+
+/// A kask MCP server tool descriptor, surfaced from the governed
+/// `McpRuntime` into the agent's tool list.
+pub struct KaskToolDescriptor {
+    pub server_id: String,
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Source for kask built-in MCP server tools — wired in `main.rs` to the
+/// governed `McpRuntime`. Kask servers are NOT registered with zed's
+/// per-project `ContextServerStore` (the single-spawn-authority invariant,
+/// 2026-08-29): their processes are owned exclusively by the runtime, their
+/// env composed exclusively by `build_mcp_server_env`, and their tools
+/// surface to the agent through this source. Dispatch through `invoke` is
+/// metered by the runtime's governance — the agent-side
+/// `record_mcp_tool_outcome` wrapper is intentionally absent from
+/// `KaskServerTool` to avoid double-recording.
+pub trait KaskToolSource: Send + Sync {
+    /// The current tool surface: one descriptor per tool across all
+    /// registered kask servers. Cache-backed and synchronous — the impl
+    /// owns the async refresh.
+    fn tools(&self) -> Vec<KaskToolDescriptor>;
+    /// Dispatch a tool call to the governed runtime. `Ok(value)` is the
+    /// parsed tool result; `Err(text)` is the operator-facing error text
+    /// (kask errors carry the typed kind as a `[kind] message` prefix).
+    fn invoke(
+        &self,
+        server_id: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    >;
+}
+
+static KASK_TOOL_SOURCE: std::sync::Mutex<Option<Arc<dyn KaskToolSource>>> =
+    std::sync::Mutex::new(None);
+
+/// Wire the governed `McpRuntime` as the agent's kask tool source. Called
+/// once from `main.rs` after the runtime is created.
+pub fn set_kask_tool_source(source: Arc<dyn KaskToolSource>) {
+    *KASK_TOOL_SOURCE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(source);
+}
+
+/// The wired kask tool source, if any (absent in tests and lightweight
+/// embedders — kask tools then simply do not surface).
+pub fn kask_tool_source() -> Option<Arc<dyn KaskToolSource>> {
+    KASK_TOOL_SOURCE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
 pub struct ContextServerPrompt {
     pub server_id: ContextServerId,
     pub prompt: context_server::types::Prompt,
@@ -58,7 +116,46 @@ impl ContextServerRegistry {
             this.reload_tools_for_server(server.id(), cx);
             this.reload_prompts_for_server(server.id(), cx);
         }
+        // zed-kask: kask tools surface from the governed runtime, not the
+        // per-project store (single spawn authority, I1).
+        this.reload_kask_tools(cx);
         this
+    }
+
+    /// Merge the kask tool surface (from the process-global
+    /// [`KaskToolSource`], wired to the governed `McpRuntime` in `main.rs`)
+    /// into the registry under each tool's server id. Cache-backed and
+    /// synchronous, so it is cheap enough to re-run on every store event —
+    /// the opportunistic refresh catches kask servers that registered after
+    /// this registry was created.
+    fn reload_kask_tools(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = kask_tool_source() else {
+            return;
+        };
+        let mut by_server: HashMap<String, BTreeMap<SharedString, Arc<dyn AnyAgentTool>>> =
+            HashMap::default();
+        for descriptor in source.tools() {
+            let server_id = descriptor.server_id.clone();
+            let name: SharedString = descriptor.name.clone().into();
+            let tool: Arc<dyn AnyAgentTool> = Arc::new(KaskServerTool {
+                source: source.clone(),
+                descriptor,
+            });
+            by_server.entry(server_id).or_default().insert(name, tool);
+        }
+        for (server_id, tools) in by_server {
+            self.registered_servers.insert(
+                ContextServerId(std::sync::Arc::from(server_id.as_str())),
+                RegisteredContextServer {
+                    tools,
+                    prompts: BTreeMap::default(),
+                    load_tools: Task::ready(Ok(())),
+                    load_prompts: Task::ready(Ok(())),
+                    _tools_updated_subscription: None,
+                },
+            );
+        }
+        cx.emit(ContextServerRegistryEvent::ToolsChanged);
     }
 
     pub fn tools_for_server(
@@ -278,6 +375,12 @@ impl ContextServerRegistry {
                 cx.notify();
             }
         };
+        // zed-kask: opportunistic kask-tool refresh. The governed runtime
+        // registers kask tools asynchronously (deferred launch, restarts,
+        // reconnects) with no store event to observe — re-reading the cache
+        // here catches late registrations, and re-inserts kask entries if a
+        // store event for a colliding raw settings id wrongly removed them.
+        self.reload_kask_tools(cx);
     }
 }
 
@@ -285,6 +388,120 @@ struct ContextServerTool {
     store: Entity<ContextServerStore>,
     server_id: ContextServerId,
     tool: context_server::types::Tool,
+}
+
+/// A kask built-in MCP server tool, dispatched through the governed
+/// `McpRuntime` via the process-global [`KaskToolSource`] — not through the
+/// per-project `ContextServerStore`. Same `AnyAgentTool` surface as
+/// `ContextServerTool` so the agent's tool list assembly is unchanged; the
+/// self-healing loop is absent because the runtime owns reconnection
+/// (keeper reaping, on-demand reconnect, health supervisor, circuit
+/// breaker), and outcome recording is absent because the runtime's
+/// governance meters every `invoke`.
+struct KaskServerTool {
+    source: Arc<dyn KaskToolSource>,
+    descriptor: KaskToolDescriptor,
+}
+
+impl AnyAgentTool for KaskServerTool {
+    fn name(&self) -> SharedString {
+        self.descriptor.name.clone().into()
+    }
+
+    fn description(&self) -> SharedString {
+        self.descriptor.description.clone().into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
+        format_mcp_initial_title(&self.descriptor.name, &input).into()
+    }
+
+    fn input_schema(
+        &self,
+        format: language_model::LanguageModelToolSchemaFormat,
+    ) -> Result<serde_json::Value> {
+        let mut schema = self.descriptor.input_schema.clone();
+        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
+        Ok(match schema {
+            serde_json::Value::Null => {
+                serde_json::json!({ "type": "object", "properties": [] })
+            }
+            serde_json::Value::Object(map) if map.is_empty() => {
+                serde_json::json!({ "type": "object", "properties": [] })
+            }
+            _ => schema,
+        })
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<serde_json::Value>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
+        let tool_id = mcp_tool_id(&self.descriptor.server_id, &self.descriptor.name);
+        let display_name = self.descriptor.name.clone();
+        let initial_title = self.initial_title(serde_json::Value::Null, cx);
+        let authorize =
+            event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
+        let server_id = self.descriptor.server_id.clone();
+        let tool_name = self.descriptor.name.clone();
+        let source = self.source.clone();
+        cx.spawn(async move |_| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            authorize
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            match source.invoke(&server_id, &tool_name, input).await {
+                Ok(value) => {
+                    let text = match &value {
+                        serde_json::Value::String(string) => string.clone(),
+                        value => value.to_string(),
+                    };
+                    // Structural display hints (T-V2) — same as the store
+                    // path: fenced media blocks render deterministically.
+                    let mut tool_call_content = Vec::new();
+                    for hint in hkask_types::tool_response::display_hints_from_output_text(&text) {
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(hint)),
+                        )));
+                    }
+                    if !tool_call_content.is_empty() {
+                        event_stream.update_fields(
+                            acp::ToolCallUpdateFields::new().content(tool_call_content),
+                        );
+                    }
+                    Ok(AgentToolOutput {
+                        raw_output: value,
+                        llm_output: vec![LanguageModelToolResultContent::Text(text.into())],
+                    })
+                }
+                Err(error_text) => Err(AgentToolOutput {
+                    raw_output: serde_json::Value::String(error_text.clone()),
+                    llm_output: vec![LanguageModelToolResultContent::Text(error_text.into())],
+                }),
+            }
+        })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Map a completed `ContextServerTool` run to the regulation outcome tuple

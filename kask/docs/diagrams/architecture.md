@@ -290,7 +290,7 @@ graph TD
         dc_bibo["dc_bibo.rs<br/>DC + BIBO + CiTO"]
         pko["pko.rs<br/>PKO"]
         fibo["fibo.rs<br/>FIBO"]
-        eso["eso.rs<br/>ESO"]
+        sepio["sepio.rs<br/>SEPIO"]
         golem["golem.rs<br/>GOLEM"]
         ml_schema["ml_schema.rs<br/>ML-Schema"]
         omc["omc.rs<br/>OMC"]
@@ -349,7 +349,7 @@ status: VERIFIED
 `select_ontology_anchor` matches the domain hint by keyword token (exact,
 prefix, or `_`/space-delimited token — no substring false positives) and
 returns either a `DualAxis` anchor (DC+BIBO or PKO) or a `DomainSupplement`
-anchor (SDMX, FIBO, ESO, GOLEM, ML-Schema). Unknown domains fall back to
+anchor (SDMX, FIBO, SEPIO, GOLEM, ML-Schema). Unknown domains fall back to
 SUMO, the universal upper ontology.
 
 **Corrections (2026-08-28):** SDMX is a new anchor (statistical data — FRED,
@@ -364,7 +364,7 @@ flowchart LR
     domain --> select
     select -->|"economic / fred / dbnomics /<br/>worldbank / indicator / timeseries"| sdmx_anchor["SDMX + DC dataset"]
     select -->|"finance / company / portfolio /<br/>forecast / prediction-markets"| fibo_anchor["FIBO + DC dataset"]
-    select -->|"science / research /<br/>hypothesis / evidence"| eso_anchor["ESO + DC text"]
+    select -->|"science / research /<br/>hypothesis / evidence"| sepio_anchor["SEPIO + DC text"]
     select -->|"narrative / literature /<br/>persona / corpus"| golem_anchor["GOLEM + DC text"]
     select -->|"training / ml / adapter /<br/>sweep / lora"| ml_anchor["ML-Schema + DC dataset"]
     select -->|"kanban / task / skill /<br/>curator / kata / condenser"| pko_anchor["PKO dual-axis procedure"]
@@ -375,7 +375,7 @@ flowchart LR
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-002
 verified_date: 2026-08-28
-verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L210-340, matches_kw token matching L213-221, SDMX branch, FIBO branch, ESO branch, GOLEM branch, ML-Schema branch, PKO DualAxis branch, DC+BIBO DualAxis branch, SUMO universal fallback)
+verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L210-340, matches_kw token matching L213-221, SDMX branch, FIBO branch, SEPIO branch, GOLEM branch, ML-Schema branch, PKO DualAxis branch, DC+BIBO DualAxis branch, SUMO universal fallback)
 status: VERIFIED
 -->
 

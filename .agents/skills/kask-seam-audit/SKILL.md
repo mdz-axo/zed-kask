@@ -30,8 +30,6 @@ methodology instructs.
 
 - **PKO** — the engagement is a Procedure (spec/execution split); Steps map
   to `pko:Step` with `pko:StepVerification` (the `lisp_eval` tool gates).
-- **ESO** — each finding is an Event with pre/post situations; the
-  divergence-surface membership check is the Situation boundary.
 - **OWASP LLM Top-10 (2025) / MITRE ATLAS v5.1 / NIST SSDF SP 800-218A** —
   the security-track ontology.
 - **de la Torre (2025, arXiv:2506.10021)** — symbolic-neural scaffolding via

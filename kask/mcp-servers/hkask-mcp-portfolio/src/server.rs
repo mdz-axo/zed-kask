@@ -49,18 +49,26 @@ where
         .map_err(map_portfolio_error)
 }
 
-/// Map a tool name to its FIBO ontology concept URI. The concept is used both
+/// Map a tool name to its ontology concept URI. The concept is used both
 /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and as
 /// the `"ontology"` field in the tool output JSON. The portfolio widget reads
 /// this field to drive its "Explain" affordance (the "I" pattern).
+///
+/// Anchoring policy (operator decision 2026-08-29): tools whose concept
+/// FIBO actually publishes anchor on the verified FIBO URI; tools with no
+/// FIBO equivalent anchor on Dublin Core — FIBO publishes no
+/// time-weighted-return or transaction-ledger terms (verified against the
+/// FIBO master ontology 2026-08-29), so returns analysis anchors on
+/// `bibo:Report` and ledger data on `dcmitype:Dataset`.
 fn ontology_anchor(tool: &str) -> Option<&'static str> {
+    use hkask_bridge_ontology::dc_bibo;
     use hkask_bridge_ontology::fibo;
     match tool {
         "portfolio_snapshot" => Some(fibo::PORTFOLIO),
-        "portfolio_returns" => Some(fibo::TIME_WEIGHTED_RETURN),
+        "portfolio_returns" => Some(dc_bibo::REPORT),
         "portfolio_create" | "portfolio_delete" | "portfolio_list" => Some(fibo::PORTFOLIO),
         "ledger_apply" | "ledger_read" | "ledger_import" | "ledger_export" => {
-            Some(fibo::TRANSACTION_LEDGER)
+            Some(dc_bibo::DATASET)
         }
         "portfolio_seed_price"
         | "portfolio_roll"

@@ -34,9 +34,12 @@
 //! - `ResearchClaimClassifier` — category tagging, numeric extraction, ticker detection
 //! - Treasury stock adjustment — hKask non-standard: TS treated as committed capital
 //!
-//! ## FIBO anchoring
-//! Balance sheet items under `fibo-fbc-pas-fpas`, ratios under `fibo-fbc-fct-ra`,
-//! securities under `fibo-sec-sec-ast`, indices under `fibo-ind-ind-ind`.
+//! ## Ontology anchoring
+//! Verified FIBO terms (fixture-pinned in `hkask-bridge-ontology`) where FIBO
+//! publishes the concept; internal metric identifiers (plain hKask keys, no
+//! external standard claimed) for ratios and line items FIBO does not
+//! publish; Dublin Core fallbacks for analysis-family tool anchors. See
+//! `fibo.rs` in this server and the bridge crate's `fibo` module.
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

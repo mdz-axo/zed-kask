@@ -463,6 +463,20 @@ impl McpRuntime {
             .collect()
     }
 
+    /// The registered tool surface: `(server_id, tools)` for every server
+    /// that completed launch and tool discovery. Read-only snapshot for tool
+    /// listing — the agent-path `KaskToolSource` reads this so kask tools can
+    /// surface in the agent's tool list without the per-project
+    /// `ContextServerStore` (single-spawn-authority invariant I1).
+    pub async fn registered_servers(&self) -> Vec<(String, Vec<McpTool>)> {
+        self.servers
+            .read()
+            .await
+            .values()
+            .map(|server| (server.id.clone(), server.tools.clone()))
+            .collect()
+    }
+
     /// Register an MCP server (metadata only, no live connection).
     pub async fn register_server(&self, server: McpServer) {
         let mut servers = self.servers.write().await;

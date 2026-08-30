@@ -14,9 +14,17 @@
 //! not add a term that is not in that fixture.
 //!
 //! Reference: https://github.com/monarch-initiative/SEPIO-ontology
-//! (OWL release 2023-06-13; the README notes the OWL lags the newer linkML
-//! information model — re-verify against the linkML models before relying
-//! on terms beyond this list).
+//! (OWL release 2023-06-13). NOTE: the SEPIO project's *current*
+//! information model is the linkML specification at
+//! https://github.com/sepio-framework/sepio-linkml
+//! (https://w3id.org/sepio-model) — a re-conceptualization that does not
+//! use the OBO `SEPIO_nnnnnnn` CURIEs (it models evidence via
+//! `Statement.hasEvidence`, `EvidenceLine.directionOfEvidenceProvided`,
+//! `specifiedBy`, etc.). This module anchors on the OWL release because
+//! its OBO CURIEs are the published ontological terms; migrating to the
+//! linkML attribute names is an open ontology-selection choice for the
+//! operator. Re-verify against the linkML model before adding terms
+//! beyond this list.
 //!
 //! This module replaces the former fabricated "Epistemic Science Ontology"
 //! (`eso:`), which never existed as a published vocabulary. Only former ESO

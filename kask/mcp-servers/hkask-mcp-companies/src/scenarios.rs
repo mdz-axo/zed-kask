@@ -6,7 +6,7 @@
 //!
 //! Reference: Schwartz, "The Art of the Long View"
 
-use crate::fibo::{GROSS_PROFIT_MARGIN, REVENUE_GROWTH_RATE};
+use crate::fibo::{METRIC_GROSS_PROFIT_MARGIN, METRIC_REVENUE_GROWTH_RATE};
 use crate::financial_model::{self, HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
 
 // ── 2x2 Matrix ────────────────────────────────────────────────────────────
@@ -27,8 +27,9 @@ pub struct Scenario {
 pub(crate) struct ScenarioAxis {
     /// Human-readable name.
     pub name: &'static str,
-    /// FIBO concept (for ontology anchoring).
-    pub fibo_concept: &'static str,
+    /// Internal metric identifier for the axis driver (hKask canonical
+    /// metric name — not an ontology URI).
+    pub metric: &'static str,
     /// Baseline value pulled from company fundamentals.
     pub baseline: f64,
     /// "High" end of the range (multiplier applied to baseline).
@@ -50,14 +51,14 @@ impl ScenarioMatrix {
     pub fn growth_x_margin(hist_revenue_growth: f64, gross_margin: f64) -> Self {
         let axis1 = ScenarioAxis {
             name: "Revenue Growth",
-            fibo_concept: REVENUE_GROWTH_RATE,
+            metric: METRIC_REVENUE_GROWTH_RATE,
             baseline: hist_revenue_growth,
             high_multiplier: 1.5,
             low_multiplier: 0.5,
         };
         let axis2 = ScenarioAxis {
             name: "Gross Margin",
-            fibo_concept: GROSS_PROFIT_MARGIN,
+            metric: METRIC_GROSS_PROFIT_MARGIN,
             baseline: gross_margin,
             high_multiplier: 1.2,
             low_multiplier: 0.8,

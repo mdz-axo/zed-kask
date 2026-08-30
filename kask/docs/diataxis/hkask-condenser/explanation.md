@@ -93,7 +93,7 @@ The cycle steps, in order:
 The engine calls `select_ontology_anchor` (`axis.rs:210`) on the tool
 name (`engine.rs:60`) to get an `OntologyAnchor` (`axis.rs:126`). This
 anchor connects compression to the dual-axis ontology (PKO + DC+BIBO)
-plus domain supplements (FIBO, ESO, GOLEM, ML-Schema, SDMX, SUMO). The
+plus domain supplements (FIBO, SEPIO, GOLEM, ML-Schema, SDMX, SUMO). The
 anchor provides the keywords that `domain_saliency`
 (`algorithms.rs:224`) uses to score lines.
 

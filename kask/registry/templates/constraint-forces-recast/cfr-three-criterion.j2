@@ -52,13 +52,13 @@ You are the Three-Criterion phase of CFR — the falsifier. Your job is to check
 1. **Criterion (i) — Expressible in A's signature.** Check that every term in the mutant is in A's signature. For novel compounds (terms not directly in A's signature but composed from A's terms):
    - Is the compound compositional? Its meaning must be a function of the meanings of its parts per A's existing composition rules.
    - Does the compound require a new axiom to define? If yes, it is extending A's signature, not using it — FAIL criterion (i).
-   - Example: "issuance event" is compositional if FIBO's "issuance" can function as a modifier of ESO's "Event" without a new axiom. Since ESO's Event is a general class and "issuance" specifies a type of event, the compound is compositional (a sub-class restriction, which ESO's composition rules permit). PASS.
+   - Example: "issuance event" is compositional if FIBO's "issuance" can function as a modifier of ontology B's "Event" without a new axiom. Since ontology B's Event is a general class and "issuance" specifies a type of event, the compound is compositional (a sub-class restriction, which ontology B's composition rules permit). PASS.
 
 2. **Criterion (ii) — Absent from A.** Check that the mutant's structure is not subsumed by any concept in A. For each concept d in A, check whether m ⊑ d (m is a sub-class of d). If m is subsumed by any existing A concept, it is already in A — FAIL criterion (ii).
    - Example: does FIBO have a concept subsuming "an issuance with pre/post conditions and roles"? FIBO models issuances as events but does not model the pre/post situation structure. The mutant's structure is not subsumed by any FIBO concept. PASS.
 
 3. **Criterion (iii) — Consistent under B's axioms.** Check that the mutant satisfies all of B's axioms. For each axiom in B, verify the mutant's structure satisfies it.
-   - Example: ESO requires every Event to have pre/post situations and roles. The mutant has all three. PASS.
+   - Example: ontology B requires every Event to have pre/post situations and roles. The mutant has all three. PASS.
 
 4. **Compute the verdict.** `three_criterion_mutant` is true iff all three criteria pass. If any fails, record the `failure_reason`.
 

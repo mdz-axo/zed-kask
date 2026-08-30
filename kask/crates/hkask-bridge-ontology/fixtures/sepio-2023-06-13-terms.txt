@@ -10,6 +10,12 @@
 # Fetched: 2026-08-29 (transcribed from the fetched sepio.owl; each line is
 #   the OBO CURIE followed by the rdfs:label of the term).
 #
+# NOTE: the current SEPIO information model is the linkML spec at
+#   https://github.com/sepio-framework/sepio-linkml (w3id.org/sepio-model),
+#   which does not use these OBO CURIEs. The OWL release remains the
+#   published ontological artifact these terms are verified against;
+#   verified 2026-08-29 that the OWL is still served at the URL above.
+#
 # Terms used by the hKask bridge (object properties relevant to
 # assertion-extraction predicates):
 SEPIO:0000030	asserts_proposition

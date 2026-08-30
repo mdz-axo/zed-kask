@@ -107,7 +107,7 @@ The engine derives the anchor by calling `select_ontology_anchor`
 (`kask/crates/hkask-bridge-ontology/src/axis.rs:210`) on the tool name
 inside `compress` (`engine.rs:60`) — there is no separate wrapper
 function. It maps a tool name to an `OntologyAnchor` (`axis.rs:126`) —
-`Core`, `DualAxis` (PKO/DC+BIBO), or `DomainSupplement` (FIBO, ESO,
+`Core`, `DualAxis` (PKO/DC+BIBO), or `DomainSupplement` (FIBO, SEPIO,
 GOLEM, ML-Schema, SDMX, SUMO). You do not set the anchor directly; you
 influence it by naming tools with a domain-signaling prefix
 (`company_fundamentals`, `generate_image`, `training_run`). The keyword

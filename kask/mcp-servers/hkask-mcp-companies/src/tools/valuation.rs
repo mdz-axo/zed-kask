@@ -213,15 +213,6 @@ impl CompaniesServer {
                 "peer_source": peer_source,
                 "dcf_overlay": dcf_overlay,
                 "comparison": comparison,
-                "fibo": {
-                    "comparable_analysis": fibo::COMPARABLE_COMPANY_ANALYSIS,
-                    "pe_ratio": fibo::PRICE_EARNINGS_RATIO,
-                    "price_to_book": fibo::PRICE_TO_BOOK_RATIO,
-                    "price_to_sales": fibo::PRICE_TO_SALES_RATIO,
-                    "ev_to_ebitda": fibo::ENTERPRISE_VALUE_MULTIPLE,
-                    "dividend_yield": fibo::DIVIDEND_YIELD,
-                    "revenue_growth": fibo::REVENUE_GROWTH_RATE,
-                },
                 "framework": "Comparable company analysis. Valuation multiples (P/E, P/B, P/S) from peer companies alongside DCF intrinsic value. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation. Auto-peer discovery: CFA Institute (Knudsen et al. 2017) SARD approach, Damodaran (NYU Stern) growth/risk/return matching, IB best practices (5–12 peers).",
             });
 
@@ -445,19 +436,15 @@ impl CompaniesServer {
                     "intrinsic_low": r.intrinsic_low,
                     "intrinsic_high": r.intrinsic_high,
                     "delta_pct": r.delta_pct,
-                    "fibo": r.fibo_concept,
+                    "metric": r.metric,
                 })
             }).collect();
 
-            let mut fibo_map = serde_json::Map::new();
-            fibo_map.insert(
-                "sensitivity_analysis".to_string(),
-                serde_json::Value::String(fibo::SENSITIVITY_ANALYSIS.to_string()),
-            );
+            let mut metric_map = serde_json::Map::new();
             for r in &sensitivity_results {
-                fibo_map.insert(
+                metric_map.insert(
                     r.driver.clone(),
-                    serde_json::Value::String(r.fibo_concept.to_string()),
+                    serde_json::Value::String(r.metric.to_string()),
                 );
             }
 
@@ -467,7 +454,7 @@ impl CompaniesServer {
                 "current_price": current_price,
                 "range_pct": req.range_pct,
                 "drivers": drivers,
-                "fibo": fibo_map,
+                "metric": metric_map,
                 "framework": "Tornado chart sensitivity analysis. Varies each DCF driver by +/- range_pct while holding others constant. Drivers ranked by impact on intrinsic value per share. Identifies which assumptions most affect the valuation.",
             });
 
@@ -923,10 +910,6 @@ impl CompaniesServer {
                     "3. scenario_impact_valuation (this tool) → probability-weighted DCF",
                     "4. Compare probability_weighted_intrinsic vs base_intrinsic vs current_price",
                 ],
-                "fibo": {
-                    "scenario_probability": fibo::SCENARIO_PROBABILITY,
-                    "intrinsic_value": fibo::INTRINSIC_VALUE_PER_SHARE,
-                },
                 "framework": "Scenario impact valuation. Exogenous scenario events drive the company's financial forecast via per-node additive deltas on DCF assumptions. Enumerates all 2^N leaf paths through the event tree, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF under each modified assumption set, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity, and intrinsic value distribution.",
             });
 

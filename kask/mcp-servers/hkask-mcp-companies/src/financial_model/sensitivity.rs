@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use super::{HistoricalSnapshot, ProjectionAssumptions, project_model};
 use crate::fibo::{
-    CAPITAL_EXPENDITURE, DEPRECIATION_AND_AMORTIZATION, DISCOUNT_RATE, GROSS_PROFIT_MARGIN,
-    NET_WORKING_CAPITAL, REVENUE_GROWTH_RATE,
+    METRIC_CAPITAL_EXPENDITURE, METRIC_DEPRECIATION_AND_AMORTIZATION, METRIC_DISCOUNT_RATE,
+    METRIC_GROSS_PROFIT_MARGIN, METRIC_NET_WORKING_CAPITAL, METRIC_REVENUE_GROWTH_RATE,
 };
 
 /// Result of varying one assumption and measuring intrinsic value delta.
@@ -48,42 +48,42 @@ pub(crate) fn sensitivity_analysis(
             "Revenue Growth",
             &|a| a.revenue_growth,
             &|a, v| a.revenue_growth = v.clamp(-0.50, 1.00),
-            REVENUE_GROWTH_RATE,
+            METRIC_REVENUE_GROWTH_RATE,
         ),
         (
             "gross_margin",
             "Gross Margin",
             &|a| a.gross_margin,
             &|a, v| a.gross_margin = v.clamp(0.05, 0.95),
-            GROSS_PROFIT_MARGIN,
+            METRIC_GROSS_PROFIT_MARGIN,
         ),
         (
             "da_to_revenue",
             "D&A / Revenue",
             &|a| a.da_to_revenue,
             &|a, v| a.da_to_revenue = v.clamp(0.0, 0.20),
-            DEPRECIATION_AND_AMORTIZATION,
+            METRIC_DEPRECIATION_AND_AMORTIZATION,
         ),
         (
             "capex_to_revenue",
             "Capex / Revenue",
             &|a| a.capex_to_revenue,
             &|a, v| a.capex_to_revenue = v.clamp(0.0, 0.30),
-            CAPITAL_EXPENDITURE,
+            METRIC_CAPITAL_EXPENDITURE,
         ),
         (
             "nwc_to_revenue",
             "NWC / Revenue",
             &|a| a.nwc_to_revenue,
             &|a, v| a.nwc_to_revenue = v.clamp(-0.20, 0.50),
-            NET_WORKING_CAPITAL,
+            METRIC_NET_WORKING_CAPITAL,
         ),
         (
             "discount_rate",
             "Discount Rate",
             &|a| a.discount_rate,
             &|a, v| a.discount_rate = v.clamp((a.terminal_growth + 0.0001).max(0.05), 0.30),
-            DISCOUNT_RATE,
+            METRIC_DISCOUNT_RATE,
         ),
     ];
 

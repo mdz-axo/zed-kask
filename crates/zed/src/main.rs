@@ -928,6 +928,46 @@ fn main() {
             ));
         }
 
+        // zed-kask: single spawn authority (I1, 2026-08-29). The governed
+        // McpRuntime is the agent's kask tool source: kask servers are no
+        // longer registered with the per-project ContextServerStore (that
+        // path spawned per-project instances with settings-entry env — the
+        // keyless-server defect). Tools surface via this source and dispatch
+        // through the runtime, metered by `with_governance` above.
+        {
+            let source = std::sync::Arc::new(ZedKaskToolSource {
+                runtime: mcp_runtime.clone(),
+                cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
+            });
+            // Background refresh: the runtime registers tools
+            // asynchronously (deferred launch, restarts, reconnects) with no
+            // event the agent could observe — poll the registered surface so
+            // the cache stays current without per-site wiring.
+            let cache = source.cache.clone();
+            let runtime = source.runtime.clone();
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            tokio_handle.spawn(async move {
+                loop {
+                    let descriptors = runtime
+                        .registered_servers()
+                        .await
+                        .into_iter()
+                        .flat_map(|(server_id, tools)| {
+                            tools.into_iter().map(move |tool| agent::KaskToolDescriptor {
+                                server_id: server_id.clone(),
+                                name: tool.name,
+                                description: tool.description,
+                                input_schema: tool.input_schema,
+                            })
+                        })
+                        .collect();
+                    *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = descriptors;
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            agent::set_kask_tool_source(source);
+        }
+
         // zed-kask: D3/D8 — F6: CyberneticsLoop + MetacognitionLoop tick cycles.
         // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
         // the GPUI-global tokio runtime (registered above via
@@ -3085,48 +3125,31 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     // observable in Zed-Kask.log — paired with the watcher-reload line in
     // settings_store.rs, one settings change pins whether the observer fires.
     log::info!("Kask MCP sync fired (startup call or settings change)");
-    let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+    // zed-kask: single spawn authority (I1, 2026-08-29). Kask built-in
+    // servers are NOT registered with zed's per-project ContextServerStore:
+    // that path spawned per-project instances whose env came from settings
+    // entries — the keyless-server defect. The governed McpRuntime owns
+    // every kask server process; the agent's tools surface via
+    // `agent::set_kask_tool_source`. This function now only (a)
+    // defensively unregisters any stale kask descriptors (e.g. registered by
+    // an older build) and (b) removes raw `context_servers` entries for kask
+    // IDs — the namespace guard: a raw entry would still spawn a keyless
+    // instance through the generic store path.
     let registry =
         project::context_server_store::registry::ContextServerDescriptorRegistry::default_global(
             cx,
         );
     registry.update(cx, |registry, cx| {
         for server in kask_bridge::BUILT_IN_MCP_SERVERS {
-            let enabled = settings.mcp.load_default
-                && *settings.mcp.overrides.get(server.id).unwrap_or(&true);
-            let id: std::sync::Arc<str> = std::sync::Arc::from(server.id);
-            let already_registered = registry.context_server_descriptor(server.id).is_some();
-            if enabled && !already_registered {
-                registry.register_context_server_descriptor(
-                    id,
-                    std::sync::Arc::new(KaskMcpDescriptor {
-                        id: server.id,
-                        binary: server.binary,
-                    })
-                        as std::sync::Arc<
-                            dyn project::context_server_store::registry::ContextServerDescriptor,
-                        >,
-                    cx,
-                );
-                log::info!(
-                    "Registered kask MCP server '{}' as zed context server",
-                    server.id
-                );
-            } else if !enabled && already_registered {
+            if registry.context_server_descriptor(server.id).is_some() {
                 registry.unregister_context_server_descriptor_by_id(server.id, cx);
                 log::info!(
-                    "Unregistered kask MCP server '{}' from zed context servers",
+                    "Unregistered stale kask MCP server '{}' from zed context servers",
                     server.id
                 );
+                cx.notify();
             }
         }
-        // Always notify so the ContextServerStore re-runs maintain_servers.
-        // This is needed because the KaskMcpDescriptor::command() resolves env
-        // vars (credentials, inference socket) at call time — if the socket
-        // wasn't available when maintain_servers last ran, the running server
-        // processes have stale env. Notifying forces maintain_servers to
-        // re-evaluate and restart servers whose configuration changed.
-        cx.notify();
     });
 
     // zed-kask: raw `context_servers` entries for built-in kask server IDs
@@ -3170,10 +3193,47 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 /// this and `KaskMcpDescriptor::command` now go through `build_mcp_server_env`,
 /// so the per-project `ContextServerStore` path and the governed `McpRuntime`
 /// path can no longer drift apart.
-async fn kask_server_env(
-    server_id: &str,
-    cx: &mut gpui::AsyncApp,
-) -> hkask_types::ServerEnv {
+/// The agent's kask tool source: the governed `McpRuntime` behind a
+/// synchronous cache. `tools()` is sync (the agent registry reads it on the
+/// foreground); a background tokio task refreshes the cache from the
+/// runtime's registered surface. Dispatch goes through the runtime's
+/// governed `invoke` — metered, self-healing, circuit-broken.
+struct ZedKaskToolSource {
+    runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    cache: std::sync::Arc<std::sync::RwLock<Vec<agent::KaskToolDescriptor>>>,
+}
+
+impl agent::KaskToolSource for ZedKaskToolSource {
+    fn tools(&self) -> Vec<agent::KaskToolDescriptor> {
+        self.cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn invoke(
+        &self,
+        server_id: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    > {
+        let runtime = self.runtime.clone();
+        let server_id = server_id.to_string();
+        let tool = tool.to_string();
+        Box::pin(async move {
+            // A stable agent identity so the reliability domain aggregates
+            // agent-path calls (the runtime meters every invoke).
+            let agent_id = hkask_types::WebID::for_agent_name("zed-agent");
+            hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+async fn kask_server_env(server_id: &str, cx: &mut gpui::AsyncApp) -> hkask_types::ServerEnv {
     let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
     kask_bridge::build_mcp_server_env(
