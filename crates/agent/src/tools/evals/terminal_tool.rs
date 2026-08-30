@@ -231,6 +231,7 @@ impl TerminalToolTest {
                 sandboxing: false,
                 is_linux: cfg!(target_os = "linux"),
                 is_windows: cfg!(target_os = "windows"),
+                mcp_tools_hidden: 0,
             };
             template.render(&Templates::new())?
         };

@@ -138,8 +138,11 @@ Full list: `kask/crates/hkask-bridge-ontology/src/fibo.rs`
 
 ### `sepio` — SEPIO (scientific evidence and provenance domain)
 
-Canonical predicate URIs for epistemic and evidential reasoning, from the
+Canonical URIs for epistemic and evidential reasoning, from the
 Monarch Initiative's SEPIO (namespace `http://purl.obolibrary.org/obo/SEPIO_`):
+`ASSERTION` (`SEPIO:0000001` — the state-axis type for extracted assertion
+h_mems), `OBJECTIVE_SPECIFICATION` (`IAO:0000005` — IAO reuse, defined in
+the SEPIO OWL; the anchor for target conditions / goals),
 `ASSERTS_PROPOSITION` (`SEPIO:0000030`), `WAS_SPECIFIED_BY` (`SEPIO:0000041`),
 `HAS_DISPUTING_EVIDENCE_LINE` (`SEPIO:0000008`), `CONTRADICTS` (`SEPIO:0000101`),
 `HAS_CONFIDENCE_LEVEL` (`SEPIO:0000167`), `HAS_EVIDENCE` (`SEPIO:0000189`),

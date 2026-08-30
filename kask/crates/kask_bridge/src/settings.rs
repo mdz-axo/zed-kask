@@ -627,6 +627,17 @@ pub struct KaskToolRouterSettings {
     /// Minimum word count for a message to be considered "complex" enough to
     /// trigger routing.
     pub complex_word_threshold: usize,
+
+    /// zed-kask: D44 — master switch for the router. `false` unwires it
+    /// entirely: every turn gets the full MCP tool surface (fail-open
+    /// behavior, no per-turn pruning). Exists because the router's per-turn
+    /// pruning hides tools from the model's view, and an operator who wants
+    /// the model to always see every registered tool had no way to turn it
+    /// off — `set_tool_router` was wired unconditionally. Re-wired live on
+    /// settings changes (post-D41 the SettingsStore observers fire on
+    /// external edits). Pinned by `tool_router_disabled_flows_through_content`
+    /// and `tool_router_enabled_defaults_true`.
+    pub enabled: bool,
 }
 
 impl Default for KaskToolRouterSettings {
@@ -634,6 +645,7 @@ impl Default for KaskToolRouterSettings {
         Self {
             threshold: 0.30,
             complex_word_threshold: 6,
+            enabled: true,
         }
     }
 }
@@ -646,6 +658,7 @@ impl From<KaskToolRouterSettingsContent> for KaskToolRouterSettings {
             complex_word_threshold: c
                 .complex_word_threshold
                 .unwrap_or(default.complex_word_threshold),
+            enabled: c.enabled.unwrap_or(default.enabled),
         }
     }
 }
@@ -1001,6 +1014,41 @@ mod tests {
         assert!(
             (default.threshold - 0.30).abs() < f64::EPSILON,
             "score threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
+        );
+    }
+
+    // zed-kask: D44 — the router's master switch. Default is ON (the
+    // router's token economics are the reason it exists); `Some(false)` in
+    // the settings content must flow through `From` so the operator can
+    // unwire the router entirely (full MCP surface every turn) without a
+    // code change. `None` must fall back to the default, per the
+    // "defaults live in Default impls" rule.
+    #[test]
+    fn tool_router_enabled_defaults_true_and_flows_through_content() {
+        assert!(
+            KaskToolRouterSettings::default().enabled,
+            "the router defaults to ON — flipping this default changes every \
+             operator's tool surface silently"
+        );
+        let disabled = KaskToolRouterSettings::from(KaskToolRouterSettingsContent {
+            threshold: None,
+            complex_word_threshold: None,
+            enabled: Some(false),
+        });
+        assert!(
+            !disabled.enabled,
+            "kask.tool_router.enabled = false must reach the resolved settings — \
+             a lost Some(false) here would silently keep pruning tools after the \
+             operator turned the router off"
+        );
+        let unset = KaskToolRouterSettings::from(KaskToolRouterSettingsContent {
+            threshold: None,
+            complex_word_threshold: None,
+            enabled: None,
+        });
+        assert!(
+            unset.enabled,
+            "an absent enabled field must fall back to the Default (ON), not to OFF"
         );
     }
 

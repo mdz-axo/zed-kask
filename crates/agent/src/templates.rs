@@ -62,6 +62,17 @@ pub struct SystemPromptTemplate<'a> {
     pub is_linux: bool,
     /// Whether sandboxed terminal commands run through WSL on Windows.
     pub is_windows: bool,
+    /// zed-kask: D44 — how many MCP server tools are registered but hidden
+    /// from `available_tools` this turn by the `LazyToolRouter`'s per-turn
+    /// relevance selection. Zero renders nothing. Non-zero renders a Tool
+    /// Use bullet telling the model the visible list is a selection, not the
+    /// whole surface — without it, the model reads a pruned list as the
+    /// complete toolset and reports registered tools as "unavailable"
+    /// (observed live: an agent denied `web_ping` existed because the
+    /// turn's routing hadn't selected it). Pinned by
+    /// `test_system_prompt_names_hidden_mcp_tools_when_router_prunes` and
+    /// `test_system_prompt_omits_hidden_mcp_section_when_nothing_hidden`.
+    pub mcp_tools_hidden: usize,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -110,6 +121,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -137,6 +149,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -166,6 +179,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -207,6 +221,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -217,6 +232,70 @@ mod tests {
             rendered.contains("three times"),
             "the loop guardrail must state a concrete iteration count, not a \
              vague quantifier the model has to interpret"
+        );
+    }
+
+    // zed-kask: D44 pins — the router-visibility marker. When the
+    // LazyToolRouter prunes the MCP surface for a turn, the system prompt must
+    // tell the model: without the marker, the model reads the pruned list as
+    // the complete toolset and reports registered tools as "unavailable"
+    // (observed live 2026-08-30: an agent denied `web_ping` existed because
+    // that turn's routing hadn't selected it — the operator caught the false
+    // report). These two tests pin the render in both states.
+    #[test]
+    fn test_system_prompt_names_hidden_mcp_tools_when_router_prunes() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 321,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("321 additional MCP server tools are registered"),
+            "the marker must name the hidden count so the model can gauge the \
+             size of the surface it cannot see"
+        );
+        assert!(
+            rendered.contains("Never report a tool as unavailable"),
+            "the marker must forbid absence claims — the false-belief failure \
+             mode it exists to kill"
+        );
+        assert!(
+            rendered.contains("a tool named in the next user message is always surfaced"),
+            "the marker must state the recovery path (exact-name bypass) so the \
+             model asks instead of denying"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_omits_hidden_mcp_section_when_nothing_hidden() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            !rendered.contains("additional MCP server tools are registered"),
+            "when the router retained everything (or is disabled), the marker \
+             must not render — per the D40 principle, never advertise a \
+             condition the turn doesn't have"
         );
     }
 
@@ -238,6 +317,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -283,6 +363,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -308,6 +389,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -339,6 +421,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -369,6 +452,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -405,6 +489,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -441,6 +526,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
@@ -478,6 +564,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let rendered = template.render(&Templates::new()).unwrap();
         for directive in [
@@ -527,6 +614,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -557,6 +645,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -591,6 +680,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -635,6 +725,7 @@ mod tests {
             sandboxing: true,
             is_linux: true,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -669,6 +760,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: true,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -700,6 +792,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -723,6 +816,7 @@ mod tests {
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -744,6 +838,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -763,6 +858,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -795,6 +891,7 @@ mod tests {
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

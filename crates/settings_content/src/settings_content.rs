@@ -1845,6 +1845,10 @@ pub struct KaskMediaSettingsContent {
 pub struct KaskToolRouterSettingsContent {
     pub threshold: Option<f64>,
     pub complex_word_threshold: Option<usize>,
+    /// zed-kask: D44 — master switch; `Some(false)` unwires the router
+    /// entirely (full MCP surface every turn). `None` falls back to the
+    /// `Default` (enabled).
+    pub enabled: Option<bool>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

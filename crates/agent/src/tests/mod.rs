@@ -5502,6 +5502,102 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
     fake_model.end_last_completion_stream();
 }
 
+/// zed-kask: D44 integration pin — the router-visibility marker. When the
+/// LazyToolRouter prunes the MCP surface for a turn, the system prompt must
+/// name how many registered tools are hidden, so the model never mistakes the
+/// pruned list for the complete toolset (the live failure: an agent reported
+/// `web_ping` as unavailable because that turn's routing hadn't selected it).
+/// This drives the full path — kask source → registry poll → enabled_tools
+/// (router prunes) → render_system_prompt — and asserts both halves: the tool
+/// is absent from the request's tool list AND the marker names it as hidden.
+#[gpui::test]
+async fn test_system_prompt_names_hidden_tools_when_router_prunes(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // Wire the source empty first (shared-slot hazard, see the note on the
+    // startup-race pin above), then register one tool whose name/description
+    // match the request and one that matches nothing.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    set_kask_tool_source(source.clone());
+    source.set(vec![
+        KaskToolDescriptor {
+            server_id: "kask-marker-test".to_string(),
+            name: "web_cats_search".to_string(),
+            description: "Search the web for cats".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "kask-marker-test".to_string(),
+            name: "marker_hidden_tool".to_string(),
+            description: "Totally unrelated to any request".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+    ]);
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+    source.set(Vec::new());
+
+    // The real router, default thresholds. The message is complex (≥ 6 words)
+    // and names web_cats_search's vocabulary, so the router activates and
+    // retains it while marker_hidden_tool scores ~0 and is pruned.
+    set_tool_router(Some(std::sync::Arc::new(
+        crate::tool_router::LazyToolRouter::default(),
+    )));
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(
+                ClientUserMessageId::new(),
+                ["please search the web for cats carefully and thoroughly"],
+                cx,
+            )
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+
+    // Half 1: the pruned tool is absent from the request's tool list.
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"web_cats_search".to_string()),
+        "the matching tool must be retained: {names:?}"
+    );
+    assert!(
+        !names.contains(&"marker_hidden_tool".to_string()),
+        "the non-matching tool must be pruned by the router: {names:?}"
+    );
+
+    // Half 2: the system prompt names the hidden count — the model is told
+    // the visible list is a selection, never the whole surface.
+    let system_message = &completion.messages[0];
+    let MessageContent::Text(system_prompt) = &system_message.content[0] else {
+        panic!("Expected text content");
+    };
+    assert!(
+        system_prompt.contains("1 additional MCP server tools are registered"),
+        "the marker must name the hidden count (marker_hidden_tool): {system_prompt}"
+    );
+    assert!(
+        system_prompt.contains("Never report a tool as unavailable"),
+        "the marker must forbid absence claims: {system_prompt}"
+    );
+
+    // Restore the process-global router and source so later/parallel tests
+    // are unaffected (the DropMarkerToolRouter pattern).
+    set_tool_router(None);
+    fake_model.end_last_completion_stream();
+}
+
 /// Like [`setup_context_server`], but starts the server with an explicit
 /// request timeout so a never-responding tool call fails with the client's
 /// "Context server request timeout" error on a test-controllable clock.

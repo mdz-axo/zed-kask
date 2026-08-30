@@ -5290,6 +5290,25 @@ impl Thread {
                 filtered
             };
 
+        // zed-kask: D44 — count MCP tools registered but hidden from this
+        // turn's selection. The router prunes per turn; without this count in
+        // the prompt, the model reads the pruned list as the complete toolset
+        // and reports registered tools as "unavailable" (observed live:
+        // an agent denied `web_ping` existed because that turn's routing
+        // hadn't selected it). Registry names not present in
+        // `available_tools` are hidden; disambiguated duplicates (server-prefixed
+        // names) count as hidden, which is honest — the model cannot invoke
+        // them under the plain name either.
+        let mcp_tools_hidden = {
+            let registry = self.context_server_registry.read(cx);
+            let available: std::collections::HashSet<&str> =
+                available_tools.iter().map(|name| name.as_ref()).collect();
+            count_hidden_mcp_tools(
+                registry.servers().flat_map(|(_, tools)| tools.keys()),
+                &available,
+            )
+        };
+
         // Compute a digest of the inputs that affect the rendered system
         // prompt. If it matches the cached digest, reuse the cached string.
         let digest = system_prompt_digest(
@@ -5302,6 +5321,7 @@ impl Thread {
             sandboxing,
             is_linux,
             is_windows,
+            mcp_tools_hidden,
         );
 
         if let Some(cached) = self.kask.cached_system_prompt(&digest) {
@@ -5319,6 +5339,7 @@ impl Thread {
             sandboxing,
             is_linux,
             is_windows,
+            mcp_tools_hidden,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -5766,6 +5787,7 @@ fn system_prompt_digest(
     sandboxing: bool,
     is_linux: bool,
     is_windows: bool,
+    mcp_tools_hidden: usize,
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     // Project context: worktrees (root_name, abs_path), rules files (path +
@@ -5794,7 +5816,27 @@ fn system_prompt_digest(
     hasher.update([is_linux as u8]);
     hasher.update(b"\nis_windows:");
     hasher.update([is_windows as u8]);
+    // zed-kask: D44 — the hidden-tool count is prompt content (the visibility
+    // marker renders it), so it must participate in the digest or a registry
+    // change that alters only the count would serve a stale cached prompt.
+    hasher.update(b"\nmcp_tools_hidden:");
+    hasher.update(mcp_tools_hidden.to_be_bytes());
     hasher.finalize().into()
+}
+
+/// zed-kask: D44 — count registered MCP tools absent from this turn's
+/// `available_tools`. The `LazyToolRouter` prunes the MCP surface per turn
+/// (≤ `DEFAULT_SELECTION_BUDGET` of the registered fleet), and the system
+/// prompt renders this count as a visibility marker so the model knows the
+/// visible list is a selection, not the whole surface. Pinned by
+/// `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
+fn count_hidden_mcp_tools<'a>(
+    registered_names: impl Iterator<Item = &'a SharedString>,
+    available_tools: &std::collections::HashSet<&str>,
+) -> usize {
+    registered_names
+        .filter(|name| !available_tools.contains(name.as_ref()))
+        .count()
 }
 
 fn auto_compact_threshold_token_count(
@@ -8270,7 +8312,35 @@ mod tests {
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
 
-    // ── Goal-event extraction (D6: ephemeral goals → curator memory) ───
+    // ── D44: router-visibility marker (hidden MCP tool count) ──────────
+
+    #[test]
+    fn count_hidden_mcp_tools_excludes_visible_and_counts_hidden() {
+        // Pins the D44 helper: registered names absent from the turn's
+        // available set count as hidden; visible ones do not. The count feeds
+        // the system-prompt visibility marker — an off-by-one here misreports
+        // the surface the model cannot see.
+        let registered: Vec<SharedString> = [
+            "web_ping",
+            "web_search",
+            "gallery_search",
+            "kanban_goal_create",
+        ]
+        .iter()
+        .map(|name| SharedString::from(*name))
+        .collect();
+        let available: std::collections::HashSet<&str> =
+            ["web_search", "echo"].into_iter().collect();
+        assert_eq!(
+            count_hidden_mcp_tools(registered.iter(), &available),
+            3,
+            "web_ping, gallery_search, and kanban_goal_create are registered \
+             but not visible this turn; web_search is visible; echo is a \
+             built-in that is not registered and must not count either way"
+        );
+    }
+
+    // ── Goal-event extraction (D6: ephemeral goals → curator memory) ────
 
     fn tool_use(id: &str, name: &str) -> AgentMessageContent {
         AgentMessageContent::ToolUse(language_model::LanguageModelToolUse {

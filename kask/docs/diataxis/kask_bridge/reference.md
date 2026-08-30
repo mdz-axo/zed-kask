@@ -206,6 +206,7 @@ classDiagram
     class KaskToolRouterSettings {
         +threshold: f64
         +complex_word_threshold: usize
+        +enabled: bool
     }
     KaskSettings --> KaskGeneralSettings
     KaskSettings --> KaskMcpSettings
@@ -238,7 +239,7 @@ status: VERIFIED
 | `KaskCondenserSettings` | `profile = "normal"`, `auto_compress_tool_results = false`, `saliency_window = 5` | `settings.rs:275-283` |
 | `KaskCorpusSettings` | `embedding_dim = 1024`, `ocr_simple_max = 0.05`, `ocr_moderate_max = 0.15`, `ocr_sample_rate = 0.10`, `ocr_tuneable = true`, `template_root = "kask/registry"` | `settings.rs:332-343` |
 | `KaskSwarmSettings` | `max_credits_per_dispatch = 50`, `curator_consent_default = false`, `memory_passphrase = "allostery"`, `embedding_dim = 1024` | `settings.rs:465-487` |
-| `KaskToolRouterSettings` | `threshold = 0.30`, `complex_word_threshold = 6` | `settings.rs:613-620` |
+| `KaskToolRouterSettings` | `threshold = 0.30`, `complex_word_threshold = 6`, `enabled = true` | `settings.rs:613-620` |
 
 ## MCP server registry
 

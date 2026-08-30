@@ -122,7 +122,13 @@ the message is complex (≥ `complex_word_threshold` = 6 words) or explicitly
 mentions a tool name; otherwise it returns `None` (fail-open — retain all
 tools). The thresholds (`threshold: 0.30`, `complex_word_threshold: 6`) are
 pinned by `default_thresholds_are_the_documented_values` and must match
-`KaskToolRouterSettings::default()` in `kask_bridge`.
+`KaskToolRouterSettings::default()` in `kask_bridge`. The master switch
+`kask.tool_router.enabled` (D44, default `true`) unwires the router entirely
+— every turn gets the full MCP surface — and is re-wired live by the
+SettingsStore observer via `wire_tool_router_from_settings` (`zed/src/main.rs`).
+When the router prunes, the system prompt renders a visibility bullet naming
+how many MCP tools are hidden (D44) so the model never mistakes the pruned
+list for the complete toolset.
 
 Every MCP tool response is a `{"content": <value>}` envelope.
 `unwrap_tool_envelope` (`hkask-types/src/tool_response.rs:61`) is the single

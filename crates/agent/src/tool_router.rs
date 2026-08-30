@@ -744,66 +744,6 @@ mod tests {
         }
     }
 
-    // zed-kask: TEMPORARY investigation probe (delete after use) — replicates
-    // the live turn-1 routing decision with the real mission text and the real
-    // fleet surface dumped from the running servers.
-    #[test]
-    fn probe_mission_routing_with_live_fleet() {
-        let Ok(fleet) = std::fs::read_to_string("/tmp/fleet_tools.json") else {
-            eprintln!("probe skipped: /tmp/fleet_tools.json not present");
-            return;
-        };
-        let fleet: Vec<(String, String, String)> =
-            serde_json::from_str::<Vec<serde_json::Value>>(&fleet)
-                .unwrap()
-                .into_iter()
-                .map(|t| {
-                    (
-                        t["server"].as_str().unwrap().to_string(),
-                        t["name"].as_str().unwrap().to_string(),
-                        t["description"].as_str().unwrap().to_string(),
-                    )
-                })
-                .collect();
-        let mission = std::fs::read_to_string("/tmp/mission.txt").expect("mission text");
-        let candidates: Vec<ToolCandidate> = fleet
-            .iter()
-            .map(|(_, name, description)| ToolCandidate {
-                name: name.clone().into(),
-                description: description.clone().into(),
-            })
-            .collect();
-        let context = ToolSelectionContext {
-            user_message: Some(mission),
-            open_file_paths: vec![],
-            candidates,
-        };
-        let router = LazyToolRouter::default();
-        let selected = router.select_tools(&context);
-        match selected {
-            Some(selected) => {
-                eprintln!(
-                    "router ACTIVATED, selected {} of {}:",
-                    selected.len(),
-                    fleet.len()
-                );
-                let selected_set: std::collections::HashSet<&str> =
-                    selected.iter().map(|s| s.as_ref()).collect();
-                for (server, name, _) in &fleet {
-                    if selected_set.contains(name.as_str()) {
-                        eprintln!("  SELECTED {server}::{name}");
-                    }
-                }
-                eprintln!("web_ping selected: {}", selected_set.contains("web_ping"));
-                eprintln!(
-                    "web_search selected: {}",
-                    selected_set.contains("web_search")
-                );
-            }
-            None => eprintln!("router returned None (fail-open — all tools retained)"),
-        }
-    }
-
     #[test]
     fn test_lazy_router_does_not_activate_for_simple_message() {
         let context = ToolSelectionContext {
