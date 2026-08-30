@@ -4801,11 +4801,19 @@ impl Thread {
                     // usually sufficient.
                     let mut description = tool.description().to_string();
                     if description.len() > 200 {
-                        // Truncate at the first sentence boundary within 200 chars.
-                        if let Some(pos) = description[..200].find(". ") {
+                        // Truncate at the first sentence boundary within 200
+                        // chars. Use a char-boundary-safe cutoff: byte index
+                        // 200 may land inside a multi-byte UTF-8 code point
+                        // (em-dash, CJK, emoji), and both `str` slicing and
+                        // `String::truncate` panic on non-boundary indices.
+                        let mut cutoff = 200;
+                        while !description.is_char_boundary(cutoff) {
+                            cutoff -= 1;
+                        }
+                        if let Some(pos) = description[..cutoff].find(". ") {
                             description.truncate(pos + 1);
                         } else {
-                            description.truncate(197);
+                            description.truncate(cutoff);
                             description.push_str("...");
                         }
                     }
