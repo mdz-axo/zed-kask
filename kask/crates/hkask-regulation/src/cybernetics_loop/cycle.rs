@@ -317,6 +317,28 @@ impl super::CyberneticsLoop {
             ));
         }
 
+        // Sense whether a model-bearing inference health source has been
+        // wired (see the `inference_health_wired` field). The composition
+        // root wires the source only after the default LanguageModel
+        // resolves; an unwired loop means inference is unusable — the state
+        // `NoModelInferencePort` exists for. Grace: the first ticks after
+        // boot often precede the deferred task's wiring; firing on those
+        // ticks would report a false model outage on every slow boot
+        // (observed live: a boot wired the no-op port at +4s while the model
+        // resolved later). 3 ticks (~30s) covers the common transient; a
+        // genuinely unconfigured system fires after that and self-clears
+        // the moment the source is wired.
+        const MODEL_WIRING_GRACE_TICKS: usize = 3;
+        let ticks_elapsed = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
+        if !self.inference_health_wired && ticks_elapsed >= MODEL_WIRING_GRACE_TICKS {
+            signals.push(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::InferenceModelAvailable,
+                0.0,
+                1.0,
+            ));
+        }
+
         // Feed observed values into the predictive simulator.
         for signal in &signals {
             self.simulator.observe(signal.metric, signal.value);
@@ -1734,6 +1756,67 @@ mod tests {
                 assert_eq!(signal.value, expected_value);
                 assert_eq!(signal.set_point, 0.0);
             }
+        });
+    }
+
+    struct StubHealthSource;
+
+    #[async_trait::async_trait]
+    impl crate::sensor_provider::InferenceHealthSource for StubHealthSource {
+        async fn in_flight(&self) -> usize {
+            0
+        }
+        async fn max_concurrency(&self) -> usize {
+            96
+        }
+        async fn recent_timeout_count(&self) -> u64 {
+            0
+        }
+    }
+
+    /// `InferenceModelAvailable` (2026-08-30): an unwired inference health
+    /// source means the default model never resolved — unusable inference.
+    /// The signal must stay silent during the boot grace window (slow
+    /// registry population is not an outage), fire after it, and clear the
+    /// moment the source is wired.
+    #[test]
+    fn sense_reports_unwired_inference_model_after_grace() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+
+            // Before the grace period: no signal — the deferred task often
+            // wires the model a few seconds after the first ticks.
+            let signals = regulation_loop.sense().await;
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::InferenceModelAvailable),
+                "grace window must not report a model outage"
+            );
+
+            // After 3 ticks with no wired source: model-unavailable.
+            regulation_loop
+                .tick_count
+                .store(3, std::sync::atomic::Ordering::Relaxed);
+            let signals = regulation_loop.sense().await;
+            let signal = signals
+                .iter()
+                .find(|s| s.metric == SignalMetric::InferenceModelAvailable)
+                .expect("unwired inference must be sensed after grace");
+            assert_eq!(signal.value, 0.0);
+            assert_eq!(signal.set_point, 1.0);
+
+            // Once the source is wired (model resolved): no signal.
+            regulation_loop.set_inference_health_source(Arc::new(StubHealthSource));
+            let signals = regulation_loop.sense().await;
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::InferenceModelAvailable),
+                "wired source means the model resolved — no outage signal"
+            );
         });
     }
 }

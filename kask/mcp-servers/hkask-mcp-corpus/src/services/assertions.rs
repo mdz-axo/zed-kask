@@ -6,6 +6,9 @@
 
 use std::sync::Arc;
 
+use hkask_bridge_ontology::golem;
+use hkask_bridge_ontology::rdf;
+use hkask_bridge_ontology::schema_org;
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::HMemOntology;
 use hkask_types::InferencePort;
@@ -170,22 +173,35 @@ impl AssertionsService {
                 vars.insert("ontology_context", ontology_context.clone());
                 let prompt = render_docproc_template("extract-hmems", &vars);
                 let prompt = if prompt.is_empty() {
-                    // Fallback: includes GOLEM predicates and ontology context if available.
-                    // GOLEM predicates are the official v1.1 vocabulary (gc:, dlp:, crm:).
+                    // Fallback when the registry template is missing. The
+                    // predicate lists are built from the same fixture-guarded
+                    // bridge constants the template's vocabulary pins, so
+                    // the fallback cannot drift from the verified term sets
+                    // (GOLEM v1.1, schema.org release, RDF 1.1).
+                    let golem_examples = [
+                        golem::HAS_CHARACTER,
+                        golem::PARTICIPANT_IN,
+                        golem::HAS_SETTING,
+                        golem::HAS_FEATURE,
+                        golem::REFERS_TO,
+                    ]
+                    .join(", ");
+                    let expository_predicates = schema_org::ALL_TERMS.join(", ");
+                    let rdf_type = rdf::TYPE;
                     let ontology_hint = if ontology_context.is_empty() {
                         String::new()
                     } else {
                         format!(
 
 "Ontology tags for this passage: {ontology_context}
-Use GOLEM predicates (gc:GP1i_has_Character, dlp:participant-in, gc:GP0_has_feature, crm:P67_refers_to, etc.) for narrative passages and standard RDF predicates (schema:author, rdf:type, etc.) for expository passages.")
+Use GOLEM predicates ({golem_examples}, etc.) for narrative passages and standard RDF predicates ({rdf_type}, {expository_predicates}) for expository passages.")
                     };
                     format!(
                         "Extract up to {max_assertions} factual RDF triples from the following text.
 
 First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract assertions using the appropriate predicates:
-  - Expository: schema:author, schema:mentions, rdf:type, schema:about, etc.
-  - Narrative: gc:GP1i_has_Character, dlp:participant-in, dlp:setting, gc:GP0_has_feature, crm:P67_refers_to, etc.
+  - Expository: {rdf_type}, {expository_predicates}
+  - Narrative: {golem_examples}, etc.
 
 Each triple: (subject, predicate, object, confidence). Prefix subjects with '{ns}:'.{ontology_hint}
 

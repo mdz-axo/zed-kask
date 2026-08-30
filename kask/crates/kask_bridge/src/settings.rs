@@ -15,7 +15,7 @@ use settings_content::{
     KaskMcpSettingsContent, KaskMediaSettingsContent, KaskMemorySettingsContent,
     KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
-    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
+    KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -93,11 +93,6 @@ pub struct KaskSettings {
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
-
-    /// Tool-router thresholds for narrowing the MCP tool set on complex or
-    /// tool-directed requests. Defaults match the historical
-    /// `LazyToolRouter::new()` hardcoded values (`0.30` / `40`).
-    pub tool_router: KaskToolRouterSettings,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -597,72 +592,6 @@ impl KaskModelsSettings {
     }
 }
 
-/// Tool-router thresholds for narrowing the MCP tool set on complex or
-/// tool-directed requests.
-///
-/// `Default` is the single source of truth — `From<Content>` reads from it
-/// via `unwrap_or(default.field)`.
-///
-/// `complex_word_threshold` was lowered 40 -> 9 -> 6 (2026-08-12). At 40 the
-/// router almost never activated: it is fail-open, so a sub-threshold message
-/// retains **all** MCP tool schemas (~15,000 tokens across 331 tools), and few
-/// real requests reach 40 words.
-///
-/// 6 rather than 9 because the 200-case eval set showed 82 of 215 graded
-/// requests never activating at all -- ordinary asks like "list all the kanban
-/// boards i own" sit at 6-8 words. Dropping to 6 cut mean retained tools from 170
-/// to 93 of 252 with recall unchanged at 1.000 on both the tuned and held-out
-/// splits. Going below 6 changed nothing further (the 4-word setting is identical
-/// to 6), so 6 is the floor of the useful range rather than an aggressive value.
-///
-/// Short vague messages stay safe because the confidence gate, not the word
-/// count, is what protects them: all 11 fail-open cases peak below 0.50 and fail
-/// open regardless of length.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskToolRouterSettings {
-    /// Score threshold for tool inclusion (0.0–1.0). Messages scoring above
-    /// this threshold get the narrowed tool set.
-    pub threshold: f64,
-
-    /// Minimum word count for a message to be considered "complex" enough to
-    /// trigger routing.
-    pub complex_word_threshold: usize,
-
-    /// zed-kask: D44 — master switch for the router. `false` unwires it
-    /// entirely: every turn gets the full MCP tool surface (fail-open
-    /// behavior, no per-turn pruning). Exists because the router's per-turn
-    /// pruning hides tools from the model's view, and an operator who wants
-    /// the model to always see every registered tool had no way to turn it
-    /// off — `set_tool_router` was wired unconditionally. Re-wired live on
-    /// settings changes (post-D41 the SettingsStore observers fire on
-    /// external edits). Pinned by `tool_router_disabled_flows_through_content`
-    /// and `tool_router_enabled_defaults_true`.
-    pub enabled: bool,
-}
-
-impl Default for KaskToolRouterSettings {
-    fn default() -> Self {
-        Self {
-            threshold: 0.30,
-            complex_word_threshold: 6,
-            enabled: true,
-        }
-    }
-}
-
-impl From<KaskToolRouterSettingsContent> for KaskToolRouterSettings {
-    fn from(c: KaskToolRouterSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            threshold: c.threshold.unwrap_or(default.threshold),
-            complex_word_threshold: c
-                .complex_word_threshold
-                .unwrap_or(default.complex_word_threshold),
-            enabled: c.enabled.unwrap_or(default.enabled),
-        }
-    }
-}
-
 /// Resolve a storage-root setting with the single priority chain shared by
 /// both roots (hidden data dir, visible artifacts dir): settings field →
 /// env var → resolved platform default. One chain, not two — the duplicated
@@ -989,7 +918,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
-            tool_router: c.tool_router.map(Into::into).unwrap_or_default(),
         }
     }
 }
@@ -997,60 +925,6 @@ impl From<KaskSettingsContent> for KaskSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Pins the `kask_bridge` half of the tool-router default-sync contract.
-    /// `LazyToolRouter::new()` in the `agent` crate hardcodes the same pair as a
-    /// fallback for settings-free construction, and `agent` cannot depend on
-    /// this crate (that would invert the D8 seam), so the invariant is pinned
-    /// from both sides against literals. Change one, change the other:
-    /// `crates/agent/src/tool_router.rs::default_thresholds_are_the_documented_values`.
-    #[test]
-    fn tool_router_defaults_match_agent_side_fallback() {
-        let default = KaskToolRouterSettings::default();
-        assert_eq!(
-            default.complex_word_threshold, 6,
-            "word threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
-        );
-        assert!(
-            (default.threshold - 0.30).abs() < f64::EPSILON,
-            "score threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
-        );
-    }
-
-    // zed-kask: D44 — the router's master switch. Default is ON (the
-    // router's token economics are the reason it exists); `Some(false)` in
-    // the settings content must flow through `From` so the operator can
-    // unwire the router entirely (full MCP surface every turn) without a
-    // code change. `None` must fall back to the default, per the
-    // "defaults live in Default impls" rule.
-    #[test]
-    fn tool_router_enabled_defaults_true_and_flows_through_content() {
-        assert!(
-            KaskToolRouterSettings::default().enabled,
-            "the router defaults to ON — flipping this default changes every \
-             operator's tool surface silently"
-        );
-        let disabled = KaskToolRouterSettings::from(KaskToolRouterSettingsContent {
-            threshold: None,
-            complex_word_threshold: None,
-            enabled: Some(false),
-        });
-        assert!(
-            !disabled.enabled,
-            "kask.tool_router.enabled = false must reach the resolved settings — \
-             a lost Some(false) here would silently keep pruning tools after the \
-             operator turned the router off"
-        );
-        let unset = KaskToolRouterSettings::from(KaskToolRouterSettingsContent {
-            threshold: None,
-            complex_word_threshold: None,
-            enabled: None,
-        });
-        assert!(
-            unset.enabled,
-            "an absent enabled field must fall back to the Default (ON), not to OFF"
-        );
-    }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user
     // setting `embedding_dim: 0` in their settings file would construct a

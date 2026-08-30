@@ -1395,14 +1395,25 @@ mod tests {
     fn explain_tool_for_omc_dispatches_correctly() {
         // The "I" pattern: ontology concept drives the explain tool.
         // Uses the shared `hkask_bridge_ontology::omc::explain_tool_for`.
-        assert_eq!(explain_tool_for("omc:Scene"), "gallery_analyze");
-        assert_eq!(explain_tool_for("omc:Asset"), "gallery_analyze");
-        assert_eq!(explain_tool_for("omc:CreativeWork"), "describe_image");
-        assert_eq!(explain_tool_for("omc:Version"), "describe_image");
-        assert_eq!(explain_tool_for("omc:MediaSource"), "describe_image");
-        assert_eq!(explain_tool_for("omc:Sequence"), "describe_image");
+        // Every OMC input is a fixture-verified bridge constant — the former
+        // `omc:Version` / `omc:MediaSource` inputs were fabricated (OMC v2.8
+        // publishes no such classes; versioning is VersionInfo, captured
+        // source material is Capture).
+        use hkask_bridge_ontology::omc::{
+            ASSET, CAPTURE, CREATIVE_WORK, SCENE, SEQUENCE, SHOT, VERSION_INFO,
+        };
+        assert_eq!(explain_tool_for(SCENE), "gallery_analyze");
+        assert_eq!(explain_tool_for(ASSET), "gallery_analyze");
+        assert_eq!(explain_tool_for(CREATIVE_WORK), "describe_image");
+        assert_eq!(explain_tool_for(VERSION_INFO), "describe_image");
+        assert_eq!(explain_tool_for(CAPTURE), "describe_image");
+        assert_eq!(explain_tool_for(SEQUENCE), "describe_image");
+        assert_eq!(explain_tool_for(SHOT), "describe_image");
         // Non-OMC and unknown concepts fall back to the general explain tool.
-        assert_eq!(explain_tool_for("fibo:Corporation"), "describe_image");
+        assert_eq!(
+            explain_tool_for(hkask_bridge_ontology::fibo::CORPORATION),
+            "describe_image"
+        );
         assert_eq!(explain_tool_for(""), "describe_image");
     }
 }

@@ -22,6 +22,10 @@ hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true
+# Ontology vocabulary bridge — fixture-guarded concept URIs (the
+# `pko:StepVerification` / `dcterms:references` result keys route through
+# its constants, never string literals).
+hkask-bridge-ontology.workspace = true
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true

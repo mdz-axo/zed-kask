@@ -47,7 +47,7 @@ Mermaid diagrams are automatically color-coded using the user's theme accent pal
 - When hkask-mcp-media tool results contain a `display_hint` field, copy that fenced ```media block verbatim into your reply to display the media inline.
 - When a media tool result contains a `display_hints` array (multiple fenced ```media blocks, e.g. from gallery_search / gallery_timeline / gallery_find_similar), copy those blocks verbatim into your reply to display the images inline.
 {{#if (gt mcp_tools_hidden 0)}}
-- Your visible tool list is a per-turn selection: {{mcp_tools_hidden}} additional MCP server tools are registered but not shown this turn (a relevance router narrows the list on each request). Never report a tool as unavailable, missing, or absent from your toolset — it may be filtered this turn. If a tool you expect is not visible, tell the user the list may be filtered and ask them to name it; a tool named in the next user message is always surfaced.
+- Your visible tool list is a per-session selection: {{mcp_tools_hidden}} additional MCP server tools are registered but not shown (filtered by the active agent profile, a panel's server scope, or curator tool gating). Never report a tool as unavailable, missing, or absent from your toolset — it may be filtered. If a tool you expect is not visible, call `list_mcp_tools` to enumerate the registered surface, and ask the user to enable it or name it explicitly.
 {{/if}}
 
 ## Task Execution

@@ -5279,122 +5279,6 @@ async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAp
     fake_model.end_last_completion_stream();
 }
 
-/// A router that drops exactly one marker tool (`model_list`) and retains
-/// everything else. While wired it is observationally inert for parallel
-/// tests (no other test in this binary exposes a tool named `model_list`),
-/// and dropping the marker proves the router is actually active — which is
-/// what makes the scoped-bypass assertion below load-bearing. The test
-/// keeps a second MCP tool (`job_status`) that the router retains, so the
-/// router's selection is never empty — an empty selection is the documented
-/// no-confidence fail-open, which would retain `model_list` and vacuous the
-/// control.
-struct DropMarkerToolRouter;
-
-impl crate::tool_router::ToolRouter for DropMarkerToolRouter {
-    fn select_tools(
-        &self,
-        context: &crate::tool_router::ToolSelectionContext,
-    ) -> Option<Vec<gpui::SharedString>> {
-        Some(
-            context
-                .candidates
-                .iter()
-                .map(|candidate| candidate.name.clone())
-                .filter(|name| name.as_ref() != "model_list")
-                .collect(),
-        )
-    }
-}
-
-/// Pin (Steer scope bypass): a thread scoped to one MCP server keeps its
-/// full — deliberately narrowed — tool surface even while a tool router is
-/// wired: the router must not double-filter a scoped surface. The
-/// unscoped control in the same test proves the router IS active (it
-/// drops `model_list` when there is no scope), so the scoped assertion
-/// pins the bypass, not router inactivity.
-#[gpui::test]
-async fn test_scoped_thread_bypasses_tool_router(cx: &mut TestAppContext) {
-    let ThreadTest {
-        model,
-        thread,
-        context_server_store,
-        fs,
-        ..
-    } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-    enable_all_context_servers_profile(&fs, cx).await;
-    thread.update(cx, |thread, cx| {
-        thread.set_profile(AgentProfileId("test".into()), cx)
-    });
-
-    let _media_calls = setup_context_server(
-        "media",
-        vec![plain_mcp_tool("model_list"), plain_mcp_tool("job_status")],
-        &context_server_store,
-        cx,
-    );
-
-    crate::set_tool_router(Some(Arc::new(DropMarkerToolRouter)));
-
-    // Scoped to `media`: the router is bypassed — `model_list` survives.
-    thread.update(cx, |thread, _| {
-        thread.kask.set_mcp_server_scope(Some("media".into()));
-    });
-    thread.update(cx, |thread, cx| {
-        thread
-            .send(ClientUserMessageId::new(), ["check on my running job"], cx)
-            .unwrap()
-    });
-    cx.run_until_parked();
-    let completion = fake_model
-        .pending_completions()
-        .pop()
-        .expect("completion after scoped send");
-    let names = tool_names_for_completion(&completion);
-    assert!(
-        names.contains(&"model_list".to_string()),
-        "a scoped thread must bypass the router — the deliberately narrowed surface must survive: {names:?}"
-    );
-    assert!(
-        names.contains(&"job_status".to_string()),
-        "the scoped surface must keep its other tools too: {names:?}"
-    );
-    fake_model.end_last_completion_stream();
-
-    // Unscoped control: the same router drops `model_list` — proving the
-    // bypass above was the scope's doing, not router inactivity.
-    thread.update(cx, |thread, _| {
-        thread.kask.set_mcp_server_scope(None);
-    });
-    thread.update(cx, |thread, cx| {
-        thread
-            .send(
-                ClientUserMessageId::new(),
-                ["check on my running job again"],
-                cx,
-            )
-            .unwrap()
-    });
-    cx.run_until_parked();
-    let completion = fake_model
-        .pending_completions()
-        .pop()
-        .expect("completion after unscoped send");
-    let names = tool_names_for_completion(&completion);
-    assert!(
-        !names.contains(&"model_list".to_string()),
-        "unscoped control: the router must drop model_list — otherwise the bypass assertion above is vacuous: {names:?}"
-    );
-    assert!(
-        names.contains(&"job_status".to_string()),
-        "unscoped control: the router retains the tools it selected — this proves the drop was the router's verdict, not a fail-open: {names:?}"
-    );
-    fake_model.end_last_completion_stream();
-
-    // Restore the process-global router so later/parallel tests are unaffected.
-    crate::set_tool_router(None);
-}
-
 /// A `KaskToolSource` whose descriptor set can change after wiring — the
 /// shape of the real source (a cache refreshed by a background poll of the
 /// governed `McpRuntime`), and the fixture for the startup-race pin below.
@@ -5502,28 +5386,56 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
     fake_model.end_last_completion_stream();
 }
 
-/// zed-kask: D44 integration pin — the router-visibility marker. When the
-/// LazyToolRouter prunes the MCP surface for a turn, the system prompt must
-/// name how many registered tools are hidden, so the model never mistakes the
-/// pruned list for the complete toolset (the live failure: an agent reported
-/// `web_ping` as unavailable because that turn's routing hadn't selected it).
-/// This drives the full path — kask source → registry poll → enabled_tools
-/// (router prunes) → render_system_prompt — and asserts both halves: the tool
-/// is absent from the request's tool list AND the marker names it as hidden.
+/// zed-kask: D44 integration pin — the tool-visibility marker. Tools can
+/// still be hidden from a turn by the non-router filter layers (profile
+/// allowlists, per-tab server scope, curator edit-tool gating); when any are,
+/// the system prompt must name how many registered tools are hidden, so the
+/// model never mistakes the visible list for the complete surface (the live
+/// failure that motivated this: an agent reported `web_ping` as unavailable
+/// because a filter layer hadn't selected it). This drives the full path —
+/// kask source → registry poll → enabled_tools (profile filters) →
+/// render_system_prompt — and asserts both halves: the filtered tool is
+/// absent from the request's tool list AND the marker names it as hidden.
 #[gpui::test]
-async fn test_system_prompt_names_hidden_tools_when_router_prunes(cx: &mut TestAppContext) {
+async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContext) {
     let ThreadTest {
         model, thread, fs, ..
     } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
-    enable_all_context_servers_profile(&fs, cx).await;
+    // The profile enables all context-server tools EXCEPT one — the
+    // per-tool profile override, the filter layer that remains now that the
+    // LazyToolRouter is gone (D44 removal, 2026-08-30).
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {},
+                        "context_servers": {
+                            "kask-marker-test": {
+                                "tools": { "marker_hidden_tool": false }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("test".into()), cx)
     });
 
     // Wire the source empty first (shared-slot hazard, see the note on the
-    // startup-race pin above), then register one tool whose name/description
-    // match the request and one that matches nothing.
+    // startup-race pin above), then register one tool the profile keeps and
+    // one it filters.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
     set_kask_tool_source(source.clone());
     source.set(vec![
@@ -5544,13 +5456,6 @@ async fn test_system_prompt_names_hidden_tools_when_router_prunes(cx: &mut TestA
     cx.run_until_parked();
     source.set(Vec::new());
 
-    // The real router, default thresholds. The message is complex (≥ 6 words)
-    // and names web_cats_search's vocabulary, so the router activates and
-    // retains it while marker_hidden_tool scores ~0 and is pruned.
-    set_tool_router(Some(std::sync::Arc::new(
-        crate::tool_router::LazyToolRouter::default(),
-    )));
-
     thread.update(cx, |thread, cx| {
         thread
             .send(
@@ -5566,15 +5471,15 @@ async fn test_system_prompt_names_hidden_tools_when_router_prunes(cx: &mut TestA
         .pop()
         .expect("completion after send");
 
-    // Half 1: the pruned tool is absent from the request's tool list.
+    // Half 1: the profile-filtered tool is absent from the request's tool list.
     let names = tool_names_for_completion(&completion);
     assert!(
         names.contains(&"web_cats_search".to_string()),
-        "the matching tool must be retained: {names:?}"
+        "the profile-enabled tool must be retained: {names:?}"
     );
     assert!(
         !names.contains(&"marker_hidden_tool".to_string()),
-        "the non-matching tool must be pruned by the router: {names:?}"
+        "the profile-disabled tool must be filtered: {names:?}"
     );
 
     // Half 2: the system prompt names the hidden count — the model is told
@@ -5592,9 +5497,6 @@ async fn test_system_prompt_names_hidden_tools_when_router_prunes(cx: &mut TestA
         "the marker must forbid absence claims: {system_prompt}"
     );
 
-    // Restore the process-global router and source so later/parallel tests
-    // are unaffected (the DropMarkerToolRouter pattern).
-    set_tool_router(None);
     fake_model.end_last_completion_stream();
 }
 

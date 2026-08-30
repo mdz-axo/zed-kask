@@ -39,8 +39,8 @@ pub fn mapping_document() -> serde_json::Value {
         "process_axis": {
             "ontology": "PKO (Procedural Knowledge Ontology)",
             "vocabulary_crate": "hkask-bridge-ontology",
-            "record_type": "pko:ProcedureExecution",
-            "probability_role": "prov:wasGeneratedBy",
+            "record_type": hkask_bridge_ontology::pko::PROCEDURE_EXECUTION,
+            "probability_role": hkask_bridge_ontology::pko::WAS_GENERATED_BY,
             "lifecycle_stages": LIFECYCLE_STAGES,
             "stage_note": "distrust prices in the `dispute` stage (arXiv:2604.20421 oracle-risk finding: markets trade within 24h of a dispute anchor)"
         },
@@ -48,11 +48,23 @@ pub fn mapping_document() -> serde_json::Value {
             "ontology": "Dublin Core (dcterms)",
             "vocabulary_crate": "hkask-bridge-ontology",
             "fields": {
-                "identifier": "dcterms:identifier = {source}:{market_id}",
-                "title": "dcterms:title ← market question",
-                "description": "dcterms:description ← market description (500-char cap)",
-                "temporal": "dcterms:temporal ← deadline (drives horizon effects)",
-                "provenance": "dcterms:provenance ← resolution_source (uma_oracle | kalshi_exchange)"
+                "identifier": format!(
+                    "{} = {{source}}:{{market_id}}",
+                    hkask_bridge_ontology::dc_bibo::IDENTIFIER
+                ),
+                "title": format!("{} ← market question", hkask_bridge_ontology::dc_bibo::TITLE),
+                "description": format!(
+                    "{} ← market description (500-char cap)",
+                    hkask_bridge_ontology::dc_bibo::DESCRIPTION
+                ),
+                "temporal": format!(
+                    "{} ← deadline (drives horizon effects)",
+                    hkask_bridge_ontology::dc_bibo::TEMPORAL
+                ),
+                "provenance": format!(
+                    "{} ← resolution_source (uma_oracle | kalshi_exchange)",
+                    hkask_bridge_ontology::dc_bibo::PROVENANCE
+                ),
             }
         },
         "domain_supplement": {

@@ -774,7 +774,7 @@ mod tests {
         let algo = WordRankAlgorithm;
         let anchor = Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Fibo,
-            concept: "fibo:Corporation".into(),
+            concept: hkask_bridge_ontology::fibo::CORPORATION.into(),
         });
         let (result, _) = algo.compress(
             input,
@@ -819,7 +819,7 @@ mod tests {
         let algo = WordRankAlgorithm;
         let anchor = Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Sumo,
-            concept: "sumo:Process".into(),
+            concept: hkask_bridge_ontology::sumo::PROCESS.into(),
         });
         let (result, _) = algo.compress(
             input,

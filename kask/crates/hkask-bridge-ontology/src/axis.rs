@@ -17,6 +17,7 @@
 
 use crate::dc_bibo;
 use crate::golem;
+use crate::omc;
 use crate::pko;
 use crate::sdmx;
 use crate::sumo;
@@ -58,6 +59,9 @@ pub enum OntologyNamespace {
     /// SDMX (Statistical Data and Metadata eXchange) — statistical data
     /// from FRED, DBnomics, World Bank, IMF, OECD, ECB, INSEE.
     Sdmx,
+    /// MovieLabs OMC (Ontology for Media Creation) — media production
+    /// workflows: creative works, scenes, shots, assets, captures.
+    Omc,
     /// SUMO (Suggested Upper Merged Ontology) — the universal upper ontology
     /// and fallback for domains that don't map to a specific supplement.
     /// Provides foundational categories (Entity, Process, Object, Agent).
@@ -75,6 +79,7 @@ impl OntologyNamespace {
             OntologyNamespace::Golem => dc_bibo::TEXT,
             OntologyNamespace::MlSchema => dc_bibo::DATASET,
             OntologyNamespace::Sdmx => dc_bibo::DATASET,
+            OntologyNamespace::Omc => dc_bibo::IMAGE,
             OntologyNamespace::Sumo => dc_bibo::TEXT,
         }
     }
@@ -89,6 +94,7 @@ impl OntologyNamespace {
             OntologyNamespace::Golem => pko::PROCEDURE,
             OntologyNamespace::MlSchema => pko::PROCEDURE,
             OntologyNamespace::Sdmx => pko::PROCEDURE,
+            OntologyNamespace::Omc => pko::PROCEDURE,
             OntologyNamespace::Sumo => pko::PROCEDURE,
         }
     }
@@ -103,6 +109,7 @@ impl std::str::FromStr for OntologyNamespace {
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
             "sdmx" => Ok(OntologyNamespace::Sdmx),
+            "omc" => Ok(OntologyNamespace::Omc),
             "sumo" => Ok(OntologyNamespace::Sumo),
             _ => Err(format!("Unknown ontology namespace: {s}")),
         }
@@ -117,6 +124,7 @@ impl std::fmt::Display for OntologyNamespace {
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
             OntologyNamespace::Sdmx => write!(f, "sdmx"),
+            OntologyNamespace::Omc => write!(f, "omc"),
             OntologyNamespace::Sumo => write!(f, "sumo"),
         }
     }
@@ -184,6 +192,7 @@ impl OntologyAnchor {
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
                 OntologyNamespace::Sdmx => 1.1,
+                OntologyNamespace::Omc => 1.0,
                 OntologyNamespace::Sumo => 1.0,
             },
         }
@@ -215,7 +224,7 @@ impl OntologyAnchor {
 /// concept has no fit in the narrowest applicable ontology, the anchor
 /// falls to progressively broader scopes until one fits:
 ///
-/// 1. **Domain supplement** — SDMX, FIBO, SEPIO, GOLEM, ML-Schema: the
+/// 1. **Domain supplement** — SDMX, FIBO, SEPIO, GOLEM, ML-Schema, OMC: the
 ///    domain's specific ontology, when the concept exists in its
 ///    published vocabulary. Never force a concept into an ontology that
 ///    has no place for it in its graph.
@@ -339,6 +348,38 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::DATASET.to_string(),
         };
     }
+    // Media creation → OMC. The media server anchors its own artifacts via
+    // `omc::tool_to_omc` directly, but the condenser derives anchors from
+    // tool names for EVERY tool result — without this arm, media tools
+    // (generate_image, gallery_search, video_clip, ...) fell to SUMO
+    // instead of their domain ontology. Keywords are the media-server
+    // tool-name tokens; deliberately generic tokens ("model", "job",
+    // "workflow", "prompt") are excluded — they are not media-specific
+    // and would misroute other domains' tools.
+    if [
+        "media",
+        "image",
+        "video",
+        "audio",
+        "gallery",
+        "face",
+        "speech",
+        "voice",
+        "transcribe",
+        "meme",
+        "collage",
+        "album",
+        "gif",
+        "upscale",
+    ]
+    .iter()
+    .any(|kw| matches_kw(kw))
+    {
+        return OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Omc,
+            concept: omc::CREATIVE_WORK.to_string(),
+        };
+    }
     // Process workflows → PKO dual-axis. Forecasting and scenario-building
     // are processes (operator decision 2026-08-29) — a forecast is a
     // procedure producing a projection, not a financial instrument.
@@ -456,6 +497,29 @@ mod tests {
                 "domain '{domain}' must stay on the FIBO supplement"
             );
         }
+        // Media tools route to OMC — the condenser derives anchors from
+        // tool names for every tool result, so media tool names must land
+        // on their domain ontology, not the SUMO fallback.
+        for domain in [
+            "generate_image",
+            "gallery_search",
+            "video_clip",
+            "face_register",
+            "generate_speech",
+            "transcribe",
+            "image_create_collage",
+            "video_to_gif",
+        ] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DomainSupplement {
+                    namespace: OntologyNamespace::Omc,
+                    concept: omc::CREATIVE_WORK.to_string(),
+                },
+                "media tool '{domain}' must anchor on the OMC supplement, not SUMO"
+            );
+        }
     }
 
     /// Pin the fallback ladder (P8.3): anchoring is a scope-broadening walk
@@ -487,6 +551,7 @@ mod tests {
             OntologyNamespace::Golem,
             OntologyNamespace::MlSchema,
             OntologyNamespace::Sdmx,
+            OntologyNamespace::Omc,
             OntologyNamespace::Sumo,
         ] {
             assert!(

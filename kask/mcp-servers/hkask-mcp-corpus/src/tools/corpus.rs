@@ -255,7 +255,7 @@ impl CorpusServer {
                 // The value blob's former nested `"ontology"` object was not
                 // queryable — this is.
                 let mut ontology = hkask_types::HMemOntology::state(
-                    "bibo:Document",
+                    hkask_bridge_ontology::dc_bibo::DOCUMENT,
                     qa.concepts.clone(),
                     qa.source.clone(),
                 );

@@ -95,7 +95,7 @@ impl HMemOntology {
                 Dimension::How.as_str().to_string(),
                 Dimension::When.as_str().to_string(),
             ],
-            dc_type: "pko:StepExecution".to_string(),
+            dc_type: hkask_bridge_ontology::pko::STEP_EXECUTION.to_string(),
             dc_subject: Vec::new(),
             dc_source: dc_source.into(),
             pko_procedure: Some(pko_procedure.into()),

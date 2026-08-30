@@ -1657,11 +1657,6 @@ pub struct KaskSettingsContent {
     /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
     #[serde(default)]
     pub models: Option<KaskModelsSettingsContent>,
-
-    /// Tool-router thresholds for narrowing the MCP tool set on complex or
-    /// tool-directed requests.
-    #[serde(default)]
-    pub tool_router: Option<KaskToolRouterSettingsContent>,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -1838,17 +1833,6 @@ pub struct KaskMediaSettingsContent {
     pub vision_model: Option<String>,
     pub image_gen_model: Option<String>,
     pub video_model: Option<String>,
-}
-
-/// Tool-router thresholds (the `"kask.tool_router"` section in settings.json).
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskToolRouterSettingsContent {
-    pub threshold: Option<f64>,
-    pub complex_word_threshold: Option<usize>,
-    /// zed-kask: D44 — master switch; `Some(false)` unwires the router
-    /// entirely (full MCP surface every turn). `None` falls back to the
-    /// `Default` (enabled).
-    pub enabled: Option<bool>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

@@ -1,0 +1,39 @@
+# Official RDF 1.1 vocabulary — fabrication guard fixture.
+#
+# Source: the RDF vocabulary namespace document (RDF 1.1 Concepts),
+#   https://www.w3.org/1999/02/22-rdf-syntax-ns
+#   (dc:date 2019-12-16 on the fetched document)
+#   Namespace: http://www.w3.org/1999/02/22-rdf-syntax-ns# (prefix rdf:)
+# Fetched: 2026-08-30. The complete published vocabulary — every term the
+#   RDF 1.1 namespace document defines. This is the full closed list; RDF
+#   publishes no other properties, classes, or datatypes in this namespace.
+#
+# The hKask corpus pipeline uses only rdf:type (assertion typing). The rest
+# is listed so future additions verify against the closed official set.
+rdf:type
+rdf:subject
+rdf:predicate
+rdf:object
+rdf:value
+rdf:first
+rdf:rest
+rdf:nil
+rdf:language
+rdf:direction
+rdf:HTML
+rdf:langString
+rdf:PlainLiteral
+rdf:XMLLiteral
+rdf:JSON
+rdf:Property
+rdf:Statement
+rdf:Bag
+rdf:Seq
+rdf:Alt
+rdf:List
+rdf:CompoundLiteral
+#
+# Notably NOT in the RDF 1.1 vocabulary (do not use):
+# rdf:creator — no such property; RDF 1.1 publishes no creator term.
+#   The real term is dcterms:creator (Dublin Core; see
+#   dublincore-bibo-cito-terms.txt).

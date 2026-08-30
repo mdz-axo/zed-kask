@@ -90,16 +90,6 @@ pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permis
 /// call instead of treating it as an arbitrary failure.
 pub(crate) const TOOL_INPUT_NOT_FULLY_RECEIVED: &str = "tool input was not fully received";
 
-/// Process-static `HashSet` of built-in tool names, built once from the
-/// compile-time `ALL_TOOL_NAMES` const. The input never changes for the
-/// process lifetime, so a `LazyLock` avoids rebuilding the `HashSet` on
-/// every `enabled_tools` call (which runs once per tool-call round).
-/// Uses the default hasher to match `apply_router_bypassing_built_ins`'s
-/// signature — the per-call cost difference vs `FxHashSet` is negligible
-/// for ~30 entries used only for `contains()` lookups.
-static BUILT_IN_TOOL_NAMES: LazyLock<std::collections::HashSet<&'static str>> =
-    LazyLock::new(|| crate::tools::ALL_TOOL_NAMES.iter().copied().collect());
-
 /// If `error` is the `ToolInput::recv()` channel-closed error, return a
 /// model-facing message that explains the cause and suggests a remedy.
 /// Otherwise return the original error string unchanged. Streaming tools
@@ -4714,19 +4704,8 @@ impl Thread {
             })
     }
 
-    /// Extract the text content of the latest user message, if any.
-    /// Used by the tool router to score tools based on message content.
-    fn last_user_message_text(&self) -> Option<String> {
-        self.last_user_message().and_then(|message| {
-            message.content.iter().find_map(|content| match content {
-                UserMessageContent::Text(text) => Some(text.clone()),
-                _ => None,
-            })
-        })
-    }
-
     /// Collect absolute paths of files currently open in the editor.
-    /// Used by conditional-rules scoping and the tool router.
+    /// Used by conditional-rules scoping.
     fn collect_open_file_paths(&self, cx: &App) -> Vec<String> {
         self.project
             .read(cx)
@@ -5041,81 +5020,19 @@ impl Thread {
             }
         }
 
-        // Apply the tool router as a final filter. When no router is set
-        // (upstream Zed), all tools pass through (I2). When a router is set,
-        // it scores each tool by keyword overlap between the context and the
-        // tool's description. An empty router result means "no filtering"
-        // (fail-open) to avoid starving the model.
-        //
-        // zed-kask: the router only filters context-server (MCP) tools.
-        // Built-in zed tools (ALL_TOOL_NAMES) always pass through — the
-        // router was introduced to tame MCP tool floods, not to second-guess
-        // the agent-profile allowlist for core tools. Filtering built-in
-        // tools caused the agent to lose access to `fetch`, `diagnostics`,
-        // `list_directory`, etc. on ordinary coding requests, while leaving
-        // the model to discover the loss by getting "tool not found" errors
-        // mid-turn.
-        //
-        // Skill-aware bypass: when the `skill` tool has been called in this
-        // conversation, skill bodies (injected as tool results) reference
-        // MCP tools by name. The router scores against the user's message
-        // only, so it would filter out tools the skill needs. Bypass the
-        // router entirely when a skill is active — `refresh_turn_tools` is
-        // called at the start of each turn-loop iteration, so the bypass
-        // takes effect on the iteration after the `skill` tool returns.
-        if let Some(router) = crate::tool_router() {
-            let skill_active =
-                self.messages
-                    .iter()
-                    .rev()
-                    .take(20)
-                    .any(|message| match &**message {
-                        Message::Agent(agent_message) => agent_message
-                            .tool_results
-                            .values()
-                            .any(|result| result.tool_name.as_ref() == "skill"),
-                        _ => false,
-                    });
-            if !skill_active {
-                // zed-kask: scope bypass — a Steer-scoped conversation (e.g. the
-                // media panel) has already narrowed its tool surface to one MCP
-                // server via `mcp_server_scope`; the router re-filtering a
-                // deliberately narrowed surface is double-filtering, and its
-                // description scoring prunes generically-named tools
-                // (`model_list`, `job_status`, `workflow_list`) on ordinary
-                // phrasing ("check on my running job") — exactly the requests
-                // the scoped surface exists to serve.
-                if self.kask.mcp_server_scope().is_some() {
-                    return tools;
-                }
-                let built_in_names: &std::collections::HashSet<&'static str> = &BUILT_IN_TOOL_NAMES;
-                let open_file_paths: Vec<String> = self
-                    .project
-                    .read(cx)
-                    .opened_buffers(cx)
-                    .into_iter()
-                    .filter_map(|buffer| {
-                        buffer.read(cx).file().and_then(|file| {
-                            file.as_local()
-                                .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
-                        })
-                    })
-                    .collect();
-                let tool_descriptions: Vec<(SharedString, SharedString)> = tools
-                    .iter()
-                    .map(|(name, tool)| (name.clone(), tool.description()))
-                    .collect();
-                let retained = crate::tool_router::apply_router_bypassing_built_ins(
-                    router.as_ref(),
-                    tool_descriptions.iter().map(|(n, d)| (n, d)),
-                    self.last_user_message_text().as_deref(),
-                    open_file_paths,
-                    &built_in_names,
-                );
-                tools.retain(|name, _| retained.contains(name));
-            }
-        }
-
+        // zed-kask: D44 — no per-turn tool filtering. The LazyToolRouter that
+        // once pruned the MCP surface here was removed (2026-08-30): its
+        // within-domain sampling gave sessions incoherent slices of a
+        // server's toolset, its per-turn selection busted provider prompt
+        // caching, and the visibility gap it created produced false
+        // "tool unavailable" reports (an agent denied `web_ping` existed
+        // because that turn's routing hadn't selected it). The full
+        // registered surface is presented every turn; tools hidden by the
+        // remaining layers (per-tab server scope, profile allowlists,
+        // curator edit-tool gating, feature flags) are named by the
+        // system-prompt visibility marker (`mcp_tools_hidden`), and the
+        // `list_mcp_tools` meta-tool lets the model enumerate the registered
+        // surface on demand.
         tools
     }
 

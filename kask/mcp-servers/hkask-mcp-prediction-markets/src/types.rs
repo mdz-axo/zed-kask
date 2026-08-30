@@ -314,9 +314,9 @@ fn make_ontology(
     };
     OntologyBlock {
         process: ProcessAxis {
-            r#type: Cow::Borrowed("pko:ProcedureExecution"),
+            r#type: Cow::Borrowed(hkask_bridge_ontology::pko::PROCEDURE_EXECUTION),
             stage: Cow::Borrowed(stage),
-            probability_role: Cow::Borrowed("prov:wasGeneratedBy"),
+            probability_role: Cow::Borrowed(hkask_bridge_ontology::pko::WAS_GENERATED_BY),
         },
         state: StateAxis {
             identifier: format!("{prefix}:{market_id}"),

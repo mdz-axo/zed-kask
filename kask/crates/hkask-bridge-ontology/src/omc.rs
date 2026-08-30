@@ -109,7 +109,7 @@ mod tests {
 /// both sides agree on which explain tool a given OMC concept dispatches.
 ///
 /// - `omc:Scene` / `omc:Asset` → `gallery_analyze` (scene/asset inspection)
-/// - Others (CreativeWork, Version, MediaSource, Sequence, Shot, Participant,
+/// - Others (CreativeWork, VersionInfo, Capture, Sequence, Shot, Participant,
 ///   Task) → `describe_image` (vision caption)
 /// - Empty/unknown → `describe_image` (the general vision fallback)
 pub fn explain_tool_for(omc: &str) -> &'static str {

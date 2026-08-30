@@ -331,6 +331,14 @@ pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'st
             "frequency",
             "period",
         ],
+        // OMC has no section in the condenser's internal concept graph yet,
+        // so there is nothing for media keywords to be adjacent TO — empty
+        // (like Core) rather than dead keyword config. Add keywords here
+        // when the graph grows media concepts.
+        crate::types::OntologyAnchor::DomainSupplement {
+            namespace: crate::types::OntologyNamespace::Omc,
+            ..
+        } => vec![],
     }
 }
 

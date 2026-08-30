@@ -27,6 +27,7 @@ pub const PUBLISHER: DcConcept = "dcterms:publisher";
 pub const DATE: DcConcept = "dcterms:date";
 pub const CREATED: DcConcept = "dcterms:created";
 pub const MODIFIED: DcConcept = "dcterms:modified";
+pub const ISSUED: DcConcept = "dcterms:issued";
 pub const DESCRIPTION: DcConcept = "dcterms:description";
 pub const FORMAT: DcConcept = "dcterms:format";
 pub const IDENTIFIER: DcConcept = "dcterms:identifier";
@@ -35,6 +36,10 @@ pub const LANGUAGE: DcConcept = "dcterms:language";
 pub const RIGHTS: DcConcept = "dcterms:rights";
 pub const SUBJECT: DcConcept = "dcterms:subject";
 pub const TYPE: DcConcept = "dcterms:type";
+pub const SPATIAL: DcConcept = "dcterms:spatial";
+pub const TEMPORAL: DcConcept = "dcterms:temporal";
+pub const PROVENANCE: DcConcept = "dcterms:provenance";
+pub const REFERENCES: DcConcept = "dcterms:references";
 
 // ── Dublin Core Type Vocabulary (`dcmitype:` namespace) ───────────────────
 
@@ -42,6 +47,7 @@ pub const STILL_IMAGE: DcConcept = "dcmitype:StillImage";
 pub const MOVING_IMAGE: DcConcept = "dcmitype:MovingImage";
 pub const SOUND: DcConcept = "dcmitype:Sound";
 pub const TEXT: DcConcept = "dcmitype:Text";
+pub const IMAGE: DcConcept = "dcmitype:Image";
 pub const DATASET: DcConcept = "dcmitype:Dataset";
 pub const SOFTWARE: DcConcept = "dcmitype:Software";
 pub const COLLECTION: DcConcept = "dcmitype:Collection";
@@ -113,6 +119,7 @@ mod tests {
         DATE,
         CREATED,
         MODIFIED,
+        ISSUED,
         DESCRIPTION,
         FORMAT,
         IDENTIFIER,
@@ -121,10 +128,15 @@ mod tests {
         RIGHTS,
         SUBJECT,
         TYPE,
+        SPATIAL,
+        TEMPORAL,
+        PROVENANCE,
+        REFERENCES,
         STILL_IMAGE,
         MOVING_IMAGE,
         SOUND,
         TEXT,
+        IMAGE,
         DATASET,
         SOFTWARE,
         COLLECTION,

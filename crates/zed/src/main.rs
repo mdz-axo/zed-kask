@@ -1343,15 +1343,6 @@ fn main() {
         })
         .detach();
 
-        // zed-kask: D44 — re-wire the tool router on settings changes so
-        // `kask.tool_router` (thresholds + the `enabled` master switch) takes
-        // effect without a restart. The wiring latches on config change, so
-        // this observer is cheap on the (common) unrelated-write path.
-        cx.observe_global::<SettingsStore>(|cx| {
-            wire_tool_router_from_settings(cx);
-        })
-        .detach();
-
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
@@ -1907,16 +1898,15 @@ fn main() {
                                     );
                                 }
 
-                                // zed-kask: D44 — LazyToolRouter hook
-                                // (set_tool_router), via the shared
-                                // settings-driven wiring so `kask.tool_router`
-                                // changes (including `enabled: false`) re-wire
-                                // live through the SettingsStore observer. The
-                                // router narrows the tool set on complex or
-                                // tool-directed requests, reducing the tool
-                                // list the model must reason about when
-                                // hKask's MCP servers expose many tools.
-                                cx.update(|cx| wire_tool_router_from_settings(cx));
+                                // zed-kask: D44 — no tool router is wired. The
+                                // LazyToolRouter was removed (2026-08-30): the
+                                // full registered MCP surface is presented
+                                // every turn, the system-prompt visibility
+                                // marker names tools hidden by the remaining
+                                // filter layers (scope, profile, curator
+                                // gating), and the `list_mcp_tools` meta-tool
+                                // lets the model enumerate the surface on
+                                // demand.
                             }
                             Err(e) => {
                                 log::warn!(
@@ -3185,58 +3175,6 @@ fn changed_env_keys(
 /// changed; servers not yet tracked by the deferred launch (empty baseline)
 /// are left alone. The baseline is recorded by the launch loop, so this
 /// observer is a no-op until the governed servers are actually running.
-/// zed-kask: D44 — the last tool-router config wired by
-/// `wire_tool_router_from_settings`. The latch makes the wiring log only on
-/// actual config changes: the SettingsStore observer fires on every settings
-/// write, and a per-write "router wired" line would be noise.
-static LAST_WIRED_TOOL_ROUTER: std::sync::Mutex<Option<(bool, f64, usize)>> =
-    std::sync::Mutex::new(None);
-
-/// zed-kask: D44 — wire (or unwire) the lazy tool router from the current
-/// kask settings. Shared by the deferred startup block and the SettingsStore
-/// observer so a `kask.tool_router` change (thresholds, or `enabled: false`)
-/// takes effect without a restart — post-D41, external settings edits fire
-/// the observers. `enabled: false` unwires the router entirely: every turn
-/// gets the full MCP surface (the operator's escape hatch from per-turn
-/// pruning; previously `set_tool_router` was wired unconditionally with no
-/// way to turn it off).
-fn wire_tool_router_from_settings(cx: &mut gpui::App) {
-    let router_settings = kask_bridge::KaskSettings::get_global(cx)
-        .tool_router
-        .clone();
-    let config = (
-        router_settings.enabled,
-        router_settings.threshold,
-        router_settings.complex_word_threshold,
-    );
-    let mut last_wired = LAST_WIRED_TOOL_ROUTER
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if *last_wired == Some(config) {
-        return;
-    }
-    if router_settings.enabled {
-        agent::set_tool_router(Some(std::sync::Arc::new(
-            agent::tool_router::LazyToolRouter::new_with_thresholds(
-                router_settings.threshold,
-                router_settings.complex_word_threshold,
-            ),
-        )));
-        log::info!(
-            "hKask lazy tool router wired (threshold={}, complex_word_threshold={})",
-            router_settings.threshold,
-            router_settings.complex_word_threshold
-        );
-    } else {
-        agent::set_tool_router(None);
-        log::info!(
-            "hKask lazy tool router disabled (kask.tool_router.enabled = false) — \
-             full MCP tool surface on every turn"
-        );
-    }
-    *last_wired = Some(config);
-}
-
 fn sync_kask_mcp_runtime_servers(
     mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
     last_env: std::sync::Arc<

@@ -1,6 +1,7 @@
 # Official Dublin Core / BIBO / CiTO term list — fabrication guard fixture.
 #
-# Sources (fetched 2026-08-29):
+# Sources (fetched 2026-08-29; dcterms:issued/spatial/references/provenance/
+# temporal and dcmitype:Image verified 2026-08-30 against the same page):
 # - DCMI Terms: https://www.dublincore.org/specifications/dublin-core/dcmi-terms/
 #   (dcterms: terms in the /terms/ namespace; type classes in the DCMI Type
 #   Vocabulary, http://purl.org/dc/dcmitype/)
@@ -15,6 +16,7 @@ dcterms:publisher
 dcterms:date
 dcterms:created
 dcterms:modified
+dcterms:issued
 dcterms:description
 dcterms:format
 dcterms:identifier
@@ -23,11 +25,16 @@ dcterms:language
 dcterms:rights
 dcterms:subject
 dcterms:type
+dcterms:spatial
+dcterms:temporal
+dcterms:provenance
+dcterms:references
 dcterms:BibliographicResource
 dcmitype:StillImage
 dcmitype:MovingImage
 dcmitype:Sound
 dcmitype:Text
+dcmitype:Image
 dcmitype:Dataset
 dcmitype:Software
 dcmitype:Collection

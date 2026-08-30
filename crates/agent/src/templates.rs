@@ -63,13 +63,14 @@ pub struct SystemPromptTemplate<'a> {
     /// Whether sandboxed terminal commands run through WSL on Windows.
     pub is_windows: bool,
     /// zed-kask: D44 — how many MCP server tools are registered but hidden
-    /// from `available_tools` this turn by the `LazyToolRouter`'s per-turn
-    /// relevance selection. Zero renders nothing. Non-zero renders a Tool
-    /// Use bullet telling the model the visible list is a selection, not the
-    /// whole surface — without it, the model reads a pruned list as the
-    /// complete toolset and reports registered tools as "unavailable"
-    /// (observed live: an agent denied `web_ping` existed because the
-    /// turn's routing hadn't selected it). Pinned by
+    /// from `available_tools` by the filter layers that remain now that the
+    /// LazyToolRouter is removed (agent-profile allowlists, per-tab server
+    /// scope, curator edit-tool gating). Zero renders nothing. Non-zero
+    /// renders a Tool Use bullet telling the model the visible list is a
+    /// selection, not the whole surface — without it, the model reads a
+    /// filtered list as the complete toolset and reports registered tools as
+    /// "unavailable" (observed live: an agent denied `web_ping` existed
+    /// because a filter layer hadn't selected it). Pinned by
     /// `test_system_prompt_names_hidden_mcp_tools_when_router_prunes` and
     /// `test_system_prompt_omits_hidden_mcp_section_when_nothing_hidden`.
     pub mcp_tools_hidden: usize,
@@ -235,13 +236,14 @@ mod tests {
         );
     }
 
-    // zed-kask: D44 pins — the router-visibility marker. When the
-    // LazyToolRouter prunes the MCP surface for a turn, the system prompt must
-    // tell the model: without the marker, the model reads the pruned list as
-    // the complete toolset and reports registered tools as "unavailable"
-    // (observed live 2026-08-30: an agent denied `web_ping` existed because
-    // that turn's routing hadn't selected it — the operator caught the false
-    // report). These two tests pin the render in both states.
+    // zed-kask: D44 pins — the tool-visibility marker. Tools hidden by the
+    // filter layers that remain now that the LazyToolRouter is removed
+    // (profile allowlists, server scope, curator gating) must be named in
+    // the system prompt, so the model never mistakes the visible list for
+    // the complete surface (observed live 2026-08-30: an agent denied
+    // `web_ping` existed because a filter layer hadn't selected it — the
+    // operator caught the false report). These two tests pin the render in
+    // both states.
     #[test]
     fn test_system_prompt_names_hidden_mcp_tools_when_router_prunes() {
         let project = prompt_store::ProjectContext::default();
@@ -269,9 +271,9 @@ mod tests {
              mode it exists to kill"
         );
         assert!(
-            rendered.contains("a tool named in the next user message is always surfaced"),
-            "the marker must state the recovery path (exact-name bypass) so the \
-             model asks instead of denying"
+            rendered.contains("call `list_mcp_tools` to enumerate"),
+            "the marker must state the recovery path (the discovery meta-tool) \
+             so the model acts instead of denying"
         );
     }
 

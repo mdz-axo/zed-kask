@@ -45,7 +45,7 @@ impl TrainingServer {
                 // classification, so it belongs on the subject axis alongside
                 // the dataset name.
                 let ontology = HMemOntology::state(
-                    "dcmitype:Dataset",
+                    hkask_bridge_ontology::dc_bibo::DATASET,
                     vec![ds.to_string(), level.to_string()],
                     source.clone(),
                 );

@@ -145,6 +145,18 @@ pub struct CyberneticsLoop {
     set_points: SetPoints,
     /// Cascade detection — prevents unbounded sense→act cycles
     max_iterations: u32,
+    /// Whether a model-bearing inference health source has been wired. The
+    /// composition root wires the source only after the default
+    /// `LanguageModel` resolves; before that (not logged in, registry still
+    /// loading) inference is unusable — the state `NoModelInferencePort`
+    /// exists for. Sensed as `SignalMetric::InferenceModelAvailable`.
+    inference_health_wired: bool,
+    /// Ticks since construction. The first ticks after boot often precede
+    /// the deferred task's model wiring (observed live: a boot wired the
+    /// no-op port at +4s while the model resolved later); sensing
+    /// model-unavailability on those ticks would report a false outage on
+    /// every slow boot. The grace constant lives at the sense site.
+    tick_count: std::sync::atomic::AtomicUsize,
     dampener: Arc<Dampener>,
     /// When present, algedonic alerts are persisted to RegulationArchive for restart durability.
     event_sink: Option<Arc<dyn RegulationSink>>,
@@ -285,6 +297,7 @@ impl CyberneticsLoop {
                 SignalMetric::PendingEscalations,
                 SignalMetric::MetacognitionCriticalAlerts,
                 SignalMetric::InferenceAvailable,
+                SignalMetric::InferenceModelAvailable,
                 SignalMetric::ContextServerHealth,
                 SignalMetric::TripleCount,
                 SignalMetric::LowConfidenceCount,
@@ -337,6 +350,8 @@ impl CyberneticsLoop {
             call_cap_manager,
             set_points,
             max_iterations,
+            inference_health_wired: false,
+            tick_count: std::sync::atomic::AtomicUsize::new(0),
             dampener,
             event_sink: None,
             alert_escalation_sink: None,
@@ -464,10 +479,12 @@ impl CyberneticsLoop {
         self,
         source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
     ) -> Self {
-        self.sensor_registry.register(Arc::new(
+        let mut this = self;
+        this.inference_health_wired = true;
+        this.sensor_registry.register(Arc::new(
             crate::sensor_provider::InferenceHealthSensor::new(source, 3),
         ));
-        self
+        this
     }
 
     /// Wire an inference health source after construction.
@@ -481,6 +498,7 @@ impl CyberneticsLoop {
         &mut self,
         source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
     ) {
+        self.inference_health_wired = true;
         self.sensor_registry.register(Arc::new(
             crate::sensor_provider::InferenceHealthSensor::new(source, 3),
         ));
@@ -701,6 +719,8 @@ impl CyberneticsLoop {
     /// `verify_impact` to close the feedback loop.
     pub async fn tick(&self) {
         let start = std::time::Instant::now();
+        self.tick_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let signals = self.sense().await;
         // Emit a runtime-posture signal span so the runtime-posture-monitor

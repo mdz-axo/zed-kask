@@ -2,7 +2,9 @@
 //!
 //! Used by `corpus_extract_assertions` in `mod.rs`.
 
+use hkask_bridge_ontology::dc_bibo;
 use hkask_bridge_ontology::golem;
+use hkask_bridge_ontology::schema_org;
 use hkask_bridge_ontology::sepio;
 
 /// Map an abstract-namespace predicate prefix to the chunk-tag namespace
@@ -32,15 +34,57 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
     use hkask_types::Dimension::*;
     let p = predicate.to_lowercase();
 
-    // Ontology-bridge predicates carry mixed-case canonical local names
-    // (e.g. `gc:GP1i_has_Character`) — compare case-insensitively against
-    // the canonical constants so the mapping cannot drift from the
-    // vocabulary module.
+    // Curated mapping — every entry is a fixture-guarded bridge constant,
+    // compared case-insensitively (LLM-emitted predicates arrive in any
+    // case; the constants carry the canonical mixed-case local names).
+    // The comparison must be case-insensitive on BOTH sides: matching a
+    // lowercased predicate against the raw constant silently drops every
+    // mixed-case arm (the former SEPIO arms were dead code — `SEPIO:0000189`
+    // never equals `sepio:0000189`).
+    //
+    // The fabricated schema.org predicates this table replaced
+    // (`schema:causes`, `schema:resultOf`, `schema:uses`, `schema:method`)
+    // exist nowhere in the published vocabulary — schema.org publishes no
+    // general causation or method predicate — so their arms were dropped,
+    // not re-termed. The Why/How dimensions survive via the SEPIO constants
+    // below; everything else falls to the default `What` arm.
+    // `rdf:creator` was also fabricated (RDF 1.1 publishes no creator
+    // property); the real term is `dcterms:creator`.
     for (canonical, dimension) in [
+        // Who — agents, authors, characters, creators
         (golem::HAS_CHARACTER, Who),
+        (schema_org::AUTHOR, Who),
+        (schema_org::CREATOR, Who),
+        (schema_org::CONTRIBUTOR, Who),
+        (schema_org::ACTOR, Who),
+        (dc_bibo::CREATOR, Who),
+        // Who — SEPIO epistemic agents (disputing evidence lines are
+        // independent arguments — agents of the debate)
+        (sepio::HAS_DISPUTING_EVIDENCE_LINE, Who),
+        // When — temporal
+        (schema_org::DATE_CREATED, When),
+        (schema_org::DATE_MODIFIED, When),
+        (schema_org::DATE_PUBLISHED, When),
+        (dc_bibo::CREATED, When),
+        (dc_bibo::ISSUED, When),
+        // When — SEPIO temporal epistemic
+        (sepio::HAS_CONFIDENCE_LEVEL, When),
+        // Where — spatial
         (golem::HAS_SETTING, Where),
         (golem::GENERIC_LOCATION, Where),
+        (schema_org::LOCATION, Where),
+        (dc_bibo::SPATIAL, Where),
+        // Why — causation, motivation, interpretive reference
         (golem::REFERS_TO, Why),
+        // Why — SEPIO epistemic causation
+        (sepio::CONTRADICTS, Why),
+        (sepio::HAS_DISPUTING_EVIDENCE, Why),
+        (sepio::HAS_SUPPORTING_EVIDENCE, Why),
+        (sepio::ASSERTS_PROPOSITION, Why),
+        // How — methods, processes
+        (sepio::WAS_SPECIFIED_BY, How),
+        (sepio::HAS_EVIDENCE, How),
+        // What — features
         (golem::HAS_FEATURE, What),
     ] {
         if p == canonical.to_lowercase() {
@@ -48,47 +92,8 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         }
     }
 
-    // Curated mapping — exact or prefix match on known predicates
-    match p.as_str() {
-        // Who — agents, authors, characters, creators
-        "schema:author" | "schema:creator" | "schema:contributor" | "schema:actor"
-        | "rdf:creator" => Who,
-
-        // Who — SEPIO epistemic agents (disputing evidence lines are
-        // independent arguments — agents of the debate)
-        sepio::HAS_DISPUTING_EVIDENCE_LINE => Who,
-
-        // When — temporal
-        "schema:datecreated"
-        | "schema:datemodified"
-        | "schema:datepublished"
-        | "dcterms:created"
-        | "dcterms:issued" => When,
-
-        // When — SEPIO temporal epistemic
-        sepio::HAS_CONFIDENCE_LEVEL => When,
-
-        // Where — spatial
-        "schema:location" | "dcterms:spatial" => Where,
-
-        // Why — causation, motivation, interpretive reference
-        "schema:causes" | "schema:resultof" => Why,
-
-        // Why — SEPIO epistemic causation
-        sepio::CONTRADICTS
-        | sepio::HAS_DISPUTING_EVIDENCE
-        | sepio::HAS_SUPPORTING_EVIDENCE
-        | sepio::ASSERTS_PROPOSITION => Why,
-
-        // How — methods, processes
-        "schema:uses" | "schema:method" => How,
-
-        // How — SEPIO methods and evidence
-        sepio::WAS_SPECIFIED_BY | sepio::HAS_EVIDENCE => How,
-
-        // What — default for everything else
-        _ => What,
-    }
+    // What — default for everything else
+    What
 }
 
 /// Hallucination guard for LLM-extracted assertions (RR-0018).

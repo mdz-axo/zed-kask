@@ -13,7 +13,6 @@ mod thread;
 mod thread_store;
 pub mod tool_permissions;
 pub mod tool_retry_tracker;
-pub mod tool_router;
 mod tools;
 
 use context_server::ContextServerId;
@@ -3152,26 +3151,6 @@ pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
         .lock()
         .expect("THREAD_CONDENSER poisoned")
         .clone()
-}
-
-/// Global hook for the tool router. When set, `Thread::enabled_tools`
-/// applies the router as a final filter after profile and feature-flag
-/// checks. When `None` (upstream Zed), all enabled tools pass through (I2).
-static TOOL_ROUTER: std::sync::Mutex<Option<Arc<dyn crate::tool_router::ToolRouter>>> =
-    std::sync::Mutex::new(None);
-
-/// Set the global tool router.
-///
-/// Re-settable — later calls replace the earlier router.
-pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) {
-    *TOOL_ROUTER.lock().expect("TOOL_ROUTER poisoned") = router;
-}
-
-/// Get the global tool router, if set. Returns `None` when no router has
-/// been configured (upstream Zed — I2). hKask's composition root calls
-/// `set_tool_router(Some(Arc::new(LazyToolRouter::new())))` to enable it.
-pub(crate) fn tool_router() -> Option<Arc<dyn crate::tool_router::ToolRouter>> {
-    TOOL_ROUTER.lock().expect("TOOL_ROUTER poisoned").clone()
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

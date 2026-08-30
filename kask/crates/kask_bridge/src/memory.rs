@@ -1375,7 +1375,7 @@ pub(crate) mod tests {
             .ontology
             .as_ref()
             .expect("curator copy carries an ontology blob");
-        assert_eq!(ontology.dc_type, "bibo:Document");
+        assert_eq!(ontology.dc_type, hkask_bridge_ontology::dc_bibo::DOCUMENT);
         assert!(
             ontology.pko_procedure.is_none(),
             "the curator copy is a semantic fact, not a process step"

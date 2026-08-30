@@ -417,15 +417,15 @@ mod tool_surface_tests {
                 }
             }
         }
-        assert_eq!(creative, Some("omc:CreativeWork"));
-        assert_eq!(version, Some("omc:VersionInfo"));
-        assert_eq!(scene, Some("omc:Scene"));
-        assert_eq!(asset, Some("omc:Asset"));
-        assert_eq!(source, Some("omc:Capture"));
-        assert_eq!(sequence, Some("omc:Sequence"));
-        assert_eq!(shot, Some("omc:Shot"));
-        assert_eq!(task, Some("omc:Task"));
-        assert_eq!(participant, Some("omc:Participant"));
+        assert_eq!(creative, Some(omc::CREATIVE_WORK));
+        assert_eq!(version, Some(omc::VERSION_INFO));
+        assert_eq!(scene, Some(omc::SCENE));
+        assert_eq!(asset, Some(omc::ASSET));
+        assert_eq!(source, Some(omc::CAPTURE));
+        assert_eq!(sequence, Some(omc::SEQUENCE));
+        assert_eq!(shot, Some(omc::SHOT));
+        assert_eq!(task, Some(omc::TASK));
+        assert_eq!(participant, Some(omc::PARTICIPANT));
     }
 }
 

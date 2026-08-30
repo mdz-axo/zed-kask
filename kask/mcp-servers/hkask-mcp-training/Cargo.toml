@@ -16,6 +16,9 @@ path = "src/main.rs"
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+# Ontology vocabulary bridge — fixture-guarded concept URIs (QA-pair
+# h_mems anchor on dc_bibo::DATASET, not a string literal).
+hkask-bridge-ontology.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true

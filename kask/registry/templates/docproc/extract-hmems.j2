@@ -1,9 +1,14 @@
 {# Goal: Extract RDF triples from text with confidence scores. #}
-{# v4: Narrative-aware with GOLEM, SEPIO, FIBO ontologies. #}
+{# v5: Narrative-aware with GOLEM, SEPIO, FIBO ontologies. #}
 {#     GOLEM predicates are the official v1.1 vocabulary (gc:, crm:, dlp:, #}
 {#     lrmoo: — https://ontology.golemlab.eu/). SEPIO predicates are the #}
 {#     official Monarch Initiative terms (SEPIO CURIEs, verified against #}
-{#     the 2023-06-13 OWL release). #}
+{#     the 2023-06-13 OWL release). schema.org predicates are verified #}
+{#     against the official release (v30.0, 2026-08-30) and pinned by the #}
+{#     bridge fixture schema-org-terms.txt — the former schema:causes / #}
+{#     schema:resultOf / schema:uses / schema:method / schema:subject were #}
+{#     fabricated (schema.org publishes no such properties) and are #}
+{#     removed; schema:subject's real counterpart is schema:subjectOf. #}
 {#     Ontology tags from tag_chunks injected when available. #}
 
 [inference]
@@ -42,12 +47,11 @@ Determine whether this passage is:
 
 ### For expository passages — use standard RDF / schema.org / domain predicates:
 - rdf:type, schema:name, schema:author, schema:mentions, schema:relatedTo
-- schema:about, schema:hasPart, schema:isPartOf, schema:subject
+- schema:about, schema:hasPart, schema:isPartOf, schema:subjectOf
 - schema:creator, schema:contributor, schema:dateCreated, schema:location
-- schema:uses, schema:method, schema:causes, schema:resultOf
 
 ### For financial/business passages — use standard RDF / schema.org predicates:
-- rdf:type, schema:about, schema:mentions, schema:relatedTo, schema:causes
+- rdf:type, schema:about, schema:mentions, schema:relatedTo
 - (FIBO publishes no predicates for competitive advantage, valuation
    methods, or capital allocation; until verified FIBO terms are wired in,
    financial passages use the generic expository set — do NOT emit

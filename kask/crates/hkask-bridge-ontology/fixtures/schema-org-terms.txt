@@ -1,0 +1,39 @@
+# Official schema.org term list — fabrication guard fixture.
+#
+# Source: schema.org machine-readable release (JSON-LD, all-https variant)
+#   https://schema.org/version/latest/schemaorg-all-https.jsonld
+#   (latest release at fetch time: v30.0, per the schemaorg/schemaorg
+#   GitHub releases page, published 2026-03-25)
+#   Namespace: https://schema.org/ (prefix schema:)
+# Fetched: 2026-08-30. Every term below was mechanically verified present
+#   as an rdf:Property node in the fetched JSON-LD @graph (1529 property
+#   nodes total) before being listed here.
+#
+# Terms used by the hKask bridge (the expository-passage predicate set for
+# corpus assertion extraction):
+schema:author
+schema:creator
+schema:contributor
+schema:actor
+schema:name
+schema:mentions
+schema:relatedTo
+schema:about
+schema:hasPart
+schema:isPartOf
+schema:dateCreated
+schema:dateModified
+schema:datePublished
+schema:location
+schema:subjectOf
+#
+# Notably NOT in the official schema.org vocabulary (do not use — each was
+# emitted by the corpus pipeline before this fixture existed):
+# schema:causes   — no such property; schema.org publishes no general
+#   causation predicate (schema:cause is domain-restricted to MedicalCondition)
+# schema:resultOf — no such property; schema:result is domain-restricted to Action
+# schema:uses     — no such property; no general "uses" predicate exists
+# schema:method   — no such property; near-misses are all domain-restricted
+#   (howPerformed: MedicalProcedure, measurementTechnique: Dataset/Observation)
+# schema:subject  — no such property; the real inverse-of-about term is
+#   schema:subjectOf ("A CreativeWork or Event about this Thing")

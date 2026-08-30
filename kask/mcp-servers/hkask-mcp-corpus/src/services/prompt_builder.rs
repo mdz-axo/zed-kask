@@ -371,7 +371,7 @@ impl PromptBuilderService {
                 // strings to Analyst), so no empty-check needed.
                 let expertise = tc.expertise_level.as_str();
                 let dc_type = if tc.dc_type.is_empty() {
-                    "bibo:Document"
+                    hkask_bridge_ontology::dc_bibo::DOCUMENT
                 } else {
                     tc.dc_type.as_str()
                 };

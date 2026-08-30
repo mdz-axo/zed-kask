@@ -286,6 +286,7 @@ pub(crate) fn sanitize_links(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_bridge_ontology::dc_bibo;
 
     #[test]
     fn dc_type_for_path_grounds_every_supported_convert_format() {
@@ -314,10 +315,12 @@ mod tests {
 
     #[test]
     fn dc_type_for_path_maps_extension_families() {
-        assert_eq!(dc_type_for_path("img.png"), Some("dcmitype:StillImage"));
-        assert_eq!(dc_type_for_path("clip.mp4"), Some("dcmitype:MovingImage"));
-        assert_eq!(dc_type_for_path("note.wav"), Some("dcmitype:Sound"));
-        assert_eq!(dc_type_for_path("data.json"), Some("dcmitype:Dataset"));
+        // Expected values are the fixture-guarded bridge constants — the
+        // fixture pins the URI's reality, this test pins the mapping.
+        assert_eq!(dc_type_for_path("img.png"), Some(dc_bibo::STILL_IMAGE));
+        assert_eq!(dc_type_for_path("clip.mp4"), Some(dc_bibo::MOVING_IMAGE));
+        assert_eq!(dc_type_for_path("note.wav"), Some(dc_bibo::SOUND));
+        assert_eq!(dc_type_for_path("data.json"), Some(dc_bibo::DATASET));
         // Legacy binary extensions (.doc/.xls/.ppt) have no canonical MIME
         // mapping — surfaced as None, never fabricated.
         assert_eq!(dc_type_for_path("old.doc"), None);

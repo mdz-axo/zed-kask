@@ -131,8 +131,11 @@ pub(crate) async fn write_turn(
 
     // ── 2. Shared copy in the curator's DB ──────────────────────────
     let curator_entity = format!("curator:thread:{thread_id}");
-    let curator_ontology =
-        HMemOntology::state("bibo:Document", vec!["chat_turn".to_string()], "curator");
+    let curator_ontology = HMemOntology::state(
+        hkask_bridge_ontology::dc_bibo::DOCUMENT,
+        vec!["chat_turn".to_string()],
+        "curator",
+    );
     let curator_copy = HMem::new(
         &curator_entity,
         "turn",

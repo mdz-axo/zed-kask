@@ -139,7 +139,7 @@ impl KanbanService {
         // field-drop trap" — the ontology blob must be set at write time).
         let board_ontology = HMemOntology {
             dimensions: vec![Dimension::How.as_str().to_string()],
-            dc_type: "pko:Procedure".to_string(),
+            dc_type: hkask_bridge_ontology::pko::PROCEDURE.to_string(),
             dc_source: "kanban".to_string(),
             pko_procedure: Some(board.id.to_string()),
             pko_step: None,

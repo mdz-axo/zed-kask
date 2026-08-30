@@ -1530,13 +1530,18 @@ impl ResearchServer {
                 0.0
             };
 
-            Ok(serde_json::json!({
+            let mut result = serde_json::json!({
                 "question": question,
                 "artifacts_evaluated": total,
                 "average_confidence": (avg_confidence * 100.0).round() / 100.0,
                 "evaluations": evaluations,
-                "pko:StepVerification": "evidence_quality_assessed",
-            }))
+            });
+            // Ontology-concept key: the StepVerification concept labels this
+            // result (evidence quality was assessed). Routed through the
+            // fixture-guarded bridge constant, not a string literal.
+            result[hkask_bridge_ontology::pko::STEP_VERIFICATION] =
+                serde_json::json!("evidence_quality_assessed");
+            Ok(result)
         })
         .await
     }
@@ -1634,12 +1639,17 @@ impl ResearchServer {
                     })
                     .collect();
 
-                Ok(serde_json::json!({
+                let mut result = serde_json::json!({
                     "style": serde_json::to_value(&style).unwrap_or_default(),
                     "count": citations.len(),
                     "citations": citations,
-                    "dcterms:references": "citations_generated",
-                }))
+                });
+                // Ontology-concept key: the dcterms:references concept labels
+                // this result (citations were generated). Routed through the
+                // fixture-guarded bridge constant, not a string literal.
+                result[hkask_bridge_ontology::dc_bibo::REFERENCES] =
+                    serde_json::json!("citations_generated");
+                Ok(result)
             },
         )
         .await

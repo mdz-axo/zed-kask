@@ -13,6 +13,10 @@ path = "src/hkask_types.rs"
 # NOTE: hkask-types must NOT depend on hkask-tool-port (would create a cycle).
 # Modules that need capability types (kanban, goal, loops/curation) are being
 # migrated to their domain crates.
+# Ontology vocabulary bridge — fixture-guarded concept URIs. The bridge is a
+# leaf crate (serde/schemars only); it must STAY leaf — if it ever needs
+# hkask-types, this dependency becomes a cycle.
+hkask-bridge-ontology.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

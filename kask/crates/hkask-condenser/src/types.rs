@@ -379,7 +379,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pko:StepExecution".into()
+                concept: hkask_bridge_ontology::pko::STEP_EXECUTION.into()
             }
             .confidence_modifier()
                 - 0.0)
@@ -391,7 +391,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Fibo,
-                concept: "fibo:Corporation".into()
+                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
             }
             .confidence_modifier()
                 - 0.10)
@@ -403,7 +403,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Sumo,
-                concept: "sumo:Entity".into()
+                concept: hkask_bridge_ontology::sumo::ENTITY.into()
             }
             .confidence_modifier()
                 - 0.05)
@@ -415,7 +415,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Golem,
-                concept: "gc:G1_Character".into()
+                concept: hkask_bridge_ontology::golem::CHARACTER.into()
             }
             .confidence_modifier()
                 - 0.0)
@@ -430,7 +430,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Fibo,
-                concept: "fibo:Corporation".into()
+                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
             }
             .density_factor()
                 - 1.3)
@@ -442,7 +442,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Sumo,
-                concept: "sumo:Process".into()
+                concept: hkask_bridge_ontology::sumo::PROCESS.into()
             }
             .density_factor()
                 - 1.0)
@@ -454,7 +454,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pko:StepExecution".into()
+                concept: hkask_bridge_ontology::pko::STEP_EXECUTION.into()
             }
             .density_factor()
                 - 1.0)
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pplan:Step".into()
+                concept: hkask_bridge_ontology::pko::STEP.into()
             }
             .tier_label(),
             "dual_axis"
@@ -480,7 +480,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Fibo,
-                concept: "fibo:Corporation".into()
+                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
             }
             .tier_label(),
             "domain_supplement"
@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pplan:Step".into()
+                concept: hkask_bridge_ontology::pko::STEP.into()
             }
             .axis(),
             Some(OntologyAxis::Pko)
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::DcBibo,
-                concept: "bibo:Article".into()
+                concept: hkask_bridge_ontology::dc_bibo::ARTICLE.into()
             }
             .axis(),
             Some(OntologyAxis::DcBibo)

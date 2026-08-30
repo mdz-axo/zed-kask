@@ -326,7 +326,10 @@ impl CorpusServer {
                         for (i, chunk) in batch_chunks.iter().enumerate() {
                             p.push_str(&format!("--- Passage {} ---\n{}\n\n", i + 1, chunk.text));
                         }
-                        p.push_str("Return a JSON array now. Schema: {\"dimensions\":[\"what\"],\"dc_type\":\"bibo:Document\",\"dc_subject\":[],\"ontology_tags\":{},\"expertise_level\":\"analyst\"}");
+                        p.push_str(&format!(
+                            "Return a JSON array now. Schema: {{\"dimensions\":[\"what\"],\"dc_type\":\"{}\",\"dc_subject\":[],\"ontology_tags\":{{}},\"expertise_level\":\"analyst\"}}",
+                            hkask_bridge_ontology::dc_bibo::DOCUMENT
+                        ));
                         p
                     } else {
                         prompt
@@ -425,7 +428,7 @@ impl CorpusServer {
                             if results[start_idx + i].is_none() {
                                 results[start_idx + i] = Some(OntologyTags {
                                     dimensions: vec!["what".to_string()],
-                                    dc_type: "bibo:Document".to_string(),
+                                    dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
                                     dc_subject: Vec::new(),
                                     ontology_tags: std::collections::HashMap::new(),
                                     expertise_level: hkask_types::corpus::ExpertiseLevel::default(),
@@ -462,7 +465,7 @@ impl CorpusServer {
                 .map(|(i, chunk)| {
                     let tags = tags_guard[i].clone().unwrap_or_else(|| OntologyTags {
                         dimensions: vec!["what".to_string()],
-                        dc_type: "bibo:Document".to_string(),
+                        dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
                         dc_subject: Vec::new(),
                         ontology_tags: std::collections::HashMap::new(),
                         expertise_level: hkask_types::corpus::ExpertiseLevel::default(),

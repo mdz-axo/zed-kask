@@ -499,18 +499,6 @@ pub(crate) fn kask_string_input(
                                     kask.corpus.get_or_insert_default().ocr_sample_rate = Some(v);
                                 }
                             }
-                            ("tool_router", "threshold") => {
-                                if let Ok(v) = parsed.parse::<f64>() {
-                                    kask.tool_router.get_or_insert_default().threshold = Some(v);
-                                }
-                            }
-                            ("tool_router", "complex_word_threshold") => {
-                                if let Ok(v) = parsed.parse::<usize>() {
-                                    kask.tool_router
-                                        .get_or_insert_default()
-                                        .complex_word_threshold = Some(v);
-                                }
-                            }
                             _ => {}
                         }
                     },

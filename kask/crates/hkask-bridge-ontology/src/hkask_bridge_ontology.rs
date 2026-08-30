@@ -3,8 +3,8 @@
 //! Ontology bridge — the single source of truth for ontology vocabulary and
 //! the dual-axis domain-selection logic in hKask.
 //!
-//! Nine ontologies: two universal axes, one upper
-//! ontology, and six domain supplements.
+//! Eleven vocabularies: two universal axes, one upper
+//! ontology, six domain supplements, and two pipeline vocabularies.
 //!
 //! Two universal axes (P5.4):
 //! - **State axis** — Dublin Core + BIBO + CiTO (`dc_bibo`): the "what is this"
@@ -30,6 +30,14 @@
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
 //! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
 //! - **MovieLabs OMC** (`omc`): media production workflows (capture → post → distribution).
+//!
+//! Pipeline vocabularies (assertion extraction):
+//! - **schema.org** (`schema_org`): the expository-passage predicate set for
+//!   corpus assertion extraction. Official terms pinned by
+//!   `fixtures/schema-org-terms.txt`.
+//! - **RDF 1.1** (`rdf`): the core `rdf:` vocabulary (the pipeline uses
+//!   `rdf:type`). The complete closed official list is pinned by
+//!   `fixtures/rdf-11-terms.txt`.
 //!
 //! The domain-selection logic (`axis`) maps a domain hint to its axis
 //! anchoring: state axis is always Dublin Core; process axis is the domain
@@ -86,6 +94,8 @@ pub mod golem;
 pub mod ml_schema;
 pub mod omc;
 pub mod pko;
+pub mod rdf;
+pub mod schema_org;
 pub mod sdmx;
 pub mod sepio;
 pub mod sumo;

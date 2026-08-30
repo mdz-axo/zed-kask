@@ -9,17 +9,11 @@ pub(crate) fn render_general_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let (data_dir, artifacts_dir, tool_router, general): (
-        String,
-        String,
-        kask_bridge::KaskToolRouterSettings,
-        kask_bridge::KaskGeneralSettings,
-    ) = raw
-        .map(|c| {
+    let (data_dir, artifacts_dir, general): (String, String, kask_bridge::KaskGeneralSettings) =
+        raw.map(|c| {
             (
                 c.data_dir.unwrap_or_default(),
                 c.artifacts_dir.unwrap_or_default(),
-                c.tool_router.map(Into::into).unwrap_or_default(),
                 c.general.map(Into::into).unwrap_or_default(),
             )
         })
@@ -48,57 +42,6 @@ pub(crate) fn render_general_page(
         "kask",
         "artifacts_dir",
     );
-    let threshold_input = kask_string_input(
-        "kask-tool-router-threshold",
-        "Activation Threshold",
-        "Default: 0.30",
-        tool_router.threshold.to_string(),
-        "tool_router",
-        "threshold",
-    );
-    let complex_word_threshold_input = kask_string_input(
-        "kask-tool-router-complex-word-threshold",
-        "Complex-Word Threshold",
-        "Default: 6",
-        tool_router.complex_word_threshold.to_string(),
-        "tool_router",
-        "complex_word_threshold",
-    );
-    // zed-kask: D44 — the router's master switch. Off = the full MCP tool
-    // surface on every turn (no per-turn pruning); the change re-wires live
-    // via the SettingsStore observer, no restart needed.
-    let tool_router_enabled = tool_router.enabled;
-    let tool_router_enabled_toggle = SwitchField::new(
-        "kask-tool-router-enabled",
-        Some("Tool Router Enabled"),
-        Some(
-            "When on, the router narrows the MCP tool list per request (the \
-             system prompt tells the model how many tools are hidden). When \
-             off, every turn gets the full MCP surface — no pruning, no \
-             hidden tools. Takes effect immediately."
-                .into(),
-        ),
-        if tool_router_enabled {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
-        },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .tool_router
-                        .get_or_insert_default()
-                        .enabled = Some(enabled);
-                },
-            );
-        },
-    )
-    .tab_index(0);
     let max_concurrency_input = kask_string_input(
         "kask-general-max-concurrency",
         "Max Concurrency",
@@ -168,26 +111,6 @@ pub(crate) fn render_general_page(
                     .color(Color::Muted),
                 )
                 .child(artifacts_dir_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(SettingsSectionHeader::new("Tool Router"))
-                .child(
-                    Label::new(
-                        "The lazy tool router narrows the MCP tool set on complex or \
-                         tool-directed requests, reducing the tool list the model must \
-                         reason about. Activation threshold is the score for inclusion \
-                         (0.0–1.0); complex-word threshold is the minimum word count \
-                         that triggers routing. Defaults: 0.30 / 6.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(threshold_input)
-                .child(complex_word_threshold_input)
-                .child(tool_router_enabled_toggle),
         )
         .child(Divider::horizontal())
         .child(
