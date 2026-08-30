@@ -589,7 +589,7 @@ pub async fn build_mcp_server_env(
     inference_socket: Option<&str>,
     inference_timeout_secs: Option<u64>,
     cx: &gpui::AsyncApp,
-) -> std::collections::HashMap<String, String> {
+) -> hkask_types::ServerEnv {
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
     //    unfiltered map; the allowlist is what keeps the curator's email
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
@@ -707,7 +707,7 @@ pub async fn build_mcp_server_env(
         );
     }
 
-    env
+    hkask_types::ServerEnv::from_canonical(env)
 }
 
 /// Env vars with a required startup-default passphrase.
@@ -1446,7 +1446,7 @@ mod tests {
         // were a skip (the pre-fix behavior), this would fail — the value would
         // be lost when the governed path clears the child's env.
         assert_eq!(
-            env.get("HKASK_ABW_API_KEY").map(|v| v.as_str()),
+            env.get("HKASK_ABW_API_KEY"),
             Some("shell-secret-value"),
             "shell-set HKASK_ABW_API_KEY must be inserted into the env map so it \
              survives the governed path's cmd.env_clear() — the prior `continue` \
@@ -1566,7 +1566,7 @@ mod tests {
         // composed env with the keychain value — not be dropped by the config
         // filter running on the credential map (the Path B regression).
         assert_eq!(
-            env.get("HKASK_DB_PASSPHRASE").map(|v| v.as_str()),
+            env.get("HKASK_DB_PASSPHRASE"),
             Some("keychain-secret-passphrase"),
             "credential must survive the config filter in the composed path — \
              the prior Path B bug dropped every credential because the config \
@@ -1576,8 +1576,7 @@ mod tests {
         // The inference socket must also be injected (it is added last,
         // outside both filters).
         assert_eq!(
-            env.get(hkask_types::inference_ipc::INFERENCE_SOCKET_ENV)
-                .map(|v| v.as_str()),
+            env.get(hkask_types::inference_ipc::INFERENCE_SOCKET_ENV),
             Some("/tmp/sock"),
             "inference socket must be injected into the composed env"
         );
@@ -1588,8 +1587,7 @@ mod tests {
         // slow-but-alive provider produces a `BrokenPipe` warn storm (client
         // times out first, server's later write hits EPIPE).
         assert_eq!(
-            env.get(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV)
-                .map(|v| v.as_str()),
+            env.get(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV),
             Some("300"),
             "inference timeout must be injected into the composed env so IPC \
              clients can align their read deadline with the server's"

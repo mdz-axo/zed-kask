@@ -8,7 +8,7 @@
 
 use hkask_bridge_ontology::omc::OmcConcept;
 use hkask_bridge_ontology::omc::{
-    ASSET, CREATIVE_WORK, MEDIA_SOURCE, PARTICIPANT, SCENE, SEQUENCE, SHOT, TASK, VERSION,
+    ASSET, CAPTURE, CREATIVE_WORK, PARTICIPANT, SCENE, SEQUENCE, SHOT, TASK, VERSION_INFO,
 };
 
 // Re-export the shared explain-tool dispatch so the media server's tests and
@@ -32,7 +32,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "upscale_image"
         | "image_remove_background"
         | "image_apply_style"
-        | "image_edit_region" => Some(VERSION),
+        | "image_edit_region" => Some(VERSION_INFO),
         // Analysis — produces a scene description (the scene is the subject).
         "describe_image" | "gallery_analyze" | "video_caption" => Some(SCENE),
         // Gallery management — produces/manages asset references.
@@ -66,7 +66,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "transcribe"
         | "transcribe_bundle"
         | "audio_trim"
-        | "audio_concat" => Some(MEDIA_SOURCE),
+        | "audio_concat" => Some(CAPTURE),
         // Video processing — produces a sequence (a clip is a sequence of shots).
         "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" | "video_add_caption"
         | "video_remix" | "video_from_images" | "video_info" => Some(SEQUENCE),
@@ -98,10 +98,10 @@ mod tests {
 
     #[test]
     fn transform_tools_map_to_version() {
-        assert_eq!(tool_to_omc("transform_image"), Some(VERSION));
-        assert_eq!(tool_to_omc("upscale_image"), Some(VERSION));
-        assert_eq!(tool_to_omc("image_remove_background"), Some(VERSION));
-        assert_eq!(tool_to_omc("image_apply_style"), Some(VERSION));
+        assert_eq!(tool_to_omc("transform_image"), Some(VERSION_INFO));
+        assert_eq!(tool_to_omc("upscale_image"), Some(VERSION_INFO));
+        assert_eq!(tool_to_omc("image_remove_background"), Some(VERSION_INFO));
+        assert_eq!(tool_to_omc("image_apply_style"), Some(VERSION_INFO));
     }
 
     #[test]
@@ -119,9 +119,9 @@ mod tests {
 
     #[test]
     fn audio_tools_map_to_media_source() {
-        assert_eq!(tool_to_omc("generate_speech"), Some(MEDIA_SOURCE));
-        assert_eq!(tool_to_omc("audio_capture"), Some(MEDIA_SOURCE));
-        assert_eq!(tool_to_omc("record_and_transcribe"), Some(MEDIA_SOURCE));
+        assert_eq!(tool_to_omc("generate_speech"), Some(CAPTURE));
+        assert_eq!(tool_to_omc("audio_capture"), Some(CAPTURE));
+        assert_eq!(tool_to_omc("record_and_transcribe"), Some(CAPTURE));
     }
 
     #[test]
@@ -172,9 +172,9 @@ mod tests {
 
     #[test]
     fn audio_transcription_maps_to_media_source() {
-        assert_eq!(tool_to_omc("voice_design"), Some(MEDIA_SOURCE));
-        assert_eq!(tool_to_omc("transcribe"), Some(MEDIA_SOURCE));
-        assert_eq!(tool_to_omc("transcribe_bundle"), Some(MEDIA_SOURCE));
+        assert_eq!(tool_to_omc("voice_design"), Some(CAPTURE));
+        assert_eq!(tool_to_omc("transcribe"), Some(CAPTURE));
+        assert_eq!(tool_to_omc("transcribe_bundle"), Some(CAPTURE));
     }
 
     #[test]
@@ -219,8 +219,8 @@ mod tests {
         assert_eq!(explain_tool_for(SCENE), "gallery_analyze");
         assert_eq!(explain_tool_for(ASSET), "gallery_analyze");
         assert_eq!(explain_tool_for(CREATIVE_WORK), "describe_image");
-        assert_eq!(explain_tool_for(VERSION), "describe_image");
-        assert_eq!(explain_tool_for(MEDIA_SOURCE), "describe_image");
+        assert_eq!(explain_tool_for(VERSION_INFO), "describe_image");
+        assert_eq!(explain_tool_for(CAPTURE), "describe_image");
         assert_eq!(explain_tool_for(SEQUENCE), "describe_image");
     }
 }

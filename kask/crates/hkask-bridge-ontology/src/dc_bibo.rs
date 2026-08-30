@@ -6,6 +6,14 @@
 //! state identity drawn from this vocabulary.
 //!
 //! Reference: <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>
+//! DCMI Type Vocabulary: <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7>
+//!   (type classes live in the `dcmitype:` namespace, `http://purl.org/dc/dcmitype/`)
+//! BIBO: <http://purl.org/ontology/bibo/> (v1.3)
+//! CiTO: <http://purl.org/spar/cito> (v2.8.2)
+//!
+//! Every term is verified against those artifacts —
+//! `fixtures/dublincore-bibo-cito-terms.txt` pins the term list, and
+//! `all_terms_are_official` fails the build if a term drifts from it.
 
 /// A Dublin Core / BIBO / CiTO concept URI.
 pub type DcConcept = &'static str;
@@ -28,15 +36,15 @@ pub const RIGHTS: DcConcept = "dcterms:rights";
 pub const SUBJECT: DcConcept = "dcterms:subject";
 pub const TYPE: DcConcept = "dcterms:type";
 
-// ── Dublin Core Type Vocabulary ───────────────────────────────────────────
+// ── Dublin Core Type Vocabulary (`dcmitype:` namespace) ───────────────────
 
-pub const STILL_IMAGE: DcConcept = "dcterms:StillImage";
-pub const MOVING_IMAGE: DcConcept = "dcterms:MovingImage";
-pub const SOUND: DcConcept = "dcterms:Sound";
-pub const TEXT: DcConcept = "dcterms:Text";
-pub const DATASET: DcConcept = "dcterms:Dataset";
-pub const SOFTWARE: DcConcept = "dcterms:Software";
-pub const COLLECTION: DcConcept = "dcterms:Collection";
+pub const STILL_IMAGE: DcConcept = "dcmitype:StillImage";
+pub const MOVING_IMAGE: DcConcept = "dcmitype:MovingImage";
+pub const SOUND: DcConcept = "dcmitype:Sound";
+pub const TEXT: DcConcept = "dcmitype:Text";
+pub const DATASET: DcConcept = "dcmitype:Dataset";
+pub const SOFTWARE: DcConcept = "dcmitype:Software";
+pub const COLLECTION: DcConcept = "dcmitype:Collection";
 pub const BIBLIOGRAPHIC_RESOURCE: DcConcept = "dcterms:BibliographicResource";
 
 // ── BIBO (Bibliographic Ontology) ─────────────────────────────────────────
@@ -49,7 +57,6 @@ pub const BOOK_SECTION: DcConcept = "bibo:BookSection";
 pub const THESIS: DcConcept = "bibo:Thesis";
 pub const WEBPAGE: DcConcept = "bibo:Webpage";
 pub const DOCUMENT: DcConcept = "bibo:Document";
-pub const PREPRINT: DcConcept = "bibo:Preprint";
 pub const PROCEEDINGS: DcConcept = "bibo:Proceedings";
 pub const REPORT: DcConcept = "bibo:Report";
 pub const MANUSCRIPT: DcConcept = "bibo:Manuscript";
@@ -95,6 +102,82 @@ pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every URI constant in this module, by construction — the fixture
+    /// test below asserts each appears in the official term list.
+    const ALL_TERMS: &[DcConcept] = &[
+        TITLE,
+        CREATOR,
+        CONTRIBUTOR,
+        PUBLISHER,
+        DATE,
+        CREATED,
+        MODIFIED,
+        DESCRIPTION,
+        FORMAT,
+        IDENTIFIER,
+        SOURCE,
+        LANGUAGE,
+        RIGHTS,
+        SUBJECT,
+        TYPE,
+        STILL_IMAGE,
+        MOVING_IMAGE,
+        SOUND,
+        TEXT,
+        DATASET,
+        SOFTWARE,
+        COLLECTION,
+        BIBLIOGRAPHIC_RESOURCE,
+        ARTICLE,
+        ACADEMIC_ARTICLE,
+        JOURNAL,
+        BOOK,
+        BOOK_SECTION,
+        THESIS,
+        WEBPAGE,
+        DOCUMENT,
+        PROCEEDINGS,
+        REPORT,
+        MANUSCRIPT,
+        CITES,
+        IS_CITED_BY,
+        SUPPORTS,
+        REFUTES,
+        DISCUSSES,
+        REVIEWS,
+        REPLIES_TO,
+        USES_DATA_FROM,
+        CITES_AS_DATA_SOURCE,
+        CITES_AS_EVIDENCE,
+    ];
+
+    /// Fabrication guard: every term in this module must appear in the
+    /// official DCMI / BIBO / CiTO term list checked in as a fixture.
+    #[test]
+    fn all_terms_are_official() {
+        let fixture_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/dublincore-bibo-cito-terms.txt"
+        );
+        let fixture = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
+        let official: std::collections::HashSet<&str> = fixture
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        assert!(
+            !official.is_empty(),
+            "fixture {fixture_path} contains no terms"
+        );
+        for term in ALL_TERMS {
+            assert!(
+                official.contains(term),
+                "{term} is not in the official DCMI/BIBO/CiTO term list ({fixture_path})"
+            );
+        }
+    }
 
     #[test]
     fn mime_to_dc_type_covers_corpus_ingest_formats() {

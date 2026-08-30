@@ -21,7 +21,7 @@ crate (user directive 2026-08-05, recorded in the crate root doc,
 The crate is organised as ten `pub` modules
 (`hkask_bridge_ontology.rs:58-67`): two universal axes (Dublin Core +
 BIBO + CiTO for state, PKO for process), one upper ontology (SUMO), and
-six domain supplements (FIBO, ESO, GOLEM, ML-Schema, SDMX, OMC) plus the
+six domain supplements (FIBO, SEPIO, GOLEM, ML-Schema, SDMX, OMC) plus the
 `axis` domain-selection logic. The dual-axis invariant — one axis is
 always Dublin Core or PKO — guarantees every artifact has a common
 mapping in process or state space regardless of domain.
@@ -32,7 +32,7 @@ graph TD
     Sel["select_ontology_anchor"]
     Core["OntologyAnchor::Core<br/>(5W1H ground, empty hint only)"]
     Dual["OntologyAnchor::DualAxis<br/>(PKO or DC+BIBO)"]
-    Supp["OntologyAnchor::DomainSupplement<br/>(FIBO/ESO/GOLEM/MLSchema/SDMX/SUMO)"]
+    Supp["OntologyAnchor::DomainSupplement<br/>(FIBO/SEPIO/GOLEM/MLSchema/SDMX/SUMO)"]
     State["State axis<br/>Dublin Core + BIBO + CiTO"]
     Proc["Process axis<br/>PKO"]
     Tag["ontology concept URI<br/>on the regulation span"]
@@ -134,7 +134,7 @@ domain-specific precision. Each supplement module is a flat list of
 `pub const` URI strings — no trait, no struct, no runtime state.
 
 ```rust
-use hkask_bridge_ontology::{fibo, sdmx, eso, golem, ml_schema, sumo, omc};
+use hkask_bridge_ontology::{fibo, sdmx, sepio, golem, ml_schema, sumo, omc};
 
 // Financial domain (FIBO)
 let roic = fibo::RETURN_ON_INVESTED_CAPITAL;  // "fibo-fbc-fct-ra:ReturnOnInvestedCapital" (fibo.rs:51)
@@ -143,8 +143,8 @@ let dcf  = fibo::DCF_VALUATION;               // "fibo:dcfValuation"            
 // Statistical data (SDMX)
 let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"  (sdmx.rs:30)
 
-// Scientific reasoning (ESO)
-let hyp = eso::HAS_HYPOTHESIS;    // "eso:hasHypothesis" (eso.rs:23)
+// Scientific evidence and provenance (SEPIO — official Monarch Initiative terms)
+let ev = sepio::HAS_EVIDENCE;      // "SEPIO:0000189" (sepio.rs, fixture-pinned)
 
 // Narrative (GOLEM — official v1.1 vocabulary, prefix gc:, reusing crm:/dlp:/lrmoo:)
 let character = golem::CHARACTER; // "gc:G1_Character" (golem.rs:54)
@@ -197,7 +197,7 @@ let anchor = select_ontology_anchor("");
 // → OntologyAnchor::Core   (axis.rs:345-347)
 ```
 
-The dispatch order is: SDMX (`axis.rs:223`) → FIBO (`:243`) → ESO
+The dispatch order is: SDMX (`axis.rs:223`) → FIBO (`:243`) → SEPIO
 (`:267`) → GOLEM (`:283`) → ML-Schema (`:300`) → PKO dual-axis (`:310`)
 → DC+BIBO dual-axis (`:330`) → SUMO fallback / `Core` for the empty
 hint (`:345-351`). The first matching keyword set wins.
@@ -339,7 +339,7 @@ their own mapping today.
 | `select_ontology_anchor` (domain-hint dispatcher) | `kask/crates/hkask-bridge-ontology/src/axis.rs:210` |
 | SDMX keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:223` |
 | FIBO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:243` |
-| ESO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:267` |
+| SEPIO keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:267` |
 | GOLEM keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:283` |
 | ML-Schema keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:300` |
 | PKO dual-axis keyword arm | `kask/crates/hkask-bridge-ontology/src/axis.rs:310` |
@@ -351,7 +351,7 @@ their own mapping today.
 | `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:106`, `:127`, `:156` |
 | `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:156` |
 | `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/PORTFOLIO/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:32`, `:51`, `:93`, `:141` |
-| `eso` constants (HAS_HYPOTHESIS/...) | `kask/crates/hkask-bridge-ontology/src/eso.rs:23` |
+| `sepio` constants (HAS_EVIDENCE/CONTRADICTS/... — official SEPIO terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/sepio.rs`, fixture `fixtures/sepio-2023-06-13-terms.txt` |
 | `golem` constants (WORK/CHARACTER/HAS_CHARACTER/... — official v1.1 terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/golem.rs:41-135`, fixture `fixtures/golem-v1.1-terms.txt` |
 | `ml_schema` constants (MODEL/RUN/...) | `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21`, `:23` |
 | `sdmx` constants (DATASET/TIME_SERIES/...) | `kask/crates/hkask-bridge-ontology/src/sdmx.rs:23`, `:30` |

@@ -1,0 +1,23 @@
+# Official OMC (MovieLabs Ontology for Media Creation) term list —
+# fabrication guard fixture.
+#
+# Source: MovieLabs OMC v2.8 RDF artifact
+#   https://raw.githubusercontent.com/MovieLabs/OMC/main/OMC-RDF/OntologyMediaCreation-OMC/omc.ttl
+#   namespace: https://movielabs.com/omc/rdf/schema/v2.8#
+# Fetched: 2026-08-29 (classes verified present in the fetched omc.ttl).
+#
+# Terms used by the hKask bridge:
+omc:CreativeWork
+omc:Scene
+omc:Shot
+omc:Sequence
+omc:Participant
+omc:Capture
+omc:Asset
+omc:Task
+omc:VersionInfo
+#
+# Notably NOT in official OMC v2.8 (do not use):
+# omc:MediaSource — no such class; captured/source material is omc:Capture
+# omc:Version — no such class; versioning is omc:VersionInfo plus the
+#   hasVersion / isVersionOf properties

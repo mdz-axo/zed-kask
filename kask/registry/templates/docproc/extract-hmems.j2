@@ -1,7 +1,9 @@
 {# Goal: Extract RDF triples from text with confidence scores. #}
-{# v4: Narrative-aware with GOLEM, FIBO, ESO ontologies. #}
+{# v4: Narrative-aware with GOLEM, SEPIO, FIBO ontologies. #}
 {#     GOLEM predicates are the official v1.1 vocabulary (gc:, crm:, dlp:, #}
-{#     lrmoo: — https://ontology.golemlab.eu/). #}
+{#     lrmoo: — https://ontology.golemlab.eu/). SEPIO predicates are the #}
+{#     official Monarch Initiative terms (SEPIO CURIEs, verified against #}
+{#     the 2023-06-13 OWL release). #}
 {#     Ontology tags from tag_chunks injected when available. #}
 
 [inference]
@@ -14,7 +16,7 @@ You are a knowledge graph extractor for a capabilities research corpus. Given a 
 This passage has already been classified with the following ontology tags:
 {{ ontology_context }}
 
-Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "fibo" or "eso" or "epistemic" or "pko", the passage is expository — use the corresponding domain predicates (FIBO for financial, ESO for scientific/epistemic, schema.org for general). If the tags include "other", use standard RDF predicates. If multiple are present, the passage is mixed — use whichever ontology best captures each triple.
+Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "fibo" or "sepio" or "epistemic" or "pko", the passage is expository — use the corresponding domain predicates (FIBO for financial, SEPIO for scientific/epistemic, schema.org for general). If the tags include "other", use standard RDF predicates. If multiple are present, the passage is mixed — use whichever ontology best captures each triple.
 {% else %}
 
 ## Step 1: Classify the passage
@@ -44,30 +46,22 @@ Determine whether this passage is:
 - schema:creator, schema:contributor, schema:dateCreated, schema:location
 - schema:uses, schema:method, schema:causes, schema:resultOf
 
-### For financial/business passages — use FIBO predicates:
-- fibo:hasCompetitiveAdvantage, fibo:hasBarrierToEntry
-- fibo:returnOnCapital, fibo:economicProfit
-- fibo:dcfValuation, fibo:intrinsicValue, fibo:marginOfSafety, fibo:costOfCapital
-- fibo:capitalAllocation, fibo:reinvestmentRate
-- fibo:hasRisk, fibo:hasUncertainty
+### For financial/business passages — use standard RDF / schema.org predicates:
+- rdf:type, schema:about, schema:mentions, schema:relatedTo, schema:causes
+- (FIBO publishes no predicates for competitive advantage, valuation
+   methods, or capital allocation; until verified FIBO terms are wired in,
+   financial passages use the generic expository set — do NOT emit
+   fibo:-prefixed predicates)
 
-### For scientific/epistemic passages — use ESO (Epistemic Science Ontology) predicates:
-- eso:hasHypothesis — a hypothesis proposed in the text
-- eso:hasTheory — a theory discussed or referenced
-- eso:hasModel — a model or framework described
-- eso:hasClaim — a factual claim made by the author
-- eso:hasAssumption — an assumption underlying an argument
-- eso:hasEvidence — evidence supporting a claim or hypothesis
-- eso:hasLimitation — a limitation or boundary condition
-- eso:implies — what follows from a claim or theory
-- eso:contradicts — what contradicts or challenges a claim
-- eso:falsifiedBy — what would falsify a claim (Popper)
-- eso:corroboratedBy — what corroborates or supports a claim
-- eso:generalizesTo — what the finding generalizes to
-- eso:hasUncertainty — uncertainty associated with a claim
-- eso:hasConfidence — confidence level in a finding
-- eso:usesMethod — the method or approach used
-- eso:hasCounterargument — a counterargument or alternative explanation
+### For scientific/epistemic passages — use SEPIO predicates (official Monarch Initiative terms):
+- SEPIO:0000030 — an agent asserts a proposition (a claim)
+- SEPIO:0000041 — an artifact or process was specified by a method
+- SEPIO:0000008 — an independent argument against a proposition (counterargument)
+- SEPIO:0000101 — one proposition contradicts another
+- SEPIO:0000167 — an assertion has a confidence level
+- SEPIO:0000189 — an assertion has evidence
+- SEPIO:0000440 — evidence supports a proposition (corroboration)
+- SEPIO:0000441 — evidence disputes a proposition (falsification pressure)
 
 ### For mixed passages — use whichever ontology best captures each triple.
 
@@ -92,6 +86,6 @@ Respond in JSON format:
 
 Example (expository): {"subject": "corpus:Damodaran", "predicate": "schema:author", "object": "Investment Valuation", "confidence": 0.98}
 Example (narrative): {"subject": "corpus:Berkshire", "predicate": "gc:GP1i_has_Character", "object": "Warren Buffett", "confidence": 0.95}
-Example (epistemic): {"subject": "corpus:Tetlock", "predicate": "eso:hasEvidence", "object": "Good Judgment Project data", "confidence": 0.90}
-Example (financial): {"subject": "corpus:Berkshire", "predicate": "fibo:hasCompetitiveAdvantage", "object": "float reinvestment", "confidence": 0.85}
+Example (epistemic): {"subject": "corpus:Tetlock", "predicate": "SEPIO:0000189", "object": "Good Judgment Project data", "confidence": 0.90}
+Example (financial): {"subject": "corpus:Berkshire", "predicate": "schema:about", "object": "float reinvestment", "confidence": 0.85}
 </task>

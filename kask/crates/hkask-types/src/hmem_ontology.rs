@@ -11,7 +11,7 @@
 //! - Dublin Core + BIBO anchor the state axis (what this is)
 //! - PKO anchors the process axis (how this came to be)
 //! - `ontology_tags` is the open-world map for domain supplements (FIBO,
-//!   GOLEM, ESO, ML-Schema, SUMO) — adding a new ontology doesn't
+//!   GOLEM, SEPIO, ML-Schema, SUMO) — adding a new ontology doesn't
 //!   require a schema change
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ pub struct HMemOntology {
     pub dimensions: Vec<String>,
 
     // ── State axis: Dublin Core + BIBO (the noun — "what is this?") ───────
-    /// Dublin Core / BIBO type (e.g., "bibo:Article", "dcterms:Dataset",
+    /// Dublin Core / BIBO type (e.g., "bibo:Article", "dcmitype:Dataset",
     /// "pko:StepExecution"). The state-axis type identity of this h_mem.
     #[serde(default)]
     pub dc_type: String,

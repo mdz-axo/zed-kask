@@ -90,7 +90,7 @@ pub(crate) fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
 ///
 /// Financial tools return FIBO concepts (`fibo-*` URIs). Non-financial
 /// artifacts (notes, files, transcripts) return Dublin Core concepts
-/// (`dcterms:Text`, `dcterms:Dataset`) — these are text/dataset artifacts,
+/// (`dcmitype:Text`, `dcmitype:Dataset`) — these are text/dataset artifacts,
 /// not financial instruments, so FIBO does not cover them. Both are
 /// `&'static str`, compatible with `execute_tool_semantic`'s
 /// `ontology: Option<&'static str>` parameter.

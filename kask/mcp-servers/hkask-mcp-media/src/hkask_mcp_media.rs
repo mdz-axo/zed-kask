@@ -428,10 +428,10 @@ mod tool_surface_tests {
             }
         }
         assert_eq!(creative, Some("omc:CreativeWork"));
-        assert_eq!(version, Some("omc:Version"));
+        assert_eq!(version, Some("omc:VersionInfo"));
         assert_eq!(scene, Some("omc:Scene"));
         assert_eq!(asset, Some("omc:Asset"));
-        assert_eq!(source, Some("omc:MediaSource"));
+        assert_eq!(source, Some("omc:Capture"));
         assert_eq!(sequence, Some("omc:Sequence"));
         assert_eq!(shot, Some("omc:Shot"));
         assert_eq!(task, Some("omc:Task"));

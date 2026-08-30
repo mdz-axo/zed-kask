@@ -1,0 +1,24 @@
+# Official ML-Schema term list — fabrication guard fixture.
+#
+# Source: ML-Schema W3C Community Group specification
+#   https://ml-schema.github.io/documentation/ML%20Schema.html
+#   namespace: http://www.w3.org/ns/mls#
+# Fetched: 2026-08-29 (transcribed from the fetched specification).
+#
+# Terms used by the hKask bridge:
+mls:Model
+mls:Run
+mls:Data
+mls:HyperParameter
+mls:HyperParameterSetting
+mls:ModelEvaluation
+mls:EvaluationMeasure
+mls:hasInput
+mls:hasOutput
+mls:implements
+#
+# Notably NOT in the official vocabulary (do not use):
+# mls:Evaluation — the class is mls:ModelEvaluation
+# mls:wasDerivedFrom — PROV-O property, not ML-Schema
+# mls:implementedBy — inverted; the real property is mls:implements
+# mls:hasData — the real property is mls:hasInput

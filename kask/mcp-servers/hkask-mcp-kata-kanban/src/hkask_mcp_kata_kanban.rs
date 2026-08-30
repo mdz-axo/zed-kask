@@ -73,6 +73,13 @@ hkask_mcp_server::mcp_server!(
         /// Shares the kanban database, so protection has the same durability as
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
+        /// Replay protection for `kanban_goal_create` — process-local by
+        /// design. Goals are ephemeral (in-memory store, operator ruling
+        /// 2026-08-29), so their replay protection must share that durability:
+        /// a durable cache here would replay a stale success — the dead
+        /// goal's id — after a restart, handing the agent a ghost pointer
+        /// whose next `kanban_goal_judge` fails NotFound.
+        pub goal_idempotency: Arc<idempotency::IdempotencyStore>,
     }
 );
 
@@ -414,7 +421,7 @@ impl KanbanServer {
             "kanban_goal_create",
             kanban_type_to_pko("kanban_goal_create"),
             with_idempotency(
-                &self.idempotency,
+                &self.goal_idempotency,
                 "kanban_goal_create",
                 idempotency_key.as_deref(),
                 async {
@@ -2012,7 +2019,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
+                // Goals are ephemeral, so their replay protection is
+                // process-local by construction — never the durable store,
+                // whose cache would outlive the goal it guards.
+                let goal_idempotency = Arc::new(idempotency::IdempotencyStore::default());
+
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency), goal_idempotency))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

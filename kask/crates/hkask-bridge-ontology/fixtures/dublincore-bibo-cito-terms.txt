@@ -1,0 +1,57 @@
+# Official Dublin Core / BIBO / CiTO term list — fabrication guard fixture.
+#
+# Sources (fetched 2026-08-29):
+# - DCMI Terms: https://www.dublincore.org/specifications/dublin-core/dcmi-terms/
+#   (dcterms: terms in the /terms/ namespace; type classes in the DCMI Type
+#   Vocabulary, http://purl.org/dc/dcmitype/)
+# - BIBO v1.3: http://purl.org/ontology/bibo/
+# - CiTO v2.8.2: http://purl.org/spar/cito
+#
+# Terms used by the hKask bridge:
+dcterms:title
+dcterms:creator
+dcterms:contributor
+dcterms:publisher
+dcterms:date
+dcterms:created
+dcterms:modified
+dcterms:description
+dcterms:format
+dcterms:identifier
+dcterms:source
+dcterms:language
+dcterms:rights
+dcterms:subject
+dcterms:type
+dcterms:BibliographicResource
+dcmitype:StillImage
+dcmitype:MovingImage
+dcmitype:Sound
+dcmitype:Text
+dcmitype:Dataset
+dcmitype:Software
+dcmitype:Collection
+bibo:Article
+bibo:AcademicArticle
+bibo:Journal
+bibo:Book
+bibo:BookSection
+bibo:Thesis
+bibo:Webpage
+bibo:Document
+bibo:Proceedings
+bibo:Report
+bibo:Manuscript
+cito:cites
+cito:isCitedBy
+cito:supports
+cito:refutes
+cito:discusses
+cito:reviews
+cito:repliesTo
+cito:usesDataFrom
+cito:citesAsDataSource
+cito:citesAsEvidence
+#
+# Notably NOT in the official artifacts (do not use):
+# bibo:Preprint — BIBO 1.3 publishes no Preprint class

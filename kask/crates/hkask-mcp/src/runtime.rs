@@ -346,7 +346,7 @@ struct ToolGovernance {
 #[derive(Clone, Debug)]
 struct LaunchSpec {
     command: String,
-    env: HashMap<String, String>,
+    env: hkask_types::ServerEnv,
 }
 
 /// Monotonic generation counter for connection identity.
@@ -503,7 +503,7 @@ impl McpRuntime {
         &self,
         server_id: &str,
         command: &str,
-        extra_env: std::collections::HashMap<String, String>,
+        env: hkask_types::ServerEnv,
     ) -> Result<(), ServerStartError> {
         // Acquire write lock first to prevent TOCTOU races.
         {
@@ -547,7 +547,7 @@ impl McpRuntime {
             server_id.to_string(),
             LaunchSpec {
                 command: command.to_string(),
-                env: extra_env.clone(),
+                env: env.clone(),
             },
         );
 
@@ -577,7 +577,8 @@ impl McpRuntime {
             // credential scoping that `filter_credentials_for_server` exists
             // to provide.
             //
-            // `extra_env` is the caller's already-filtered per-server set, so after the
+            // `env` is the caller's already-filtered per-server set (a
+            // `ServerEnv` composed by `build_mcp_server_env`), so after the
             // clear the child sees exactly that, plus the non-secret process plumbing
             // enumerated in `PASSTHROUGH_ENV_VARS` (a child with no PATH or HOME cannot
             // resolve subprocesses or its own data directory).
@@ -587,7 +588,7 @@ impl McpRuntime {
                     cmd.env(key, value);
                 }
             }
-            for (key, value) in &extra_env {
+            for (key, value) in env.iter() {
                 cmd.env(key, value);
             }
 
@@ -1835,7 +1836,7 @@ mod reconnect_path_tests {
             "fixture".to_string(),
             LaunchSpec {
                 command: "mcp-test-fixture".to_string(),
-                env: HashMap::new(),
+                env: hkask_types::ServerEnv::default(),
             },
         );
         runtime
@@ -1867,14 +1868,14 @@ mod reconnect_path_tests {
             "a".to_string(),
             LaunchSpec {
                 command: "a".to_string(),
-                env: HashMap::new(),
+                env: hkask_types::ServerEnv::default(),
             },
         );
         specs.insert(
             "b".to_string(),
             LaunchSpec {
                 command: "b".to_string(),
-                env: HashMap::new(),
+                env: hkask_types::ServerEnv::default(),
             },
         );
         drop(specs);
@@ -1914,7 +1915,7 @@ mod reconnect_path_tests {
             "fixture".to_string(),
             LaunchSpec {
                 command: "mcp-test-fixture".to_string(),
-                env: HashMap::new(),
+                env: hkask_types::ServerEnv::default(),
             },
         );
 
@@ -1975,12 +1976,15 @@ mod reconnect_path_tests {
         // Mirror the pre-spawn recording `start_server_with_env` performs.
         // The real call would fail at the handshake step (no such binary),
         // but the spec is already recorded by that point.
-        let extra_env = HashMap::from([("FIXTURE_MARKER".to_string(), "first".to_string())]);
+        let fixture_env = hkask_types::ServerEnv::from_canonical(HashMap::from([(
+            "FIXTURE_MARKER".to_string(),
+            "first".to_string(),
+        )]));
         runtime.launch_specs.write().await.insert(
             "fixture".to_string(),
             LaunchSpec {
                 command: "mcp-test-fixture".to_string(),
-                env: extra_env.clone(),
+                env: fixture_env.clone(),
             },
         );
 
@@ -1994,7 +1998,7 @@ mod reconnect_path_tests {
             .expect("launch spec must be recorded even if the spawn fails");
         assert_eq!(spec.command, "mcp-test-fixture");
         assert_eq!(
-            spec.env.get("FIXTURE_MARKER").map(String::as_str),
+            spec.env.get("FIXTURE_MARKER"),
             Some("first"),
             "the recorded env must be the one a reconnect would reuse"
         );

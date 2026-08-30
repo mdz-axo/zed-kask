@@ -1,0 +1,38 @@
+# Official FIBO term list — fabrication guard fixture.
+#
+# Source: EDM Council / OMG, Financial Industry Business Ontology.
+#   Spec: https://spec.edmcouncil.org/fibo/
+#   Repository: https://github.com/EDMCouncil/FIBO (master branch)
+# Fetched: 2026-08-29 (full master tarball; every term below mechanically
+#   confirmed as defined in the listed module's RDF file).
+#
+# Prefix bindings (module namespaces under
+#   https://spec.edmcouncil.org/fibo/ontology/):
+#   fibo-be-le-cb:    BE/LegalEntities/CorporateBodies/
+#   fibo-sec-sec-id:  SEC/Securities/SecuritiesIdentification/
+#   fibo-sec-sec-ast: SEC/Securities/SecurityAssets/
+#   fibo-ind-mkt-bas: IND/MarketIndices/BasketIndices/
+#   fibo-ind-ir-ir:   IND/InterestRates/InterestRates/
+#   fibo-ind-ei-ei:   IND/EconomicIndicators/EconomicIndicators/
+#   fibo-fbc-fi-ip:   FBC/FinancialInstruments/InstrumentPricing/
+#
+# Format: one term per line, TAB-separated: <prefixed term> <defining module>
+#
+# NOTE: the former `fibo-fbc-fct-ra` (Financial Ratios) module prefix never
+# existed in FIBO — no such file in the repository or its git history. Terms
+# formerly carried under it (PriceEarningsRatio, ReturnOnInvestedCapital,
+# margins, DCF line items, analysis tools, etc.) are fabricated and were
+# removed; consumers fall back to Dublin Core per the operator decision
+# 2026-08-29.
+fibo-be-le-cb:Corporation	BE/LegalEntities/CorporateBodies.rdf
+fibo-sec-sec-id:TickerSymbol	SEC/Securities/SecuritiesIdentification.rdf
+fibo-sec-sec-ast:Portfolio	SEC/Securities/SecurityAssets.rdf
+fibo-ind-mkt-bas:MarketCapitalization	IND/MarketIndices/BasketIndices.rdf
+fibo-fbc-fi-ip:InternalRateOfReturn	FBC/FinancialInstruments/InstrumentPricing.rdf
+fibo-ind-ei-ei:ConsumerPriceIndex	IND/EconomicIndicators/EconomicIndicators.rdf
+fibo-ind-ei-ei:ProducerPriceIndex	IND/EconomicIndicators/EconomicIndicators.rdf
+fibo-ind-ei-ei:GrossDomesticProduct	IND/EconomicIndicators/EconomicIndicators.rdf
+fibo-ind-ei-ei:EconomicIndicator	IND/EconomicIndicators/EconomicIndicators.rdf
+fibo-ind-mkt-bas:ReferenceIndex	IND/MarketIndices/BasketIndices.rdf
+fibo-ind-ir-ir:ReferenceInterestRate	IND/InterestRates/InterestRates.rdf
+fibo-ind-ir-ir:InterestRateBenchmark	IND/InterestRates/InterestRates.rdf

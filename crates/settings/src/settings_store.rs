@@ -1857,6 +1857,87 @@ mod tests {
         );
     }
 
+    // zed-kask: regression pin for the settings-reactivity defect
+    // (2026-08-29). Live, the store was observed freezing after the first
+    // post-startup external write: later writes never reached
+    // `raw_user_settings`, so reconcilers kept acting on stale state
+    // (keyless servers respawning from a `context_servers` entry that had
+    // been removed from the file). This test drives the exact live flow —
+    // successive external file writes, each delivered through the watcher —
+    // and asserts the store reflects every one. If the watcher task dies
+    // mid-stream (the live hypothesis), the store freezes and this fails at
+    // the write where delivery stopped.
+    #[gpui::test]
+    async fn test_each_external_settings_write_reaches_the_store(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            br#"{"context_servers": {"first": {"command": "/bin/true", "args": [], "env": {}}}}"#
+                .to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            store.watch_settings_files(fs.clone(), cx, |_, _, _| {});
+            cx.set_global(store);
+        });
+        cx.run_until_parked();
+
+        let context_server_ids = |cx: &gpui::TestAppContext| {
+            cx.update(|cx| {
+                cx.global::<SettingsStore>()
+                    .raw_user_settings()
+                    .map(|user| {
+                        user.content
+                            .project
+                            .context_servers
+                            .keys()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+        };
+        assert_eq!(
+            context_server_ids(cx),
+            vec!["first".to_string()],
+            "the initial load must reach the store"
+        );
+
+        // External write #2 — the live store froze here (delivery stopped
+        // after the first post-startup write).
+        fs.insert_file(
+            paths::settings_file(),
+            br#"{"context_servers": {"second": {"command": "/bin/true", "args": [], "env": {}}}}"#
+                .to_vec(),
+        )
+        .await;
+        fs.flush_events(100);
+        cx.run_until_parked();
+        assert_eq!(
+            context_server_ids(cx),
+            vec!["second".to_string()],
+            "external write #2 must reach the store — a freeze here is the live defect"
+        );
+
+        // External write #3 — removal (the live cleanup that never landed).
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        fs.flush_events(100);
+        cx.run_until_parked();
+        assert!(
+            context_server_ids(cx).is_empty(),
+            "external write #3 (entry removal) must reach the store — reconcilers \
+             acting on the stale entry respawn servers the operator deleted"
+        );
+    }
+
     // zed-kask: D32 — a no-op `update_settings_file` call (one whose update
     // closure produces text identical to the current file) must NOT touch the
     // filesystem or fire the file-watcher parse callback. Before the D32 fix,

@@ -392,7 +392,7 @@ pub(crate) struct BuildPromptsRequest {
     #[serde(default)]
     pub max_prompts: usize,
     /// Per-ontology Bloom distribution overrides. Format:
-    /// "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|eso:1,1,2,1,0"
+    /// "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|sepio:1,1,2,1,0"
     /// When a chunk's ontology_tags contain the key, use the override
     /// instead of the default type_distribution. Chunks without matching
     /// ontology tags use type_distribution.

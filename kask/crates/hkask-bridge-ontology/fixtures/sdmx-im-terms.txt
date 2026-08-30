@@ -1,0 +1,24 @@
+# Official SDMX Information Model term list — fabrication guard fixture.
+#
+# Source: SDMX Information Model (sdmx-twg/sdmx-im)
+#   https://github.com/sdmx-twg/sdmx-im
+#   docs/information_model/4_Data_Structure_Definition_and_Dataset.md
+#   docs/information_model/3_Specific_Item_Schemes.md
+# Fetched: 2026-08-29 (class names transcribed from the fetched IM docs).
+#
+# Note: SDMX publishes the IM as a UML/XML specification, not RDF/OWL —
+# there is no official sdmx: URI namespace. The sdmx: prefix in hKask code
+# is a rendering convention over these official IM class names.
+#
+# Terms used by the hKask bridge:
+sdmx:DataSet
+sdmx:Dataflow
+sdmx:DataStructureDefinition
+sdmx:SeriesKey
+sdmx:Observation
+sdmx:Category
+sdmx:DataProvider
+#
+# Notably NOT in the official IM (do not use):
+# sdmx:DataFlow — the IM class is "Dataflow" (lowercase f)
+# sdmx:TimeSeries — no such IM class; the series concept is SeriesKey

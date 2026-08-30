@@ -78,6 +78,7 @@ fn make_server_with_shared_driver() -> (
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(idempotency),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
     );
     (server, driver)
 }
@@ -387,6 +388,7 @@ async fn replay_is_absorbed_across_processes() {
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
                 .expect("idempotency schema"),
         ),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
     );
 
     let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared"))
@@ -424,6 +426,7 @@ async fn non_durable_protection_is_labelled_in_the_response() {
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
     );
 
     let board = create_board(&server, "Board", Some("labelled")).await;
@@ -449,6 +452,122 @@ async fn durable_protection_carries_no_degradation_label() {
         board.get("idempotency_durable").is_none(),
         "a durable store must not emit the degradation marker, or the marker would \
          carry no information, got: {board}"
+    );
+}
+
+// ── Goal replay protection: process-local by design ──────────────────────
+
+async fn create_goal(
+    server: &KanbanServer,
+    goal_text: &str,
+    key: Option<&str>,
+) -> serde_json::Value {
+    let out = server
+        .kanban_goal_create(Parameters(GoalCreateRequest {
+            goal_text: goal_text.to_string(),
+            criteria: vec![GoalCriterionInput {
+                description: "observable criterion".to_string(),
+            }],
+            prediction: None,
+            task_id: None,
+            idempotency_key: key.map(str::to_string),
+        }))
+        .await
+        .expect("tool ok");
+    parse(&out)
+}
+
+/// Goal replay protection must NOT survive a restart, even when the kanban DB
+/// (and the durable idempotency store) does.
+///
+/// Goals are ephemeral (operator ruling 2026-08-29): the goal store dies with
+/// the process. A durable replay cache for `kanban_goal_create` would return
+/// the first call's response — `replayed: true`, the dead goal's id — for a
+/// goal that no longer exists, handing the agent a ghost pointer whose next
+/// `kanban_goal_judge` fails NotFound. The re-create must mint a fresh goal.
+#[tokio::test]
+async fn goal_replay_protection_does_not_survive_a_restart() {
+    let (process_a, shared_driver) = make_server_with_shared_driver();
+    let first = create_goal(&process_a, "Goal", Some("goal-key")).await;
+    let first_id = first["goal_id"].as_str().expect("goal_id").to_string();
+
+    // A second server over the same durable kanban DB — the restart shape.
+    // The durable idempotency store is intact; the goal store is fresh.
+    let store = HMemStore::from_driver(shared_driver.clone()).expect("hmem store");
+    let process_b = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(store),
+        Arc::new(LazyLocalSwarmRuntime::lazy(
+            std::env::temp_dir()
+                .join(format!("kanban-idem-goal-b-{}.db", std::process::id()))
+                .to_string_lossy()
+                .to_string(),
+        )),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
+                .expect("idempotency schema"),
+        ),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+    );
+
+    let second = create_goal(&process_b, "Goal", Some("goal-key")).await;
+    let second_id = second["goal_id"].as_str().expect("goal_id").to_string();
+    assert_ne!(
+        second_id, first_id,
+        "a re-create after restart must mint a fresh goal, not replay the dead one"
+    );
+    assert!(
+        second.get("replayed").is_none(),
+        "the response must not claim a replay of a goal that died with the process, got: {second}"
+    );
+
+    // The fresh goal is real: it is listable on the new process; the dead one
+    // is not.
+    let out = process_b
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect("tool ok");
+    let listed = parse(&out);
+    let ids: Vec<&str> = listed["goals"]
+        .as_array()
+        .expect("goals array")
+        .iter()
+        .filter_map(|g| g["goal_id"].as_str())
+        .collect();
+    assert!(
+        ids.contains(&second_id.as_str()),
+        "the fresh goal must exist in the live store, got: {listed}"
+    );
+    assert!(
+        !ids.contains(&first_id.as_str()),
+        "the dead goal must not appear in the new process's store"
+    );
+}
+
+/// Within one process, a keyed goal create is still replay-protected — the
+/// process-local store absorbs the retry, and the label says so.
+#[tokio::test]
+async fn goal_replay_is_absorbed_within_the_process() {
+    let server = make_server();
+    let first = create_goal(&server, "Goal", Some("goal-key")).await;
+    assert_eq!(
+        first["idempotency_durable"].as_bool(),
+        Some(false),
+        "goal replay protection is process-local and must be labelled as such, got: {first}"
+    );
+
+    let replay = create_goal(&server, "Goal", Some("goal-key")).await;
+    assert_eq!(
+        replay["goal_id"].as_str(),
+        first["goal_id"].as_str(),
+        "an in-process retry must return the original goal"
+    );
+    assert_eq!(
+        replay["replayed"].as_bool(),
+        Some(true),
+        "an in-process retry must be marked as a replay, got: {replay}"
     );
 }
 

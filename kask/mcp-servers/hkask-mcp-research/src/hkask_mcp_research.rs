@@ -144,11 +144,11 @@ impl ResearchServer {
     /// A tool *execution* is a process, so the anchor maps each tool to its
     /// research-workflow stage and delegates the stage→concept values to the
     /// canonical bridge mapper (`pko::research_stage_to_pko`) — single source
-    /// of truth, same pattern as the corpus server's anchor. ESO predicates
-    /// (`eso:hasEvidence` etc.) annotate *passage content* in corpus
+    /// truth, same pattern as the corpus server's anchor. SEPIO predicates
+    /// (`SEPIO:0000189` etc.) annotate *passage content* in corpus
     /// assertion extraction; they are relation predicates, not types, and are
     /// never used as tool-span tags (the category error this delegation
-    /// removed: web tools were previously tagged `eso:hasEvidence`).
+    /// removed: web tools were previously tagged with an evidence predicate).
     ///
     /// - Search/discovery (web + RSS) → PKO `ACTION` (search stage).
     /// - Content extraction (web pages, feeds) → PKO `ACTION` (extract stage).
@@ -1570,7 +1570,7 @@ impl ResearchServer {
     // ═══════════════════ Evidence evaluation ═══════════════════
 
     #[tool(
-        description = "Evaluate retrieved evidence against a research question. Scores each artifact on recency, source credibility, corroboration, and counter-evidence. Emits ESO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
+        description = "Evaluate retrieved evidence against a research question. Scores each artifact on recency, source credibility, corroboration, and counter-evidence. Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
     )]
     pub async fn evaluate_evidence(
         &self,
@@ -1630,8 +1630,8 @@ impl ResearchServer {
                             "corroboration_count": corroboration,
                             "has_published_date": has_date,
                             "has_content": has_content,
-                            "eso:hasConfidence": format!("{:.2}", confidence),
-                            "eso:corroboratedBy": if corroboration > 1 {
+                            "SEPIO:0000167": format!("{:.2}", confidence),
+                            "SEPIO:0000440": if corroboration > 1 {
                                 serde_json::Value::String(format!(
                                     "{} independent sources on same domain",
                                     corroboration

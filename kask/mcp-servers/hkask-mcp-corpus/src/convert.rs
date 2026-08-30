@@ -314,10 +314,10 @@ mod tests {
 
     #[test]
     fn dc_type_for_path_maps_extension_families() {
-        assert_eq!(dc_type_for_path("img.png"), Some("dcterms:StillImage"));
-        assert_eq!(dc_type_for_path("clip.mp4"), Some("dcterms:MovingImage"));
-        assert_eq!(dc_type_for_path("note.wav"), Some("dcterms:Sound"));
-        assert_eq!(dc_type_for_path("data.json"), Some("dcterms:Dataset"));
+        assert_eq!(dc_type_for_path("img.png"), Some("dcmitype:StillImage"));
+        assert_eq!(dc_type_for_path("clip.mp4"), Some("dcmitype:MovingImage"));
+        assert_eq!(dc_type_for_path("note.wav"), Some("dcmitype:Sound"));
+        assert_eq!(dc_type_for_path("data.json"), Some("dcmitype:Dataset"));
         // Legacy binary extensions (.doc/.xls/.ppt) have no canonical MIME
         // mapping — surfaced as None, never fabricated.
         assert_eq!(dc_type_for_path("old.doc"), None);

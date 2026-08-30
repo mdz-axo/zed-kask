@@ -184,7 +184,7 @@ Use GOLEM predicates (gc:GP1i_has_Character, dlp:participant-in, gc:GP0_has_feat
                         "Extract up to {max_assertions} factual RDF triples from the following text.
 
 First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract assertions using the appropriate predicates:
-  - Expository: schema:author, schema:mentions, rdf:type, fibo:returnOnCapital, etc.
+  - Expository: schema:author, schema:mentions, rdf:type, schema:about, etc.
   - Narrative: gc:GP1i_has_Character, dlp:participant-in, dlp:setting, gc:GP0_has_feature, crm:P67_refers_to, etc.
 
 Each triple: (subject, predicate, object, confidence). Prefix subjects with '{ns}:'.{ontology_hint}

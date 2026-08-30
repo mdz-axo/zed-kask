@@ -5,7 +5,13 @@
 //! We anchor to OMC rather than inventing our own taxonomy.
 //!
 //! Reference: <https://movielabs.com/ontology-for-media-creation/>
-//! Source: <https://github.com/MovieLabs/OMC>
+//! Source: <https://github.com/MovieLabs/OMC> — official RDF artifact
+//! `OMC-RDF/OntologyMediaCreation-OMC/omc.ttl` (v2.8, namespace
+//! `https://movielabs.com/omc/rdf/schema/v2.8#`).
+//!
+//! Every term is verified against that artifact —
+//! `fixtures/omc-v2.8-terms.txt` pins the term list, and
+//! `all_terms_are_official` fails the build if a term drifts from it.
 //!
 //! This module holds the OMC concept vocabulary and the shared concept→explain-tool
 //! dispatch function. Server-specific tool-name→concept mapping lives in the media
@@ -40,8 +46,9 @@ pub const SEQUENCE: OmcConcept = "omc:Sequence";
 /// OMC: `omc:Participant`.
 pub const PARTICIPANT: OmcConcept = "omc:Participant";
 /// A source media asset — the raw input to a transform or generation.
-/// OMC: `omc:MediaSource`.
-pub const MEDIA_SOURCE: OmcConcept = "omc:MediaSource";
+/// OMC: `omc:Capture` (an AssetAsFunction for captured material; OMC v2.8
+/// publishes no `MediaSource` class).
+pub const CAPTURE: OmcConcept = "omc:Capture";
 /// A managed media asset in the gallery — a stored, tagged, retrievable item.
 /// OMC: `omc:Asset`.
 pub const ASSET: OmcConcept = "omc:Asset";
@@ -49,8 +56,10 @@ pub const ASSET: OmcConcept = "omc:Asset";
 /// OMC: `omc:Task`.
 pub const TASK: OmcConcept = "omc:Task";
 /// A derived or modified form of a creative work — an upscale, transform,
-/// or remix output. OMC: `omc:Version` (a version is a creative work).
-pub const VERSION: OmcConcept = "omc:Version";
+/// or remix output. OMC: `omc:VersionInfo` (a description of a version of
+/// an asset; OMC v2.8 publishes no `Version` class — versioning is modeled
+/// as VersionInfo plus the `hasVersion`/`isVersionOf` properties).
+pub const VERSION_INFO: OmcConcept = "omc:VersionInfo";
 
 /// All OMC concepts, for validation or iteration.
 pub const ALL_CONCEPTS: &[OmcConcept] = &[
@@ -59,11 +68,41 @@ pub const ALL_CONCEPTS: &[OmcConcept] = &[
     SHOT,
     SEQUENCE,
     PARTICIPANT,
-    MEDIA_SOURCE,
+    CAPTURE,
     ASSET,
     TASK,
-    VERSION,
+    VERSION_INFO,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fabrication guard: every term in this module must appear in the
+    /// official OMC v2.8 term list checked in as a fixture (sourced from
+    /// the official omc.ttl artifact).
+    #[test]
+    fn all_terms_are_official() {
+        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/omc-v2.8-terms.txt");
+        let fixture = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
+        let official: std::collections::HashSet<&str> = fixture
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        assert!(
+            !official.is_empty(),
+            "fixture {fixture_path} contains no terms"
+        );
+        for term in ALL_CONCEPTS {
+            assert!(
+                official.contains(term),
+                "{term} is not in the official OMC v2.8 term list ({fixture_path})"
+            );
+        }
+    }
+}
 
 /// The OMC concept → explain tool mapping (the "I" pattern — ontology-bounded
 /// affordances). Shared between the media MCP server and the media widget so

@@ -1,7 +1,7 @@
 //! Dual-axis domain-selection logic (P5.4 / P8.1).
 //!
 //! The two universal axes — state (Dublin Core) and process (PKO) — are
-//! always available. Domain supplements (FIBO, ESO, GOLEM, ML-Schema)
+//! always available. Domain supplements (FIBO, SEPIO, GOLEM, ML-Schema)
 //! layer on top where the universal axes aren't specific enough for a domain.
 //!
 //! The invariant (user directive 2026-08-05): one axis is always Dublin Core
@@ -19,7 +19,6 @@ use crate::dc_bibo;
 use crate::golem;
 use crate::pko;
 use crate::sdmx;
-use crate::sepio;
 use crate::sumo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -135,7 +134,7 @@ pub enum OntologyAnchor {
     /// Process axis (PKO) or state axis (DC+BIBO) — dual-axis framework (P5.4).
     /// `concept` is the canonical concept URI, e.g. "pko:StepExecution" or "bibo:Article".
     DualAxis { axis: OntologyAxis, concept: String },
-    /// Domain supplement — FIBO, ESO, GOLEM, ML-Schema, or SUMO (P8.1).
+    /// Domain supplement — FIBO, SEPIO, GOLEM, ML-Schema, or SUMO (P8.1).
     /// Layered on top of the dual-axis core for domain-specific precision.
     /// SUMO is the universal fallback for domains without a specific supplement.
     DomainSupplement {

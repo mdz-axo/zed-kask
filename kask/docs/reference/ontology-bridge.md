@@ -22,7 +22,7 @@ tagging depends on this crate (user directive 2026-08-05, recorded at
 
 ## Modules
 
-Declared at `hkask_bridge_ontology.rs:58-67`: `axis`, `dc_bibo`, `eso`,
+Declared at `hkask_bridge_ontology.rs:58-67`: `axis`, `dc_bibo`, `sepio`,
 `fibo`, `golem`, `ml_schema`, `omc`, `pko`, `sdmx`, `sumo`.
 
 ### `dc_bibo` — Dublin Core + BIBO + CiTO (state axis, universal)
@@ -87,14 +87,23 @@ ratios + corpus-server competitive-advantage concepts).
 
 Full list: `kask/crates/hkask-bridge-ontology/src/fibo.rs`
 
-### `eso` — Epistemic Science Ontology (scientific domain)
+### `sepio` — SEPIO (scientific evidence and provenance domain)
 
-Canonical predicate URIs for epistemic and scientific reasoning:
-`HAS_HYPOTHESIS` (`eso:hasHypothesis`), `HAS_EVIDENCE` (`eso:hasEvidence`),
-`FALSIFIED_BY` (`eso:falsifiedBy`), `CORROBORATED_BY` (`eso:corroboratedBy`),
-`HAS_UNCERTAINTY` (`eso:hasUncertainty`).
+Canonical predicate URIs for epistemic and evidential reasoning, from the
+Monarch Initiative's SEPIO (namespace `http://purl.obolibrary.org/obo/SEPIO_`):
+`ASSERTS_PROPOSITION` (`SEPIO:0000030`), `WAS_SPECIFIED_BY` (`SEPIO:0000041`),
+`HAS_DISPUTING_EVIDENCE_LINE` (`SEPIO:0000008`), `CONTRADICTS` (`SEPIO:0000101`),
+`HAS_CONFIDENCE_LEVEL` (`SEPIO:0000167`), `HAS_EVIDENCE` (`SEPIO:0000189`),
+`HAS_SUPPORTING_EVIDENCE` (`SEPIO:0000440`), `HAS_DISPUTING_EVIDENCE`
+(`SEPIO:0000441`). Every term is pinned by
+`fixtures/sepio-2023-06-13-terms.txt` (official OWL release 2023-06-13).
 
-Full list: `kask/crates/hkask-bridge-ontology/src/eso.rs`
+Full list: `kask/crates/hkask-bridge-ontology/src/sepio.rs`
+
+> History: this module replaces the former `eso` module ("Epistemic Science
+> Ontology"), which was a fabrication — no such ontology was ever published.
+> Only former ESO functions with a real SEPIO equivalent survived; the rest
+> were dropped.
 
 ### `golem` — GOLEM narrative ontology (narrative domain)
 
@@ -163,10 +172,10 @@ Media production workflows (capture → post → distribution)
 | `SHOT` | `omc:Shot` |
 | `SEQUENCE` | `omc:Sequence` |
 | `PARTICIPANT` | `omc:Participant` |
-| `MEDIA_SOURCE` | `omc:MediaSource` |
+| `CAPTURE` | `omc:Capture` |
 | `ASSET` | `omc:Asset` |
 | `TASK` | `omc:Task` |
-| `VERSION` | `omc:Version` |
+| `VERSION_INFO` | `omc:VersionInfo` |
 
 Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs:29-53`
 
@@ -229,7 +238,7 @@ Verified against `select_ontology_anchor` (`axis.rs:210-347`):
 |---------------------|-----------|------------|--------------|
 | `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` | SDMX | DC | SDMX |
 | `finance`, `company`, `stock`, `portfolio`, `dcf`, `screener`, `forecast`, `scenario`, `prediction-markets` | FIBO | DC | FIBO |
-| `science`, `research`, `hypothesis`, `evidence` | ESO | DC | ESO |
+| `science`, `research`, `hypothesis`, `evidence` | SEPIO | DC | SEPIO |
 | `narrative`, `literature`, `persona`, `author`, `corpus` | GOLEM | DC | GOLEM |
 | `training`, `ml`, `adapter`, `sweep`, `lora` | ML-Schema | DC | ML-Schema |
 | `kanban`, `board`, `task`, `spec`, `skill`, `docproc`, `curator`, `kata`, `condenser` | (PKO) | DC | PKO |

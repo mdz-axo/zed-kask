@@ -52,7 +52,7 @@ pub struct MappedEvent {
     pub fibo_concept: fibo::FiboConcept,
     /// The Dublin Core subject keywords extracted from the event (state axis).
     pub dc_subjects: Vec<String>,
-    /// The Dublin Core type (e.g. `dcterms:Dataset` for economic data).
+    /// The Dublin Core type (e.g. `dcmitype:Dataset` for economic data).
     pub dc_type: dc_bibo::DcConcept,
     /// The event's end date (RFC3339), for temporal proximity.
     pub end_date: Option<String>,

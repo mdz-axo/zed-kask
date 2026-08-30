@@ -157,7 +157,7 @@ pub enum ManifestValidationError {
     #[error("company.fiscal_year_end_month must be 1–12, got {0}")]
     BadFiscalMonth(u8),
     #[error(
-        "unknown ontology namespace '{0}' in tagging.ontologies — must be one of: fibo, eso, golem, mlschema, omc, sumo"
+        "unknown ontology namespace '{0}' in tagging.ontologies — must be one of: fibo, sepio, golem, mlschema, omc, sumo"
     )]
     UnknownOntology(String),
 }

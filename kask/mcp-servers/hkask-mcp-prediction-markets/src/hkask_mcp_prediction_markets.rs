@@ -104,7 +104,7 @@ impl PredictionMarketsServer {
     ///
     /// Economic-data tools (FRED, World Bank, DBnomics) anchor on SDMX — the
     /// ISO 17369 standard all three providers use as their data model. Market
-    /// tools anchor on Dublin Core (`dcterms:Dataset`) as the fallback per the
+    /// tools anchor on Dublin Core (`dcmitype:Dataset`) as the fallback per the
     /// standardization decision: no prediction-market-specific ontology yet,
     /// and Dublin Core is always a valid state-axis anchor.
     fn ontology_anchor(tool: &str) -> Option<&'static str> {

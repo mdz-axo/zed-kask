@@ -414,7 +414,7 @@ mod tests {
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
-        assert!(hint.contains("\"ontology\":\"omc:Version\""));
+        assert!(hint.contains("\"ontology\":\"omc:VersionInfo\""));
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod tests {
         let hint = enriched["display_hint"].as_str().expect("hint attached");
         assert!(hint.contains("\"kind\":\"audio\""));
         assert!(hint.contains("/tmp/rec.wav"));
-        assert!(hint.contains("\"ontology\":\"omc:MediaSource\""));
+        assert!(hint.contains("\"ontology\":\"omc:Capture\""));
     }
 
     #[test]

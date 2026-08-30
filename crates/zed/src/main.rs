@@ -2987,11 +2987,13 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
                 cx,
             )
             .await;
-            // `build_mcp_server_env` returns `std::collections::HashMap` (matches
-            // the filter helpers and `start_server_with_env`); `ContextServerCommand`
-            // expects zed's `collections::HashMap` (FxBuildHasher). Convert here
-            // so the canonical builder keeps one return type for both consumers.
-            let env_map: collections::HashMap<String, String> = env_map.into_iter().collect();
+            // `build_mcp_server_env` returns `ServerEnv` (the canonical-env
+            // invariant); `ContextServerCommand` expects zed's
+            // `collections::HashMap` (FxBuildHasher). `into_inner` is the
+            // documented escape hatch for non-kask types — this boundary is
+            // legitimate: the env was still composed by the canonical path.
+            let env_map: collections::HashMap<String, String> =
+                env_map.into_inner().into_iter().collect();
 
             Ok(context_server::ContextServerCommand {
                 path: resolve_mcp_binary(&server_id, &binary).into(),
@@ -3171,7 +3173,7 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 async fn kask_server_env(
     server_id: &str,
     cx: &mut gpui::AsyncApp,
-) -> std::collections::HashMap<String, String> {
+) -> hkask_types::ServerEnv {
     let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
     kask_bridge::build_mcp_server_env(
@@ -3189,18 +3191,18 @@ async fn kask_server_env(
 ///
 /// Keys only — several values are credentials and must not reach the log.
 fn changed_env_keys(
-    previous: &std::collections::HashMap<String, String>,
-    current: &std::collections::HashMap<String, String>,
+    previous: &hkask_types::ServerEnv,
+    current: &hkask_types::ServerEnv,
 ) -> Vec<String> {
     let mut keys: Vec<String> = previous
         .iter()
-        .filter(|(key, value)| current.get(*key) != Some(*value))
+        .filter(|(key, value)| current.get(key) != Some(value.as_str()))
         .map(|(key, _)| key.clone())
         .chain(
             current
-                .keys()
-                .filter(|key| !previous.contains_key(*key))
-                .cloned(),
+                .iter()
+                .map(|(key, _)| key.clone())
+                .filter(|key| previous.get(key).is_none()),
         )
         .collect();
     keys.sort();
@@ -3224,9 +3226,7 @@ fn changed_env_keys(
 fn sync_kask_mcp_runtime_servers(
     mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
     last_env: std::sync::Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, std::collections::HashMap<String, String>>,
-        >,
+        std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
     >,
     cx: &mut gpui::App,
 ) {
@@ -3242,11 +3242,7 @@ fn sync_kask_mcp_runtime_servers(
         // `Tokio::spawn` below, which enters the reactor on the worker thread
         // — no foreground guard held across awaits (the `.rules` "background_
         // spawn of tokio-dependent futures" pattern).
-        let mut changed: Vec<(
-            &'static str,
-            String,
-            std::collections::HashMap<String, String>,
-        )> = Vec::new();
+        let mut changed: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
         for server_id in server_ids {
             let env = kask_server_env(server_id, cx).await;
             let previous = last_env

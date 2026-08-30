@@ -1,0 +1,25 @@
+# Official SUMO term list — fabrication guard fixture.
+#
+# Source: SUMO (Suggested Upper Merged Ontology), Merge.kif
+#   https://raw.githubusercontent.com/ontologyportal/sumo/master/Merge.kif
+# Fetched: 2026-08-29 (terms verified present in the fetched Merge.kif).
+#
+# Terms used by the hKask bridge:
+sumo:Entity
+sumo:Object
+sumo:Process
+sumo:AutonomousAgent
+sumo:Relation
+sumo:Proposition
+sumo:Text
+sumo:Quantity
+sumo:TimeMeasure
+sumo:subclass
+sumo:part
+sumo:attribute
+sumo:causes
+#
+# Notably NOT in current SUMO (do not use):
+# sumo:Agent — no such class; the class is AutonomousAgent ("agent" is a
+#   CaseRole relation)
+# sumo:Representation — no such class; "represents" is a relation

@@ -72,7 +72,7 @@ impl PromptBuilderService {
         let default_rotation = parse_type_distribution(&type_distribution);
 
         // Parse per-ontology Bloom overrides (if provided)
-        // Format: "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|eso:1,1,2,1,0"
+        // Format: "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|sepio:1,1,2,1,0"
         let bloom_overrides: std::collections::HashMap<String, Vec<QaType>> =
             ontology_bloom_overrides
                 .as_deref()
@@ -347,7 +347,7 @@ impl PromptBuilderService {
             // This ensures narrative chunks always get golem distribution
             // even if they also have epistemic or pko tags.
             let type_rotation: &[QaType] = {
-                const PRIORITY: &[&str] = &["pko", "golem", "fibo", "eso", "epistemic"];
+                const PRIORITY: &[&str] = &["pko", "golem", "fibo", "sepio", "epistemic"];
                 let mut selected: Option<&[QaType]> = None;
                 for ns in PRIORITY {
                     if tc.ontology_tags.contains_key(*ns) && bloom_overrides.contains_key(*ns) {
