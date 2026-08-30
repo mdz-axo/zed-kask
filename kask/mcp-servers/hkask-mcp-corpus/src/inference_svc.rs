@@ -54,7 +54,7 @@ impl InferenceService {
         // Return an error rather than silently falling back to a standalone
         // MediaRouter with env-var credentials.
         Err(ServiceError::Domain {
-            domain: hkask_services_core::DomainKind::Wallet,
+            domain: hkask_services_core::DomainKind::Inference,
             kind: hkask_services_core::ErrorKind::ServiceUnavailable,
             source: None,
             message: format!(

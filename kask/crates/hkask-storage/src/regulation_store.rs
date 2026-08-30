@@ -49,16 +49,15 @@ pub struct WeightedEvent {
 ///
 /// These are the Regulation span namespaces that produce events requiring
 /// Curation (Loop 5) attention: energy deficits, variety imbalances,
-/// agent pod failures, wallet key lifecycle events, and communication
-/// activity (Matrix messages, thread lifecycle).
+/// agent pod failures, and communication activity (Matrix messages, thread
+/// lifecycle).
 ///
 /// Matched against the stored `span_category` column (which holds the
-/// full `short_name()` — e.g., `"wallet.key_expired"`).
+/// full `short_name()`). Wallet key-lifecycle entries removed 2026-08-30
+/// with the deleted wallet module (219c74b180).
 const ALGEDONIC_SPAN_CATEGORIES: &[&str] = &[
     "variety",
     "pod",
-    "wallet.key_expired",
-    "wallet.key_exhausted",
     "communication.message",
     "communication.thread",
     "outcome",
@@ -163,8 +162,7 @@ impl RegulationArchive {
             SpanCategory::Curation => config.curation_lambda,
             SpanCategory::Inference => config.inference_lambda,
             SpanCategory::Memory => config.memory_lambda,
-            SpanCategory::Wallet => config.cybernetics_lambda, // wallet ops are cybernetic (energy budget)
-            SpanCategory::Skill => config.cybernetics_lambda,  // skill ops are cybernetic
+            SpanCategory::Skill => config.cybernetics_lambda, // skill ops are cybernetic
             SpanCategory::Unknown => config.cybernetics_lambda, // safe default
         }
     }

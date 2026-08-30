@@ -124,7 +124,6 @@ impl RegulationData {
             RegulationData::ErrorRateExceeded { .. } => "error_rate",
             RegulationData::ConnectorLatencyExceeded { .. } => "connector_latency",
             RegulationData::CommunicationBackpressure { .. } => "queue_depth",
-            RegulationData::CommunicationBackpressure { .. } => "communication_backpressure",
             RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
             RegulationData::ContextServerFleetHealth { .. } => "context_server_health",
             RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",

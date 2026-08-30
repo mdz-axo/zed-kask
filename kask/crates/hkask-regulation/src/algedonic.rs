@@ -448,6 +448,13 @@ impl AlgedonicManager {
         self.alerts.len()
     }
 
+    /// Number of escalated alerts currently in the log — routed toward the
+    /// durable `EscalationQueue` but not yet resolved. The cybernetics loop
+    /// senses this as `PendingEscalations`.
+    pub(crate) fn escalated_alert_count(&self) -> usize {
+        self.alerts.iter().filter(|alert| alert.escalated).count()
+    }
+
     /// The configured alert-log cap.
     pub(crate) fn max_alerts(&self) -> usize {
         self.max_alerts

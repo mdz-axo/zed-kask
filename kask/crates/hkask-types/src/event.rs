@@ -81,8 +81,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.pod",
     "reg.alert",
     // ── Seam architecture ──
-    "reg.architecture.seam.coverage",
-    "reg.architecture.seam.drift",
+    // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
+    // that would have emitted them was never built; zero emitters.
     // ── Core infrastructure ──
     "reg.backup",
     "reg.backup.variety",
@@ -299,7 +299,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.tool.registry",
     "reg.tool.research",
     "reg.tool.training",
-    "reg.tool.wallet",
     "reg.tool.web_search",
     // ── Web research (per-provider outcome spans — cybernetic feedback for
     // provider selection. Emitted by ProviderPool::search_compound and
@@ -308,29 +307,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.web.provider",
     // ── Variety ──
     "reg.variety",
-    // ── Wallet ──
-    "reg.wallet",
-    "reg.wallet.balance",
-    "reg.wallet.calibration",
-    "reg.wallet.chain",
-    "reg.wallet.chain_error",
-    "reg.wallet.conversion",
-    "reg.wallet.created",
-    "reg.wallet.deposit",
-    "reg.wallet.deposit_shielded",
-    "reg.wallet.draw",
-    "reg.wallet.exhausted",
-    "reg.wallet.key_exhausted",
-    "reg.wallet.key_expired",
-    "reg.wallet.key_issued",
-    "reg.wallet.key_revoked",
-    "reg.wallet.spend",
-    "reg.wallet.withdrawal",
+    // ── Wallet span names removed 2026-08-30 — residuals of the wallet
+    // module deleted in 219c74b180; no emitter constructs them.
     // ── Well ──
-    "reg.well.created",
-    "reg.well.draw",
-    "reg.well.exhausted",
-    "reg.well.replenished",
+    // (removed with the wallet economy — no emitter)
     // ── Pipeline (corpus) ──
     "reg.pipeline",
     "reg.pipeline.calibration",
@@ -535,8 +515,9 @@ pub enum SpanCategory {
     Inference,
     /// `reg.pod*`, `reg.connector*` — agent pod / connector operations (Memory loop).
     Memory,
-    /// `reg.wallet*` — wallet operations (balance, keys, deposits, withdrawals).
-    Wallet,
+    // Wallet variant removed 2026-08-30 — residual of the wallet module
+    // deleted in 219c74b180; no span emitter constructed `reg.wallet*`
+    // namespaces anymore.
     /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, rJoule, outcome).
     Skill,
     /// Any other namespace. Callers decide the fallback policy.
@@ -554,7 +535,6 @@ impl SpanCategory {
             "curation" | "spec" => Self::Curation,
             "inference" => Self::Inference,
             "pod" | "connector" => Self::Memory,
-            "wallet" => Self::Wallet,
             "skill" => Self::Skill,
             _ => Self::Unknown,
         }
@@ -568,7 +548,6 @@ impl std::fmt::Display for SpanCategory {
             SpanCategory::Curation => "curation",
             SpanCategory::Inference => "inference",
             SpanCategory::Memory => "memory",
-            SpanCategory::Wallet => "wallet",
             SpanCategory::Skill => "skill",
             SpanCategory::Unknown => "unknown",
         };

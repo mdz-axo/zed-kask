@@ -132,7 +132,10 @@ pub enum DomainKind {
     Memory,
     Storage,
     User,
-    Wallet,
+    // Wallet removed 2026-08-30 — residual of the deleted wallet module
+    // (219c74b180). Its two remaining call sites were mislabels: an
+    // inference-port error (now Inference) and a template-render error
+    // (now Infrastructure).
     /// MCP tool invocations (out-of-process tool servers).
     Mcp,
 }

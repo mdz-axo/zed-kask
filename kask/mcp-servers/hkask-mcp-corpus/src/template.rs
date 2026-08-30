@@ -105,7 +105,7 @@ use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 pub(crate) fn template_error(operation: &str, name: &str, e: minijinja::Error) -> ServiceError {
     let message = format!("Template {operation} failed for '{name}': {e}");
     ServiceError::Domain {
-        domain: DomainKind::Wallet,
+        domain: DomainKind::Infrastructure,
         kind: ErrorKind::ServiceUnavailable,
         source: Some(Box::new(e)),
         message,

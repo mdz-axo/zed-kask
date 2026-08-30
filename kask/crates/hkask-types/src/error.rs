@@ -45,14 +45,15 @@ impl std::fmt::Display for DatabaseErrorKind {
 
 // DbError — Database operation errors (moved from hkask-database::types)
 //
-// Relocated to break the circular dependency: hkask-storage -> the wallet types crate
-// -> hkask-database -> hkask-storage. DbError is a pure type with no external deps
-// beyond thiserror + serde (already in hkask-types).
+// Relocated to break a historical circular dependency (the wallet types
+// crate involved in the original cycle was deleted in 219c74b180).
+// DbError is a pure type with no external deps beyond thiserror + serde
+// (already in hkask-types).
 
 /// Database operation errors — provider-agnostic.
 ///
-/// Moved from hkask-database::types to break the storage/wallet-types/database
-/// circular dependency. These types only depend on hkask-types itself.
+/// Moved from hkask-database::types to break a historical circular
+/// dependency (see above). These types only depend on hkask-types itself.
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error("database: {0}")]

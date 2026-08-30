@@ -278,6 +278,45 @@ impl super::CyberneticsLoop {
             ));
         }
 
+        // Sense the algedonic log's population state: total events,
+        // escalated-but-unresolved events, and critical alerts. Set-points
+        // are 0.0 — any positive count is a deviation (the "alert on ANY"
+        // convention, matching the variety-threshold default). The dampener
+        // prevents repeat-escalation spam while an alert awaits review;
+        // `clear_reviewed_alerts` closes the loop.
+        let (alert_count, escalated_count, critical_count) = {
+            let ledger = self.ledger.read().await;
+            (
+                ledger.alert_log_count().await,
+                ledger.escalated_alert_count().await,
+                ledger.critical_alerts().await.len(),
+            )
+        };
+        if alert_count > 0 {
+            signals.push(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::AlgedonicEvents,
+                alert_count as f64,
+                0.0,
+            ));
+        }
+        if escalated_count > 0 {
+            signals.push(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::PendingEscalations,
+                escalated_count as f64,
+                0.0,
+            ));
+        }
+        if critical_count > 0 {
+            signals.push(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::MetacognitionCriticalAlerts,
+                critical_count as f64,
+                0.0,
+            ));
+        }
+
         // Feed observed values into the predictive simulator.
         for signal in &signals {
             self.simulator.observe(signal.metric, signal.value);
@@ -1642,5 +1681,67 @@ mod tests {
             metrics.fidelity_score, 0.0,
             "action without metric_name must not match via string fallback"
         );
+    }
+
+    /// D-sensing (2026-08-30): the algedonic log's population state must be
+    /// sensed — `AlgedonicEvents`, `PendingEscalations`, and
+    /// `MetacognitionCriticalAlerts` were policy-only (rules that could never
+    /// fire) before this. A clean log emits none of the three; a critical
+    /// outcome alert (0% success → Critical, escalated) emits all three with
+    /// value 1.0 against set-point 0.0.
+    #[test]
+    fn sense_reports_algedonic_log_population() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+
+            // Clean log: none of the three population signals.
+            let signals = regulation_loop.sense().await;
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::AlgedonicEvents),
+                "clean log must not emit AlgedonicEvents"
+            );
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::PendingEscalations),
+                "clean log must not emit PendingEscalations"
+            );
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::MetacognitionCriticalAlerts),
+                "clean log must not emit MetacognitionCriticalAlerts"
+            );
+
+            // A critical outcome alert: 0% success over 5 operations
+            // (the minimum sample `check_outcome` evaluates) → Critical,
+            // escalated. `record_outcome` re-checks thresholds on every record,
+            // so the alert fires on the fifth failure.
+            let ledger_guard = ledger.read().await;
+            for _ in 0..5 {
+                ledger_guard.record_outcome("sense_test", false, None).await;
+            }
+            let alert_count = ledger_guard.alert_log_count().await;
+            drop(ledger_guard);
+            assert!(alert_count > 0, "0% success must produce an alert");
+
+            let signals = regulation_loop.sense().await;
+            for (metric, expected_value) in [
+                (SignalMetric::AlgedonicEvents, 1.0),
+                (SignalMetric::PendingEscalations, 1.0),
+                (SignalMetric::MetacognitionCriticalAlerts, 1.0),
+            ] {
+                let signal = signals
+                    .iter()
+                    .find(|s| s.metric == metric)
+                    .unwrap_or_else(|| panic!("{metric:?} must be sensed"));
+                assert_eq!(signal.value, expected_value);
+                assert_eq!(signal.set_point, 0.0);
+            }
+        });
     }
 }

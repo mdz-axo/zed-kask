@@ -12,7 +12,7 @@ mds_categories: [domain, curation]
 
 Regulation spans are the observability substrate of hKask's Cybernetic Nervous
 System (Loop 6). Every operation that affects system state — tool invocations,
-loop outcomes, wallet draws, skill feedback — emits a **span** through the
+loop outcomes, skill feedback — emits a **span** through the
 Regulation tracing infrastructure.[^otel-spans][^beer-cybernetics]
 
 > **Hosting note (updated 2026-08-28):** hKask runs in-process inside
@@ -85,7 +85,6 @@ Namespaces form a tree rooted at `reg`. The namespace prefix maps to a
 | **Curation** | `curation`, `spec` | `reg.curation.directive_acknowledged` |
 | **Inference** | `inference` | `reg.inference` |
 | **Memory** | `pod`, `connector` | `reg.pod` |
-| **Wallet** | `wallet` | `reg.wallet.balance`, `reg.wallet.key_issued` |
 | **Skill** | `skill` | `reg.skill.convergence.converged` |
 | **Unknown** | everything else | `reg.tool.web_search`, `reg.consent`, `reg.api.request` |
 
@@ -152,10 +151,13 @@ queryability, but no typed emitter exists:
 | `AcpSpan` | `reg.acp.ide.connection_state`, `reg.acp.agent.memory_size` |
 | `ClassifySpan` | `reg.classify.dual_fidelity`, `reg.classify.drift` |
 | `ContractSpan` | `reg.contract.proposed/accepted/rejected/violated/coverage/quality.violated` |
-| `SeamSpan` | `reg.architecture.seam.coverage`, `reg.architecture.seam.drift` |
 | `SloSpan` | `reg.slo.evaluated` |
 | `ApiRequestSpan` | `reg.api.request` (the `hkask-api` HTTP server is deleted; nothing meters it) |
-| `InfraSpan`, `QaSpan` | `reg.ci.invariant.violation`, `reg.curator.consolidation`, `reg.chat`, `reg.wallet.conversion`, `reg.qa.repair_attempted/verified/exhausted`, `reg.qa.run.*` — emitted, if at all, as raw tracing events |
+| `InfraSpan`, `QaSpan` | `reg.ci.invariant.violation`, `reg.curator.consolidation`, `reg.chat`, `reg.qa.repair_attempted/verified/exhausted`, `reg.qa.run.*` — emitted, if at all, as raw tracing events |
+
+The `SeamSpan` row (`reg.architecture.seam.coverage`/`.drift`) was removed
+2026-08-30 along with the namespaces — the "seam watcher" that would have
+emitted them was never built.
 
 ### 3.5 Skill spans
 
@@ -178,19 +180,17 @@ machinery (`StepMachine`/`ConvergenceTracker`), and `skill_tool.rs` (836
 lines) contains no `reg.skill` tracing emission — skill execution is
 upstream-Zed body injection (D1).
 
-### 3.6 Wallet spans
+### 3.6 Wallet spans (removed)
 
-Canonical namespace strings (no dedicated `WalletSpan` enum). The
-`hkask-wallet` crate, the residual crypto wallet ledger, `WalletManager`/
-`Well`, and `hkask-types::wallet_types` are all deleted. The remaining
-emitters are the cybernetics loop's raw `reg.wallet` events for the
-`WalletBalanceLow`/`WalletKeyUnhealthy` reasons
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1237,1262`).
-Registered: `reg.wallet`, `.balance`, `.calibration`, `.chain`,
-`.chain_error`, `.conversion`, `.created`, `.deposit`, `.deposit_shielded`,
-`.draw`, `.exhausted`, `.key_exhausted`, `.key_expired`, `.key_issued`,
-`.key_revoked`, `.spend`, `.withdrawal` (plus `reg.well.created/draw/
-exhausted/replenished`).
+The wallet system is fully deleted: the `hkask-wallet` crate, the crypto
+wallet ledger, `WalletManager`/`Well`, `hkask-types::wallet_types`, the
+`SpanCategory::Wallet` variant, the `reg.wallet.*`/`reg.well.*`/
+`reg.tool.wallet` namespaces, and (2026-08-30) the last policy-side
+residuals — the `WalletBalanceRatio`/`WalletKeyHealth` metrics, their
+`RegulationReason`s, rules, and cycle handlers, which had no sensor and
+could never fire. The ABW cloud wallet balance
+(`hkask-mcp-swarm/src/abw_client.rs`) is a separate live system, never
+wired to these spans.
 
 ### 3.7 Additional canonical namespace groups
 
@@ -199,7 +199,7 @@ exhaustive — the array is the authority):
 
 | Group | Namespaces (selected) |
 |---|---|
-| **Tool subsystems** | `reg.tool`, `reg.tool.{communication, companies, corpus, curator, filesystem, kanban, media, memory, registry, research, training, wallet, web_search}` — note: no `reg.tool.condenser` is registered |
+| **Tool subsystems** | `reg.tool`, `reg.tool.{communication, companies, corpus, curator, filesystem, kanban, media, memory, registry, research, training, web_search}` — note: no `reg.tool.condenser` is registered |
 | **Outcome** | `reg.outcome` (registered twice — `event.rs:192,215`, a benign duplicate), `.calibration`, `.coherence`, `.predictive` |
 | **Memory** | `reg.memory`, `.budget`, `.decay`, `.encode`, `.health` — no `.episodic` is registered |
 | **MCP** | `reg.mcp`, `.cap`, `.health`, `.media.face` |
