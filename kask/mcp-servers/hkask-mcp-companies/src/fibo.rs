@@ -1,147 +1,192 @@
-//! FIBO dispatch for the companies server — FMP/EODHD field mapping.
+//! FIBO dispatch + internal metric vocabulary for the companies server.
 //!
-//! The FIBO concept vocabulary (the canonical `fibo-*` URIs) lives in the
-//! shared `hkask-bridge-ontology` crate. This module re-exports those
-//! constants so the companies server's existing `fibo::CONSTANT` call sites
-//! keep working, and holds the server-specific mapping from FMP/EODHD
-//! provider field names to their FIBO concepts. That mapping is the
-//! server's business (it knows the provider's field names), not the
-//! ontology's.
+//! The verified FIBO concept constants live in the shared
+//! `hkask-bridge-ontology` crate (fixture-pinned against the FIBO master
+//! ontology). This module re-exports them, defines the server's internal
+//! metric identifiers, and holds the tool → ontology anchor mapping.
+//!
+//! The `METRIC_*` constants are hKask-internal canonical metric names —
+//! NOT ontology URIs and not FIBO terms. FIBO publishes no terms for
+//! financial ratios, DCF line items, or valuation methods (verified
+//! against the FIBO master ontology 2026-08-29); these keys identify
+//! metrics in the concept cache and the financial model and claim no
+//! external standard.
+//!
+//! Tool anchors follow the operator decision (2026-08-29): tools whose
+//! concept FIBO actually publishes anchor on FIBO; analysis-family tools
+//! with no FIBO equivalent anchor on Dublin Core (analysis outputs are
+//! reports, data outputs are datasets) — never an invented FIBO URI.
 
-// Re-export the FIBO vocabulary from the shared bridge crate.
+// Re-export the verified FIBO vocabulary from the shared bridge crate.
 pub(crate) use hkask_bridge_ontology::fibo::{
-    ATTRIBUTION_ANALYSIS, BRIER_SCORE, CAPITAL_ALLOCATION, CAPITAL_EXPENDITURE,
-    COMPARABLE_COMPANY_ANALYSIS, COMPETITIVE_ADVANTAGE, CORPORATION, COUNTRY_OF_INCORPORATION,
-    DCF_VALUATION, DEBT_TO_EQUITY_RATIO, DEPRECIATION_AND_AMORTIZATION, DISCOUNT_RATE,
-    DIVIDEND_YIELD, EBIT, ECONOMIC_PROFIT, ENTERPRISE_VALUE, ENTERPRISE_VALUE_MULTIPLE,
-    EPS_GROWTH_RATE, EQUITY_VALUE, FINANCIAL_LEVERAGE_RATIO, FORECAST_ID, FREE_CASH_FLOW,
-    GROSS_PROFIT_MARGIN, INDUSTRY_CLASSIFICATION, INDUSTRY_SECTOR, INTRINSIC_VALUE_PER_SHARE,
-    LEGAL_NAME, MARGIN_OF_SAFETY, MARKET_CAPITALIZATION, MONTE_CARLO_DCF, NET_DEBT,
-    NET_PROFIT_MARGIN, NET_WORKING_CAPITAL, OPERATING_PROFIT_MARGIN, PRICE_EARNINGS_RATIO,
-    PRICE_TO_BOOK_RATIO, PRICE_TO_SALES_RATIO, PROBABILITY_OF_UNDERVALUATION, RETURN_ON_ASSETS,
-    RETURN_ON_EQUITY, RETURN_ON_INVESTED_CAPITAL, REVENUE_GROWTH_RATE, SCENARIO_PROBABILITY,
-    SENSITIVITY_ANALYSIS, STOCK_SCREENER, TERMINAL_GROWTH_RATE, TICKER_SYMBOL, TOTAL_ASSETS,
-    TOTAL_EQUITY, TREASURY_STOCK, WEIGHTED_AVERAGE,
+    CORPORATION, INTERNAL_RATE_OF_RETURN, MARKET_CAPITALIZATION, PORTFOLIO, TICKER_SYMBOL,
 };
 
-// Re-export the concept type so call sites that reference `fibo::FiboConcept`
-// keep resolving.
-pub(crate) use hkask_bridge_ontology::fibo::FiboConcept;
+// ── Internal metric identifiers ─────────────────────────────────────────
+//
+// Plain canonical names for the metrics the concept cache stores and the
+// financial model projects. They double as the `"metric"` values in tool
+// output JSON.
 
-// ── FMP/EODHD field → FIBO concept mapping ──────────────────────────────
+/// Profile fields.
+pub(crate) const METRIC_TICKER_SYMBOL: &str = "ticker_symbol";
+pub(crate) const METRIC_LEGAL_NAME: &str = "legal_name";
+pub(crate) const METRIC_INDUSTRY_SECTOR: &str = "industry_sector";
+pub(crate) const METRIC_INDUSTRY_CLASSIFICATION: &str = "industry_classification";
+pub(crate) const METRIC_COUNTRY_OF_INCORPORATION: &str = "country_of_incorporation";
+pub(crate) const METRIC_MARKET_CAPITALIZATION: &str = "market_capitalization";
 
-/// Map an FMP/EODHD API field name to its FIBO concept URI.
-/// Returns None for fields not covered by FIBO (provider-specific metadata).
-pub(crate) fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
+/// Valuation multiples.
+pub(crate) const METRIC_PRICE_EARNINGS_RATIO: &str = "price_earnings_ratio";
+pub(crate) const METRIC_PRICE_TO_BOOK_RATIO: &str = "price_to_book_ratio";
+pub(crate) const METRIC_PRICE_TO_SALES_RATIO: &str = "price_to_sales_ratio";
+
+/// Profitability.
+pub(crate) const METRIC_RETURN_ON_INVESTED_CAPITAL: &str = "return_on_invested_capital";
+pub(crate) const METRIC_RETURN_ON_EQUITY: &str = "return_on_equity";
+pub(crate) const METRIC_RETURN_ON_ASSETS: &str = "return_on_assets";
+pub(crate) const METRIC_GROSS_PROFIT_MARGIN: &str = "gross_profit_margin";
+pub(crate) const METRIC_OPERATING_PROFIT_MARGIN: &str = "operating_profit_margin";
+pub(crate) const METRIC_NET_PROFIT_MARGIN: &str = "net_profit_margin";
+
+/// Leverage.
+pub(crate) const METRIC_DEBT_TO_EQUITY_RATIO: &str = "debt_to_equity_ratio";
+pub(crate) const METRIC_FINANCIAL_LEVERAGE_RATIO: &str = "financial_leverage_ratio";
+pub(crate) const METRIC_TOTAL_ASSETS: &str = "total_assets";
+pub(crate) const METRIC_TOTAL_EQUITY: &str = "total_equity";
+pub(crate) const METRIC_TREASURY_STOCK: &str = "treasury_stock";
+
+/// Income / growth.
+pub(crate) const METRIC_DIVIDEND_YIELD: &str = "dividend_yield";
+pub(crate) const METRIC_REVENUE_GROWTH_RATE: &str = "revenue_growth_rate";
+pub(crate) const METRIC_EPS_GROWTH_RATE: &str = "eps_growth_rate";
+
+/// DCF model line items.
+pub(crate) const METRIC_ENTERPRISE_VALUE: &str = "enterprise_value";
+pub(crate) const METRIC_EQUITY_VALUE: &str = "equity_value";
+pub(crate) const METRIC_INTRINSIC_VALUE_PER_SHARE: &str = "intrinsic_value_per_share";
+pub(crate) const METRIC_FREE_CASH_FLOW: &str = "free_cash_flow";
+pub(crate) const METRIC_CAPITAL_EXPENDITURE: &str = "capital_expenditure";
+pub(crate) const METRIC_NET_DEBT: &str = "net_debt";
+pub(crate) const METRIC_MARGIN_OF_SAFETY: &str = "margin_of_safety";
+pub(crate) const METRIC_DEPRECIATION_AND_AMORTIZATION: &str = "depreciation_and_amortization";
+pub(crate) const METRIC_NET_WORKING_CAPITAL: &str = "net_working_capital";
+pub(crate) const METRIC_DISCOUNT_RATE: &str = "discount_rate";
+
+// ── FMP/EODHD field → metric mapping ────────────────────────────────────
+
+/// Map an FMP/EODHD API field name to its internal metric identifier.
+/// Returns None for fields not covered (provider-specific metadata).
+pub(crate) fn fmp_field_to_metric(field: &str) -> Option<&'static str> {
     match field {
         // Profile
-        "symbol" => Some(TICKER_SYMBOL),
-        "companyName" => Some(LEGAL_NAME),
-        "sector" => Some(INDUSTRY_SECTOR),
-        "industry" => Some(INDUSTRY_CLASSIFICATION),
-        "country" => Some(COUNTRY_OF_INCORPORATION),
-        "mktCap" => Some(MARKET_CAPITALIZATION),
+        "symbol" => Some(METRIC_TICKER_SYMBOL),
+        "companyName" => Some(METRIC_LEGAL_NAME),
+        "sector" => Some(METRIC_INDUSTRY_SECTOR),
+        "industry" => Some(METRIC_INDUSTRY_CLASSIFICATION),
+        "country" => Some(METRIC_COUNTRY_OF_INCORPORATION),
+        "mktCap" => Some(METRIC_MARKET_CAPITALIZATION),
 
         // Valuation
-        "peRatio" => Some(PRICE_EARNINGS_RATIO),
-        "priceToBookRatio" => Some(PRICE_TO_BOOK_RATIO),
-        "priceToSalesRatio" => Some(PRICE_TO_SALES_RATIO),
+        "peRatio" => Some(METRIC_PRICE_EARNINGS_RATIO),
+        "priceToBookRatio" => Some(METRIC_PRICE_TO_BOOK_RATIO),
+        "priceToSalesRatio" => Some(METRIC_PRICE_TO_SALES_RATIO),
 
         // Profitability
-        "roic" => Some(RETURN_ON_INVESTED_CAPITAL),
-        "roe" => Some(RETURN_ON_EQUITY),
-        "roa" => Some(RETURN_ON_ASSETS),
-        "grossProfitMargin" => Some(GROSS_PROFIT_MARGIN),
-        "operatingProfitMargin" => Some(OPERATING_PROFIT_MARGIN),
-        "netProfitMargin" => Some(NET_PROFIT_MARGIN),
+        "roic" => Some(METRIC_RETURN_ON_INVESTED_CAPITAL),
+        "roe" => Some(METRIC_RETURN_ON_EQUITY),
+        "roa" => Some(METRIC_RETURN_ON_ASSETS),
+        "grossProfitMargin" => Some(METRIC_GROSS_PROFIT_MARGIN),
+        "operatingProfitMargin" => Some(METRIC_OPERATING_PROFIT_MARGIN),
+        "netProfitMargin" => Some(METRIC_NET_PROFIT_MARGIN),
 
         // Leverage
-        "debtToEquity" => Some(DEBT_TO_EQUITY_RATIO),
-        "financialLeverage" => Some(FINANCIAL_LEVERAGE_RATIO),
-        "totalAssets" => Some(TOTAL_ASSETS),
-        "totalEquity" => Some(TOTAL_EQUITY),
-        "treasuryStock" => Some(TREASURY_STOCK),
+        "debtToEquity" => Some(METRIC_DEBT_TO_EQUITY_RATIO),
+        "financialLeverage" => Some(METRIC_FINANCIAL_LEVERAGE_RATIO),
+        "totalAssets" => Some(METRIC_TOTAL_ASSETS),
+        "totalEquity" => Some(METRIC_TOTAL_EQUITY),
+        "treasuryStock" => Some(METRIC_TREASURY_STOCK),
 
         // Income / growth
-        "dividendYield" => Some(DIVIDEND_YIELD),
-        "revenueGrowth" => Some(REVENUE_GROWTH_RATE),
-        "epsGrowth" => Some(EPS_GROWTH_RATE),
+        "dividendYield" => Some(METRIC_DIVIDEND_YIELD),
+        "revenueGrowth" => Some(METRIC_REVENUE_GROWTH_RATE),
+        "epsGrowth" => Some(METRIC_EPS_GROWTH_RATE),
 
         // DCF valuation
-        "enterpriseValue" => Some(ENTERPRISE_VALUE),
-        "equityValue" => Some(EQUITY_VALUE),
-        "intrinsicValuePerShare" => Some(INTRINSIC_VALUE_PER_SHARE),
-        "freeCashFlow" => Some(FREE_CASH_FLOW),
-        "capitalExpenditure" => Some(CAPITAL_EXPENDITURE),
-        "netDebt" => Some(NET_DEBT),
-        "marginOfSafety" => Some(MARGIN_OF_SAFETY),
+        "enterpriseValue" => Some(METRIC_ENTERPRISE_VALUE),
+        "equityValue" => Some(METRIC_EQUITY_VALUE),
+        "intrinsicValuePerShare" => Some(METRIC_INTRINSIC_VALUE_PER_SHARE),
+        "freeCashFlow" => Some(METRIC_FREE_CASH_FLOW),
+        "capitalExpenditure" => Some(METRIC_CAPITAL_EXPENDITURE),
+        "netDebt" => Some(METRIC_NET_DEBT),
+        "marginOfSafety" => Some(METRIC_MARGIN_OF_SAFETY),
 
-        // Not covered by FIBO (FMP/EODHD-specific metadata)
+        // Not covered (FMP/EODHD-specific metadata)
         _ => None,
     }
 }
 
+// ── Tool → ontology anchor mapping ──────────────────────────────────────
+
 /// Map a companies-server tool name to its top-level ontology concept URI —
-/// the concept that represents *what the artifact is* (not the per-field concepts
-/// in the `"fibo"` map). This is the unified `"ontology"` field the widget
+/// the concept that represents *what the artifact is* (not the per-field
+/// metric identifiers). This is the unified `"ontology"` field the widget
 /// reads for the "I" pattern dispatch and the compose-back body, AND the
 /// concept tagged on the `reg.tool.*` span via `execute_tool_semantic` for
 /// type-aware feedback routing.
 ///
-/// Financial tools return FIBO concepts (`fibo-*` URIs). Non-financial
-/// artifacts (notes, files, transcripts) return Dublin Core concepts
-/// (`dcmitype:Text`, `dcmitype:Dataset`) — these are text/dataset artifacts,
-/// not financial instruments, so FIBO does not cover them. Both are
-/// `&'static str`, compatible with `execute_tool_semantic`'s
-/// `ontology: Option<&'static str>` parameter.
+/// Anchoring policy (operator decision 2026-08-29): tools whose concept
+/// FIBO actually publishes anchor on the verified FIBO URI; analysis-family
+/// tools with no FIBO equivalent anchor on Dublin Core — analysis outputs
+/// are reports (`bibo:Report`), data outputs are datasets
+/// (`dcterms:Dataset`), text artifacts are `dcterms:Text`. No invented
+/// FIBO URIs.
 ///
 /// Returns `None` only for tools that produce no artifact worth anchoring
-/// (currently none — all 43 tools are mapped).
+/// (currently none — all tools are mapped).
 pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
     use hkask_bridge_ontology::dc_bibo;
     match tool {
-        // Portfolio analytics (the ledger itself lives in the portfolio server)
-        "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
-        "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
-        // Valuation tools
-        "dcf_valuation" | "reverse_dcf" => Some(DCF_VALUATION),
-        "ep_valuation" => Some(ECONOMIC_PROFIT),
-        "expectations_gap" => Some(INTRINSIC_VALUE_PER_SHARE),
-        "scenario_analysis" | "scenario_impact_valuation" => Some(SCENARIO_PROBABILITY),
-        "comparable_analysis" => Some(COMPARABLE_COMPANY_ANALYSIS),
-        "monte_carlo_dcf" => Some(MONTE_CARLO_DCF),
-        "sensitivity_analysis" => Some(SENSITIVITY_ANALYSIS),
-        // Equity duration is the cash-flow-timing profile of the DCF
-        // projection — a DCF-valuation derivative, NOT an internal rate of
-        // return (the prior IRR tag was a category error: duration measures
-        // timing, IRR is a discount rate).
-        "equity_duration" => Some(DCF_VALUATION),
-        // Forecast tools
-        "calibrate_forecast" => Some(BRIER_SCORE),
-        // The driver is user-specified and DuPont-scoped: a growth rate, a
-        // profitability measure (net/gross margin, ROE, ROA, ROIC), a tax rate
-        // change, asset turnover, or financial leverage — every driver is a
-        // component or subcomponent of the DuPont identity, whose apex is ROE.
-        "driver_forecast" => Some(RETURN_ON_EQUITY),
-        "forecast_record" | "forecast_get" | "forecast_list" | "forecast_persist" => {
-            Some(FORECAST_ID)
-        }
-        "result_feedback" => Some(BRIER_SCORE),
-        // Analysis tools
-        "stock_screener" | "stock_universe" | "company_screener" => Some(STOCK_SCREENER),
-        "moat_check" => Some(COMPETITIVE_ADVANTAGE),
-        "management_scorecard" => Some(CAPITAL_ALLOCATION),
-        "working_capital_cycle" => Some(NET_WORKING_CAPITAL),
-        "company_research_search" => Some(CORPORATION),
-        // Financial data tools
-        "company_profile" => Some(CORPORATION),
+        // Real FIBO anchors — FIBO publishes these concepts.
+        "company_profile" | "company_research_search" => Some(CORPORATION),
         "stock_quote" | "historical_price" => Some(MARKET_CAPITALIZATION),
-        "key_metrics" => Some(PRICE_EARNINGS_RATIO),
-        "income_statement" => Some(EBIT),
-        "balance_sheet" => Some(TOTAL_ASSETS),
-        "cash_flow_statement" => Some(FREE_CASH_FLOW),
         "symbol_search" | "resolve_symbol" => Some(TICKER_SYMBOL),
-        // Non-financial artifacts — Dublin Core (text/dataset artifacts)
+
+        // Analysis-family tools — no FIBO equivalent (verified 2026-08-29);
+        // their outputs are analysis reports → Dublin Core.
+        "portfolio_attribution"
+        | "dcf_valuation"
+        | "reverse_dcf"
+        | "ep_valuation"
+        | "expectations_gap"
+        | "scenario_analysis"
+        | "scenario_impact_valuation"
+        | "comparable_analysis"
+        | "monte_carlo_dcf"
+        | "sensitivity_analysis"
+        | "equity_duration"
+        | "calibrate_forecast"
+        | "driver_forecast"
+        | "moat_check"
+        | "management_scorecard"
+        | "working_capital_cycle" => Some(dc_bibo::REPORT),
+
+        // Data outputs — structured data, not analysis → Dublin Core.
+        "portfolio_characteristics"
+        | "stock_screener"
+        | "stock_universe"
+        | "company_screener"
+        | "key_metrics"
+        | "income_statement"
+        | "balance_sheet"
+        | "cash_flow_statement"
+        | "forecast_record"
+        | "forecast_get"
+        | "forecast_list"
+        | "forecast_persist"
+        | "result_feedback" => Some(dc_bibo::DATASET),
+
+        // Non-financial artifacts — Dublin Core (text/dataset artifacts).
         "company_transcript" | "note_add" | "note_list" | "note_delete" => Some(dc_bibo::TEXT),
         "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::DATASET),
         "report_save" | "report_load" | "report_list" => Some(dc_bibo::REPORT),

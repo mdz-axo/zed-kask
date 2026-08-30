@@ -2,7 +2,6 @@
 //!
 //! Used by `corpus_extract_assertions` in `mod.rs`.
 
-use hkask_bridge_ontology::fibo;
 use hkask_bridge_ontology::golem;
 use hkask_bridge_ontology::sepio;
 
@@ -74,7 +73,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         "schema:location" | "dcterms:spatial" => Where,
 
         // Why — causation, motivation, interpretive reference
-        "schema:causes" | "schema:resultof" | fibo::HAS_RISK => Why,
+        "schema:causes" | "schema:resultof" => Why,
 
         // Why — SEPIO epistemic causation
         sepio::CONTRADICTS

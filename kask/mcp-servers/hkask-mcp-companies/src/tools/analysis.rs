@@ -304,10 +304,7 @@ impl CompaniesServer {
                 "count": count,
                 "results": rows,
                 "fibo": {
-                    "screener": fibo::STOCK_SCREENER,
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
-                    "price_earnings_ratio": fibo::PRICE_EARNINGS_RATIO,
-                    "dividend_yield": fibo::DIVIDEND_YIELD,
                 },
                 "framework": "EODHD Screener API. Parses natural language screening prompts into EODHD filter triples ([field, operation, value], AND-combined). Screener-compatible fields: market_capitalization, adjusted_close, avgvol_1d, avgvol_200d, earnings_share, dividend_yield, sector, industry, exchange, refund_1d_p, refund_5d_p. Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) are parsed and returned in post_screen_filters but require per-company fundamentals from key_metrics. Paginates with market cap band splitting to exhaust the full universe beyond the 1,000-result offset limit.",
                 "source": "EODHD Screener API"
@@ -358,7 +355,6 @@ impl CompaniesServer {
                     "count": count,
                     "results": listings,
                     "fibo": {
-                        "screener": fibo::STOCK_SCREENER,
                         "market_capitalization": fibo::MARKET_CAPITALIZATION,
                     },
                     "source": "EODHD Screener API",

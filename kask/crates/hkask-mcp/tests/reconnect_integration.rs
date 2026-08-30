@@ -164,7 +164,7 @@ async fn launch(fixture: &Fixture) -> (McpRuntime, u32) {
         .start_server_with_env(
             "fixture",
             &fixture_binary().to_string_lossy(),
-            fixture.env.clone(),
+            hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
         )
         .await
         .expect("fixture must start and handshake");
@@ -384,7 +384,7 @@ async fn startup_retry_with_backoff() {
         .start_server_with_env(
             "no-such-server",
             "/nonexistent/binary/that/does/not/exist",
-            HashMap::new(),
+            hkask_types::ServerEnv::default(),
         )
         .await;
 
@@ -478,6 +478,118 @@ async fn health_supervisor_removes_dead_connection_without_tool_call() {
     // SAFETY: see the set_var block above; --test-threads=1 serializes access.
     unsafe {
         std::env::remove_var("HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS");
+    }
+    runtime.shutdown_all().await;
+}
+
+// ── Reconciler convergence pins (lifecycle review, 2026-08-29) ──────────────
+
+/// Invariant I4: reconciliation is idempotent. A `start_server_with_env`
+/// call for an already-live connection with the same env must be a no-op —
+/// no respawn, same pid. Without this, every redundant reconcile pass
+/// (settings observers, startup double-calls) would tear down and respawn
+/// live servers, the exact churn observed live when uncoordinated actors
+/// each held their own restart authority.
+#[tokio::test(flavor = "multi_thread")]
+async fn second_start_with_same_env_is_a_noop() {
+    let fixture = Fixture::new("second_start_with_same_env_is_a_noop");
+    let (runtime, original_pid) = launch(&fixture).await;
+
+    // The redundant reconcile call — same server, same env, live transport.
+    runtime
+        .start_server_with_env(
+            "fixture",
+            &fixture_binary().to_string_lossy(),
+            hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+        )
+        .await
+        .expect("a redundant start against a live connection must succeed as a no-op");
+
+    // Give any (buggy) respawn a moment to write a new pid, then assert the
+    // original process is still the one serving.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        fixture.read_pid(),
+        original_pid,
+        "a redundant start must not respawn the server — reconcile is idempotent"
+    );
+    let result = ping(&runtime, "fixture").await;
+    assert_eq!(
+        result["marker"].as_str().expect("marker"),
+        fixture.marker,
+        "the original process must still be serving after the redundant start"
+    );
+    runtime.shutdown_all().await;
+}
+
+/// Invariant I5: the health supervisor's circuit breaker. A server whose
+/// restarts keep failing must stop being auto-healed after
+/// `max_consecutive_health_failures` — an unsupervised respawn loop is the
+/// crash-loop defect observed live (a keyless instance churning a new pid
+/// every interval forever, with no operator-visible stop condition). The
+/// failure count must reach the cap and FREEZE: the breaker stops the
+/// supervisor instead of looping.
+#[tokio::test(flavor = "multi_thread")]
+async fn health_breaker_trips_after_consecutive_restart_failures() {
+    // 1s health interval + a 2-failure cap so the test runs in seconds.
+    // SAFETY: `--test-threads=1` serializes these tests (see the sibling
+    // health-supervisor test); vars are removed before returning.
+    unsafe {
+        std::env::set_var("HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS", "1");
+        std::env::set_var("HKASK_MCP_MAX_HEALTH_FAILURES", "2");
+    }
+
+    // Launch the real fixture so a supervisor spawns with a live connection.
+    let fixture = Fixture::new("health_breaker_trips_after_consecutive_restart_failures");
+    let (runtime, original_pid) = launch(&fixture).await;
+
+    // Break every FUTURE respawn: `resolve_mcp_binary` checks
+    // HKASK_MCP_{ID}_BIN at spawn time, so pointing it at a nonexistent
+    // path makes the supervisor's restart attempts fail while the original
+    // process keeps running.
+    // SAFETY: see the set_var block above.
+    unsafe {
+        std::env::set_var("HKASK_MCP_FIXTURE_BIN", "/nonexistent/mcp-binary");
+    }
+
+    Fixture::kill(original_pid);
+
+    // The supervisor counts one failure per cycle (dead/missing state) and
+    // trips the breaker at 2. Wait for the count to reach the cap...
+    wait_for(
+        || {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(runtime.health_failure_count("fixture"))
+                    >= 2
+            })
+        },
+        Duration::from_secs(15),
+        Duration::from_millis(200),
+        "the health breaker to reach its failure cap",
+    )
+    .await;
+
+    // ...then assert it FREEZES: with the breaker tripped, the supervisor
+    // has exited, so no further failures are counted. Two more cycles'
+    // worth of wait must not move the count.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let count_after = runtime.health_failure_count("fixture").await;
+    assert_eq!(
+        count_after, 2,
+        "the breaker must stop the respawn loop — the failure count freezes at \
+         the cap instead of growing forever (the live crash-loop defect)"
+    );
+    assert!(
+        !runtime.is_connected("fixture").await,
+        "the breaker must leave the server down — no more auto-respawn"
+    );
+
+    // SAFETY: see the set_var block above.
+    unsafe {
+        std::env::remove_var("HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS");
+        std::env::remove_var("HKASK_MCP_MAX_HEALTH_FAILURES");
+        std::env::remove_var("HKASK_MCP_FIXTURE_BIN");
     }
     runtime.shutdown_all().await;
 }

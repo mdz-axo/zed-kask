@@ -26,10 +26,12 @@
 //!    **attempts a restart** using the recorded launch spec. Unlike the
 //!    on-demand path, the supervisor heals even when no tool call is in
 //!    flight — without it, a server that crashes while idle stays dead
-//!    forever. After `max_consecutive_health_failures` the supervisor
-//!    transitions to a slower (degraded) check interval but does NOT stop —
-//!    a crashed server needs periodic restart attempts forever, or a
-//!    transient crash becomes a permanent outage.
+//!    forever. After `max_consecutive_health_failures` consecutive failures
+//!    the circuit breaker stops auto-healing that server with an
+//!    operator-actionable error — an unsupervised respawn loop is the
+//!    crash-loop defect (2026-08-29). Any explicit start (settings-change
+//!    restart, operator action, on-demand reconnect from a tool call)
+//!    spawns a fresh supervisor and re-enables healing.
 //!
 //! Without these, `start_server_with_env`'s presence-based idempotency check
 //! (`connections.contains_key`) would short-circuit every recovery attempt and
@@ -89,12 +91,13 @@ const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
 /// Override: `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` env var.
 const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Maximum consecutive health-check failures before the supervisor transitions
-/// from the normal interval to the degraded interval. The supervisor does NOT
-/// stop checking — a server that crashes and stays crashed needs periodic
-/// restart attempts forever, or a transient crash becomes a permanent outage.
-/// The threshold exists only to bound the log volume and CPU cost of a
-/// crash-looping binary: after it, the supervisor slows down rather than giving
+/// Maximum consecutive health-check failures before the supervisor's circuit
+/// breaker stops auto-healing the server. The stop is not a permanent outage:
+/// any explicit start (settings-change restart, operator action, or
+/// `call_tool_inner`'s on-demand reconnect) spawns a fresh supervisor whose
+/// first healthy check resets the counter. The threshold bounds the
+/// crash-loop defect — a dying binary respawned forever with no
+/// operator-visible stop condition (observed live 2026-08-29).
 /// up. Reset to zero on the first healthy connection seen.
 ///
 /// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
@@ -106,9 +109,6 @@ const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 /// transient cause (a DB lock that released, a disk that freed) is recovered
 /// without operator intervention.
 ///
-/// Override: `HKASK_MCP_DEGRADED_HEALTH_CHECK_INTERVAL_SECS` env var.
-const DEFAULT_DEGRADED_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(300);
-
 /// Resolve a duration from an env var (seconds), falling back to `default`.
 /// Logs a warning on parse failure per `.rules` (numeric env vars that fail
 /// to parse must `log::warn!` naming the malformed value).
@@ -178,7 +178,6 @@ struct McpRuntimeConfig {
     startup_max_backoff: Duration,
     health_check_interval: Duration,
     max_consecutive_health_failures: u32,
-    degraded_health_check_interval: Duration,
 }
 
 impl Default for McpRuntimeConfig {
@@ -207,10 +206,6 @@ impl Default for McpRuntimeConfig {
             max_consecutive_health_failures: resolve_u32_env(
                 "HKASK_MCP_MAX_HEALTH_FAILURES",
                 DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES,
-            ),
-            degraded_health_check_interval: resolve_duration_env_secs(
-                "HKASK_MCP_DEGRADED_HEALTH_CHECK_INTERVAL_SECS",
-                DEFAULT_DEGRADED_HEALTH_CHECK_INTERVAL,
             ),
         }
     }
@@ -391,10 +386,9 @@ pub struct McpRuntime {
     /// Last reconnect attempt per server, for the reconnect cooldown.
     last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
     /// Consecutive health-check failures per server. After
-    /// `config.max_consecutive_health_failures` the supervisor transitions to
-    /// the degraded interval (slower checks) but does NOT stop checking — a
-    /// crashed server needs periodic restart attempts forever. Reset to zero
-    /// on the first healthy connection seen.
+    /// `config.max_consecutive_health_failures` the circuit breaker stops
+    /// auto-healing that server (operator-actionable error logged). Reset to
+    /// zero on the first healthy connection seen.
     health_failures: Arc<RwLock<HashMap<String, u32>>>,
     /// Resolved tuning parameters (env-overridable defaults).
     config: McpRuntimeConfig,
@@ -867,10 +861,9 @@ impl McpRuntime {
     /// runtime, so this is safe.
     ///
     /// After `config.max_consecutive_health_failures` consecutive failures
-    /// the supervisor transitions from the normal interval to the degraded
-    /// interval (slower checks) but does NOT stop — a crashed server needs
-    /// periodic restart attempts forever. The failure counter increments on
-    /// every check where the connection is dead or missing, and only resets
+    /// the circuit breaker stops auto-healing the server with an
+    /// operator-actionable error. The failure counter increments on every
+    /// check where the connection is dead or missing, and only resets
     /// when a genuinely healthy connection is seen — so a server that keeps
     /// dying accumulates failures across check intervals.
     fn spawn_health_supervisor(&self, server_id: &str, cancel: CancellationToken) {
@@ -881,7 +874,6 @@ impl McpRuntime {
         let supervisor_runtime = self.clone();
         let supervisor_id = server_id.to_string();
         let normal_interval = self.config.health_check_interval;
-        let degraded_interval = self.config.degraded_health_check_interval;
         let max_health_failures = self.config.max_consecutive_health_failures;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(normal_interval);
@@ -999,24 +991,27 @@ impl McpRuntime {
                 }
 
                 if failures >= max_health_failures {
-                    // Transition to the degraded interval rather than giving up.
-                    // A crashed server needs periodic restart attempts forever;
-                    // giving up turns a transient crash into a permanent outage.
-                    // The degraded interval bounds CPU and log volume while
-                    // still attempting recovery.
-                    if failures == max_health_failures {
-                        tracing::error!(
-                            target: "hkask.mcp",
-                            server_id = %supervisor_id,
-                            consecutive_failures = failures,
-                            degraded_interval_secs = degraded_interval.as_secs(),
-                            "MCP server health supervisor transitioning to degraded interval \
-                             after repeated failures — continuing restart attempts at reduced \
-                             frequency (operator intervention recommended: check stderr logs)"
-                        );
-                        interval = tokio::time::interval(degraded_interval);
-                        interval.tick().await; // skip the immediate tick from the new interval
-                    }
+                    // The circuit breaker: stop auto-healing this server. The
+                    // prior behavior — degrade the check interval but keep
+                    // restarting forever — is the live crash-loop defect
+                    // (2026-08-29: a keyless instance respawned a new pid
+                    // every interval indefinitely, with no operator-visible
+                    // stop condition). Giving up is NOT a permanent outage:
+                    // any explicit start (settings-change restart, operator
+                    // action, or `call_tool_inner`'s on-demand reconnect)
+                    // spawns a fresh supervisor whose first healthy check
+                    // resets the counter. What stops is the unsupervised
+                    // respawn loop.
+                    tracing::error!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        consecutive_failures = failures,
+                        "MCP server health supervisor giving up — auto-healing disabled \
+                         after repeated restart failures (operator action required: check \
+                         the server binary and configuration; a settings change or tool \
+                         call re-enables healing)"
+                    );
+                    return;
                 }
 
                 warn!(
@@ -1105,6 +1100,21 @@ impl McpRuntime {
     #[cfg(feature = "test-fixture")]
     pub async fn is_connected(&self, server_id: &str) -> bool {
         self.get_peer(server_id).await.is_some()
+    }
+
+    /// Test seam: the health supervisor's consecutive-failure count for a
+    /// server. When it reaches `max_consecutive_health_failures`, auto-healing
+    /// is disabled for that server — the crash-loop protection (invariant I5
+    /// of the MCP server lifecycle review, 2026-08-29). Read-only, so it
+    /// cannot perturb the supervisor.
+    #[doc(hidden)]
+    pub async fn health_failure_count(&self, server_id: &str) -> u32 {
+        self.health_failures
+            .read()
+            .await
+            .get(server_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Re-spawn a server whose connection died, subject to the reconnect cooldown

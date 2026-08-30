@@ -1446,7 +1446,7 @@ mod tests {
         // were a skip (the pre-fix behavior), this would fail — the value would
         // be lost when the governed path clears the child's env.
         assert_eq!(
-            env.get("HKASK_ABW_API_KEY"),
+            env.get("HKASK_ABW_API_KEY").map(|v| v.as_str()),
             Some("shell-secret-value"),
             "shell-set HKASK_ABW_API_KEY must be inserted into the env map so it \
              survives the governed path's cmd.env_clear() — the prior `continue` \
