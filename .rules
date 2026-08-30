@@ -68,6 +68,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 `DIVERGENCE.md` defines what's ours (`kask/`) vs upstream Zed. Don't "fix" upstream files speculatively — push fixes into `kask/` behind a D-seam. If an upstream edit is unavoidable, add a D-seam entry + test in the same PR. Every `// zed-kask:` comment disabling upstream behavior needs a test pinning the disabled behavior.
 
+`cargo machete` in `script/clippy` is scoped to `kask/` on purpose — don't widen it to the repo root. Root-scope machete flags ~30 deps in upstream `crates/` (mostly `tracing`, `component`) as false positives from macro/feature-activated usage; those belong to upstream CI, not us. Silencing them with `[package.metadata.cargo-machete] ignored` entries means editing ~30 upstream Cargo.tomls (rebase friction) and masks genuinely-dead deps behind "intentionally unused" assertions. A machete finding in `kask/` is always actionable — verify zero `use <dep>` hits in `src/` and `tests/`, then remove the dep line.
+
 ## Failure signals
 
 * Every `set_*` hook wired conditionally must `log::warn!` on failure — operators can't distinguish "not configured" from "configured but broken" without it. `OnceLock` hooks must warn on the `Err` branch of `set`; `Mutex` hooks are re-settable and don't need it.
