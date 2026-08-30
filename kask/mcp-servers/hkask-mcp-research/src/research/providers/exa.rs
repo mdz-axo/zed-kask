@@ -40,7 +40,10 @@ impl ExaProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Exa findSimilar failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => {
@@ -127,7 +130,10 @@ impl WebSearchProvider for ExaProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Exa request failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("Exa auth error: {status}")),
@@ -235,7 +241,10 @@ impl WebBrowseProvider for ExaProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("Exa browse failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Exa body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("Exa auth error: {status}")),

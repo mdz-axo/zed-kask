@@ -76,7 +76,10 @@ impl SerapiProvider {
             })?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),
@@ -196,7 +199,10 @@ impl WebSearchProvider for SerapiProvider {
             .map_err(|e| WebError::ProviderUnavailable(format!("SerpAPI request failed: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),

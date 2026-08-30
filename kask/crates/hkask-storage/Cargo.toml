@@ -23,7 +23,6 @@ chrono.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
-hex.workspace = true
 sqlite-vec.workspace = true
 
 [dev-dependencies]

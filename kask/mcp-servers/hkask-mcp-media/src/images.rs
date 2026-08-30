@@ -233,13 +233,15 @@ impl MediaServer {
     ) -> (u32, Vec<String>) {
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
-            None => return (
-                0,
-                vec![
+            None => {
+                return (
+                    0,
+                    vec![
                     "No vision model available — configure a vision-capable provider (OpenRouter)"
                         .to_string(),
                 ],
-            ),
+                );
+            }
         };
         let mut analyzed = 0u32;
         let mut errors = Vec::new();

@@ -6,7 +6,6 @@ use std::sync::Arc;
 use hkask_memory::MemoryStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{EmbeddingStore, HMemStore, open_or_repair};
-use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 

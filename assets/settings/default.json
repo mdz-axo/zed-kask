@@ -2539,8 +2539,8 @@
       "DeepInfra": {
         "api_url": "https://api.deepinfra.com/v1/openai",
         "available_models": [],
-        "auto_discover": true
-      }
+        "auto_discover": true,
+      },
     },
     "opencode": {
       "api_url": "https://opencode.ai/zen",

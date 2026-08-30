@@ -292,8 +292,16 @@ mod tests {
         // Every format detect_format reports as supported must ground to a
         // DC type — the ingest state-identity contract.
         for path in [
-            "doc.pdf", "doc.md", "doc.markdown", "doc.html", "doc.htm",
-            "doc.txt", "doc.docx", "doc.pptx", "doc.xlsx", "doc.csv",
+            "doc.pdf",
+            "doc.md",
+            "doc.markdown",
+            "doc.html",
+            "doc.htm",
+            "doc.txt",
+            "doc.docx",
+            "doc.pptx",
+            "doc.xlsx",
+            "doc.csv",
         ] {
             let (format, supported, _) = detect_format(path);
             assert!(supported, "{path} must be a supported format");

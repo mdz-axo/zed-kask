@@ -1,7 +1,6 @@
 use crate::TrainingServer;
 use crate::types::TrainEvaluateRequest;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
