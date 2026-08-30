@@ -2721,4 +2721,33 @@ description: A skill with no body content
             );
         }
     }
+
+    // zed-kask: D28 — pins the global skills dir override hook.
+    // Mirrors `test_threads_db_override_hook_round_trips` in
+    // `crates/agent/src/db.rs`. Tests that `global_skills_dir()` returns the
+    // path set by `set_global_skills_dir_override` (checked first, before the
+    // `paths::data_dir()` fallback), and that resetting the override restores
+    // the default path. Does NOT seed or list skills through the override
+    // (which would race with concurrent FakeFs tests via the global
+    // `Mutex`); the production wiring is covered by `main.rs` + the kask
+    // data-root composition root.
+    #[test]
+    fn test_global_skills_dir_override_hook_round_trips() {
+        // Default: no override set (other tests may have reset it).
+        // We set it, verify, then reset.
+        let sentinel = std::path::PathBuf::from("/tmp/kask-test-global-skills");
+        set_global_skills_dir_override(Some(sentinel.clone()));
+        assert_eq!(
+            global_skills_dir(),
+            sentinel,
+            "global_skills_dir must return the path set by set_global_skills_dir_override \
+             (the override is checked first, before the paths::data_dir fallback)"
+        );
+        set_global_skills_dir_override(None);
+        assert_eq!(
+            global_skills_dir(),
+            paths::data_dir().join("agents").join(SKILLS_DIR_NAME),
+            "global_skills_dir must return the default path after the override is reset"
+        );
+    }
 }

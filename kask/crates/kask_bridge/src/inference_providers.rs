@@ -696,4 +696,200 @@ mod tests {
             "UnknownProvider/some-model"
         );
     }
+
+    // ── D29: RunPod credential mirror ─────────────────────────────────────
+    //
+    // A recording `CredentialsProvider` stand-in: reads consult a seeded
+    // secrets map (plus anything previously written), writes are recorded
+    // so tests can assert exactly which URLs the mirror touched. Modeled on
+    // `MockCredentialsProvider` in `mcp_servers.rs` tests, extended with
+    // write recording + read-back so the round-trip is observable.
+    struct RecordingCredentialsProvider {
+        secrets: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+        writes: std::sync::Mutex<Vec<(String, String, Vec<u8>)>>,
+    }
+
+    impl RecordingCredentialsProvider {
+        fn new(secrets: std::collections::HashMap<String, Vec<u8>>) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                secrets: std::sync::Mutex::new(secrets),
+                writes: std::sync::Mutex::new(Vec::new()),
+            })
+        }
+
+        fn written_urls(&self) -> Vec<String> {
+            self.writes
+                .lock()
+                .expect("writes lock poisoned")
+                .iter()
+                .map(|(url, _, _)| url.clone())
+                .collect()
+        }
+    }
+
+    impl credentials_provider::CredentialsProvider for RecordingCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            let result = self
+                .secrets
+                .lock()
+                .expect("secrets lock poisoned")
+                .get(url)
+                .cloned()
+                .map(|pw| ("user".to_string(), pw));
+            Box::pin(async move { Ok(result) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            url: &'a str,
+            username: &'a str,
+            password: &'a [u8],
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            self.writes.lock().expect("writes lock poisoned").push((
+                url.to_string(),
+                username.to_string(),
+                password.to_vec(),
+            ));
+            self.secrets
+                .lock()
+                .expect("secrets lock poisoned")
+                .insert(url.to_string(), password.to_vec());
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    // zed-kask: D29 — pins the RunPod credential mirror contract:
+    // (a) a key at `kask://credentials/runpod` is mirrored to
+    //     `https://api.runpod.io` (round-trip: the written value reads back
+    //     through the provider),
+    // (b) an existing key at `https://api.runpod.io` is NOT clobbered,
+    // (c) RunPod is in `INFERENCE_PROVIDERS` for the mirror but with
+    //     `inject_for_mcp == false` — `DATA_SERVICES` is the single MCP
+    //     injector (same credential_key in both registries; no
+    //     double-injection).
+    //
+    // NOT covered here: "RunPod is absent from the openai_compatible
+    // registration set" — no such set exists in kask_bridge (providers are
+    // registered via zed's native Settings → AI → LLM Providers). RunPod's
+    // non-registration as openai_compatible is enforced by the dedicated
+    // `LanguageModelProvider` in `crates/language_models/src/provider/runpod.rs`,
+    // outside this crate.
+    #[gpui::test]
+    async fn runpod_is_mirrored_to_keychain_but_not_registered_as_openai_compatible(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runpod = INFERENCE_PROVIDERS
+            .iter()
+            .find(|p| p.id == "RunPod")
+            .expect("RunPod must be in INFERENCE_PROVIDERS so the mirror covers it");
+        assert_eq!(
+            runpod.credential_url(),
+            "kask://credentials/runpod",
+            "RunPod's kask credential URL must be the canonical namespace entry"
+        );
+        assert_eq!(
+            runpod.api_url, "https://api.runpod.io",
+            "RunPod's mirror target must be the GraphQL/API domain its ApiKeyState reads"
+        );
+        assert!(
+            !runpod.env_var.is_empty(),
+            "RunPod must require a key or the mirror loop skips it"
+        );
+        assert!(
+            !runpod.inject_for_mcp,
+            "RunPod must not be MCP-injected from INFERENCE_PROVIDERS — DATA_SERVICES \
+             is the single injector (same credential_key in both registries)"
+        );
+        assert!(
+            super::DATA_SERVICES
+                .iter()
+                .any(|d| d.credential_key == runpod.credential_key),
+            "RunPod's credential_key must also appear in DATA_SERVICES (the single \
+             MCP injector) or its key would never reach MCP servers"
+        );
+
+        // (a) kask key present, no existing key at the target URL → mirror writes.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(
+            "kask://credentials/runpod".to_string(),
+            b"kask-runpod-secret".to_vec(),
+        );
+        let provider = RecordingCredentialsProvider::new(secrets);
+        let credentials: std::sync::Arc<dyn credentials_provider::CredentialsProvider> =
+            provider.clone();
+        let task = cx.update(|cx| super::mirror_kask_credentials_to_providers(&credentials, cx));
+        cx.run_until_parked();
+        drop(task);
+
+        let written_urls = provider.written_urls();
+        assert_eq!(
+            written_urls,
+            vec!["https://api.runpod.io".to_string()],
+            "with only the runpod kask key set, the mirror must write exactly RunPod's \
+             api_url and nothing else"
+        );
+        // Round-trip: the mirrored key reads back through the provider at the
+        // target URL — not just "a write happened".
+        let cx_async = cx.to_async();
+        let read_back = credentials
+            .read_credentials("https://api.runpod.io", &cx_async)
+            .await
+            .expect("read after mirror must succeed")
+            .expect("mirrored key must be readable at https://api.runpod.io");
+        assert_eq!(
+            read_back.1,
+            b"kask-runpod-secret".to_vec(),
+            "the mirrored value must equal the kask-store key"
+        );
+
+        // (b) existing key at the target URL → mirror must NOT clobber it.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(
+            "kask://credentials/runpod".to_string(),
+            b"kask-runpod-secret".to_vec(),
+        );
+        secrets.insert(
+            "https://api.runpod.io".to_string(),
+            b"ui-entered-key".to_vec(),
+        );
+        let provider = RecordingCredentialsProvider::new(secrets);
+        let credentials: std::sync::Arc<dyn credentials_provider::CredentialsProvider> =
+            provider.clone();
+        let task = cx.update(|cx| super::mirror_kask_credentials_to_providers(&credentials, cx));
+        cx.run_until_parked();
+        drop(task);
+
+        assert!(
+            !provider
+                .written_urls()
+                .contains(&"https://api.runpod.io".to_string()),
+            "the mirror must not write to https://api.runpod.io when a key already \
+             exists there (UI-entered keys are preserved)"
+        );
+        let read_back = credentials
+            .read_credentials("https://api.runpod.io", &cx.to_async())
+            .await
+            .expect("read after mirror must succeed")
+            .expect("existing key must still be present");
+        assert_eq!(
+            read_back.1,
+            b"ui-entered-key".to_vec(),
+            "the pre-existing key at the target URL must be unchanged"
+        );
+    }
 }
