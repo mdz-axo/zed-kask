@@ -139,7 +139,8 @@ pub struct GoalJudgeRequest {
     pub verdict: String,
     /// Confidence in the verdict (0.0–1.0).
     pub confidence: f64,
-    /// Per-criterion results.
+    /// Per-criterion results — must cover every criterion of the goal
+    /// exactly once (validated at judge time).
     #[serde(default)]
     pub criterion_results: Vec<CriterionJudgmentInput>,
     /// Overall reasoning, grounded in the observed outcome.
@@ -204,12 +205,29 @@ pub(crate) struct GoalInfo {
 
 // ── Task tools ─────────────────────────────────────────────────────────────
 
+/// One goal-criterion citation for `kanban_task_create`'s `advances`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CriterionCitationInput {
+    /// The goal being cited.
+    pub goal_id: String,
+    /// Index into the goal's criteria (0-based).
+    pub criterion_index: usize,
+    /// The criterion's description, verbatim — validated against the goal
+    /// at creation and captured so the citation stays readable after the
+    /// ephemeral goal is gone.
+    pub criterion_text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskCreateRequest {
     pub board_id: String,
     pub title: String,
     pub description: Option<String>,
     pub criteria: Option<Vec<String>>,
+    /// Goal criteria this task advances — the functional–technical join.
+    /// Each citation is validated against the cited goal at creation.
+    #[serde(default)]
+    pub advances: Vec<CriterionCitationInput>,
     /// Opaque client-generated key making this create replay-safe. See
     /// [`BoardCreateRequest::idempotency_key`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,6 +244,8 @@ pub(crate) struct TaskCreateResponse {
     pub board_id: String,
     pub title: String,
     pub status: String,
+    /// Number of goal-criterion citations recorded on the task.
+    pub advances_count: usize,
     /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -270,6 +290,8 @@ pub struct TaskInfo {
     pub status: String,
     pub assignee: Option<String>,
     pub criteria_count: usize,
+    /// Number of goal-criterion citations on the task.
+    pub advances_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_remaining: Option<u64>,
     /// The swarm this task belongs to, when coordinated via a local swarm.
@@ -599,12 +621,18 @@ pub(crate) struct TaskUpdateRequest {
     pub priority: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
+    /// Goal criteria this task advances — replaces the existing citations
+    /// when present. Each citation is validated against the cited goal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advances: Option<Vec<CriterionCitationInput>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskUpdateResponse {
     pub task_id: String,
     pub title: String,
+    /// Number of goal-criterion citations on the task after the update.
+    pub advances_count: usize,
     /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,

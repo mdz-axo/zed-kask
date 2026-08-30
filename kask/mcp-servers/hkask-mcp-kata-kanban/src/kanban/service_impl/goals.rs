@@ -160,7 +160,8 @@ impl KanbanService {
     /// the goal owner may judge (P12).
     ///
     /// pre:  goal exists and is owned by caller; confidence in 0.0..=1.0;
-    ///       criterion indices in range
+    ///       criterion results cover every criterion exactly once (indices
+    ///       in range, no duplicates, none missing)
     /// post: verdict appended and persisted; returns the updated Goal
     #[must_use = "result must be used"]
     pub(crate) fn goal_judge(
@@ -186,15 +187,40 @@ impl KanbanService {
                 verdict.confidence
             )));
         }
+        // A verdict must judge EVERY criterion: the per-criterion results are
+        // the explicit obligation the Brier score later discharges. A verdict
+        // with missing or duplicated criterion results is an unanchored
+        // claim — reject it with an error naming what is missing.
+        let criterion_count = goal.criteria.len();
         if let Some(cj) = verdict
             .criterion_results
             .iter()
-            .find(|cj| cj.index >= goal.criteria.len())
+            .find(|cj| cj.index >= criterion_count)
         {
             return Err(KanbanError::InvalidInput(format!(
                 "criterion index {} out of range (goal has {} criteria)",
-                cj.index,
-                goal.criteria.len()
+                cj.index, criterion_count
+            )));
+        }
+        let mut judged: Vec<usize> = verdict
+            .criterion_results
+            .iter()
+            .map(|cj| cj.index)
+            .collect();
+        judged.sort_unstable();
+        judged.dedup();
+        if judged.len() != verdict.criterion_results.len() {
+            return Err(KanbanError::InvalidInput(
+                "criterion results contain duplicate indices — judge each criterion exactly once"
+                    .to_string(),
+            ));
+        }
+        let missing: Vec<usize> = (0..criterion_count)
+            .filter(|index| !judged.contains(index))
+            .collect();
+        if !missing.is_empty() {
+            return Err(KanbanError::InvalidInput(format!(
+                "verdict must judge every criterion — missing indices {missing:?} (goal has {criterion_count} criteria)"
             )));
         }
 
@@ -378,22 +404,41 @@ mod goal_tests {
         let verdict = GoalVerdict {
             verdict: GoalVerdictValue::Continue,
             confidence: 0.7,
-            criterion_results: vec![CriterionJudgment {
-                index: 0,
-                passed: false,
-                note: "not yet observable".into(),
-            }],
+            criterion_results: vec![
+                CriterionJudgment {
+                    index: 0,
+                    passed: false,
+                    note: "not yet observable".into(),
+                },
+                CriterionJudgment {
+                    index: 1,
+                    passed: false,
+                    note: "not yet observable".into(),
+                },
+            ],
             reasoning: "work in progress".into(),
             judged_at: chrono::Utc::now(),
         };
         let updated = svc.goal_judge(goal.id, verdict, owner).unwrap();
         assert_eq!(updated.verdicts.len(), 1);
 
-        // Non-owner cannot judge (P12).
+        // Non-owner cannot judge (P12). Full criterion coverage so the ONLY
+        // rejection reason is ownership.
         let verdict2 = GoalVerdict {
             verdict: GoalVerdictValue::Done,
             confidence: 0.9,
-            criterion_results: vec![],
+            criterion_results: vec![
+                CriterionJudgment {
+                    index: 0,
+                    passed: true,
+                    note: "observable".into(),
+                },
+                CriterionJudgment {
+                    index: 1,
+                    passed: true,
+                    note: "observable".into(),
+                },
+            ],
             reasoning: "done".into(),
             judged_at: chrono::Utc::now(),
         };
@@ -412,6 +457,74 @@ mod goal_tests {
             judged_at: chrono::Utc::now(),
         };
         assert!(svc.goal_judge(goal.id, bad, owner).is_err());
+    }
+
+    #[test]
+    fn goal_judge_requires_every_criterion_judged_exactly_once() {
+        // A verdict with missing or duplicate criterion results is an
+        // unanchored claim — the per-criterion results are the explicit
+        // obligation the Brier score discharges, so they must cover every
+        // criterion exactly once.
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc
+            .goal_create("goal".into(), criteria(3), None, None, owner)
+            .unwrap();
+
+        let missing = GoalVerdict {
+            verdict: GoalVerdictValue::Done,
+            confidence: 0.9,
+            criterion_results: vec![
+                CriterionJudgment {
+                    index: 0,
+                    passed: true,
+                    note: "observable".into(),
+                },
+                CriterionJudgment {
+                    index: 2,
+                    passed: true,
+                    note: "observable".into(),
+                },
+            ],
+            reasoning: "skipped criterion 1".into(),
+            judged_at: chrono::Utc::now(),
+        };
+        match svc.goal_judge(goal.id, missing, owner) {
+            Err(KanbanError::InvalidInput(message)) => {
+                assert!(message.contains("missing indices [1]"), "{message}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+
+        let duplicate = GoalVerdict {
+            verdict: GoalVerdictValue::Done,
+            confidence: 0.9,
+            criterion_results: vec![
+                CriterionJudgment {
+                    index: 0,
+                    passed: true,
+                    note: "observable".into(),
+                },
+                CriterionJudgment {
+                    index: 0,
+                    passed: true,
+                    note: "judged twice".into(),
+                },
+                CriterionJudgment {
+                    index: 1,
+                    passed: true,
+                    note: "observable".into(),
+                },
+                CriterionJudgment {
+                    index: 2,
+                    passed: true,
+                    note: "observable".into(),
+                },
+            ],
+            reasoning: "double-judged criterion 0".into(),
+            judged_at: chrono::Utc::now(),
+        };
+        assert!(svc.goal_judge(goal.id, duplicate, owner).is_err());
     }
 
     #[test]
@@ -463,7 +576,18 @@ mod goal_tests {
                 GoalVerdict {
                     verdict: GoalVerdictValue::Done,
                     confidence: 0.9,
-                    criterion_results: vec![],
+                    criterion_results: vec![
+                        CriterionJudgment {
+                            index: 0,
+                            passed: true,
+                            note: "observable".into(),
+                        },
+                        CriterionJudgment {
+                            index: 1,
+                            passed: true,
+                            note: "observable".into(),
+                        },
+                    ],
                     reasoning: "done".into(),
                     judged_at: chrono::Utc::now(),
                 },

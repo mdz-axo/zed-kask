@@ -208,6 +208,27 @@ When a user works with the agent:
   not sovereign). Lessons are learned in `therapy` and `algedonic-review`
   sessions with the curator, not from a persistent goal store.
 
+  **Criterion-coupling layer (2026-08-30).** Two seams closed the
+  functional–technical join — the mapping between the technical plan and
+  the functional goal it serves. (1) `kanban_goal_judge` requires a result
+  for **every** criterion, exactly once: the per-criterion results are the
+  explicit obligation the Brier score discharges, so a verdict with missing
+  or duplicate results is an unanchored claim and is rejected with an
+  error naming the missing indices. (2) `kanban_task_create` accepts
+  `advances`: citations of the form `{goal_id, criterion_index,
+  criterion_text}` declaring which goal criterion the task advances.
+  Citations are **documentation-grade** (per-session re-anchoring, extending
+  the ephemerality ruling): validated against the live goal at creation —
+  the goal must exist, the index must be in range, and the text must match
+  verbatim — and the captured text keeps the citation readable after the
+  ephemeral goal is gone. Tasks are the durable side, so the citation is
+  captured data on the task, never a foreign key into the in-memory goal
+  store. `advances_count` is surfaced on task create/list/update responses
+  so the citation rate is observable. `kanban_task_update` accepts
+  `advances` as a full-list replacement, re-anchoring every citation
+  against the live goal store at each write — an invalid replacement is
+  rejected and leaves the task's existing citations untouched.
+
 - **Loop closed (2026-08-29):** the Division section now wires the moves
   to the native tools — conditionally on `kanban_goal_create` being in
   the turn's tool registry (Move 1 → `kanban_goal_create` at intake,

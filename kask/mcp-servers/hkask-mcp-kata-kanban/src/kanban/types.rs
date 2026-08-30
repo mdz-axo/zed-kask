@@ -25,7 +25,9 @@ pub(crate) mod verification;
 // existing `crate::kanban::TaskStatus` paths keep working.
 pub(crate) use board::Board;
 pub(crate) use column::ColumnDef;
-pub(crate) use goal::{CriterionJudgment, Goal, GoalResolution, GoalVerdict, GoalVerdictValue};
+pub(crate) use goal::{
+    CriterionCitation, CriterionJudgment, Goal, GoalResolution, GoalVerdict, GoalVerdictValue,
+};
 
 pub(crate) use hkask_types::TaskStatus;
 pub(crate) use phase::KanbanPhase;

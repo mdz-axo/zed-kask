@@ -23,6 +23,10 @@ pub struct Task {
     pub assignee: Option<WebID>,
     /// Acceptance criteria for task completion.
     pub(crate) criteria: Vec<VerificationCriterion>,
+    /// Goal criteria this task advances (documentation-grade citations —
+    /// see `CriterionCitation`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) advances: Vec<CriterionCitation>,
     /// Verification result, if the task has been verified.
     pub verification: Option<Verification>,
     /// Story points (relative sizing, agile convention).
@@ -88,6 +92,7 @@ impl Task {
             owner,
             assignee: None,
             criteria: spec.criteria,
+            advances: spec.advances,
             verification: None,
             story_points: None,
             estimated_hours: None,

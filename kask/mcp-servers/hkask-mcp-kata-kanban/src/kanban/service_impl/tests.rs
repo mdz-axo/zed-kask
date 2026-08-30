@@ -1,7 +1,9 @@
 use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{columns_from_parsed, export_board_to_mermaid, parse_mermaid_kanban};
-use crate::kanban::{Board, ColumnDef, SpawnSpec, TaskFilter, TaskSpec, TaskStatus};
+use crate::kanban::{
+    Board, ColumnDef, CriterionCitation, SpawnSpec, TaskFilter, TaskSpec, TaskStatus,
+};
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
@@ -81,6 +83,133 @@ fn task_create_rejects_unknown_board() {
     let svc = KanbanService::new(make_store());
     let result = svc.task_create(BoardId::new(), TaskSpec::new("Test".into()), WebID::new());
     assert!(result.is_err());
+}
+
+#[test]
+fn task_create_validates_goal_citations() {
+    // The functional–technical join: a task may cite the goal criteria it
+    // advances. Citations are validated at creation — the goal must exist,
+    // the index must be in range, and the text must match verbatim — and
+    // captured on the task as documentation that outlives the ephemeral
+    // goal.
+    let (svc, board, owner) = make_service_with_board();
+    let goal = svc
+        .goal_create(
+            "The user can see which work serves which goal".into(),
+            vec![
+                VerificationCriterion::new("criterion 0 is observable".into()),
+                VerificationCriterion::new("criterion 1 is observable".into()),
+            ],
+            None,
+            None,
+            owner,
+        )
+        .unwrap();
+
+    let valid_citation = CriterionCitation {
+        goal_id: goal.id,
+        criterion_index: 1,
+        criterion_text: "criterion 1 is observable".into(),
+    };
+    let mut spec = TaskSpec::new("Cited task".into());
+    spec.advances = vec![valid_citation];
+    let task = svc.task_create(board.id, spec, owner).unwrap();
+    assert_eq!(task.advances.len(), 1);
+    assert_eq!(task.advances[0].criterion_index, 1);
+    // The citation persists with the task.
+    let reloaded = svc.task_get(task.id).unwrap().expect("task persists");
+    assert_eq!(reloaded.advances.len(), 1);
+
+    // Unknown goal → NotFound.
+    let mut spec = TaskSpec::new("Ghost goal".into());
+    spec.advances = vec![CriterionCitation {
+        goal_id: hkask_types::id::GoalID::new(),
+        criterion_index: 0,
+        criterion_text: "criterion 0 is observable".into(),
+    }];
+    assert!(svc.task_create(board.id, spec, owner).is_err());
+
+    // Out-of-range index → rejected.
+    let mut spec = TaskSpec::new("Bad index".into());
+    spec.advances = vec![CriterionCitation {
+        goal_id: goal.id,
+        criterion_index: 5,
+        criterion_text: "criterion 5 is observable".into(),
+    }];
+    assert!(svc.task_create(board.id, spec, owner).is_err());
+
+    // Text mismatch → rejected: the citation must quote the goal's
+    // criterion verbatim, so the documentation cannot silently diverge
+    // from the goal.
+    let mut spec = TaskSpec::new("Drifted text".into());
+    spec.advances = vec![CriterionCitation {
+        goal_id: goal.id,
+        criterion_index: 0,
+        criterion_text: "a paraphrase, not the criterion".into(),
+    }];
+    assert!(svc.task_create(board.id, spec, owner).is_err());
+}
+
+#[test]
+fn task_update_replaces_and_validates_goal_citations() {
+    // `advances` on task_update replaces the citation list and re-anchors
+    // each citation against the live goal store — an invalid replacement
+    // is rejected and leaves the task's existing citations untouched.
+    let (svc, board, owner) = make_service_with_board();
+    let goal = svc
+        .goal_create(
+            "The user can see which work serves which goal".into(),
+            vec![
+                VerificationCriterion::new("criterion 0 is observable".into()),
+                VerificationCriterion::new("criterion 1 is observable".into()),
+            ],
+            None,
+            None,
+            owner,
+        )
+        .unwrap();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Cited task".into()), owner)
+        .unwrap();
+    assert!(task.advances.is_empty());
+
+    let updated = svc
+        .task_update(
+            task.id,
+            owner,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(vec![CriterionCitation {
+                goal_id: goal.id,
+                criterion_index: 0,
+                criterion_text: "criterion 0 is observable".into(),
+            }]),
+        )
+        .unwrap();
+    assert_eq!(updated.advances.len(), 1);
+
+    // An out-of-range replacement is rejected; the prior citation stands.
+    let bad = svc.task_update(
+        task.id,
+        owner,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(vec![CriterionCitation {
+            goal_id: goal.id,
+            criterion_index: 9,
+            criterion_text: "criterion 9 is observable".into(),
+        }]),
+    );
+    assert!(bad.is_err());
+    let reloaded = svc.task_get(task.id).unwrap().expect("task persists");
+    assert_eq!(reloaded.advances.len(), 1);
+    assert_eq!(reloaded.advances[0].criterion_index, 0);
 }
 
 #[test]
@@ -345,8 +474,8 @@ fn task_record_delegation_writes_structured_fields() {
         tool_calls: vec![],
         task_success: None,
         bind_matched: None,
-        raw_response: None,
-        envelope: None,
+        rollout_id: None,
+        reasoning_steps: vec![],
     };
     let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
         pass: true,
@@ -409,8 +538,8 @@ fn task_record_delegation_rejects_non_owner() {
         tool_calls: vec![],
         task_success: None,
         bind_matched: None,
-        raw_response: None,
-        envelope: None,
+        rollout_id: None,
+        reasoning_steps: vec![],
     };
     let result = svc.task_record_delegation(task.id, None, delegate_result, None, other);
     assert!(

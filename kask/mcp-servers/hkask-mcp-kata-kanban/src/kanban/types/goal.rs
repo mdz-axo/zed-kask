@@ -118,6 +118,27 @@ pub struct CriterionJudgment {
     pub note: String,
 }
 
+/// CriterionCitation — a task's declaration that it advances one criterion
+/// of a goal. The functional–technical join.
+///
+/// Documentation-grade by the ephemerality ruling (2026-08-30): the goal
+/// store is in-memory, so the citation captures the criterion text verbatim
+/// at task-creation time and stays readable after the goal is gone. The
+/// `(goal_id, criterion_index)` pair is the join key while the goal lives;
+/// `criterion_text` is the self-contained record that survives it.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CriterionCitation {
+    /// The cited goal.
+    pub goal_id: GoalID,
+    /// Index into the goal's criteria at citation time. Criteria are
+    /// immutable after `goal_create`, so the index is stable for the
+    /// goal's lifetime.
+    pub criterion_index: usize,
+    /// The criterion's description, captured verbatim at citation time.
+    pub criterion_text: String,
+}
+
 /// GoalVerdict — one recorded judgment of the goal against its criteria.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

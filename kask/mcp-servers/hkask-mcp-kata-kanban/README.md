@@ -13,7 +13,8 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 ### Task CRUD
 | Tool | Description |
 |------|-------------|
-| `kanban_task_create` | Create a new task on a kanban board |
+| `kanban_task_create` | Create a new task on a kanban board; `advances` cites the goal criteria the task serves (validated against the goal, captured as documentation) |
+| `kanban_task_update` | Update editable fields on a task (title, description, criteria, priority, labels, `advances` citations); only the task owner can edit |
 | `kanban_task_list` | List tasks on a kanban board, optionally filtered by status |
 | `kanban_task_move` | Move a task to a new column (status transition) |
 | `kanban_task_assign` | Assign a task to an agent with consent proof (P1 compliance) |
@@ -39,7 +40,7 @@ h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 | Tool | Description |
 |------|-------------|
 | `kanban_goal_create` | Create a functional goal with 1–4 observable criteria and an optional intake prediction |
-| `kanban_goal_judge` | Record a done/continue/blocked verdict with confidence and per-criterion results (history preserved) |
+| `kanban_goal_judge` | Record a done/continue/blocked verdict with confidence and a result for every criterion (history preserved) |
 | `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; `brier: null` + note when no prediction was recorded |
 | `kanban_goal_list` | List the caller's goals with latest verdicts and resolution state, newest first |
 

@@ -21,8 +21,8 @@ use serde_json::Value;
 use super::types::KanbanError;
 
 use crate::kanban::{
-    Board, ColumnDef, Priority, SpendEntry, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
-    VerificationCriterion,
+    Board, ColumnDef, CriterionCitation, Priority, SpendEntry, Task, TaskFilter, TaskSpec,
+    TaskStatus, Verification, VerificationCriterion,
 };
 
 /// Core kanban coordination service.
@@ -227,6 +227,38 @@ impl KanbanService {
 
     // ── Task operations ───────────────────────────────────────────────────
 
+    /// Validate goal citations against the live goal store: the cited goal
+    /// must exist, the index must be in range, and the captured text must
+    /// match the goal's criterion verbatim. After a restart the goal is gone
+    /// (ephemerality ruling) and the citation survives as captured
+    /// documentation — validation happens once, at the write that carries
+    /// the citation (create or update).
+    fn validate_goal_citations(&self, citations: &[CriterionCitation]) -> Result<(), KanbanError> {
+        for citation in citations {
+            let goal = self.goal_get(citation.goal_id)?.ok_or_else(|| {
+                KanbanError::NotFound(NotFound {
+                    entity_type: "goal".to_string(),
+                    id: citation.goal_id.to_string(),
+                })
+            })?;
+            let criterion = goal.criteria.get(citation.criterion_index).ok_or_else(|| {
+                KanbanError::InvalidInput(format!(
+                    "criterion index {} out of range (goal {} has {} criteria)",
+                    citation.criterion_index,
+                    citation.goal_id,
+                    goal.criteria.len()
+                ))
+            })?;
+            if citation.criterion_text != criterion.description {
+                return Err(KanbanError::InvalidInput(format!(
+                    "cited criterion text does not match goal {} criterion {} — cite the criterion verbatim",
+                    citation.goal_id, citation.criterion_index
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Create a new task on a board.
     ///
     /// pre:  board_id refers to an existing board; spec.title is non-empty; owner is valid
@@ -246,6 +278,8 @@ impl KanbanService {
             })
         })?;
         let _ = board;
+
+        self.validate_goal_citations(&spec.advances)?;
 
         // Extract sizing fields before Task::new consumes the spec
         let sp = spec.story_points;
@@ -684,6 +718,7 @@ impl KanbanService {
         criteria: Option<Vec<VerificationCriterion>>,
         priority: Option<Option<Priority>>,
         labels: Option<Vec<String>>,
+        advances: Option<Vec<CriterionCitation>>,
     ) -> Result<Task, KanbanError> {
         let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
@@ -701,6 +736,12 @@ impl KanbanService {
         }
         if let Some(new_labels) = labels {
             task.labels = new_labels;
+        }
+        if let Some(new_advances) = advances {
+            // Same validation as creation: the citation is re-anchored against
+            // the live goal store at every write that carries it.
+            self.validate_goal_citations(&new_advances)?;
+            task.advances = new_advances;
         }
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;

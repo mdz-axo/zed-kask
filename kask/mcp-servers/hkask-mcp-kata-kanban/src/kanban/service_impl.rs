@@ -35,5 +35,8 @@ mod service;
 pub(crate) mod spawn;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 pub use service::KanbanService;
 pub(crate) use types::KanbanError;

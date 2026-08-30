@@ -12,6 +12,11 @@ pub(crate) struct TaskSpec {
     pub description: Option<String>,
     /// Acceptance criteria — what "done" means.
     pub criteria: Vec<VerificationCriterion>,
+    /// Goal criteria this task advances — the functional–technical join.
+    /// Validated against the cited goal at creation; documentation-grade
+    /// thereafter (see `CriterionCitation`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advances: Vec<CriterionCitation>,
 
     /// Story points for relative sizing (agile convention).
     pub story_points: Option<u32>,
@@ -36,6 +41,7 @@ impl TaskSpec {
             title,
             description: None,
             criteria: Vec::new(),
+            advances: Vec::new(),
 
             story_points: None,
             estimated_hours: None,

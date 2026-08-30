@@ -115,6 +115,7 @@ async fn create_task(
             title: title.to_string(),
             description: None,
             criteria: None,
+            advances: Vec::new(),
             rjoule_budget: None,
             idempotency_key: key.map(str::to_string),
         }))

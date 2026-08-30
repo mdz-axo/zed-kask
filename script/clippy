@@ -17,7 +17,9 @@ set -x
 # If local, run other checks if we have the tools installed.
 if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
     which cargo-machete >/dev/null 2>&1 || exit 0
-    cargo machete
+    # Scoped to kask/: upstream crates/ produce machete false positives
+    # (macro/feature-activated usage) that upstream CI owns, not us.
+    (cd kask && cargo machete)
 
     which typos >/dev/null 2>&1 || exit 0
     typos --config typos.toml

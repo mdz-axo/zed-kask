@@ -19,8 +19,8 @@ pub mod types;
 // testing standard (docs/reference/mcp-servers/README.md §Testing standard) requires this.
 pub use kanban::KanbanService;
 pub(crate) use kanban::{
-    ColumnDef, CriterionJudgment, GoalVerdict, GoalVerdictValue, KanbanError, Priority, SpawnSpec,
-    Task, TaskFilter, TaskSpec, TaskStatus, VerificationCriterion,
+    ColumnDef, CriterionCitation, CriterionJudgment, GoalVerdict, GoalVerdictValue, KanbanError,
+    Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus, VerificationCriterion,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
@@ -445,7 +445,7 @@ impl KanbanServer {
     /// needs user input). Verdicts append to a history — the history IS the
     /// learning.
     #[tool(
-        description = "Record a judge verdict (done/continue/blocked) with confidence and per-criterion results against a goal."
+        description = "Record a judge verdict (done/continue/blocked) with confidence and a result for every criterion of the goal."
     )]
     pub async fn kanban_goal_judge(
         &self,
@@ -577,6 +577,7 @@ impl KanbanServer {
             title,
             description,
             criteria,
+            advances,
             idempotency_key,
             rjoule_budget,
         }): Parameters<TaskCreateRequest>,
@@ -602,6 +603,16 @@ impl KanbanServer {
                     if let Some(rj) = rjoule_budget {
                         spec.rjoule_budget = Some(rj);
                     }
+                    let mut citations = Vec::with_capacity(advances.len());
+                    for citation in advances {
+                        let goal_id = parse_goal_id(&citation.goal_id)?;
+                        citations.push(CriterionCitation {
+                            goal_id,
+                            criterion_index: citation.criterion_index,
+                            criterion_text: citation.criterion_text,
+                        });
+                    }
+                    spec.advances = citations;
 
                     match self.service.task_create(bid, spec, self.webid) {
                         Ok(task) => Ok(serde_json::to_value(TaskCreateResponse {
@@ -609,6 +620,7 @@ impl KanbanServer {
                             board_id: task.board_id.to_string(),
                             title: task.title,
                             status: task.status.to_string(),
+                            advances_count: task.advances.len(),
                             ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                         })
                         .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
@@ -621,7 +633,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Update editable fields on a task (title, description, criteria, priority, labels). Only the task owner can edit."
+        description = "Update editable fields on a task (title, description, criteria, priority, labels, goal-criterion citations). Only the task owner can edit."
     )]
     pub async fn kanban_task_update(
         &self,
@@ -632,6 +644,7 @@ impl KanbanServer {
             criteria,
             priority,
             labels,
+            advances,
         }): Parameters<TaskUpdateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_update", async {
@@ -656,6 +669,21 @@ impl KanbanServer {
             let criteria_update =
                 criteria.map(|cs| cs.into_iter().map(VerificationCriterion::new).collect());
 
+            let advances_update = advances
+                .map(|citations| {
+                    citations
+                        .into_iter()
+                        .map(|citation| {
+                            Ok::<_, McpToolError>(CriterionCitation {
+                                goal_id: parse_goal_id(&citation.goal_id)?,
+                                criterion_index: citation.criterion_index,
+                                criterion_text: citation.criterion_text,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+
             match self.service.task_update(
                 tid,
                 self.webid,
@@ -664,10 +692,12 @@ impl KanbanServer {
                 criteria_update,
                 priority_update,
                 labels,
+                advances_update,
             ) {
                 Ok(task) => Ok(serde_json::to_value(TaskUpdateResponse {
                     task_id: task.id.to_string(),
                     title: task.title,
+                    advances_count: task.advances.len(),
                     ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                 })
                 .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
@@ -708,6 +738,7 @@ impl KanbanServer {
                                 status: t.status.to_string(),
                                 assignee: t.assignee.map(|a| a.to_string()),
                                 criteria_count: t.criteria.len(),
+                                advances_count: t.advances.len(),
                                 rjoule_remaining: t.rjoule_remaining,
                                 swarm_id: t.swarm_id,
                                 activity,

@@ -8969,7 +8969,6 @@ dependencies = [
  "chrono",
  "feed-rs",
  "futures-util",
- "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-storage",
@@ -9036,7 +9035,6 @@ version = "0.39.0"
 dependencies = [
  "a2a-lf",
  "chrono",
- "hkask-bridge-ontology",
  "hkask-event-store",
  "hkask-inference",
  "hkask-keystore",
@@ -9070,7 +9068,6 @@ dependencies = [
  "chrono",
  "dirs",
  "hf-hub",
- "hkask-bridge-ontology",
  "hkask-event-store",
  "hkask-inference",
  "hkask-mcp-server",
