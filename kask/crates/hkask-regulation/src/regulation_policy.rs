@@ -23,10 +23,6 @@ pub(crate) enum RegulationReason {
     ErrorRateExceeded,
     ConnectorLatencyExceeded,
     CommunicationBackpressure,
-    WalletBalanceLow,
-    WalletKeyUnhealthy,
-    SeamCoverageDegraded,
-    SeamCoverageImproved,
     ToolReliabilityDegraded,
     StorageUsageObserved,
     TripleCountObserved,
@@ -63,10 +59,6 @@ impl RegulationReason {
             Self::ErrorRateExceeded => "error_rate_exceeded",
             Self::ConnectorLatencyExceeded => "connector_latency_exceeded",
             Self::CommunicationBackpressure => "communication_backpressure",
-            Self::WalletBalanceLow => "wallet_balance_low",
-            Self::WalletKeyUnhealthy => "wallet_key_unhealthy",
-            Self::SeamCoverageDegraded => "seam_coverage_degraded",
-            Self::SeamCoverageImproved => "seam_coverage_improved",
             Self::ToolReliabilityDegraded => "tool_reliability_degraded",
             Self::StorageUsageObserved => "storage_usage_observed",
             Self::TripleCountObserved => "triple_count_observed",
@@ -215,44 +207,10 @@ impl RegulationPolicy {
                         reason: CommunicationBackpressure,
                     }],
                 },
-                // ── Wallet (Cybernetics Loop 6) ──
-                RegulationRule {
-                    metric: WalletBalanceRatio,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: WalletBalanceLow,
-                    }],
-                },
-                RegulationRule {
-                    metric: WalletKeyHealth,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: WalletKeyUnhealthy,
-                    }],
-                },
-                // ── Seam Coverage (Seam Watcher R7.3) ──
-                RegulationRule {
-                    metric: SeamCoverage,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: SeamCoverageDegraded,
-                    }],
-                },
-                RegulationRule {
-                    metric: SeamCoverage,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Notify,
-                        reason: SeamCoverageImproved,
-                    }],
-                },
+                // ── Wallet and Seam Coverage rules removed 2026-08-30 —
+                // residuals of the deleted wallet module (219c74b180) and a
+                // never-built seam watcher. No sensor ever emitted these
+                // metrics; the rules could never fire.
                 // ── Tool Reliability (Cybernetics Loop 6) ──
                 RegulationRule {
                     metric: ToolReliability,
@@ -492,11 +450,6 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             queue_depth,
             threshold,
         } => Some((*queue_depth as u64, *threshold as u64)),
-        RegulationData::WalletBalanceLow {
-            balance_ratio,
-            threshold,
-            ..
-        } => Some((*balance_ratio as u64, *threshold as u64)),
         RegulationData::ToolReliabilityDegraded {
             reliability,
             threshold,
@@ -514,17 +467,6 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             remaining_ratio,
             set_point,
         } => Some((*remaining_ratio as u64, *set_point as u64)),
-        RegulationData::SeamCoverageDegraded {
-            coverage_pct,
-            previous_coverage,
-            ..
-        } => Some((*coverage_pct as u64, *previous_coverage as u64)),
-        RegulationData::SeamCoverageImproved {
-            coverage_pct,
-            previous_coverage,
-            ..
-        } => Some((*coverage_pct as u64, *previous_coverage as u64)),
-        RegulationData::WalletKeyUnhealthy { threshold, .. } => Some((0, *threshold as u64)),
         RegulationData::ContextServerFleetHealth {
             healthy_count,
             total_count,
@@ -578,9 +520,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         // ── Latency / Backpressure ──
         SignalMetric::ConnectorLatency => &[Throttle, Calibrate, Escalate],
         SignalMetric::CommunicationQueueDepth => &[Throttle, Escalate],
-        // ── Wallet ──
-        SignalMetric::WalletBalanceRatio => &[Escalate, ReplenishBudget],
-        SignalMetric::WalletKeyHealth => &[Escalate, Calibrate],
         // ── Meta-regulatory (only Curation can break the plateau) ──
         SignalMetric::AlgedonicEvents => &[Escalate, Calibrate],
         SignalMetric::AlgedonicLogApproachingCap => &[Escalate, Calibrate],
@@ -601,7 +540,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::LowConfidenceCount
         | SignalMetric::ConsolidationCandidates
         | SignalMetric::PendingEscalations
-        | SignalMetric::SeamCoverage
         | SignalMetric::ToolReliability
         | SignalMetric::TestCoverage
         | SignalMetric::MutationScore => &[],

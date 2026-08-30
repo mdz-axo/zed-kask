@@ -79,8 +79,6 @@ impl StrategyEvaluator {
             SignalMetric::ErrorRate,
             SignalMetric::ConnectorLatency,
             SignalMetric::CommunicationQueueDepth,
-            SignalMetric::WalletBalanceRatio,
-            SignalMetric::WalletKeyHealth,
             SignalMetric::ToolReliability,
         ];
 

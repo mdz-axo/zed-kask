@@ -66,13 +66,10 @@ pub enum SignalMetric {
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
 
-    /// Wallet rJoule balance ratio (0.0 = empty, 1.0 = full relative to 30-day avg)
-    WalletBalanceRatio,
-
-    /// Wallet API key health (1.0 = exhausted/expired, 0.0 = healthy)
-    WalletKeyHealth,
-    /// Public seam coverage ratio per crate (seam watcher, 0.0–100.0)
-    SeamCoverage,
+    // WalletBalanceRatio / WalletKeyHealth removed 2026-08-30 — residuals
+    // of the deleted wallet module (219c74b180); no sensor ever emitted
+    // them. SeamCoverage removed with them — its "seam watcher" was never
+    // built.
     /// A regulatory action has been ineffective over multiple cycles.
     /// 0.0 = all actions effective, 1.0 = all actions ineffective.
     /// Triggers escalation to Curation for metacognitive override.
@@ -136,10 +133,6 @@ impl SignalMetric {
             SignalMetric::MetacognitionVarietyDeficit => "metacognition_variety_deficit",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
 
-            SignalMetric::WalletBalanceRatio => "wallet_balance_ratio",
-
-            SignalMetric::WalletKeyHealth => "wallet_key_health",
-            SignalMetric::SeamCoverage => "seam_coverage",
             SignalMetric::ActionIneffective => "action_ineffective",
             SignalMetric::RegulatoryPlateau => "regulatory_plateau",
             SignalMetric::ActionDecisionBlocked => "action_decision_blocked",
@@ -175,9 +168,6 @@ impl SignalMetric {
             SignalMetric::GoalExpiredCount,
             SignalMetric::MetacognitionVarietyDeficit,
             SignalMetric::MetacognitionCriticalAlerts,
-            SignalMetric::WalletBalanceRatio,
-            SignalMetric::WalletKeyHealth,
-            SignalMetric::SeamCoverage,
             SignalMetric::ActionIneffective,
             SignalMetric::RegulatoryPlateau,
             SignalMetric::ActionDecisionBlocked,

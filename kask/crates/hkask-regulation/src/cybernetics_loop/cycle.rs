@@ -249,8 +249,7 @@ impl super::CyberneticsLoop {
         signals.iter().filter_map(Deviation::from_signal).collect()
     }
 
-    /// Produces signals for: per-agent energy ratio, variety deficit, queue depth,
-    /// wallet balance ratio, wallet treasury ratio.
+    /// Produces signals for: per-agent energy ratio, variety deficit, queue depth.
     pub(super) async fn sense(&self) -> Vec<Signal> {
         // Process pending directives before sensing state
         self.process_inbox().await;
@@ -1225,110 +1224,10 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
-            // -- WalletBalanceRatio BelowSetPoint ---------------------------
-            RegulationReason::WalletBalanceLow => {
-                let severity = if dev.signal.value <= 0.0 {
-                    "critical"
-                } else {
-                    "warning"
-                };
-                tracing::warn!(
-                    target: "reg.wallet",
-                    balance_ratio = dev.signal.value,
-                    severity = severity,
-                    "Wallet balance alert"
-                );
-                let at = self
-                    .try_substitute(WalletBalanceRatio, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "wallet_balance_low",
-                        RegulationData::WalletBalanceLow {
-                            balance_ratio: dev.signal.value,
-                            severity: severity.to_string(),
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- WalletKeyHealth AboveSetPoint ------------------------------
-            RegulationReason::WalletKeyUnhealthy => {
-                tracing::info!(
-                    target: "reg.wallet",
-                    "API key health alert — exhausted or expired"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "wallet_key_unhealthy",
-                        RegulationData::WalletKeyUnhealthy {
-                            severity: "warning".into(),
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- SeamCoverage BelowSetPoint ---------------------------------
-            RegulationReason::SeamCoverageDegraded => {
-                let drop_magnitude = dev.signal.set_point - dev.signal.value;
-                let severity = if drop_magnitude > 5.0 {
-                    "critical"
-                } else {
-                    "warning"
-                };
-                tracing::warn!(
-                    target: "hkask.architecture.seam",
-                    coverage_pct = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    drop_magnitude = drop_magnitude,
-                    severity = severity,
-                    "Public seam coverage degraded — seam watcher alert"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "seam_coverage_degraded",
-                        RegulationData::SeamCoverageDegraded {
-                            coverage_pct: dev.signal.value,
-                            previous_coverage: dev.signal.set_point,
-                            drop_magnitude,
-                            severity: severity.to_string(),
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- SeamCoverage AboveSetPoint ---------------------------------
-            RegulationReason::SeamCoverageImproved => {
-                let improvement = dev.signal.value - dev.signal.set_point;
-                tracing::info!(
-                    target: "hkask.architecture.seam",
-                    coverage_pct = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    improvement = improvement,
-                    "Public seam coverage improved — seam watcher positive signal"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "seam_coverage_improved",
-                        RegulationData::SeamCoverageImproved {
-                            coverage_pct: dev.signal.value,
-                            previous_coverage: dev.signal.set_point,
-                            improvement,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
+            // -- Wallet and SeamCoverage handlers removed 2026-08-30 —
+            // residuals of the deleted wallet module (219c74b180) and a
+            // never-built seam watcher; no sensor ever emitted these
+            // metrics, so these arms were unreachable.
             // -- ToolReliability BelowSetPoint ------------------------------
             RegulationReason::ToolReliabilityDegraded => {
                 tracing::warn!(

@@ -44,27 +44,9 @@ pub enum RegulationData {
     ConnectorLatencyExceeded { latency_secs: f64, threshold: f64 },
     /// Communication queue backpressure.
     CommunicationBackpressure { queue_depth: f64, threshold: f64 },
-    /// Wallet balance ratio low.
-    WalletBalanceLow {
-        balance_ratio: f64,
-        severity: String,
-        threshold: f64,
-    },
-    /// Wallet key unhealthy (expired or exhausted).
-    WalletKeyUnhealthy { severity: String, threshold: f64 },
-    /// Public seam coverage degraded.
-    SeamCoverageDegraded {
-        coverage_pct: f64,
-        previous_coverage: f64,
-        drop_magnitude: f64,
-        severity: String,
-    },
-    /// Public seam coverage improved (positive signal).
-    SeamCoverageImproved {
-        coverage_pct: f64,
-        previous_coverage: f64,
-        improvement: f64,
-    },
+    // Wallet and SeamCoverage data variants removed 2026-08-30 with their
+    // policy rules — residuals of the deleted wallet module (219c74b180)
+    // and a never-built seam watcher.
     /// Tool reliability degraded below threshold.
     ToolReliabilityDegraded { reliability: f64, threshold: f64 },
     /// Context-server fleet health degraded — some registered servers are
@@ -142,10 +124,7 @@ impl RegulationData {
             RegulationData::ErrorRateExceeded { .. } => "error_rate",
             RegulationData::ConnectorLatencyExceeded { .. } => "connector_latency",
             RegulationData::CommunicationBackpressure { .. } => "queue_depth",
-            RegulationData::WalletBalanceLow { .. } => "wallet_balance",
-            RegulationData::WalletKeyUnhealthy { .. } => "wallet_health",
-            RegulationData::SeamCoverageDegraded { .. }
-            | RegulationData::SeamCoverageImproved { .. } => "seam_coverage",
+            RegulationData::CommunicationBackpressure { .. } => "communication_backpressure",
             RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
             RegulationData::ContextServerFleetHealth { .. } => "context_server_health",
             RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",
