@@ -77,23 +77,39 @@ Full list: `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs`
 
 ### `pko` — Procedural Knowledge Ontology (process axis, universal)
 
-Canonical URI constants for procedures, steps, executions, and verification.
-The universal "how did this come to be" axis.
+Canonical URI constants for procedures, steps, executions, and verification,
+from the official PKO v2.0.0 (Carriero et al., <https://w3id.org/pko>),
+fixture-pinned by `fixtures/pko-2.0.0-terms.txt`. The universal "how did
+this come to be" axis. PKO reuses P-Plan, PROV-O, and Dublin Core terms;
+reused terms keep their canonical prefixes (`pplan:Step`, `prov:Agent`,
+`dcterms:references`) — never re-prefixed under `pko:`.
 
 | Constant | URI |
 |----------|-----|
 | `PROCEDURE` | `pko:Procedure` |
-| `STEP` | `pko:Step` |
+| `STEP` | `pplan:Step` |
+| `MULTI_STEP` | `pplan:MultiStep` |
 | `STEP_EXECUTION` | `pko:StepExecution` |
 | `PROCEDURE_EXECUTION` | `pko:ProcedureExecution` |
 | `STEP_VERIFICATION` | `pko:StepVerification` |
 | `ACTION` | `pko:Action` |
+| `AGENT` | `prov:Agent` |
+
+> History: verification (2026-08-29, PKO v2.0.0 OWL) corrected five
+> mis-prefixed terms (`pko:Step` → `pplan:Step`, `pko:MultiStep` →
+> `pplan:MultiStep`, `pko:Agent` → `prov:Agent`, `pko:references` →
+> `dcterms:references`), removed the fabricated `pko:ProcedureTarget`,
+> and remapped `kanban_status_to_pko_execution` onto PKO's four published
+> execution-status individuals (`pko:InProgress`, `pko:Completed`,
+> `pko:Paused`, `pko:Cancelled`) — the former
+> `pko:ProcedureExecutionStatus/queued|verifying|blocked` path-suffixed
+> URIs were fabricated. Statuses with no published individual omit the
+> annotation rather than force one.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
-**Helpers:** `kanban_status_to_pko_execution` (`pko.rs:106`),
-`corpus_stage_to_pko_step` (`pko.rs:127`), `research_stage_to_pko`
-(`pko.rs:156`).
+**Helpers:** `kanban_status_to_pko_execution`,
+`corpus_stage_to_pko_step`, `research_stage_to_pko` (all in `pko.rs`).
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 

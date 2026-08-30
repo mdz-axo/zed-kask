@@ -105,8 +105,8 @@ let article = dc_bibo::ARTICLE;   // "bibo:Article"         (dc_bibo.rs:44)
 let cites   = dc_bibo::CITES;     // "cito:cites"           (dc_bibo.rs:59)
 
 // Process axis — "how did this come to be?"
-let procedure = pko::PROCEDURE;        // "pko:Procedure"        (pko.rs:21)
-let step_exec = pko::STEP_EXECUTION;   // "pko:StepExecution"    (pko.rs:54)
+let procedure = pko::PROCEDURE;        // "pko:Procedure"        (pko.rs:46)
+let step_exec = pko::STEP_EXECUTION;   // "pko:StepExecution"    (pko.rs:81)
 ```
 
 One mapping helper converts runtime values to state-axis concepts
@@ -121,8 +121,8 @@ let dc_type = dc_bibo::mime_to_dc_type("application/pdf");  // Some("dcterms:Tex
 
 PKO also ships stage-mapping helpers for the servers that convert their
 domain stages to process concepts: `kanban_status_to_pko_execution`
-(`pko.rs:106`), `corpus_stage_to_pko_step` (`pko.rs:127`), and
-`research_stage_to_pko` (`pko.rs:156`). GOLEM ships `corpus_op_to_golem`
+(`pko.rs:172`), `corpus_stage_to_pko_step` (`pko.rs:191`), and
+`research_stage_to_pko` (`pko.rs:220`). GOLEM ships `corpus_op_to_golem`
 (`golem.rs:156`) for creative-generation operations. The corpus server's
 `ontology_anchor` delegates to `corpus_stage_to_pko_step` and
 `corpus_op_to_golem` — the canonical mapping, so it cannot drift.
@@ -352,8 +352,8 @@ their own mapping today.
 | SUMO fallback / empty → Core | `kask/crates/hkask-bridge-ontology/src/axis.rs:345-351` |
 | `dc_bibo` constants (TITLE/DATASET/ARTICLE/CITES/...) | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:15`, `:37`, `:44`, `:59` |
 | `dc_bibo::mime_to_dc_type` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:79` |
-| `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:21`, `:54` |
-| `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:106`, `:127`, `:156` |
+| `pko` constants (PROCEDURE/STEP_EXECUTION/... — verified PKO v2.0.0 terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/pko.rs:36-169`, fixture `fixtures/pko-2.0.0-terms.txt` |
+| `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:172`, `:191`, `:220` |
 | `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:156` |
 | `fibo` constants (CORPORATION/TICKER_SYMBOL/PORTFOLIO/MARKET_CAPITALIZATION/... — verified FIBO terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:47-80`, fixture `fixtures/fibo-verified-terms.txt` |
 | `sepio` constants (HAS_EVIDENCE/CONTRADICTS/... — official SEPIO terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/sepio.rs`, fixture `fixtures/sepio-2023-06-13-terms.txt` |

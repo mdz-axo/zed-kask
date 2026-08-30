@@ -1130,8 +1130,18 @@ mod tests {
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
 
+    /// Takes the shared trace-state lock: a `TraceScope` opened here keeps
+    /// `trace_enabled()` true process-wide, which would mask the profiler
+    /// tests' `set_trace_enabled(false)` transitions if run concurrently.
+    fn trace_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::profiler::TRACE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn foreground_work_reports_long_task_without_window_draw() {
+        let _trace_test_lock = trace_test_lock();
         let (journal, _journal_guard) = install_test_foreground_journal(1024, 64);
         let dispatcher = Arc::new(ThreadedDispatcher::new());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
@@ -1146,10 +1156,13 @@ mod tests {
         run_task_to_completion(&foreground_executor, task);
 
         let events = trace_scope.finish();
-        assert!(
-            events.frame_events.is_empty(),
-            "no window was involved, so no frame events should be recorded"
-        );
+        // The frame-event buffer (`FRAME_TIMINGS`) is process-global and
+        // receives events from any window drawn by a concurrently running
+        // test while this scope keeps tracing enabled, so emptiness cannot
+        // be asserted here. The recording path itself — that frame events
+        // appear only for windows that actually drew — is pinned by the
+        // profiler tests using unique window ids. This test creates no
+        // window, so it asserts only on the foreground-journal stream.
 
         let report = BenchReport::default();
         report.record_foreground_events(events.foreground_events());
@@ -1178,6 +1191,7 @@ mod tests {
 
     #[test]
     fn foreground_work_excludes_setup_before_trace_scope_starts() {
+        let _trace_test_lock = trace_test_lock();
         let (journal, _journal_guard) = install_test_foreground_journal(1024, 64);
         let dispatcher = Arc::new(ThreadedDispatcher::new());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
@@ -1218,6 +1232,7 @@ mod tests {
 
     #[test]
     fn bench_task_reports_long_task_without_window() {
+        let _trace_test_lock = trace_test_lock();
         let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
         let report = BenchReport::default();
         let name = "bench_task_reports_long_task_without_window";

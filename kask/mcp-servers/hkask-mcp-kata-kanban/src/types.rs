@@ -299,10 +299,11 @@ pub(crate) struct TaskMoveResponse {
     /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
-    /// The new status mapped to its PKO execution status (the execution axis:
-    /// pko:ProcedureExecutionStatus/queued|inProgress|verifying|completed).
-    /// All standard TaskStatus wire strings map, so this is present on every
-    /// successful move.
+    /// The new status mapped to its PKO execution-status individual (the
+    /// execution axis: pko:InProgress|Completed|Paused — PKO v2.0.0's
+    /// published individuals). Statuses PKO publishes no individual for
+    /// (todo/backlog/ready/review) omit the field rather than force a
+    /// nonexistent status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pko_execution_status: Option<String>,
 }

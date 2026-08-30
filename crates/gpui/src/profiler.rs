@@ -761,6 +761,16 @@ impl Drop for TraceGuard {
     }
 }
 
+/// Serializes tests that manipulate the process-global trace state
+/// (`TRACE_STATE`, `FRAME_TIMINGS`). A trace scope opened by a concurrently
+/// running test keeps `trace_enabled()` true process-wide, which masks
+/// `set_trace_enabled(false)` — the scope count survives the disable, so the
+/// buffers are never cleared and the disabling test observes stale events.
+/// The bench-context tests open such scopes (via `TraceScope::start` and
+/// `BenchAppContext`), so they take this lock alongside the profiler tests.
+#[cfg(all(test, feature = "profiler"))]
+pub(crate) static TRACE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Returns whether profiler trace collection is enabled.
 pub fn trace_enabled() -> bool {
     TRACE_STATE.load(Ordering::Relaxed) != 0
@@ -1239,7 +1249,7 @@ impl FrameTimingCollector {
 #[cfg(all(test, feature = "profiler"))]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
 
     #[test]
     fn records_draw_events_only_while_tracing() {
@@ -1508,7 +1518,6 @@ mod tests {
     }
 
     const FRAME: Duration = Duration::from_millis(16);
-    static TRACE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct TraceTestGuard {
         was_enabled: bool,

@@ -1,0 +1,65 @@
+# Official PKO (Procedural Knowledge Ontology) term list — fabrication
+# guard fixture.
+#
+# Source: https://w3id.org/pko (PKO v2.0.0, 2026-06-29)
+#   Carriero, Scrocca, Baroni, Azzini, Celino (2025),
+#   arXiv:2503.20634. Namespace: https://w3id.org/pko#
+# Fetched: 2026-08-29 (full OWL artifact; every term below mechanically
+#   confirmed as defined in it).
+#
+# PKO reuses P-Plan, PROV-O, and Dublin Core terms; the reused terms the
+# bridge module carries are defined in the PKO artifact itself and keep
+# their canonical prefixes (pplan:, prov:, dcterms:) — never re-prefixed
+# under pko:.
+#
+# Format: one term per line, TAB-separated: <prefixed term> <kind>
+#
+# NOTE (2026-08-29 verification): the former `pko:Step`, `pko:MultiStep`,
+# `pko:Agent`, `pko:references` were mis-prefixed — the real terms are
+# pplan:Step, pplan:MultiStep, prov:Agent, dcterms:references.
+# `pko:ProcedureTarget` never existed in PKO and was removed.
+# PKO v2.0.0 publishes exactly four ProcedureExecutionStatus individuals
+# (InProgress, Completed, Paused, Cancelled) — the former
+# `pko:ProcedureExecutionStatus/queued|verifying|blocked` path-suffixed
+# URIs were fabricated.
+#
+# PKO classes and properties:
+pko:Procedure	class
+pko:ProcedureType	class
+pko:ProcedureStatus	class
+pko:hasStep	property
+pko:nextStep	property
+pko:requiresAction	property
+pko:Action	class
+pko:requiresFunction	property
+pko:Function	class
+pko:requiresTool	property
+pko:ProcedureExecution	class
+pko:StepExecution	class
+pko:ProcedureExecutionStatus	class
+pko:IssueOccurrence	class
+pko:UserFeedbackOccurrence	class
+pko:UserQuestionOccurrence	class
+pko:Error	class
+pko:errorCode	property
+pko:StepVerification	class
+pko:ExpertiseLevel	class
+pko:wasExtractedFrom	property
+pko:nextVersion	property
+pko:ChangeOfStatus	class
+pko:hasExpectedDuration	property
+#
+# Reused terms (defined in the PKO artifact, canonical prefixes kept):
+pplan:Step	reused class (P-Plan)
+pplan:MultiStep	reused class (P-Plan)
+prov:Agent	reused class (PROV-O)
+dcterms:references	reused property (Dublin Core)
+prov:wasAssociatedWith	reused property (PROV-O)
+prov:wasGeneratedBy	reused property (PROV-O)
+prov:used	reused property (PROV-O)
+#
+# Published ProcedureExecutionStatus individuals:
+pko:InProgress	individual
+pko:Completed	individual
+pko:Paused	individual
+pko:Cancelled	individual

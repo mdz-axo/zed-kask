@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pko:Step".into()
+                concept: "pplan:Step".into()
             }
             .tier_label(),
             "dual_axis"
@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
-                concept: "pko:Step".into()
+                concept: "pplan:Step".into()
             }
             .axis(),
             Some(OntologyAxis::Pko)

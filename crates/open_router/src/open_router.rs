@@ -642,8 +642,15 @@ fn model_from_entry(entry: ModelEntry) -> Model {
             .supported_parameters
             .contains(&"reasoning".to_string())
         {
+            // Thinking enabled, uncapped. The former hardcoded
+            // `budget_tokens: Some(4_096)` silently killed agent turns:
+            // reasoning-heavy completions hit the 4096-token cap, OpenRouter
+            // ended the stream with finish_reason "length", zed mapped that
+            // to StopReason::MaxTokens, and the turn ended with no retry and
+            // no visible error — the operator saw threads "just stop".
+            // Reasoning depth is the model's business, not a client budget.
             ModelMode::Thinking {
-                budget_tokens: Some(4_096),
+                budget_tokens: None,
             }
         } else {
             ModelMode::Default
@@ -901,6 +908,31 @@ mod tests {
         assert_eq!(headers["http-referer"], "https://zed.dev");
         assert_eq!(headers["x-title"], OPEN_ROUTER_APP_TITLE);
         assert_eq!(headers["x-custom-header"], "custom-value");
+    }
+
+    #[test]
+    fn reasoning_models_get_uncapped_thinking_budget() {
+        // D42: the former hardcoded `budget_tokens: Some(4_096)` silently
+        // killed reasoning-heavy agent turns — OpenRouter ended the stream
+        // with finish_reason "length", zed mapped it to StopReason::MaxTokens,
+        // and the turn ended with no retry and no visible error.
+        let reasoning_entry = ModelEntry {
+            supported_parameters: vec!["reasoning".to_string()],
+            ..Default::default()
+        };
+        let model = model_from_entry(reasoning_entry);
+        assert!(matches!(
+            model.mode,
+            ModelMode::Thinking {
+                budget_tokens: None
+            }
+        ));
+
+        let plain_entry = ModelEntry::default();
+        assert!(matches!(
+            model_from_entry(plain_entry).mode,
+            ModelMode::Default
+        ));
     }
 
     #[test]

@@ -4,132 +4,176 @@
 //! processes — procedures, steps, actions, executions, issues, feedback.
 //! Shared by kanban, docproc, and research servers.
 //!
-//! Reference: Carriero et al. (2025, arXiv:2503.20634)
-//! PKO reuses: PROV-O (Activity, Agent), P-Plan (Step, Plan), DCAT (Resource), DCMI
-//! Canonical namespace: <https://w3id.org/pko>
+//! Every URI in this module is verified against the official PKO v2.0.0
+//! OWL artifact (Carriero et al., arXiv:2503.20634,
+//! <https://w3id.org/pko>, version 2.0.0, 2026-06-29) —
+//! `fixtures/pko-2.0.0-terms.txt` pins the term list, and
+//! `all_terms_are_official` fails the build if a term drifts from it. Do
+//! not add a term that is not in that fixture.
+//!
+//! PKO reuses P-Plan, PROV-O, SPAR, Dublin Core, and DCAT terms; the
+//! reused terms this module carries (`pplan:`, `prov:`, `dcterms:`) are
+//! defined in the PKO artifact itself and keep their canonical namespace
+//! prefixes — never re-prefixed under `pko:`. Verification (2026-08-29)
+//! corrected five such mis-prefixed terms and dropped five dead ones
+//! (`ProcedureTarget` does not exist in PKO; `Role`/`RoleInTime` are SPAR
+//! terms with no consumers here; versioning is DCAT's, not PKO's).
 //!
 //! Pattern: thin mapping layer — canonical URI constants, field mapping
-//! functions, no dependencies, no reasoners, no overhead ≤150 lines.
+//! functions, no dependencies, no reasoners, no overhead.
 
 /// A PKO concept URI.
 pub type PkoConcept = &'static str;
 
-// ── Procedure specification ───────────────────────────────────────────────
+/// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
+/// so the fixture test covers each constant by construction.
+macro_rules! pko_terms {
+    ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
+        $($(#[$doc])* pub const $name: PkoConcept = $uri;)*
 
-/// A sequence of actions to be executed to achieve an outcome.
-/// Subclass of both pplan:Plan and dcat:Resource.
-pub const PROCEDURE: PkoConcept = "pko:Procedure";
-pub const PROCEDURE_TYPE: PkoConcept = "pko:ProcedureType";
-pub const PROCEDURE_STATUS: PkoConcept = "pko:ProcedureStatus";
-pub const PROCEDURE_TARGET: PkoConcept = "pko:ProcedureTarget";
+        /// Every term in this module. The fixture test asserts each appears
+        /// in the official PKO term list — a fabricated URI cannot pass.
+        /// New terms must go through this macro.
+        pub const ALL_TERMS: &[PkoConcept] = &[$($name),*];
+    };
+}
 
-/// Links a Procedure to its Steps (pplan:Step instances).
-pub const HAS_STEP: PkoConcept = "pko:hasStep";
-/// Sequential ordering between Steps.
-pub const NEXT_STEP: PkoConcept = "pko:nextStep";
+pko_terms! {
+    // ── Procedure specification ───────────────────────────────────────────
 
-// ── Step structure ────────────────────────────────────────────────────────
+    /// A sequence of actions to be executed to achieve an outcome.
+    /// Subclass of both pplan:Plan and dcat:Resource.
+    PROCEDURE = "pko:Procedure",
+    /// The type of a Procedure (e.g. standard operating procedure).
+    PROCEDURE_TYPE = "pko:ProcedureType",
+    /// The status of a Procedure (Draft, Approval, Approved, ...).
+    PROCEDURE_STATUS = "pko:ProcedureStatus",
+    /// Links a Procedure to its Steps.
+    HAS_STEP = "pko:hasStep",
+    /// Sequential ordering between Steps.
+    NEXT_STEP = "pko:nextStep",
 
-/// A Step groups one or more Actions/Functions to execute a portion of a Procedure.
-/// PKO reuses pplan:Step; MultiStep is a PKO extension.
-pub const STEP: PkoConcept = "pko:Step";
-pub const MULTI_STEP: PkoConcept = "pko:MultiStep";
+    // ── Step structure ───────────────────────────────────────────────────
+    // PKO reuses P-Plan's Step and MultiStep — they keep the pplan: prefix.
 
-/// Human action required by a Step.
-pub const REQUIRES_ACTION: PkoConcept = "pko:requiresAction";
-pub const ACTION: PkoConcept = "pko:Action";
+    /// A Step groups one or more Actions/Functions to execute a portion of
+    /// a Procedure (P-Plan, reused by PKO).
+    STEP = "pplan:Step",
+    /// A Step composed of other Steps (P-Plan, reused by PKO).
+    MULTI_STEP = "pplan:MultiStep",
 
-/// Algorithmic function required by a Step.
-pub const REQUIRES_FUNCTION: PkoConcept = "pko:requiresFunction";
-pub const FUNCTION: PkoConcept = "pko:Function";
+    /// Human action required by a Step.
+    REQUIRES_ACTION = "pko:requiresAction",
+    /// A human action.
+    ACTION = "pko:Action",
+    /// Algorithmic function required by a Step.
+    REQUIRES_FUNCTION = "pko:requiresFunction",
+    /// An algorithmic function.
+    FUNCTION = "pko:Function",
+    /// Tool required by a Step.
+    REQUIRES_TOOL = "pko:requiresTool",
 
-/// Tool required by a Step.
-pub const REQUIRES_TOOL: PkoConcept = "pko:requiresTool";
+    // ── Execution ────────────────────────────────────────────────────────
 
-// ── Execution ─────────────────────────────────────────────────────────────
+    /// Execution of a Procedure. Subclass of prov:Activity.
+    PROCEDURE_EXECUTION = "pko:ProcedureExecution",
+    /// Execution of a single Step. Subclass of prov:Activity.
+    STEP_EXECUTION = "pko:StepExecution",
+    /// The status of a Procedure Execution. Published individuals:
+    /// InProgress, Completed, Paused, Cancelled.
+    PROCEDURE_EXECUTION_STATUS = "pko:ProcedureExecutionStatus",
 
-/// Execution of a Procedure. Subclass of prov:Activity.
-pub const PROCEDURE_EXECUTION: PkoConcept = "pko:ProcedureExecution";
-/// Execution of a single Step. Subclass of prov:Activity.
-pub const STEP_EXECUTION: PkoConcept = "pko:StepExecution";
-pub const PROCEDURE_EXECUTION_STATUS: PkoConcept = "pko:ProcedureExecutionStatus";
+    // ── Issues, feedback, questions ───────────────────────────────────────
 
-// ── Issues, feedback, questions ───────────────────────────────────────────
+    /// An error encountered by an Agent during execution.
+    ISSUE_OCCURRENCE = "pko:IssueOccurrence",
+    /// Feedback left by an Agent on a procedure or execution.
+    USER_FEEDBACK_OCCURRENCE = "pko:UserFeedbackOccurrence",
+    /// A question asked by an Agent while performing a procedure.
+    USER_QUESTION_OCCURRENCE = "pko:UserQuestionOccurrence",
+    /// The Error that caused an IssueOccurrence.
+    ERROR = "pko:Error",
+    /// The code of an Error.
+    ERROR_CODE = "pko:errorCode",
 
-/// An error encountered by an Agent during execution.
-pub const ISSUE_OCCURRENCE: PkoConcept = "pko:IssueOccurrence";
-/// Feedback left by an Agent on a procedure or execution.
-pub const USER_FEEDBACK_OCCURRENCE: PkoConcept = "pko:UserFeedbackOccurrence";
-/// A question asked by an Agent while performing a procedure.
-pub const USER_QUESTION_OCCURRENCE: PkoConcept = "pko:UserQuestionOccurrence";
+    // ── Verification ──────────────────────────────────────────────────────
 
-/// The Error that caused an IssueOccurrence.
-pub const ERROR: PkoConcept = "pko:Error";
-pub const ERROR_CODE: PkoConcept = "pko:errorCode";
+    /// How a Step's execution can be verified.
+    STEP_VERIFICATION = "pko:StepVerification",
 
-// ── Verification ──────────────────────────────────────────────────────────
+    // ── Agents and expertise ──────────────────────────────────────────────
 
-/// How a Step's execution can be verified.
-pub const STEP_VERIFICATION: PkoConcept = "pko:StepVerification";
+    /// An Agent involved in procedure creation or execution (PROV-O,
+    /// reused by PKO).
+    AGENT = "prov:Agent",
+    /// Expertise level required for a Step. Published individuals:
+    /// Junior, Senior, Master, Expert.
+    EXPERTISE_LEVEL = "pko:ExpertiseLevel",
 
-// ── Agents and roles ──────────────────────────────────────────────────────
+    // ── Resources ─────────────────────────────────────────────────────────
 
-/// An Agent involved in procedure creation or execution.
-pub const AGENT: PkoConcept = "pko:Agent";
-/// A Role an Agent plays (e.g., editor, supervisor, user).
-pub const ROLE: PkoConcept = "pko:Role";
-/// A role restricted to a PeriodOfTime.
-pub const ROLE_IN_TIME: PkoConcept = "pko:RoleInTime";
-/// Expertise level required for a Step.
-pub const EXPERTISE_LEVEL: PkoConcept = "pko:ExpertiseLevel";
+    /// A Resource referenced by a Procedure (document, image, video) —
+    /// Dublin Core, reused by PKO.
+    REFERENCES_RESOURCE = "dcterms:references",
+    /// A Procedure was extracted from a Resource (e.g., PDF describing steps).
+    WAS_EXTRACTED_FROM = "pko:wasExtractedFrom",
 
-// ── Resources ─────────────────────────────────────────────────────────────
+    // ── Versioning ────────────────────────────────────────────────────────
 
-/// A Resource referenced by a Procedure (document, image, video).
-pub const REFERENCES_RESOURCE: PkoConcept = "pko:references";
-/// A Procedure was extracted from a Resource (e.g., PDF describing steps).
-pub const WAS_EXTRACTED_FROM: PkoConcept = "pko:wasExtractedFrom";
+    /// The next version of a Procedure.
+    NEXT_VERSION = "pko:nextVersion",
 
-// ── Versioning ────────────────────────────────────────────────────────────
+    // ── Execution lifecycle ───────────────────────────────────────────────
+    // Consumed by the kata-kanban server's type mapping (the execution axis
+    // of the task lifecycle: status transitions and step-execution
+    // provenance).
 
-pub const HAS_VERSION: PkoConcept = "pko:hasVersion";
-pub const NEXT_VERSION: PkoConcept = "pko:nextVersion";
-pub const PREVIOUS_VERSION: PkoConcept = "pko:previousVersion";
+    /// A transition between two statuses.
+    CHANGE_OF_STATUS = "pko:ChangeOfStatus",
+    /// Expected duration of a step/procedure.
+    HAS_EXPECTED_DURATION = "pko:hasExpectedDuration",
 
-// ── Execution lifecycle ───────────────────────────────────────────────────
-// Consumed by the kata-kanban server's type mapping (the execution axis of the
-// task lifecycle: status transitions and step-execution provenance).
+    // ── PROV-O reuse ─────────────────────────────────────────────────────
+    // PKO extends P-Plan and PROV-O via soft reuse; these are the PROV-O
+    // provenance properties the execution axis needs.
 
-/// A transition between two statuses.
-pub const CHANGE_OF_STATUS: PkoConcept = "pko:ChangeOfStatus";
-/// Expected duration of a step/procedure.
-pub const HAS_EXPECTED_DURATION: PkoConcept = "pko:hasExpectedDuration";
+    /// Agent associated with an activity — PROV-O.
+    WAS_ASSOCIATED_WITH = "prov:wasAssociatedWith",
+    /// Entity generated by an activity — PROV-O.
+    WAS_GENERATED_BY = "prov:wasGeneratedBy",
+    /// Entity used by an activity — PROV-O.
+    USED = "prov:used",
 
-// ── PROV-O reuse ─────────────────────────────────────────────────────────
-// PKO extends P-Plan and PROV-O via soft reuse; these are the PROV-O
-// provenance properties the execution axis needs.
+    // ── Published status individuals ─────────────────────────────────────
+    // PKO v2.0.0 publishes exactly four ProcedureExecutionStatus individuals.
 
-/// Agent associated with an activity — PROV-O.
-pub const WAS_ASSOCIATED_WITH: PkoConcept = "prov:wasAssociatedWith";
-/// Entity generated by an activity — PROV-O.
-pub const WAS_GENERATED_BY: PkoConcept = "prov:wasGeneratedBy";
-/// Entity used by an activity — PROV-O.
-pub const USED: PkoConcept = "prov:used";
+    /// Execution is in progress (PKO published individual).
+    STATUS_IN_PROGRESS = "pko:InProgress",
+    /// Execution completed (PKO published individual).
+    STATUS_COMPLETED = "pko:Completed",
+    /// Execution halted, resumable (PKO published individual). The honest
+    /// cover for a blocked task: the execution is paused pending the
+    /// impediment's resolution.
+    STATUS_PAUSED = "pko:Paused",
+}
 
-// ── Mapping helpers ───────────────────────────────────────────────────────
+// ── Mapping helpers ───────────────────────────────────────────────
 
-/// Map a kanban task status to PKO execution status.
+/// Map a kanban task status to its PKO execution-status individual.
 ///
-/// Covers the standard kanban `TaskStatus` wire strings (backlog, ready,
-/// in_progress, review, done) plus their common aliases. `ready` maps to
-/// queued — a ready task is pulled but not yet started.
+/// Covers the standard kanban `TaskStatus` wire strings. Only statuses
+/// PKO actually publishes individuals for are mapped: `in_progress` →
+/// InProgress, `done` → Completed, `blocked` → Paused (a blocked
+/// execution is a paused one). PKO v2.0.0 publishes no queued,
+/// not-started, or reviewing execution status — `todo`/`backlog`/`ready`
+/// and `review` return `None` rather than forcing a nonexistent
+/// individual (the response field is optional, so `None` degrades
+/// gracefully).
 pub fn kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept> {
     match status.to_lowercase().as_str() {
-        "todo" | "backlog" | "ready" => Some("pko:ProcedureExecutionStatus/queued"),
-        "in_progress" | "doing" => Some("pko:ProcedureExecutionStatus/inProgress"),
-        "review" | "verify" => Some("pko:ProcedureExecutionStatus/verifying"),
-        "done" | "complete" => Some("pko:ProcedureExecutionStatus/completed"),
-        "blocked" => Some("pko:ProcedureExecutionStatus/blocked"),
+        "in_progress" | "doing" => Some(STATUS_IN_PROGRESS),
+        "done" | "complete" => Some(STATUS_COMPLETED),
+        "blocked" => Some(STATUS_PAUSED),
         _ => None,
     }
 }
@@ -190,39 +234,57 @@ pub fn research_stage_to_pko(stage: &str) -> Option<PkoConcept> {
 mod tests {
     use super::*;
 
+    /// Fabrication guard: every term in this module must appear in the
+    /// official PKO term list checked in as a fixture (source URL and
+    /// fetch date in the fixture header). A term that is not in the
+    /// published ontology fails here — pin tests on the constants alone
+    /// cannot catch a plausible-looking invented URI.
     #[test]
-    fn kanban_status_maps_all_standard_wire_statuses() {
-        // The kanban TaskStatus wire strings (hkask-types, rename_all =
-        // lowercase) must all map — an unmapped standard status would leave
-        // the execution-axis annotation silently absent.
-        assert_eq!(
-            kanban_status_to_pko_execution("backlog"),
-            Some("pko:ProcedureExecutionStatus/queued")
+    fn all_terms_are_official() {
+        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/pko-2.0.0-terms.txt");
+        let fixture = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
+        let official: std::collections::HashSet<&str> = fixture
+            .lines()
+            .map(|line| line.split('\t').next().unwrap_or("").trim())
+            .filter(|term| !term.is_empty() && !term.starts_with('#'))
+            .collect();
+        assert!(
+            !official.is_empty(),
+            "fixture {fixture_path} contains no terms"
         );
-        assert_eq!(
-            kanban_status_to_pko_execution("ready"),
-            Some("pko:ProcedureExecutionStatus/queued")
-        );
-        assert_eq!(
-            kanban_status_to_pko_execution("in_progress"),
-            Some("pko:ProcedureExecutionStatus/inProgress")
-        );
-        assert_eq!(
-            kanban_status_to_pko_execution("review"),
-            Some("pko:ProcedureExecutionStatus/verifying")
-        );
-        assert_eq!(
-            kanban_status_to_pko_execution("done"),
-            Some("pko:ProcedureExecutionStatus/completed")
-        );
+        for term in ALL_TERMS {
+            assert!(
+                official.contains(term),
+                "{term} is not in the official PKO v2.0.0 term list ({fixture_path}) — \
+                 it must be verified against https://w3id.org/pko before use"
+            );
+        }
     }
 
     #[test]
-    fn kanban_status_mapping_is_case_insensitive_and_rejects_unknown() {
+    fn kanban_status_maps_only_published_individuals() {
+        // PKO v2.0.0 publishes exactly four ProcedureExecutionStatus
+        // individuals (InProgress, Completed, Paused, Cancelled). Only
+        // wire statuses with a real individual map; the rest return None
+        // rather than forcing a nonexistent status.
         assert_eq!(
-            kanban_status_to_pko_execution("Done"),
-            Some("pko:ProcedureExecutionStatus/completed")
+            kanban_status_to_pko_execution("in_progress"),
+            Some("pko:InProgress")
         );
+        assert_eq!(
+            kanban_status_to_pko_execution("done"),
+            Some("pko:Completed")
+        );
+        assert_eq!(
+            kanban_status_to_pko_execution("blocked"),
+            Some("pko:Paused")
+        );
+        // No queued / not-started / reviewing individual exists in PKO.
+        assert_eq!(kanban_status_to_pko_execution("todo"), None);
+        assert_eq!(kanban_status_to_pko_execution("backlog"), None);
+        assert_eq!(kanban_status_to_pko_execution("ready"), None);
+        assert_eq!(kanban_status_to_pko_execution("review"), None);
         assert_eq!(kanban_status_to_pko_execution("archived"), None);
     }
 }
