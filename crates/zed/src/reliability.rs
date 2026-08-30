@@ -187,6 +187,16 @@ fn start_context_server_health_polling(
     cx.spawn({
         async move |cx| {
             while update_receiver.next().await.is_some() {
+                // Pre-login gate: user-configured context servers launch with
+                // no login gating (`maintain_servers` checks only
+                // `disable_ai`) and can legitimately sit in `Starting`
+                // pre-login — counting them toward the fleet total produced
+                // the `ContextServerFleetDegraded` alert storm every tick.
+                let user_id = cx.update(|cx| Client::global(cx).user_id());
+                if !context_server_fleet_observable(user_id) {
+                    health_source.update(0, 0);
+                    continue;
+                }
                 // Read ContextServerStore statuses synchronously on the foreground.
                 let css_statuses =
                     cx.update(|cx| read_context_server_statuses(&workspace_store, cx));
@@ -215,6 +225,22 @@ fn start_context_server_health_polling(
 /// How often to poll context-server health. Matches the cybernetics loop's
 /// tick cadence (10s) so the sensor sees a stuck server within one tick.
 const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Whether the context-server fleet snapshot can be meaningfully measured.
+///
+/// Before the Zed user resolves (no credentials), user-configured context
+/// servers can legitimately sit in `Starting` (slow launch, or
+/// credential-gated with no way to authenticate yet) — measuring then
+/// produced a constant false-positive `ContextServerFleetDegraded` alert
+/// storm every tick. Restored 2026-08-30: the gate was removed with the
+/// single-spawn-authority change on the theory that the kask servers it
+/// guarded against had left `ContextServerStore`, but code analysis showed
+/// `maintain_servers` has no login gating, so user-configured servers keep
+/// the storm path open. Gate on `Client::user_id` (the same predicate the
+/// deferred post-login task waits on via `UserStore::watch_current_user`).
+fn context_server_fleet_observable(user_id: Option<u64>) -> bool {
+    user_id.is_some()
+}
 
 /// Compute `(healthy_count, total_count)` across all open projects'
 /// Read ContextServerStore statuses (per-project) as a map of server_id → is_healthy.
@@ -815,6 +841,20 @@ mod tests {
         let (healthy, total) = classify_fleet_health(&[]);
         assert_eq!(healthy, 0);
         assert_eq!(total, 0);
+    }
+
+    // ── pre-login gate tests (restored 2026-08-30) ───────────────────
+
+    #[test]
+    fn pre_login_fleet_is_unobservable() {
+        // No credentials → gate is closed → snapshot reports (0, 0) → the
+        // sensor emits no signal. This pins the false-positive-storm fix.
+        assert!(!super::context_server_fleet_observable(None));
+    }
+
+    #[test]
+    fn resolved_user_opens_the_gate() {
+        assert!(super::context_server_fleet_observable(Some(7)));
     }
 
     // ── merge_fleet_health tests ──────────────────────────────────────

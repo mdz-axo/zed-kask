@@ -63,6 +63,27 @@ pub trait KaskToolSource: Send + Sync {
 static KASK_TOOL_SOURCE: std::sync::Mutex<Option<Arc<dyn KaskToolSource>>> =
     std::sync::Mutex::new(None);
 
+/// Warn-once latch for the unwired kask tool source. Resets when the source
+/// is present, so the normal startup window (main.rs wires the source in its
+/// deferred task) produces at most one line, and a source that later goes
+/// away warns again. Without this, an unwired source is silent: kask tools
+/// just don't surface, and the operator cannot distinguish "not configured"
+/// from "configured but broken".
+static KASK_TOOL_SOURCE_UNWIRED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the kask tool source was consulted and found unwired.
+/// Returns whether this call is the first since the last wired observation
+/// (the caller warns only then, to avoid a line per store event).
+fn note_kask_tool_source_unwired() -> bool {
+    !KASK_TOOL_SOURCE_UNWIRED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Record that the kask tool source is wired, re-arming the unwired warn.
+fn note_kask_tool_source_wired() {
+    KASK_TOOL_SOURCE_UNWIRED_WARNED.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Wire the governed `McpRuntime` as the agent's kask tool source. Called
 /// once from `main.rs` after the runtime is created.
 pub fn set_kask_tool_source(source: Arc<dyn KaskToolSource>) {
@@ -131,8 +152,14 @@ impl ContextServerRegistry {
     /// this registry was created.
     fn reload_kask_tools(&mut self, cx: &mut Context<Self>) {
         let Some(source) = kask_tool_source() else {
+            if note_kask_tool_source_unwired() {
+                log::warn!(
+                    "kask tool source is unwired — kask MCP server tools are not surfacing in the agent tool list. main.rs wires set_kask_tool_source in its deferred startup task: a single line during the first seconds after launch is startup ordering; a persistent absence means the wiring is broken"
+                );
+            }
             return;
         };
+        note_kask_tool_source_wired();
         let mut by_server: HashMap<String, BTreeMap<SharedString, Arc<dyn AnyAgentTool>>> =
             HashMap::default();
         for descriptor in source.tools() {
@@ -1211,6 +1238,35 @@ mod tests {
                 }
             })
         }
+    }
+
+    /// Pin: the warn-once latch for the unwired kask tool source. The first
+    /// unwired observation reports true (the caller warns), subsequent ones
+    /// false (no storm); a wired observation re-arms it so a later regression
+    /// warns again. Without the latch, `reload_kask_tools` would either warn
+    /// on every store event or stay silent — neither lets the operator
+    /// distinguish "not configured" from "configured but broken".
+    #[test]
+    fn kask_tool_source_unwired_warn_latch_fires_once_and_rearms() {
+        // Reset to a known state, then simulate the startup window: the
+        // source is unwired before main.rs's deferred task runs.
+        note_kask_tool_source_wired();
+        assert!(
+            note_kask_tool_source_unwired(),
+            "first unwired observation must report warn"
+        );
+        assert!(
+            !note_kask_tool_source_unwired(),
+            "subsequent unwired observations must not warn again"
+        );
+        // The deferred task lands the source: the latch re-arms.
+        note_kask_tool_source_wired();
+        assert!(
+            note_kask_tool_source_unwired(),
+            "a wired observation must re-arm the warn latch"
+        );
+        // Leave the latch armed-but-unwarned for other tests.
+        note_kask_tool_source_wired();
     }
 
     /// Pin: the `KaskToolSource` process-global hook (wired in `main.rs` to
