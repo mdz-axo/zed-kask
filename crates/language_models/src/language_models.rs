@@ -556,4 +556,51 @@ mod tests {
             "removing all entries should unregister the provider"
         );
     }
+
+    /// Pin (D29): RunPod is registered as a dedicated `LanguageModelProvider`
+    /// (like DeepSeek), not via `openai_compatible`. The dedicated
+    /// registration is what makes `RunPod/kask-ocr` resolvable through the
+    /// IPC bridge with an empty settings file — an `openai_compatible`
+    /// provider only exists after a settings entry creates it, and its id
+    /// would not carry the endpoint-name model resolution the OCR pipeline
+    /// depends on. The kask_bridge mirror test pins the credential side; this
+    /// pins the provider-registration side.
+    #[gpui::test]
+    fn runpod_is_a_dedicated_provider_not_openai_compatible(cx: &mut App) {
+        let (client, credentials_provider) = init_test(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        // The Cloud provider reads the LLM token listener global.
+        client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            register_language_model_providers(
+                registry,
+                user_store,
+                client,
+                credentials_provider,
+                cx,
+            );
+        });
+
+        // The dedicated registration surfaces with an empty settings file —
+        // no `openai_compatible` entry can do that (they only register via
+        // `register_compatible_providers` after a settings entry exists).
+        // The registration id is lowercase `runpod` (the display name
+        // "RunPod" is separate) — the same case split that forced D29's
+        // `resolve_ocr_model` case-insensitivity fix.
+        let runpod = registry
+            .read(cx)
+            .provider(&LanguageModelProviderId::from("runpod".to_string()))
+            .expect("RunPod must be registered as a dedicated provider");
+        assert_eq!(runpod.id().0.as_ref(), "runpod");
+
+        // Control: DeepSeek is the dedicated-provider pattern D29 mirrors.
+        assert!(
+            registry
+                .read(cx)
+                .provider(&LanguageModelProviderId::from("deepseek".to_string()))
+                .is_some(),
+            "DeepSeek (the dedicated-provider pattern RunPod mirrors) must also be registered"
+        );
+    }
 }
