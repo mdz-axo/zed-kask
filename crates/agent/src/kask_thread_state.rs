@@ -93,6 +93,29 @@ impl KaskThreadState {
         self.last_completion_truncated = false;
     }
 
+    /// Warning for a turn that ends with `StopReason::MaxTokens` (D43).
+    /// Upstream sends the stop reason with no operator-visible signal, so
+    /// threads appear to "just stop" mid-generation. The message
+    /// distinguishes the zero-content signature (prompt → silence →
+    /// nothing — the operator sees a dead thread) from partial-content
+    /// truncation, and names the model so the log line is actionable
+    /// without cross-referencing the thread.
+    pub(crate) fn max_tokens_turn_end_warning(model_name: &str, produced_content: bool) -> String {
+        if produced_content {
+            format!(
+                "Turn ended at the model's token limit (StopReason::MaxTokens) after \
+                 producing partial content (model: {model_name}). The turn stopped \
+                 mid-generation with no error shown to the operator."
+            )
+        } else {
+            format!(
+                "Turn ended at the model's token limit (StopReason::MaxTokens) with NO \
+                 content (model: {model_name}) — the silent-stop signature: prompt → \
+                 silence → nothing. Check the provider's reasoning/output token budget."
+            )
+        }
+    }
+
     // ── System prompt caching ─────────────────────────────────────────
 
     /// Get the cached system prompt if the digest matches.
@@ -287,5 +310,27 @@ impl KaskThreadState {
 impl Default for KaskThreadState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KaskThreadState;
+
+    #[test]
+    fn max_tokens_warning_names_the_stop_reason_and_content_state() {
+        // D43: the warn must carry the stop reason, the model, and the
+        // zero-content distinction — the fields that made the 2026-08-30
+        // silent-turn-stop incident diagnosable only by inference.
+        let zero_content = KaskThreadState::max_tokens_turn_end_warning("GLM 5.3", false);
+        assert!(zero_content.contains("StopReason::MaxTokens"));
+        assert!(zero_content.contains("GLM 5.3"));
+        assert!(zero_content.contains("NO"));
+        assert!(zero_content.contains("silent-stop"));
+
+        let partial = KaskThreadState::max_tokens_turn_end_warning("GLM 5.3", true);
+        assert!(partial.contains("StopReason::MaxTokens"));
+        assert!(partial.contains("partial content"));
+        assert!(!partial.contains("silent-stop"));
     }
 }

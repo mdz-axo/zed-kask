@@ -53,7 +53,7 @@ pub(crate) fn settings_path() -> std::path::PathBuf {
 ///
 /// Note: the generation model is `HKASK_DEFAULT_MODEL` in `InferenceConfig` —
 /// there is no separate replica/composition model slot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HkaskSettings {
     /// Default embedding model for vectorization.
     /// Override: `HKASK_EMBEDDING_MODEL` env var.
@@ -113,26 +113,72 @@ impl Default for HkaskSettings {
 }
 
 impl HkaskSettings {
-    /// Load settings from `~/.config/hkask/settings.json`.
+    /// Load settings from the shared `~/.config/zed-kask/settings.json`.
     /// Falls back to defaults if the file doesn't exist or is unreadable.
+    ///
+    /// The file is zed's settings file; kask model settings live under its
+    /// `kask.models` section (`KaskModelsSettingsContent` in
+    /// `settings_content.rs`). Fields absent from that section fall back to
+    /// `Default` — the file never needs to carry all four fields.
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  none (always succeeds)
-    /// post: returns HkaskSettings from disk; HkaskSettings::default() if file missing or unparsable
+    /// post: returns HkaskSettings with `kask.models` overrides applied over defaults; defaults if file missing or unparsable
     #[must_use]
     pub fn load() -> Self {
         let path = settings_path();
         match std::fs::read_to_string(&path) {
-            Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to parse settings.json — using defaults"
-                );
-                Self::default()
-            }),
+            Ok(json) => Self::parse_over_defaults(&json, &path),
             Err(_) => Self::default(),
         }
+    }
+
+    /// Parse the shared settings file, overlaying the `kask.models` section
+    /// onto `Default`. The former whole-file `from_str::<HkaskSettings>` read
+    /// required `embedding_model` et al. at the file's top level — keys that
+    /// never exist in zed's settings file — so every parse failed and every
+    /// surface silently ran on defaults (observed live: `missing field
+    /// 'embedding_model' at line 147`, every boot).
+    ///
+    /// \[P5\] pre:  none
+    /// post: defaults with `kask.models.{embedding_model, classifier_model, ocr_model}` overlaid when present and well-typed
+    fn parse_over_defaults(json: &str, path: &std::path::Path) -> Self {
+        let user: serde_json::Value = match serde_json::from_str(json) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "Failed to parse settings.json — using defaults"
+                );
+                return Self::default();
+            }
+        };
+        let mut merged = match serde_json::to_value(Self::default()) {
+            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+            _ => return Self::default(),
+        };
+        if let Some(user_models) = user
+            .get("kask")
+            .and_then(|kask| kask.get("models"))
+            .and_then(|models| models.as_object())
+        {
+            if let Some(merged_object) = merged.as_object_mut() {
+                for key in ["embedding_model", "classifier_model", "ocr_model"] {
+                    if let Some(value) = user_models.get(key) {
+                        merged_object.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+        }
+        serde_json::from_value(merged).unwrap_or_else(|error| {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "Failed to parse kask.models settings — using defaults"
+            );
+            Self::default()
+        })
     }
 
     /// Resolve the effective model, preferring env var over settings over default.
@@ -225,15 +271,69 @@ impl HkaskSettings {
         }
     }
 
-    /// Save settings to `~/.config/hkask/settings.json`.
-    ///
-    /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  self must be a valid HkaskSettings
-    /// post: settings are written as pretty JSON to settings_path(); Err on serialization or I/O failure
-    #[must_use = "result must be used"]
-    pub fn save(&self) -> Result<(), std::io::Error> {
-        let path = settings_path();
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)
+    // `save()` was removed 2026-08-30: zero callers anywhere in the
+    // workspace, and its behavior was a data-loss hazard — it serialized
+    // `HkaskSettings` alone to the shared settings path, which would
+    // clobber zed's entire settings file (every key outside the four model
+    // fields) if it were ever called. Settings writes belong to the zed
+    // layer (`kask_bridge/src/settings.rs`), which merges into the real
+    // store.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HkaskSettings;
+
+    /// The shared settings file is zed's — kask model settings live under
+    /// `kask.models`. A zed-shaped file (the operator's actual file shape)
+    /// must parse without error, overlaying present fields and defaulting
+    /// absent ones. The former whole-file read failed on exactly this shape.
+    #[test]
+    fn zed_shaped_settings_file_parses_with_kask_models_overrides() {
+        let json = r#"{
+            "theme": "one",
+            "language_models": {"open_router": {"api_url": "https://openrouter.ai/api/v1"}},
+            "kask": {
+                "models": {
+                    "default_model": "OpenRouter/z-ai/glm-5.2",
+                    "ocr_model": "RunPod/kask-ocr-v2"
+                },
+                "memory": {"memory_life_days": 30.0}
+            },
+            "context_servers": {}
+        }"#;
+        let settings =
+            HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
+        assert_eq!(settings.ocr_model, "RunPod/kask-ocr-v2");
+        // Absent fields fall back to Default, not to a parse error.
+        assert_eq!(
+            settings.embedding_model,
+            hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL
+        );
+        assert_eq!(
+            settings.classifier_model,
+            hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL
+        );
+    }
+
+    /// A file with no `kask` section at all (pure zed settings) yields pure
+    /// defaults — no warn-worthy failure, since the file is valid.
+    #[test]
+    fn settings_file_without_kask_section_yields_defaults() {
+        let json = r#"{"theme": "one", "context_servers": {}}"#;
+        let settings =
+            HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
+        assert_eq!(settings, HkaskSettings::default());
+    }
+
+    /// Unparsable JSON still degrades to defaults (surfaced by the warn in
+    /// the parse path, not by a panic).
+    #[test]
+    fn unparsable_settings_file_yields_defaults() {
+        let settings = HkaskSettings::parse_over_defaults(
+            "{ not json",
+            std::path::Path::new("/test/settings.json"),
+        );
+        assert_eq!(settings, HkaskSettings::default());
     }
 }

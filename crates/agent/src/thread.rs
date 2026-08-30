@@ -3064,6 +3064,40 @@ impl Thread {
                                 _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
                             }
                             Ok(CompletionError::MaxTokens) => {
+                                // zed-kask: D43 — upstream sends the stop with no
+                                // operator-visible signal; threads appear to
+                                // "just stop". Warn so the log carries the
+                                // signature (root cause of the 2026-08-30
+                                // silent-turn-stop incident: a hardcoded
+                                // reasoning budget mapped to MaxTokens).
+                                let (thread_id, model_name, produced_content) = this
+                                    .read_with(cx, |thread, _| {
+                                        (
+                                            thread.id().to_string(),
+                                            thread
+                                                .model()
+                                                .map(|m| m.name().0.to_string())
+                                                .unwrap_or_default(),
+                                            thread.messages.iter().skip(message_ix + 1).any(
+                                                |msg| {
+                                                    matches!(
+                                                        &**msg,
+                                                        crate::thread::Message::Agent(_)
+                                                    )
+                                                },
+                                            ),
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                                log::warn!(
+                                    target: "agent.thread",
+                                    "[thread {thread_id}] {}",
+                                    crate::kask_thread_state::KaskThreadState::
+                                        max_tokens_turn_end_warning(
+                                            &model_name,
+                                            produced_content,
+                                        )
+                                );
                                 event_stream.send_stop(acp::StopReason::MaxTokens);
                             }
                             Ok(CompletionError::Other(error)) | Err(error) => {
