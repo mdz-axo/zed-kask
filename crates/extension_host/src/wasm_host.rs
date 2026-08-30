@@ -1206,7 +1206,7 @@ mod tests {
         // Simulate the call-site pattern: push, capture the resource rep
         // (the u32 handle, since Resource<T> is not Copy), do work, then
         // delete on both success and error paths. The D31 fix uses this
-        // pattern at 8 call sites.
+        // pattern at 12 call sites.
         struct Worktree;
 
         for i in 0..1000 {
