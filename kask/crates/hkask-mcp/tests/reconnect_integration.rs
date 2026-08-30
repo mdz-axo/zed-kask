@@ -559,8 +559,7 @@ async fn health_breaker_trips_after_consecutive_restart_failures() {
     wait_for(
         || {
             tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(runtime.health_failure_count("fixture"))
+                tokio::runtime::Handle::current().block_on(runtime.health_failure_count("fixture"))
                     >= 2
             })
         },

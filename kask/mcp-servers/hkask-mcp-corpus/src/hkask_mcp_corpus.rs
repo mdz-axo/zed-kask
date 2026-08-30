@@ -275,7 +275,6 @@ impl CorpusServer {
             + Self::compose_router()
             + Self::gather_router()
     }
-
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -459,4 +458,3 @@ mod smoke {
         );
     }
 }
-

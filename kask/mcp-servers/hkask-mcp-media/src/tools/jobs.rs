@@ -68,125 +68,121 @@ impl MediaServer {
         &self,
         Parameters(JobSubmitRequest { op, params }): Parameters<JobSubmitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "job_submit",
-            async {
-                if op.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument("op must not be empty"));
-                }
-                // Parse the params JSON into MediaGenerateParams.
-                let media_params: hkask_types::MediaGenerateParams = serde_json::from_str(&params)
-                    .map_err(|e| {
-                        McpToolError::invalid_argument(format!(
-                            "params must be valid JSON MediaGenerateParams: {e}"
-                        ))
-                    })?;
+        execute_tool(self, "job_submit", async {
+            if op.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("op must not be empty"));
+            }
+            // Parse the params JSON into MediaGenerateParams.
+            let media_params: hkask_types::MediaGenerateParams = serde_json::from_str(&params)
+                .map_err(|e| {
+                    McpToolError::invalid_argument(format!(
+                        "params must be valid JSON MediaGenerateParams: {e}"
+                    ))
+                })?;
 
-                let job_id = uuid::Uuid::new_v4().to_string();
-                let now = hkask_types::time::now_rfc3339();
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let now = hkask_types::time::now_rfc3339();
 
-                // Insert the job record with "queued" status.
-                {
-                    let mut store = self
-                        .job_store
-                        .lock()
-                        .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
-                    store.insert(
-                        job_id.clone(),
-                        JobRecord {
-                            id: job_id.clone(),
-                            op: op.clone(),
-                            status: "queued".to_string(),
-                            created_at: now,
-                            completed_at: None,
-                            result: None,
-                            error: None,
-                        },
-                    );
-                }
+            // Insert the job record with "queued" status.
+            {
+                let mut store = self
+                    .job_store
+                    .lock()
+                    .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+                store.insert(
+                    job_id.clone(),
+                    JobRecord {
+                        id: job_id.clone(),
+                        op: op.clone(),
+                        status: "queued".to_string(),
+                        created_at: now,
+                        completed_at: None,
+                        result: None,
+                        error: None,
+                    },
+                );
+            }
 
-                // Spawn the background generation task.
-                let vision_port = self.vision_port.clone();
-                let job_store = self.job_store.clone();
-                let job_id_for_task = job_id.clone();
-                let op_for_task = op.clone();
+            // Spawn the background generation task.
+            let vision_port = self.vision_port.clone();
+            let job_store = self.job_store.clone();
+            let job_id_for_task = job_id.clone();
+            let op_for_task = op.clone();
 
-                tokio::spawn(async move {
-                    // Update status to "running".
-                    match job_store.lock() {
-                        Ok(mut store) => {
-                            if let Some(job) = store.get_mut(&job_id_for_task) {
-                                job.status = "running".to_string();
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.media.jobs",
-                                job_id = %job_id_for_task,
-                                error = %e,
-                                "Job store lock poisoned — 'running' status update skipped"
-                            );
-                            // Continue anyway: the generation can still run, and
-                            // the final update below retries the lock.
+            tokio::spawn(async move {
+                // Update status to "running".
+                match job_store.lock() {
+                    Ok(mut store) => {
+                        if let Some(job) = store.get_mut(&job_id_for_task) {
+                            job.status = "running".to_string();
                         }
                     }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.media.jobs",
+                            job_id = %job_id_for_task,
+                            error = %e,
+                            "Job store lock poisoned — 'running' status update skipped"
+                        );
+                        // Continue anyway: the generation can still run, and
+                        // the final update below retries the lock.
+                    }
+                }
 
-                    // If the generation future panics or the task is aborted,
-                    // this guard marks the job failed on drop instead of
-                    // leaving it stuck in "running".
-                    let guard = JobPanicGuard::new(job_store.clone(), job_id_for_task.clone());
+                // If the generation future panics or the task is aborted,
+                // this guard marks the job failed on drop instead of
+                // leaving it stuck in "running".
+                let guard = JobPanicGuard::new(job_store.clone(), job_id_for_task.clone());
 
-                    let result = vision_port
-                        .media_generate(&op_for_task, &media_params)
-                        .await;
+                let result = vision_port
+                    .media_generate(&op_for_task, &media_params)
+                    .await;
 
-                    // Update the job record with the result.
-                    {
-                        let Ok(mut store) = job_store.lock() else {
-                            tracing::warn!(
-                                target: "hkask.mcp.media.jobs",
-                                job_id = %job_id_for_task,
-                                "Job store lock poisoned — completed job result could not be recorded"
-                            );
-                            return;
-                        };
-                        if let Some(job) = store.get_mut(&job_id_for_task) {
-                                let now = hkask_types::time::now_rfc3339();
-                                job.completed_at = Some(now);
-                                match result {
-                                    Ok(value) => {
-                                        // Check if the job was cancelled while running.
-                                        if job.status == "cancelled" {
-                                            // Keep cancelled status.
-                                        } else {
-                                            job.status = "completed".to_string();
-                                            job.result = Some(value);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        if job.status == "cancelled" {
-                                            // Keep cancelled status.
-                                        } else {
-                                            job.status = "failed".to_string();
-                                            job.error = Some(e.to_string());
-                                        }
-                                    }
+                // Update the job record with the result.
+                {
+                    let Ok(mut store) = job_store.lock() else {
+                        tracing::warn!(
+                            target: "hkask.mcp.media.jobs",
+                            job_id = %job_id_for_task,
+                            "Job store lock poisoned — completed job result could not be recorded"
+                        );
+                        return;
+                    };
+                    if let Some(job) = store.get_mut(&job_id_for_task) {
+                        let now = hkask_types::time::now_rfc3339();
+                        job.completed_at = Some(now);
+                        match result {
+                            Ok(value) => {
+                                // Check if the job was cancelled while running.
+                                if job.status == "cancelled" {
+                                    // Keep cancelled status.
+                                } else {
+                                    job.status = "completed".to_string();
+                                    job.result = Some(value);
+                                }
+                            }
+                            Err(e) => {
+                                if job.status == "cancelled" {
+                                    // Keep cancelled status.
+                                } else {
+                                    job.status = "failed".to_string();
+                                    job.error = Some(e.to_string());
                                 }
                             }
                         }
+                    }
+                }
 
-                    // Normal completion — disarm the panic guard.
-                    guard.defuse();
-                });
+                // Normal completion — disarm the panic guard.
+                guard.defuse();
+            });
 
-                Ok(serde_json::json!({
-                    "job_id": job_id,
-                    "status": "queued",
-                    "op": op,
-                }))
-            },
-        )
+            Ok(serde_json::json!({
+                "job_id": job_id,
+                "status": "queued",
+                "op": op,
+            }))
+        })
         .await
     }
 
@@ -227,26 +223,22 @@ impl MediaServer {
         &self,
         Parameters(JobStatusRequest { job_id }): Parameters<JobStatusRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "job_status",
-            async {
-                let store = self
-                    .job_store
-                    .lock()
-                    .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
-                let job = store.get(&job_id).ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "Job not found: {job_id}. The job store is in-memory — if the \
+        execute_tool(self, "job_status", async {
+            let store = self
+                .job_store
+                .lock()
+                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+            let job = store.get(&job_id).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "Job not found: {job_id}. The job store is in-memory — if the \
                          media server restarted, all job records were lost (persistent \
                          lineage survives in gallery_record_generation). Call job_list \
                          to see known jobs."
-                    ))
-                })?;
-                serde_json::to_value(job)
-                    .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))
-            },
-        )
+                ))
+            })?;
+            serde_json::to_value(job)
+                .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))
+        })
         .await
     }
 
@@ -256,37 +248,32 @@ impl MediaServer {
         &self,
         Parameters(JobCancelRequest { job_id }): Parameters<JobCancelRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "job_cancel",
-            async {
-                let mut store = self
-                    .job_store
-                    .lock()
-                    .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
-                let job = store.get_mut(&job_id).ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "Job not found: {job_id}. Call job_list to see known jobs."
-                    ))
-                })?;
+        execute_tool(self, "job_cancel", async {
+            let mut store = self
+                .job_store
+                .lock()
+                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+            let job = store.get_mut(&job_id).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "Job not found: {job_id}. Call job_list to see known jobs."
+                ))
+            })?;
 
-                if job.status == "completed" || job.status == "failed" || job.status == "cancelled"
-                {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "Job {job_id} is already {} — cannot cancel",
-                        job.status
-                    )));
-                }
+            if job.status == "completed" || job.status == "failed" || job.status == "cancelled" {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Job {job_id} is already {} — cannot cancel",
+                    job.status
+                )));
+            }
 
-                job.status = "cancelled".to_string();
-                job.completed_at = Some(hkask_types::time::now_rfc3339());
+            job.status = "cancelled".to_string();
+            job.completed_at = Some(hkask_types::time::now_rfc3339());
 
-                Ok(serde_json::json!({
-                    "job_id": job_id,
-                    "status": "cancelled",
-                }))
-            },
-        )
+            Ok(serde_json::json!({
+                "job_id": job_id,
+                "status": "cancelled",
+            }))
+        })
         .await
     }
 }

@@ -89,31 +89,24 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportSaveRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "report_save",
-            async {
-                let kind_label = validate_kind(&req.kind)?;
-                let name = sanitize_artifact_name(&req.name)?;
-                let dir = artifact_dir(kind_label)?;
-                let path = dir.join(format!("{name}.json"));
-                let json = serde_json::to_string_pretty(&req.payload).map_err(|e| {
-                    McpToolError::invalid_argument(format!("payload is not serializable: {e}"))
-                })?;
-                std::fs::write(&path, json).map_err(|e| {
-                    McpToolError::internal(format!(
-                        "Failed to write artifact {}: {e}",
-                        path.display()
-                    ))
-                })?;
-                Ok(serde_json::json!({
-                    "saved": true,
-                    "kind": req.kind,
-                    "name": name,
-                    "path": path.to_string_lossy(),
-                }))
-            },
-        )
+        execute_tool(self, "report_save", async {
+            let kind_label = validate_kind(&req.kind)?;
+            let name = sanitize_artifact_name(&req.name)?;
+            let dir = artifact_dir(kind_label)?;
+            let path = dir.join(format!("{name}.json"));
+            let json = serde_json::to_string_pretty(&req.payload).map_err(|e| {
+                McpToolError::invalid_argument(format!("payload is not serializable: {e}"))
+            })?;
+            std::fs::write(&path, json).map_err(|e| {
+                McpToolError::internal(format!("Failed to write artifact {}: {e}", path.display()))
+            })?;
+            Ok(serde_json::json!({
+                "saved": true,
+                "kind": req.kind,
+                "name": name,
+                "path": path.to_string_lossy(),
+            }))
+        })
         .await
     }
 
@@ -124,31 +117,27 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportLoadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "report_load",
-            async {
-                let kind_label = validate_kind(&req.kind)?;
-                let name = sanitize_artifact_name(&req.name)?;
-                let dir = artifact_dir(kind_label)?;
-                let path = dir.join(format!("{name}.json"));
-                let content = std::fs::read_to_string(&path).map_err(|_| {
-                    McpToolError::not_found(format!(
-                        "No {kind_label} artifact named '{name}' at {}",
-                        path.display()
-                    ))
-                })?;
-                let payload: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-                    McpToolError::internal(format!("Artifact {name} is not valid JSON: {e}"))
-                })?;
-                Ok(serde_json::json!({
-                    "loaded": true,
-                    "kind": req.kind,
-                    "name": name,
-                    "payload": payload,
-                }))
-            },
-        )
+        execute_tool(self, "report_load", async {
+            let kind_label = validate_kind(&req.kind)?;
+            let name = sanitize_artifact_name(&req.name)?;
+            let dir = artifact_dir(kind_label)?;
+            let path = dir.join(format!("{name}.json"));
+            let content = std::fs::read_to_string(&path).map_err(|_| {
+                McpToolError::not_found(format!(
+                    "No {kind_label} artifact named '{name}' at {}",
+                    path.display()
+                ))
+            })?;
+            let payload: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+                McpToolError::internal(format!("Artifact {name} is not valid JSON: {e}"))
+            })?;
+            Ok(serde_json::json!({
+                "loaded": true,
+                "kind": req.kind,
+                "name": name,
+                "payload": payload,
+            }))
+        })
         .await
     }
 
@@ -159,37 +148,33 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "report_list",
-            async {
-                let kind_label = validate_kind(&req.kind)?;
-                let dir = artifact_dir(kind_label)?;
-                let mut names: Vec<String> = std::fs::read_dir(&dir)
-                    .map_err(|e| {
-                        McpToolError::internal(format!(
-                            "Failed to read artifact directory {}: {e}",
-                            dir.display()
-                        ))
-                    })?
-                    .filter_map(|entry| entry.ok())
-                    .filter_map(|entry| {
-                        let path = entry.path();
-                        if path.extension().is_some_and(|ext| ext == "json") {
-                            path.file_stem()?.to_str().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                names.sort();
-                Ok(serde_json::json!({
-                    "kind": req.kind,
-                    "count": names.len(),
-                    "names": names,
-                }))
-            },
-        )
+        execute_tool(self, "report_list", async {
+            let kind_label = validate_kind(&req.kind)?;
+            let dir = artifact_dir(kind_label)?;
+            let mut names: Vec<String> = std::fs::read_dir(&dir)
+                .map_err(|e| {
+                    McpToolError::internal(format!(
+                        "Failed to read artifact directory {}: {e}",
+                        dir.display()
+                    ))
+                })?
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "json") {
+                        path.file_stem()?.to_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            names.sort();
+            Ok(serde_json::json!({
+                "kind": req.kind,
+                "count": names.len(),
+                "names": names,
+            }))
+        })
         .await
     }
 }

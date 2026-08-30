@@ -180,217 +180,207 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<CharacteristicsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_characteristics",
-            async {
-                let portfolio_name = req.portfolio.clone();
-                let symbols = run_store(self.research.clone(), move |portfolio| {
-                    portfolio.get_symbols(&portfolio_name)
-                })
-                .await?;
+        execute_tool(self, "portfolio_characteristics", async {
+            let portfolio_name = req.portfolio.clone();
+            let symbols = run_store(self.research.clone(), move |portfolio| {
+                portfolio.get_symbols(&portfolio_name)
+            })
+            .await?;
 
-                if symbols.is_empty() {
-                    return Ok(serde_json::json!(
-                        {"characteristics": {}, "message": "no symbols in portfolio"}
-                    ));
-                }
+            if symbols.is_empty() {
+                return Ok(serde_json::json!(
+                    {"characteristics": {}, "message": "no symbols in portfolio"}
+                ));
+            }
 
-                // Get positions at the as-of date
-                let portfolio_name = req.portfolio.clone();
-                let as_of = req.date.clone();
-                let txs = run_store(self.research.clone(), move |portfolio| {
-                    portfolio.get_transactions(&portfolio_name, None, None, None, Some(&as_of))
-                })
-                .await?;
-                let mut positions: std::collections::HashMap<String, f64> =
-                    std::collections::HashMap::new();
-                for tx in &txs {
-                    if let Some(ref sym) = tx.symbol {
-                        match tx.tx_type {
-                            TxType::Buy => {
-                                *positions.entry(sym.clone()).or_insert(0.0) +=
-                                    tx.quantity.unwrap_or(0.0)
-                            }
-                            TxType::Sell => {
-                                *positions.entry(sym.clone()).or_insert(0.0) -=
-                                    tx.quantity.unwrap_or(0.0)
-                            }
-                            _ => {}
+            // Get positions at the as-of date
+            let portfolio_name = req.portfolio.clone();
+            let as_of = req.date.clone();
+            let txs = run_store(self.research.clone(), move |portfolio| {
+                portfolio.get_transactions(&portfolio_name, None, None, None, Some(&as_of))
+            })
+            .await?;
+            let mut positions: std::collections::HashMap<String, f64> =
+                std::collections::HashMap::new();
+            for tx in &txs {
+                if let Some(ref sym) = tx.symbol {
+                    match tx.tx_type {
+                        TxType::Buy => {
+                            *positions.entry(sym.clone()).or_insert(0.0) +=
+                                tx.quantity.unwrap_or(0.0)
                         }
+                        TxType::Sell => {
+                            *positions.entry(sym.clone()).or_insert(0.0) -=
+                                tx.quantity.unwrap_or(0.0)
+                        }
+                        _ => {}
                     }
                 }
-                positions.retain(|_, v| *v > 0.0001);
+            }
+            positions.retain(|_, v| *v > 0.0001);
 
-                // Fetch prices and market values
-                let mut market_values = Vec::new();
-                let mut errors = Vec::new();
-                for sym in positions.keys() {
-                    match self.fetch("stock_quote", sym, &[]).await {
-                        Ok(value) => {
-                            let price = value
-                                .as_array()
-                                .and_then(|a| a.first())
-                                .and_then(|q| q.get("price").and_then(|p| p.as_f64()))
-                                .unwrap_or(0.0);
-                            let shares = positions.get(sym).copied().unwrap_or(0.0);
-                            market_values.push((sym.clone(), shares, price, shares * price));
-                        }
-                        Err(e) => {
-                            errors.push(format!("{sym} quote: {}", e.to_json_string()));
-                        }
+            // Fetch prices and market values
+            let mut market_values = Vec::new();
+            let mut errors = Vec::new();
+            for sym in positions.keys() {
+                match self.fetch("stock_quote", sym, &[]).await {
+                    Ok(value) => {
+                        let price = value
+                            .as_array()
+                            .and_then(|a| a.first())
+                            .and_then(|q| q.get("price").and_then(|p| p.as_f64()))
+                            .unwrap_or(0.0);
+                        let shares = positions.get(sym).copied().unwrap_or(0.0);
+                        market_values.push((sym.clone(), shares, price, shares * price));
+                    }
+                    Err(e) => {
+                        errors.push(format!("{sym} quote: {}", e.to_json_string()));
                     }
                 }
+            }
 
-                let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
-                if total_mv <= 0.0 {
-                    return Ok(serde_json::json!(
-                        {"characteristics": {}, "message": "no market value"}
-                    ));
-                }
+            let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
+            if total_mv <= 0.0 {
+                return Ok(serde_json::json!(
+                    {"characteristics": {}, "message": "no market value"}
+                ));
+            }
 
-                // Cap at 99 holdings - if the portfolio exceeds this, keep the
-                // largest by market value. Bounds the fetch + calculation cost.
-                const MAX_HOLDINGS: usize = 99;
-                if market_values.len() > MAX_HOLDINGS {
-                    market_values
-                        .sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-                    market_values.truncate(MAX_HOLDINGS);
-                }
-                // Recompute total_mv after truncation.
-                let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
+            // Cap at 99 holdings - if the portfolio exceeds this, keep the
+            // largest by market value. Bounds the fetch + calculation cost.
+            const MAX_HOLDINGS: usize = 99;
+            if market_values.len() > MAX_HOLDINGS {
+                market_values
+                    .sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+                market_values.truncate(MAX_HOLDINGS);
+            }
+            // Recompute total_mv after truncation.
+            let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
 
-                // Fetch fundamentals and compute weighted averages.
-                //
-                // Collect (weight, value) pairs per field, then aggregate at the
-                // end using the requested method. Categorical fields (sector,
-                // industry, country) are always weight-summed (not aggregated).
-                let mut numeric_fields: std::collections::HashMap<
-                    String,
-                    (Vec<crate::aggregation::WeightedValue>, &'static str),
-                > = std::collections::HashMap::new();
-                let mut categorical_breakdowns: std::collections::HashMap<
-                    String,
-                    std::collections::HashMap<String, f64>,
-                > = std::collections::HashMap::new();
+            // Fetch fundamentals and compute weighted averages.
+            //
+            // Collect (weight, value) pairs per field, then aggregate at the
+            // end using the requested method. Categorical fields (sector,
+            // industry, country) are always weight-summed (not aggregated).
+            let mut numeric_fields: std::collections::HashMap<
+                String,
+                (Vec<crate::aggregation::WeightedValue>, &'static str),
+            > = std::collections::HashMap::new();
+            let mut categorical_breakdowns: std::collections::HashMap<
+                String,
+                std::collections::HashMap<String, f64>,
+            > = std::collections::HashMap::new();
 
-                for (sym, _shares, _price, mv) in &market_values {
-                    let weight = mv / total_mv;
+            for (sym, _shares, _price, mv) in &market_values {
+                let weight = mv / total_mv;
 
-                    // Fetch profile for sector/industry/country/market cap
-                    if let Ok(profile_val) = self.fetch("company_profile", sym, &[]).await
-                        && let Some(profile) = profile_val.as_array().and_then(|a| a.first())
-                    {
-                        for field in ["sector", "industry", "country", "mktCap"] {
-                            if let Some(val) = profile.get(field) {
-                                if val.is_string() {
-                                    let str_val =
-                                        val.as_str().expect("guarded by is_string check above");
-                                    let sub = categorical_breakdowns
-                                        .entry(field.to_string())
-                                        .or_default();
-                                    *sub.entry(str_val.to_string()).or_insert(0.0) += weight;
-                                } else if let Some(num) = val.as_f64() {
-                                    let metric =
-                                        fibo::fmp_field_to_metric(field).unwrap_or("unknown");
-                                    numeric_fields
-                                        .entry(field.to_string())
-                                        .or_insert_with(|| (Vec::new(), metric))
-                                        .0
-                                        .push(crate::aggregation::WeightedValue {
-                                            weight,
-                                            value: num,
-                                        });
-                                }
-                            }
-                        }
-                    }
-
-                    // Fetch key metrics for profitability/valuation
-                    if let Ok(metrics_val) = self.fetch("key_metrics", sym, &[("limit", "1")]).await
-                        && let Some(metrics) = metrics_val.as_array().and_then(|a| a.first())
-                    {
-                        for field in [
-                            "peRatio",
-                            "priceToBookRatio",
-                            "priceToSalesRatio",
-                            "roic",
-                            "roe",
-                            "grossProfitMargin",
-                            "operatingProfitMargin",
-                            "netProfitMargin",
-                            "debtToEquity",
-                            "dividendYield",
-                            "revenueGrowth",
-                            "epsGrowth",
-                        ] {
-                            if let Some(val) = metrics.get(field).and_then(|v| v.as_f64()) {
+                // Fetch profile for sector/industry/country/market cap
+                if let Ok(profile_val) = self.fetch("company_profile", sym, &[]).await
+                    && let Some(profile) = profile_val.as_array().and_then(|a| a.first())
+                {
+                    for field in ["sector", "industry", "country", "mktCap"] {
+                        if let Some(val) = profile.get(field) {
+                            if val.is_string() {
+                                let str_val =
+                                    val.as_str().expect("guarded by is_string check above");
+                                let sub =
+                                    categorical_breakdowns.entry(field.to_string()).or_default();
+                                *sub.entry(str_val.to_string()).or_insert(0.0) += weight;
+                            } else if let Some(num) = val.as_f64() {
                                 let metric = fibo::fmp_field_to_metric(field).unwrap_or("unknown");
                                 numeric_fields
                                     .entry(field.to_string())
                                     .or_insert_with(|| (Vec::new(), metric))
                                     .0
-                                    .push(crate::aggregation::WeightedValue { weight, value: val });
+                                    .push(crate::aggregation::WeightedValue { weight, value: num });
                             }
                         }
                     }
+                }
 
-                    // Balance sheet for leverage
-                    if let Ok(bs_val) = self.fetch("balance_sheet", sym, &[("limit", "1")]).await
-                        && let Some(bs) = bs_val.as_array().and_then(|a| a.first())
-                    {
-                        let assets = bs.get("totalAssets").and_then(|v| v.as_f64());
-                        let equity = bs.get("totalEquity").and_then(|v| v.as_f64());
-                        if let (Some(a), Some(e)) = (assets, equity)
-                            && e > 0.0
-                        {
-                            let lev = a / e;
-                            let metric =
-                                fibo::fmp_field_to_metric("financialLeverage").unwrap_or("unknown");
+                // Fetch key metrics for profitability/valuation
+                if let Ok(metrics_val) = self.fetch("key_metrics", sym, &[("limit", "1")]).await
+                    && let Some(metrics) = metrics_val.as_array().and_then(|a| a.first())
+                {
+                    for field in [
+                        "peRatio",
+                        "priceToBookRatio",
+                        "priceToSalesRatio",
+                        "roic",
+                        "roe",
+                        "grossProfitMargin",
+                        "operatingProfitMargin",
+                        "netProfitMargin",
+                        "debtToEquity",
+                        "dividendYield",
+                        "revenueGrowth",
+                        "epsGrowth",
+                    ] {
+                        if let Some(val) = metrics.get(field).and_then(|v| v.as_f64()) {
+                            let metric = fibo::fmp_field_to_metric(field).unwrap_or("unknown");
                             numeric_fields
-                                .entry("financialLeverage".to_string())
+                                .entry(field.to_string())
                                 .or_insert_with(|| (Vec::new(), metric))
                                 .0
-                                .push(crate::aggregation::WeightedValue { weight, value: lev });
+                                .push(crate::aggregation::WeightedValue { weight, value: val });
                         }
                     }
                 }
 
-                // Aggregate numeric fields using the requested method.
-                let mut characteristics = serde_json::Map::new();
-                for (field, (values, metric)) in &numeric_fields {
-                    let aggregated = crate::aggregation::aggregate(values, &req.aggregation);
-                    characteristics.insert(
-                        field.clone(),
-                        serde_json::json!({
-                            "value": aggregated,
-                            "metric": metric,
-                            "method": req.aggregation,
-                            "holdings": values.len(),
-                        }),
-                    );
+                // Balance sheet for leverage
+                if let Ok(bs_val) = self.fetch("balance_sheet", sym, &[("limit", "1")]).await
+                    && let Some(bs) = bs_val.as_array().and_then(|a| a.first())
+                {
+                    let assets = bs.get("totalAssets").and_then(|v| v.as_f64());
+                    let equity = bs.get("totalEquity").and_then(|v| v.as_f64());
+                    if let (Some(a), Some(e)) = (assets, equity)
+                        && e > 0.0
+                    {
+                        let lev = a / e;
+                        let metric =
+                            fibo::fmp_field_to_metric("financialLeverage").unwrap_or("unknown");
+                        numeric_fields
+                            .entry("financialLeverage".to_string())
+                            .or_insert_with(|| (Vec::new(), metric))
+                            .0
+                            .push(crate::aggregation::WeightedValue { weight, value: lev });
+                    }
                 }
+            }
 
-                // Insert categorical breakdowns.
-                for (field, breakdown) in categorical_breakdowns {
-                    characteristics
-                        .insert(format!("{field}_breakdown"), serde_json::json!(breakdown));
-                }
-
-                Ok(fibo::enrich_with_ontology(
+            // Aggregate numeric fields using the requested method.
+            let mut characteristics = serde_json::Map::new();
+            for (field, (values, metric)) in &numeric_fields {
+                let aggregated = crate::aggregation::aggregate(values, &req.aggregation);
+                characteristics.insert(
+                    field.clone(),
                     serde_json::json!({
-                        "portfolio": req.portfolio,
-                        "date": req.date,
-                        "aggregation": req.aggregation,
-                        "total_market_value": total_mv,
-                        "position_count": market_values.len(),
-                        "characteristics": characteristics,
-                        "errors": errors,
+                        "value": aggregated,
+                        "metric": metric,
+                        "method": req.aggregation,
+                        "holdings": values.len(),
                     }),
-                    "portfolio_characteristics",
-                ))
-            },
-        )
+                );
+            }
+
+            // Insert categorical breakdowns.
+            for (field, breakdown) in categorical_breakdowns {
+                characteristics.insert(format!("{field}_breakdown"), serde_json::json!(breakdown));
+            }
+
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({
+                    "portfolio": req.portfolio,
+                    "date": req.date,
+                    "aggregation": req.aggregation,
+                    "total_market_value": total_mv,
+                    "position_count": market_values.len(),
+                    "characteristics": characteristics,
+                    "errors": errors,
+                }),
+                "portfolio_characteristics",
+            ))
+        })
         .await
     }
 

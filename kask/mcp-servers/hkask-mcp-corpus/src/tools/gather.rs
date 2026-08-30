@@ -183,52 +183,47 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<CacheWorkRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_cache_work",
-            async {
-                if params.slug.is_empty()
-                    || !params
-                        .slug
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-                {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "Invalid slug '{}': must be alphanumeric with hyphens/underscores only",
-                        params.slug
-                    )));
-                }
+        execute_tool(self, "corpus_cache_work", async {
+            if params.slug.is_empty()
+                || !params
+                    .slug
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Invalid slug '{}': must be alphanumeric with hyphens/underscores only",
+                    params.slug
+                )));
+            }
 
-                let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
-                let cache_path = cache_dir.join(format!("{}.txt", params.slug));
+            let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
+            let cache_path = cache_dir.join(format!("{}.txt", params.slug));
 
-                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                    return Err(map_corpus_io_error(
-                        e,
-                        &format!("Failed to create cache directory '{}'", cache_dir.display()),
-                    ));
-                }
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                return Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to create cache directory '{}'", cache_dir.display()),
+                ));
+            }
 
-                let bytes = params.content.as_bytes();
-                match std::fs::write(&cache_path, bytes) {
-                    Ok(()) => {
-                        let result = CacheWorkResult {
-                            slug: params.slug.clone(),
-                            path: cache_path.to_string_lossy().to_string(),
-                            bytes_written: bytes.len() as u64,
-                        };
-                        let output = serde_json::to_value(&result).unwrap_or_else(
-                            |_| serde_json::json!({"error": "serialization failed"}),
-                        );
-                        Ok(output)
-                    }
-                    Err(e) => Err(map_corpus_io_error(
-                        e,
-                        &format!("Failed to write cache file '{}'", cache_path.display()),
-                    )),
+            let bytes = params.content.as_bytes();
+            match std::fs::write(&cache_path, bytes) {
+                Ok(()) => {
+                    let result = CacheWorkResult {
+                        slug: params.slug.clone(),
+                        path: cache_path.to_string_lossy().to_string(),
+                        bytes_written: bytes.len() as u64,
+                    };
+                    let output = serde_json::to_value(&result)
+                        .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
+                    Ok(output)
                 }
-            },
-        )
+                Err(e) => Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to write cache file '{}'", cache_path.display()),
+                )),
+            }
+        })
         .await
     }
 

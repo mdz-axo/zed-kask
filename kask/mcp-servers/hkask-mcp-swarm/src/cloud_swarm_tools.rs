@@ -156,58 +156,52 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAgentsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_list_agents",
-            async {
-                // The ABW `/agents` catalogue endpoint is open (no API key required).
-                // The module doc (L10) and the tool doc both say "Keyless". The prior
-                // `require_auth()` call broke the panel's primary browse surface in
-                // catalogue-only mode (the default when no key is set) — every
-                // `swarm_list_agents` call returned an Auth error. The `is_authenticated()`
-                // flag is returned in the response envelope so the caller knows the
-                // auth state and can gate authenticated-only UI accordingly.
-                let req = parameters.0;
-                let data = self
-                    .client
-                    .get("/agents")
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+        execute_tool(self, "swarm_list_agents", async {
+            // The ABW `/agents` catalogue endpoint is open (no API key required).
+            // The module doc (L10) and the tool doc both say "Keyless". The prior
+            // `require_auth()` call broke the panel's primary browse surface in
+            // catalogue-only mode (the default when no key is set) — every
+            // `swarm_list_agents` call returned an Auth error. The `is_authenticated()`
+            // flag is returned in the response envelope so the caller knows the
+            // auth state and can gate authenticated-only UI accordingly.
+            let req = parameters.0;
+            let data = self
+                .client
+                .get("/agents")
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                let empty = Vec::new();
-                let agents = data
-                    .get("agents")
-                    .and_then(|a| a.as_array())
-                    .unwrap_or(&empty);
+            let empty = Vec::new();
+            let agents = data
+                .get("agents")
+                .and_then(|a| a.as_array())
+                .unwrap_or(&empty);
 
-                let limit = req.limit.unwrap_or(50);
-                let filtered: Vec<serde_json::Value> = agents
-                    .iter()
-                    .filter(|a| {
-                        req.agent_type.as_ref().is_none_or(|t| {
-                            a.get("agent_type").and_then(|v| v.as_str()) == Some(t.as_str())
-                        })
+            let limit = req.limit.unwrap_or(50);
+            let filtered: Vec<serde_json::Value> = agents
+                .iter()
+                .filter(|a| {
+                    req.agent_type.as_ref().is_none_or(|t| {
+                        a.get("agent_type").and_then(|v| v.as_str()) == Some(t.as_str())
                     })
-                    .filter(|a| {
-                        req.tag.as_ref().is_none_or(|t| {
-                            a.get("tags")
-                                .and_then(|v| v.as_array())
-                                .is_some_and(|tags| {
-                                    tags.iter().any(|x| x.as_str() == Some(t.as_str()))
-                                })
-                        })
+                })
+                .filter(|a| {
+                    req.tag.as_ref().is_none_or(|t| {
+                        a.get("tags")
+                            .and_then(|v| v.as_array())
+                            .is_some_and(|tags| tags.iter().any(|x| x.as_str() == Some(t.as_str())))
                     })
-                    .take(limit)
-                    .map(map_catalogue_agent)
-                    .collect();
+                })
+                .take(limit)
+                .map(map_catalogue_agent)
+                .collect();
 
-                Ok(serde_json::json!({
-                    "count": filtered.len(),
-                    "authenticated": self.client.is_authenticated(),
-                    "agents": filtered,
-                }))
-            },
-        )
+            Ok(serde_json::json!({
+                "count": filtered.len(),
+                "authenticated": self.client.is_authenticated(),
+                "agents": filtered,
+            }))
+        })
         .await
     }
 
@@ -219,50 +213,46 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_get_swarm",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
+        execute_tool(self, "swarm_get_swarm", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
 
-                match req.workspace_id {
-                    Some(id) => {
-                        let data = self
-                            .client
-                            .get(&format!("/workspaces/{}", url_encode_segment(&id)))
-                            .await
-                            .map_err(SwarmError::into_tool_error)?;
-                        // Sanitize roster text (KA-01): the workspace payload can
-                        // carry agent descriptions and chat messages — the primary
-                        // injection surface. Unlike `swarm_list_agents`, the whole
-                        // payload is walked recursively.
-                        Ok(sanitize_workspace_payload(data))
-                    }
-                    None => {
-                        let data = self
-                            .client
-                            .get("/workspaces")
-                            .await
-                            .map_err(SwarmError::into_tool_error)?;
-                        let payload = sanitize_workspace_payload(data);
-                        // Normalize the list shape: ABW's /workspaces response is
-                        // not part of the verified surface and may be a bare array
-                        // or a `{workspaces: [...]}` envelope. The panel expects
-                        // the envelope — wrap a bare array so a shape change on
-                        // ABW's side cannot silently blank the panel's list.
-                        Ok(match payload {
-                            serde_json::Value::Array(arr) => {
-                                serde_json::json!({ "workspaces": arr })
-                            }
-                            other => other,
-                        })
-                    }
+            match req.workspace_id {
+                Some(id) => {
+                    let data = self
+                        .client
+                        .get(&format!("/workspaces/{}", url_encode_segment(&id)))
+                        .await
+                        .map_err(SwarmError::into_tool_error)?;
+                    // Sanitize roster text (KA-01): the workspace payload can
+                    // carry agent descriptions and chat messages — the primary
+                    // injection surface. Unlike `swarm_list_agents`, the whole
+                    // payload is walked recursively.
+                    Ok(sanitize_workspace_payload(data))
                 }
-            },
-        )
+                None => {
+                    let data = self
+                        .client
+                        .get("/workspaces")
+                        .await
+                        .map_err(SwarmError::into_tool_error)?;
+                    let payload = sanitize_workspace_payload(data);
+                    // Normalize the list shape: ABW's /workspaces response is
+                    // not part of the verified surface and may be a bare array
+                    // or a `{workspaces: [...]}` envelope. The panel expects
+                    // the envelope — wrap a bare array so a shape change on
+                    // ABW's side cannot silently blank the panel's list.
+                    Ok(match payload {
+                        serde_json::Value::Array(arr) => {
+                            serde_json::json!({ "workspaces": arr })
+                        }
+                        other => other,
+                    })
+                }
+            }
+        })
         .await
     }
 
@@ -274,52 +264,47 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_get_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                // The catalogue carries the full card; filter to the one agent.
-                let data = self
-                    .client
-                    .get("/agents")
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                let agent = data
-                    .get("agents")
-                    .and_then(|a| a.as_array())
-                    .and_then(|agents| {
-                        agents.iter().find(|a| {
-                            // The catalogue's `agent_id` field carries the agent's
-                            // name (e.g. "sensor_advisor") — match on it.
-                            a.get("agent_id").and_then(|i| i.as_str())
-                                == Some(req.agent_name.as_str())
-                        })
+        execute_tool(self, "swarm_get_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // The catalogue carries the full card; filter to the one agent.
+            let data = self
+                .client
+                .get("/agents")
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            let agent = data
+                .get("agents")
+                .and_then(|a| a.as_array())
+                .and_then(|agents| {
+                    agents.iter().find(|a| {
+                        // The catalogue's `agent_id` field carries the agent's
+                        // name (e.g. "sensor_advisor") — match on it.
+                        a.get("agent_id").and_then(|i| i.as_str()) == Some(req.agent_name.as_str())
                     })
-                    .cloned()
-                    .ok_or_else(|| {
-                        McpToolError::not_found(format!("agent '{}' not found", req.agent_name))
-                    })?;
-                // Sanitize the agent card (KA-01): the card carries `description`,
-                // `system_prompt`, and other text fields from ABW — a third-party
-                // surface that could carry injection payloads. `swarm_list_agents`
-                // sanitizes its `description`; this tool returns the full card and
-                // must sanitize the same way (display fields → plain string,
-                // model-consumed fields → container).
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(agent))
-                    .await)
-            },
-        )
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!("agent '{}' not found", req.agent_name))
+                })?;
+            // Sanitize the agent card (KA-01): the card carries `description`,
+            // `system_prompt`, and other text fields from ABW — a third-party
+            // surface that could carry injection payloads. `swarm_list_agents`
+            // sanitizes its `description`; this tool returns the full card and
+            // must sanitize the same way (display fields → plain string,
+            // model-consumed fields → container).
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(agent))
+                .await)
+        })
         .await
     }
 
@@ -331,36 +316,32 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAppsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_list_apps",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let limit = parameters.0.limit.unwrap_or(50);
-                // Apps live under the catalogue's app projection.
-                let data = self
-                    .client
-                    .get("/apps")
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                let mut payload = sanitize_workspace_payload(data);
-                // Apply the limit defensively: the /apps response shape is not part
-                // of the verified ABW surface, so truncate whichever array shape
-                // appears (top-level array or `apps` key) and leave others alone.
-                match &mut payload {
-                    serde_json::Value::Array(arr) => arr.truncate(limit),
-                    serde_json::Value::Object(map) => {
-                        if let Some(arr) = map.get_mut("apps").and_then(|a| a.as_array_mut()) {
-                            arr.truncate(limit);
-                        }
+        execute_tool(self, "swarm_list_apps", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let limit = parameters.0.limit.unwrap_or(50);
+            // Apps live under the catalogue's app projection.
+            let data = self
+                .client
+                .get("/apps")
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            let mut payload = sanitize_workspace_payload(data);
+            // Apply the limit defensively: the /apps response shape is not part
+            // of the verified ABW surface, so truncate whichever array shape
+            // appears (top-level array or `apps` key) and leave others alone.
+            match &mut payload {
+                serde_json::Value::Array(arr) => arr.truncate(limit),
+                serde_json::Value::Object(map) => {
+                    if let Some(arr) = map.get_mut("apps").and_then(|a| a.as_array_mut()) {
+                        arr.truncate(limit);
                     }
-                    _ => {}
                 }
-                Ok(self.client.with_wallet(payload).await)
-            },
-        )
+                _ => {}
+            }
+            Ok(self.client.with_wallet(payload).await)
+        })
         .await
     }
 
@@ -372,21 +353,17 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<OntologyTemplatesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_ontology_templates",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let data = self
-                    .client
-                    .get("/ontology-templates")
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(sanitize_workspace_payload(data))
-            },
-        )
+        execute_tool(self, "swarm_ontology_templates", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let data = self
+                .client
+                .get("/ontology-templates")
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(sanitize_workspace_payload(data))
+        })
         .await
     }
 
@@ -398,54 +375,50 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecuteAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_execute_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name and query must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_execute_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and query must be non-empty".to_string(),
+                ));
+            }
 
-                let data = self
-                    .client
-                    .post(
-                        &format!("/agents/{}/execute", url_encode_segment(&req.agent_name)),
-                        &serde_json::json!({ "query": req.query }),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+            let data = self
+                .client
+                .post(
+                    &format!("/agents/{}/execute", url_encode_segment(&req.agent_name)),
+                    &serde_json::json!({ "query": req.query }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Fermi's execute handler returns the agent's output in
-                // `metadata.reasoning` and `evidence[]`, not a top-level
-                // `response` field. `extract_execute_response` handles the
-                // current shape, the evidence fallback, and the legacy
-                // `response` field for older deploys.
-                let response_text = extract_execute_response(&data);
-                let response_value = response_text
-                    .map(serde_json::Value::String)
-                    .unwrap_or(serde_json::Value::Null);
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "agent_name": req.agent_name,
-                        "response": sanitize_abw_response(Some(&response_value)),
-                        // Forward the structured fields fermi emits so the
-                        // caller sees status, cost, and confidence alongside
-                        // the narrative.
-                        "status": data.get("status"),
-                        "confidence": data.get("confidence"),
-                        "episode_id": data.get("episode_id"),
-                        "credits_charged": data.get("credits_charged"),
-                    }))
-                    .await)
-            },
-        )
+            // Fermi's execute handler returns the agent's output in
+            // `metadata.reasoning` and `evidence[]`, not a top-level
+            // `response` field. `extract_execute_response` handles the
+            // current shape, the evidence fallback, and the legacy
+            // `response` field for older deploys.
+            let response_text = extract_execute_response(&data);
+            let response_value = response_text
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null);
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "response": sanitize_abw_response(Some(&response_value)),
+                    // Forward the structured fields fermi emits so the
+                    // caller sees status, cost, and confidence alongside
+                    // the narrative.
+                    "status": data.get("status"),
+                    "confidence": data.get("confidence"),
+                    "episode_id": data.get("episode_id"),
+                    "credits_charged": data.get("credits_charged"),
+                }))
+                .await)
+        })
         .await
     }
 
@@ -536,45 +509,40 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RequestConsentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_request_consent",
-            async {
-                // Auth required: without this, a prompt-injected agent could mint
-                // consent tokens and self-authorize credit spends. Every spend tool
-                // calls `require_auth()`; the token minter must too.
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.action.trim().is_empty() || req.target.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "action and target must be non-empty".to_string(),
-                    ));
-                }
-                // Curator calls (action "curate") read task content but spend no
-                // credits, so a zero ceiling is correct for them. Spend actions
-                // ("hire", "delegate") must authorize a positive ceiling — a zero
-                // ceiling would authorize nothing and is almost certainly a caller
-                // bug. Reject zero only for spend actions.
-                if req.credits_authorized == 0 && req.action != "curate" {
-                    return Err(McpToolError::invalid_argument(
-                        "credits_authorized must be > 0 for spend actions (hire/delegate)"
-                            .to_string(),
-                    ));
-                }
-                let token = self
-                    .consent
-                    .mint(&req.action, &req.target, req.credits_authorized)
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(serde_json::json!({
-                    "consent_token": token,
-                    "action": req.action,
-                    "target": req.target,
-                    "credits_authorized": req.credits_authorized,
-                }))
-            },
-        )
+        execute_tool(self, "swarm_request_consent", async {
+            // Auth required: without this, a prompt-injected agent could mint
+            // consent tokens and self-authorize credit spends. Every spend tool
+            // calls `require_auth()`; the token minter must too.
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.action.trim().is_empty() || req.target.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "action and target must be non-empty".to_string(),
+                ));
+            }
+            // Curator calls (action "curate") read task content but spend no
+            // credits, so a zero ceiling is correct for them. Spend actions
+            // ("hire", "delegate") must authorize a positive ceiling — a zero
+            // ceiling would authorize nothing and is almost certainly a caller
+            // bug. Reject zero only for spend actions.
+            if req.credits_authorized == 0 && req.action != "curate" {
+                return Err(McpToolError::invalid_argument(
+                    "credits_authorized must be > 0 for spend actions (hire/delegate)".to_string(),
+                ));
+            }
+            let token = self
+                .consent
+                .mint(&req.action, &req.target, req.credits_authorized)
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(serde_json::json!({
+                "consent_token": token,
+                "action": req.action,
+                "target": req.target,
+                "credits_authorized": req.credits_authorized,
+            }))
+        })
         .await
     }
 
@@ -589,32 +557,28 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AuthorizeSessionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_authorize_session",
-            async {
-                let req = parameters.0;
-                if req.total_credits == 0 {
-                    return Err(McpToolError::invalid_argument(
-                        "total_credits must be positive".to_string(),
-                    ));
-                }
-                let token = self
-                    .consent
-                    .open_session(req.total_credits, &req.actions)
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(serde_json::json!({
-                    "session_token": token,
-                    "total_credits": req.total_credits,
-                    "remaining_credits": req.total_credits,
-                    "actions": if req.actions.is_empty() {
-                        vec!["hire".to_string(), "delegate".to_string()]
-                    } else {
-                        req.actions
-                    },
-                }))
-            },
-        )
+        execute_tool(self, "swarm_authorize_session", async {
+            let req = parameters.0;
+            if req.total_credits == 0 {
+                return Err(McpToolError::invalid_argument(
+                    "total_credits must be positive".to_string(),
+                ));
+            }
+            let token = self
+                .consent
+                .open_session(req.total_credits, &req.actions)
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(serde_json::json!({
+                "session_token": token,
+                "total_credits": req.total_credits,
+                "remaining_credits": req.total_credits,
+                "actions": if req.actions.is_empty() {
+                    vec!["hire".to_string(), "delegate".to_string()]
+                } else {
+                    req.actions
+                },
+            }))
+        })
         .await
     }
 
@@ -626,61 +590,57 @@ impl SwarmServer {
         &self,
         parameters: Parameters<HireRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_hire",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id and agent_name must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_hire", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id and agent_name must be non-empty".to_string(),
+                ));
+            }
 
-                // The consent gate is the enforcement point. The two-phase shape
-                // (authorize → complete) makes the refund invariant structural:
-                // `complete_hire` owns the authorization and refunds on every Err
-                // path. The re-verify + ceiling + `/hire`→`/add` fallback all live
-                // in `spend_gate` now — `swarm_create_swarm`'s per-hire loop routes
-                // through the same functions, so the two cannot desync.
-                let include_optional = req.include_optional.unwrap_or(false);
-                let auth = spend_gate::authorize_hire(
-                    &self.client,
-                    &self.consent,
-                    spend_gate::resolve_auth(
-                        req.consent_token.as_deref(),
-                        req.session_token.as_deref(),
-                    )?,
-                    &req.agent_name,
-                    req.credits_authorized,
-                    Some(req.credits_authorized),
-                    include_optional,
-                )
-                .await?;
-                let data = spend_gate::complete_hire(
-                    &self.client,
-                    &self.consent,
-                    auth,
-                    &req.workspace_id,
-                    &req.agent_name,
-                    include_optional,
-                )
-                .await?;
+            // The consent gate is the enforcement point. The two-phase shape
+            // (authorize → complete) makes the refund invariant structural:
+            // `complete_hire` owns the authorization and refunds on every Err
+            // path. The re-verify + ceiling + `/hire`→`/add` fallback all live
+            // in `spend_gate` now — `swarm_create_swarm`'s per-hire loop routes
+            // through the same functions, so the two cannot desync.
+            let include_optional = req.include_optional.unwrap_or(false);
+            let auth = spend_gate::authorize_hire(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.agent_name,
+                req.credits_authorized,
+                Some(req.credits_authorized),
+                include_optional,
+            )
+            .await?;
+            let data = spend_gate::complete_hire(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                include_optional,
+            )
+            .await?;
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "hired": req.agent_name,
-                        "workspace_id": req.workspace_id,
-                        "credits_authorized": req.credits_authorized,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "hired": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "credits_authorized": req.credits_authorized,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -692,63 +652,59 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_delegate",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty()
-                    || req.agent_name.trim().is_empty()
-                    || req.task.trim().is_empty()
-                {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id, agent_name, and task must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_delegate", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id, agent_name, and task must be non-empty".to_string(),
+                ));
+            }
 
-                // The consent gate + per-dispatch ceiling live in `spend_gate`.
-                // Design tradeoff (R8): the consent ceiling gates the operator's
-                // *authorization*, not ABW's *actual charge*. ABW is a third-party
-                // service that charges its own credits based on execution — the
-                // `credits_authorized` field is the operator's declared budget,
-                // not a hard limit on ABW's spend. This is inherent to the ABW
-                // architecture: zed-kask posts a message; ABW executes and charges.
-                // // Local mode has no equivalent gate at all: its ledger records spend
-                // rather than authorizing it, so neither path hard-caps ABW's charge.
-                let auth = spend_gate::authorize_delegate(
-                    &self.client,
-                    &self.consent,
-                    spend_gate::resolve_auth(
-                        req.consent_token.as_deref(),
-                        req.session_token.as_deref(),
-                    )?,
-                    &req.workspace_id,
-                    req.credits_authorized,
-                )?;
-                let data = spend_gate::complete_delegate(
-                    &self.client,
-                    &self.consent,
-                    auth,
-                    &req.workspace_id,
-                    &req.agent_name,
-                    &req.task,
-                )
-                .await?;
+            // The consent gate + per-dispatch ceiling live in `spend_gate`.
+            // Design tradeoff (R8): the consent ceiling gates the operator's
+            // *authorization*, not ABW's *actual charge*. ABW is a third-party
+            // service that charges its own credits based on execution — the
+            // `credits_authorized` field is the operator's declared budget,
+            // not a hard limit on ABW's spend. This is inherent to the ABW
+            // architecture: zed-kask posts a message; ABW executes and charges.
+            // // Local mode has no equivalent gate at all: its ledger records spend
+            // rather than authorizing it, so neither path hard-caps ABW's charge.
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let data = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "delegated_to": req.agent_name,
-                        "workspace_id": req.workspace_id,
-                        "credits_authorized": req.credits_authorized,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "delegated_to": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "credits_authorized": req.credits_authorized,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -762,112 +718,108 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateAndWaitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_delegate_and_wait",
-            async {
-                self.client
-                    .require_auth()
+        execute_tool(self, "swarm_delegate_and_wait", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id, agent_name, and task must be non-empty".to_string(),
+                ));
+            }
+            let timeout_secs = req.timeout_secs.unwrap_or(60).min(300);
+            // Step 1: post the @mention via the spend gate. A session token
+            // (from `swarm_authorize_session`) may be used in place of a
+            // single-use consent token — the gate handles both.
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let post_result = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
+            // Record the post timestamp for filtering messages.
+            let post_time = chrono::Utc::now();
+            // Step 2: poll for the agent's response.
+            let poll_interval = std::time::Duration::from_secs(2);
+            let deadline = post_time + chrono::Duration::seconds(timeout_secs as i64);
+            let mut agent_response: Option<serde_json::Value> = None;
+            let mut poll_count = 0u32;
+            while chrono::Utc::now() < deadline {
+                poll_count += 1;
+                tokio::time::sleep(poll_interval).await;
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/messages?limit=10",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
                     .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty()
-                    || req.agent_name.trim().is_empty()
-                    || req.task.trim().is_empty()
-                {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id, agent_name, and task must be non-empty".to_string(),
-                    ));
-                }
-                let timeout_secs = req.timeout_secs.unwrap_or(60).min(300);
-                // Step 1: post the @mention via the spend gate. A session token
-                // (from `swarm_authorize_session`) may be used in place of a
-                // single-use consent token — the gate handles both.
-                let auth = spend_gate::authorize_delegate(
-                    &self.client,
-                    &self.consent,
-                    spend_gate::resolve_auth(
-                        req.consent_token.as_deref(),
-                        req.session_token.as_deref(),
-                    )?,
-                    &req.workspace_id,
-                    req.credits_authorized,
-                )?;
-                let post_result = spend_gate::complete_delegate(
-                    &self.client,
-                    &self.consent,
-                    auth,
-                    &req.workspace_id,
-                    &req.agent_name,
-                    &req.task,
-                )
-                .await?;
-                // Record the post timestamp for filtering messages.
-                let post_time = chrono::Utc::now();
-                // Step 2: poll for the agent's response.
-                let poll_interval = std::time::Duration::from_secs(2);
-                let deadline = post_time + chrono::Duration::seconds(timeout_secs as i64);
-                let mut agent_response: Option<serde_json::Value> = None;
-                let mut poll_count = 0u32;
-                while chrono::Utc::now() < deadline {
-                    poll_count += 1;
-                    tokio::time::sleep(poll_interval).await;
-                    let data = self
-                        .client
-                        .get(&format!(
-                            "/workspaces/{}/messages?limit=10",
-                            url_encode_segment(&req.workspace_id)
-                        ))
-                        .await
-                        .map_err(SwarmError::into_tool_error)?;
-                    let empty = Vec::new();
-                    let messages = data
-                        .get("messages")
-                        .and_then(|m| m.as_array())
-                        .unwrap_or(&empty);
-                    // Look for a message from the delegated agent after the post
-                    // time. Iterate in reverse so the latest matching message wins.
-                    for msg in messages.iter().rev() {
-                        let sender = msg
-                            .get("sender")
-                            .or_else(|| msg.get("agent_name"))
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("");
-                        let msg_time_str = msg
-                            .get("created_at")
-                            .or_else(|| msg.get("timestamp"))
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("");
-                        let msg_time = chrono::DateTime::parse_from_rfc3339(msg_time_str)
-                            .ok()
-                            .map(|d| d.with_timezone(&chrono::Utc))
-                            .unwrap_or(chrono::Utc::now());
-                        if sender == req.agent_name && msg_time > post_time {
-                            let content = sanitize_abw_response(unwrap_abw_envelope(msg));
-                            agent_response = Some(serde_json::json!({
-                                "content": content,
-                                "created_at": msg_time_str,
-                            }));
-                            break;
-                        }
-                    }
-                    if agent_response.is_some() {
+                let empty = Vec::new();
+                let messages = data
+                    .get("messages")
+                    .and_then(|m| m.as_array())
+                    .unwrap_or(&empty);
+                // Look for a message from the delegated agent after the post
+                // time. Iterate in reverse so the latest matching message wins.
+                for msg in messages.iter().rev() {
+                    let sender = msg
+                        .get("sender")
+                        .or_else(|| msg.get("agent_name"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("");
+                    let msg_time_str = msg
+                        .get("created_at")
+                        .or_else(|| msg.get("timestamp"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let msg_time = chrono::DateTime::parse_from_rfc3339(msg_time_str)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                        .unwrap_or(chrono::Utc::now());
+                    if sender == req.agent_name && msg_time > post_time {
+                        let content = sanitize_abw_response(unwrap_abw_envelope(msg));
+                        agent_response = Some(serde_json::json!({
+                            "content": content,
+                            "created_at": msg_time_str,
+                        }));
                         break;
                     }
                 }
-                let timed_out = agent_response.is_none();
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "delegated_to": req.agent_name,
-                        "workspace_id": req.workspace_id,
-                        "post_result": post_result,
-                        "agent_response": agent_response,
-                        "timed_out": timed_out,
-                        "poll_count": poll_count,
-                    }))
-                    .await)
-            },
-        )
+                if agent_response.is_some() {
+                    break;
+                }
+            }
+            let timed_out = agent_response.is_none();
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "delegated_to": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "post_result": post_result,
+                    "agent_response": agent_response,
+                    "timed_out": timed_out,
+                    "poll_count": poll_count,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -879,51 +831,47 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SwarmRunRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_run_status",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let limit = req.limit.unwrap_or(50);
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/messages?limit={limit}",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+        execute_tool(self, "swarm_run_status", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let limit = req.limit.unwrap_or(50);
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/messages?limit={limit}",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Sanitize each message's content (KA-01): workspace chat history
-                // is the primary injection vector — ABW agents can echo prompt-
-                // injection payloads in their messages. Map over the messages
-                // array and route each message's content/response field through
-                // sanitize_abw_response.
-                let empty = Vec::new();
-                let messages = data
-                    .get("messages")
-                    .and_then(|m| m.as_array())
-                    .unwrap_or(&empty);
-                let sanitized_messages: Vec<serde_json::Value> =
-                    messages.iter().map(sanitize_run_status_message).collect();
+            // Sanitize each message's content (KA-01): workspace chat history
+            // is the primary injection vector — ABW agents can echo prompt-
+            // injection payloads in their messages. Map over the messages
+            // array and route each message's content/response field through
+            // sanitize_abw_response.
+            let empty = Vec::new();
+            let messages = data
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .unwrap_or(&empty);
+            let sanitized_messages: Vec<serde_json::Value> =
+                messages.iter().map(sanitize_run_status_message).collect();
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "workspace_id": req.workspace_id,
-                        "messages": sanitized_messages,
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": req.workspace_id,
+                    "messages": sanitized_messages,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -935,44 +883,40 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GeneratePromptRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_generate_prompt",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "description and agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        "/agents/generate-prompt",
-                        &serde_json::json!({
-                            "description": req.description,
-                            "agent_name": req.agent_name,
-                            "agent_type": req.agent_type.unwrap_or_else(|| "research".to_string()),
-                        }),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                // Sanitize the LLM-generated prompt field (KA-01): ABW's response
-                // carries the generated prompt in a `prompt` or `response` field.
-                // Route through sanitize_abw_response so injection prefixes are
-                // stripped and the content is wrapped in the {content, source,
-                // trust} container.
-                let sanitized =
-                    sanitize_abw_response(data.get("prompt").or_else(|| data.get("response")));
-                Ok(serde_json::json!({
-                    "prompt": sanitized,
-                    "raw": sanitize_workspace_payload(data),
-                }))
-            },
-        )
+        execute_tool(self, "swarm_generate_prompt", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "description and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    "/agents/generate-prompt",
+                    &serde_json::json!({
+                        "description": req.description,
+                        "agent_name": req.agent_name,
+                        "agent_type": req.agent_type.unwrap_or_else(|| "research".to_string()),
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Sanitize the LLM-generated prompt field (KA-01): ABW's response
+            // carries the generated prompt in a `prompt` or `response` field.
+            // Route through sanitize_abw_response so injection prefixes are
+            // stripped and the content is wrapped in the {content, source,
+            // trust} container.
+            let sanitized =
+                sanitize_abw_response(data.get("prompt").or_else(|| data.get("response")));
+            Ok(serde_json::json!({
+                "prompt": sanitized,
+                "raw": sanitize_workspace_payload(data),
+            }))
+        })
         .await
     }
 
@@ -984,39 +928,35 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GenerateOntologyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_generate_ontology",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.domain_description.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "domain_description must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        "/agents/generate-ontology",
-                        &serde_json::json!({ "domain_description": req.domain_description }),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                // Sanitize the LLM-generated ontology field (KA-01): ABW's
-                // response carries the generated ER diagram in an `ontology` or
-                // `response` field. Route through sanitize_abw_response so
-                // injection prefixes are stripped.
-                let sanitized =
-                    sanitize_abw_response(data.get("ontology").or_else(|| data.get("response")));
-                Ok(serde_json::json!({
-                    "ontology": sanitized,
-                    "raw": sanitize_workspace_payload(data),
-                }))
-            },
-        )
+        execute_tool(self, "swarm_generate_ontology", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.domain_description.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "domain_description must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    "/agents/generate-ontology",
+                    &serde_json::json!({ "domain_description": req.domain_description }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Sanitize the LLM-generated ontology field (KA-01): ABW's
+            // response carries the generated ER diagram in an `ontology` or
+            // `response` field. Route through sanitize_abw_response so
+            // injection prefixes are stripped.
+            let sanitized =
+                sanitize_abw_response(data.get("ontology").or_else(|| data.get("response")));
+            Ok(serde_json::json!({
+                "ontology": sanitized,
+                "raw": sanitize_workspace_payload(data),
+            }))
+        })
         .await
     }
 
@@ -1028,46 +968,42 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() || req.system_prompt.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name and system_prompt must be non-empty".to_string(),
-                    ));
-                }
-                // ABW agent names are slugs ([a-z0-9_], 3–64) — reject invalid
-                // names here so ABW's confusing 400 becomes a clear argument error
-                // (verified live 2026-08-13).
-                if let Err(e) = validate_agent_name(&req.agent_name) {
-                    return Err(crate::error::map_local_swarm_error(e));
-                }
+        execute_tool(self, "swarm_create_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and system_prompt must be non-empty".to_string(),
+                ));
+            }
+            // ABW agent names are slugs ([a-z0-9_], 3–64) — reject invalid
+            // names here so ABW's confusing 400 becomes a clear argument error
+            // (verified live 2026-08-13).
+            if let Err(e) = validate_agent_name(&req.agent_name) {
+                return Err(crate::error::map_local_swarm_error(e));
+            }
 
-                let card = build_create_agent_card(&req, &self.client.config().default_agent_model);
+            let card = build_create_agent_card(&req, &self.client.config().default_agent_model);
 
-                let data = self
-                    .client
-                    .post("/agents", &card)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+            let data = self
+                .client
+                .post("/agents", &card)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Sanitize the full response (KA-01): ABW may augment or regenerate
-                // the agent description and other text fields. `sanitize_workspace_payload`
-                // walks the entire payload — display fields become plain sanitized
-                // strings, model-consumed fields get the container. The operator-
-                // supplied system_prompt is echoed back but `sanitize_workspace_payload`
-                // treats it as a display field (plain string), which is correct.
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+            // Sanitize the full response (KA-01): ABW may augment or regenerate
+            // the agent description and other text fields. `sanitize_workspace_payload`
+            // walks the entire payload — display fields become plain sanitized
+            // strings, model-consumed fields get the container. The operator-
+            // supplied system_prompt is echoed back but `sanitize_workspace_payload`
+            // treats it as a display field (plain string), which is correct.
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -1079,140 +1015,136 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_swarm",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "name must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_create_swarm", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
 
-                // Create the workspace (free).
-                // ABW slugs allow only lowercase letters, digits, and underscores.
-                let slug_base: String = req
-                    .name
-                    .to_lowercase()
-                    .chars()
-                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                    .collect();
-                let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
-                let team = self
-                    .client
-                    .post(
-                        "/teams",
-                        &serde_json::json!({
-                            "name": req.name,
-                            "slug": slug,
-                            "description": req.mission,
-                            "mission": req.mission,
-                        }),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+            // Create the workspace (free).
+            // ABW slugs allow only lowercase letters, digits, and underscores.
+            let slug_base: String = req
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
+            let team = self
+                .client
+                .post(
+                    "/teams",
+                    &serde_json::json!({
+                        "name": req.name,
+                        "slug": slug,
+                        "description": req.mission,
+                        "mission": req.mission,
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                let workspace_id = team
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .map(str::to_string)
-                    .ok_or_else(|| {
-                        SwarmError::ApiVersionMismatch("team create returned no id".to_string())
-                            .into_tool_error()
-                    })?;
+            let workspace_id = team
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    SwarmError::ApiVersionMismatch("team create returned no id".to_string())
+                        .into_tool_error()
+                })?;
 
-                // Hire the requested agents, each gated by its own consent token.
-                // Each hire routes through `spend_gate::authorize_hire` +
-                // `complete_hire` — the same path `swarm_hire` uses — so the two
-                // cannot desync (the prior version copy-pasted `swarm_hire`'s
-                // re-verify + `/hire`→`/add` fallback body into this loop).
-                //
-                // `consume_cost = 0` (the two-phase consume pattern): the actual
-                // spend is not known until the ABW re-verify inside `authorize_hire`,
-                // so the consent store's over-spend guard cannot fire meaningfully;
-                // the store's single-use + scope checks still fire, and the real
-                // over-spend guard is `actual_cost > grant` inside `authorize_hire`,
-                // which refunds on failure. `budget = None` uses the token's own
-                // embedded ceiling (`swarm_create_swarm` has no per-agent caller
-                // budget — `CreateSwarmRequest` carries only tokens, not amounts).
-                let agents = req.agents.unwrap_or_default();
-                let tokens = req.consent_tokens.unwrap_or_default();
-                let session_token = req.session_token.as_deref().filter(|s| !s.is_empty());
-                // Exactly one auth source: a single session token funds all hires,
-                // or one consent token per agent. Both is ambiguous; neither is
-                // caught per-hire below (the existing "no consent token" path).
-                if session_token.is_some() && !tokens.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "provide either consent_tokens or session_token, not both".to_string(),
-                    ));
-                }
-                let mut hired = Vec::new();
-                let mut hire_errors = Vec::new();
-                for (ix, agent) in agents.iter().enumerate() {
-                    // One auth source per hire: a shared session token, or a
-                    // per-agent single-use consent token. The gate handles either.
-                    let spend_auth = match session_token {
-                        Some(st) => spend_gate::SpendAuth::Session(st),
-                        None => match tokens.get(ix) {
-                            Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
-                            None => {
-                                hire_errors.push(serde_json::json!({
-                                    "agent": agent,
-                                    "error": "no consent token provided for this hire",
-                                }));
-                                continue;
-                            }
-                        },
-                    };
-                    match spend_gate::authorize_hire(
+            // Hire the requested agents, each gated by its own consent token.
+            // Each hire routes through `spend_gate::authorize_hire` +
+            // `complete_hire` — the same path `swarm_hire` uses — so the two
+            // cannot desync (the prior version copy-pasted `swarm_hire`'s
+            // re-verify + `/hire`→`/add` fallback body into this loop).
+            //
+            // `consume_cost = 0` (the two-phase consume pattern): the actual
+            // spend is not known until the ABW re-verify inside `authorize_hire`,
+            // so the consent store's over-spend guard cannot fire meaningfully;
+            // the store's single-use + scope checks still fire, and the real
+            // over-spend guard is `actual_cost > grant` inside `authorize_hire`,
+            // which refunds on failure. `budget = None` uses the token's own
+            // embedded ceiling (`swarm_create_swarm` has no per-agent caller
+            // budget — `CreateSwarmRequest` carries only tokens, not amounts).
+            let agents = req.agents.unwrap_or_default();
+            let tokens = req.consent_tokens.unwrap_or_default();
+            let session_token = req.session_token.as_deref().filter(|s| !s.is_empty());
+            // Exactly one auth source: a single session token funds all hires,
+            // or one consent token per agent. Both is ambiguous; neither is
+            // caught per-hire below (the existing "no consent token" path).
+            if session_token.is_some() && !tokens.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "provide either consent_tokens or session_token, not both".to_string(),
+                ));
+            }
+            let mut hired = Vec::new();
+            let mut hire_errors = Vec::new();
+            for (ix, agent) in agents.iter().enumerate() {
+                // One auth source per hire: a shared session token, or a
+                // per-agent single-use consent token. The gate handles either.
+                let spend_auth = match session_token {
+                    Some(st) => spend_gate::SpendAuth::Session(st),
+                    None => match tokens.get(ix) {
+                        Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
+                        None => {
+                            hire_errors.push(serde_json::json!({
+                                "agent": agent,
+                                "error": "no consent token provided for this hire",
+                            }));
+                            continue;
+                        }
+                    },
+                };
+                match spend_gate::authorize_hire(
+                    &self.client,
+                    &self.consent,
+                    spend_auth,
+                    agent,
+                    0,
+                    None,
+                    false,
+                )
+                .await
+                {
+                    Ok(auth) => match spend_gate::complete_hire(
                         &self.client,
                         &self.consent,
-                        spend_auth,
+                        auth,
+                        &workspace_id,
                         agent,
-                        0,
-                        None,
                         false,
                     )
                     .await
                     {
-                        Ok(auth) => match spend_gate::complete_hire(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &workspace_id,
-                            agent,
-                            false,
-                        )
-                        .await
-                        {
-                            Ok(_) => hired.push(agent.clone()),
-                            Err(e) => hire_errors.push(serde_json::json!({
-                                "agent": agent,
-                                "error": e.to_string(),
-                            })),
-                        },
+                        Ok(_) => hired.push(agent.clone()),
                         Err(e) => hire_errors.push(serde_json::json!({
                             "agent": agent,
                             "error": e.to_string(),
                         })),
-                    }
+                    },
+                    Err(e) => hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": e.to_string(),
+                    })),
                 }
+            }
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "workspace_id": workspace_id,
-                        "name": req.name,
-                        "hired": hired,
-                        "hire_errors": hire_errors,
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "name": req.name,
+                    "hired": hired,
+                    "hire_errors": hire_errors,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1229,78 +1161,74 @@ impl SwarmServer {
         &self,
         parameters: Parameters<XamanRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_xaman",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.message.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "message must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_xaman", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.message.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "message must be non-empty".to_string(),
+                ));
+            }
 
-                // Consent gate: Xaman Ek is a third-party curator that reads user
-                // task content. Per the plan's §3.7, sending content to it requires
-                // explicit opt-in. The gate lives in `cloud_swarm::curator::authorize`
-                // (wraps `spend_gate::authorize_curate`); it returns `Some(auth)`
-                // when a token was consumed (refundable) or `None` when the
-                // operator has globally opted in (`curator_consent_default`).
-                //
-                // The refund invariant is structural: `CuratorSession` owns the
-                // `Option<DelegateAuthorization>` and refunds it on `Drop` unless
-                // `send` succeeds (which calls `disarm` internally). The prior
-                // inline ladder had four `auth.take().refund()` sites; the guard
-                // removes that footgun — a new failure path cannot forget the
-                // refund because `Drop` covers it.
-                let auth = cloud_swarm::curator::authorize(
+            // Consent gate: Xaman Ek is a third-party curator that reads user
+            // task content. Per the plan's §3.7, sending content to it requires
+            // explicit opt-in. The gate lives in `cloud_swarm::curator::authorize`
+            // (wraps `spend_gate::authorize_curate`); it returns `Some(auth)`
+            // when a token was consumed (refundable) or `None` when the
+            // operator has globally opted in (`curator_consent_default`).
+            //
+            // The refund invariant is structural: `CuratorSession` owns the
+            // `Option<DelegateAuthorization>` and refunds it on `Drop` unless
+            // `send` succeeds (which calls `disarm` internally). The prior
+            // inline ladder had four `auth.take().refund()` sites; the guard
+            // removes that footgun — a new failure path cannot forget the
+            // refund because `Drop` covers it.
+            let auth = cloud_swarm::curator::authorize(
+                &self.client,
+                &self.consent,
+                req.consent_token.as_deref(),
+            )?;
+
+            // Resolve or create the session. `CuratorSession::create` refunds
+            // the auth on construction failure; `resume` carries it for the
+            // send step.
+            let mut session = match req.session_id {
+                Some(id) => cloud_swarm::curator::CuratorSession::resume(
                     &self.client,
                     &self.consent,
-                    req.consent_token.as_deref(),
-                )?;
-
-                // Resolve or create the session. `CuratorSession::create` refunds
-                // the auth on construction failure; `resume` carries it for the
-                // send step.
-                let mut session = match req.session_id {
-                    Some(id) => cloud_swarm::curator::CuratorSession::resume(
+                    auth,
+                    id,
+                ),
+                None => {
+                    let session_type = req.session_type.unwrap_or_else(|| "free".to_string());
+                    cloud_swarm::curator::CuratorSession::create(
                         &self.client,
                         &self.consent,
                         auth,
-                        id,
-                    ),
-                    None => {
-                        let session_type = req.session_type.unwrap_or_else(|| "free".to_string());
-                        cloud_swarm::curator::CuratorSession::create(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &session_type,
-                        )
-                        .await?
-                    }
-                };
+                        &session_type,
+                    )
+                    .await?
+                }
+            };
 
-                let data = session.send(&req.message).await?;
-                let session_id = session.session_id().to_string();
-                // `session` drops here; `send` already disarmed it on success, so
-                // `Drop` is a no-op (the auth stays consumed).
+            let data = session.send(&req.message).await?;
+            let session_id = session.session_id().to_string();
+            // `session` drops here; `send` already disarmed it on success, so
+            // `Drop` is a no-op (the auth stays consumed).
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "session_id": session_id,
-                        "session_type": data.get("session_type"),
-                        "response": sanitize_abw_response(data.get("response")),
-                        "ready_to_create": data.get("ready_to_create"),
-                        "in_progress": data.get("in_progress"),
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "session_id": session_id,
+                    "session_type": data.get("session_type"),
+                    "response": sanitize_abw_response(data.get("response")),
+                    "ready_to_create": data.get("ready_to_create"),
+                    "in_progress": data.get("in_progress"),
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1312,59 +1240,55 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.session_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "session_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/xaman/sessions/{}/create-app",
-                            url_encode_segment(&req.session_id)
-                        ),
-                        &serde_json::json!({}),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+        execute_tool(self, "swarm_create_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.session_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "session_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/xaman/sessions/{}/create-app",
+                        url_encode_segment(&req.session_id)
+                    ),
+                    &serde_json::json!({}),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Rung 2 (Typing): validate port labels in the App manifest
-                // against the local PortRegistry. ABW composed the team — we
-                // check that every accepts/produces label in the manifest
-                // resolves to a registered type. Unresolved labels are
-                // "decorative" (the paper: labels that match nothing).
-                // Non-fatal: the app is already created by ABW, but the
-                // operator sees the warning so they can fix the team composition.
-                let unresolved_ports =
-                    validate_app_port_labels(&data, &self.local_registry.port_registry());
-                let mut response = sanitize_workspace_payload(data);
-                if !unresolved_ports.is_empty() {
-                    tracing::warn!(
-                        target: "hkask.swarm.create_app",
-                        session_id = %req.session_id,
-                        unresolved = ?unresolved_ports,
-                        "App manifest contains port labels that do not resolve to registered types"
+            // Rung 2 (Typing): validate port labels in the App manifest
+            // against the local PortRegistry. ABW composed the team — we
+            // check that every accepts/produces label in the manifest
+            // resolves to a registered type. Unresolved labels are
+            // "decorative" (the paper: labels that match nothing).
+            // Non-fatal: the app is already created by ABW, but the
+            // operator sees the warning so they can fix the team composition.
+            let unresolved_ports =
+                validate_app_port_labels(&data, &self.local_registry.port_registry());
+            let mut response = sanitize_workspace_payload(data);
+            if !unresolved_ports.is_empty() {
+                tracing::warn!(
+                    target: "hkask.swarm.create_app",
+                    session_id = %req.session_id,
+                    unresolved = ?unresolved_ports,
+                    "App manifest contains port labels that do not resolve to registered types"
+                );
+                if let serde_json::Value::Object(ref mut map) = response {
+                    map.insert(
+                        "port_validation_warnings".to_string(),
+                        serde_json::json!(unresolved_ports),
                     );
-                    if let serde_json::Value::Object(ref mut map) = response {
-                        map.insert(
-                            "port_validation_warnings".to_string(),
-                            serde_json::json!(unresolved_ports),
-                        );
-                    }
                 }
+            }
 
-                Ok(self.client.with_wallet(response).await)
-            },
-        )
+            Ok(self.client.with_wallet(response).await)
+        })
         .await
     }
 
@@ -1380,97 +1304,93 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fanout",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
+        execute_tool(self, "swarm_fanout", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            const MAX_FANOUT_ABW: usize = 10;
+            if req.delegations.len() > MAX_FANOUT_ABW {
+                return Err(McpToolError::invalid_argument(format!(
+                    "fanout cap is {MAX_FANOUT_ABW} agents, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            for entry in &req.delegations {
+                if entry.agent_name.trim().is_empty() || entry.task.trim().is_empty() {
+                    failed += 1;
+                    results.push(serde_json::json!({
+                        "agent_name": entry.agent_name,
+                        "ok": false,
+                        "error": "agent_name and task must be non-empty",
+                    }));
+                    continue;
                 }
-                if req.delegations.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "delegations must be non-empty".to_string(),
-                    ));
+                // Each delegation routes through the spend gate. A session
+                // token (from `swarm_authorize_session`) may be used in place
+                // of a single-use consent token; the gate handles both.
+                let delegated: Result<serde_json::Value, McpToolError> = async {
+                    let auth = spend_gate::authorize_delegate(
+                        &self.client,
+                        &self.consent,
+                        spend_gate::resolve_auth(
+                            entry.consent_token.as_deref(),
+                            entry.session_token.as_deref(),
+                        )?,
+                        &req.workspace_id,
+                        entry.credits_authorized,
+                    )?;
+                    spend_gate::complete_delegate(
+                        &self.client,
+                        &self.consent,
+                        auth,
+                        &req.workspace_id,
+                        &entry.agent_name,
+                        &entry.task,
+                    )
+                    .await
                 }
-                const MAX_FANOUT_ABW: usize = 10;
-                if req.delegations.len() > MAX_FANOUT_ABW {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "fanout cap is {MAX_FANOUT_ABW} agents, got {}",
-                        req.delegations.len()
-                    )));
-                }
-                let mut results = Vec::new();
-                let mut failed = 0usize;
-                for entry in &req.delegations {
-                    if entry.agent_name.trim().is_empty() || entry.task.trim().is_empty() {
+                .await;
+                match delegated {
+                    Ok(data) => {
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": true,
+                            "result": data,
+                        }));
+                    }
+                    Err(e) => {
                         failed += 1;
                         results.push(serde_json::json!({
                             "agent_name": entry.agent_name,
                             "ok": false,
-                            "error": "agent_name and task must be non-empty",
+                            "error": e.to_string(),
                         }));
-                        continue;
-                    }
-                    // Each delegation routes through the spend gate. A session
-                    // token (from `swarm_authorize_session`) may be used in place
-                    // of a single-use consent token; the gate handles both.
-                    let delegated: Result<serde_json::Value, McpToolError> = async {
-                        let auth = spend_gate::authorize_delegate(
-                            &self.client,
-                            &self.consent,
-                            spend_gate::resolve_auth(
-                                entry.consent_token.as_deref(),
-                                entry.session_token.as_deref(),
-                            )?,
-                            &req.workspace_id,
-                            entry.credits_authorized,
-                        )?;
-                        spend_gate::complete_delegate(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &req.workspace_id,
-                            &entry.agent_name,
-                            &entry.task,
-                        )
-                        .await
-                    }
-                    .await;
-                    match delegated {
-                        Ok(data) => {
-                            results.push(serde_json::json!({
-                                "agent_name": entry.agent_name,
-                                "ok": true,
-                                "result": data,
-                            }));
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            results.push(serde_json::json!({
-                                "agent_name": entry.agent_name,
-                                "ok": false,
-                                "error": e.to_string(),
-                            }));
-                        }
                     }
                 }
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "workspace_id": req.workspace_id,
-                        "results": results,
-                        "failed": failed,
-                        "succeeded": req.delegations.len() - failed,
-                    }))
-                    .await)
-            },
-        )
+            }
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": req.workspace_id,
+                    "results": results,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1488,38 +1408,34 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FireRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fire",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id and agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .delete(&format!(
-                        "/workspaces/{}/agents/{}",
-                        url_encode_segment(&req.workspace_id),
-                        url_encode_segment(&req.agent_name),
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "fired": req.agent_name,
-                        "workspace_id": req.workspace_id,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_fire", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .delete(&format!(
+                    "/workspaces/{}/agents/{}",
+                    url_encode_segment(&req.workspace_id),
+                    url_encode_segment(&req.agent_name),
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "fired": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1536,80 +1452,76 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_delete_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                // DELETE /agents/{id} accepts the agent_id (uuid for owned agents)
-                // and the agent_name (slug). If the direct delete 404s, the caller
-                // may have passed the slug while ABW keys the agent by uuid —
-                // resolve through the catalogue and retry with the id.
-                let data = match self
-                    .client
-                    .delete(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
-                    .await
-                {
-                    Ok(d) => Ok(d),
-                    Err(SwarmError::Unavailable(m)) if m.contains("404") => {
-                        tracing::info!(
-                            target: "hkask.mcp.swarm",
-                            agent = %req.agent_name,
-                            "direct agent delete 404 — resolving via catalogue"
-                        );
-                        let catalogue = self
-                            .client
-                            .get("/agents")
-                            .await
-                            .map_err(SwarmError::into_tool_error)?;
-                        let found_id =
-                            catalogue
-                                .get("agents")
-                                .and_then(|a| a.as_array())
-                                .and_then(|arr| {
-                                    arr.iter()
-                                        .find(|e| {
-                                            e.get("agent_id").and_then(|v| v.as_str())
-                                                == Some(req.agent_name.as_str())
-                                                || e.get("agent_name").and_then(|v| v.as_str())
-                                                    == Some(req.agent_name.as_str())
-                                        })
-                                        .and_then(|e| {
-                                            e.get("agent_id")
-                                                .and_then(|v| v.as_str())
-                                                .map(str::to_string)
-                                        })
-                                });
-                        let Some(found_id) = found_id else {
-                            return Err(McpToolError::not_found(format!(
-                                "agent '{}' not found",
-                                req.agent_name
-                            )));
-                        };
-                        self.client
-                            .delete(&format!("/agents/{}", url_encode_segment(&found_id)))
-                            .await
-                    }
-                    Err(e) => Err(e),
-                }
+        execute_tool(self, "swarm_delete_agent", async {
+            self.client
+                .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "deleted": req.agent_name,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // DELETE /agents/{id} accepts the agent_id (uuid for owned agents)
+            // and the agent_name (slug). If the direct delete 404s, the caller
+            // may have passed the slug while ABW keys the agent by uuid —
+            // resolve through the catalogue and retry with the id.
+            let data = match self
+                .client
+                .delete(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
+                .await
+            {
+                Ok(d) => Ok(d),
+                Err(SwarmError::Unavailable(m)) if m.contains("404") => {
+                    tracing::info!(
+                        target: "hkask.mcp.swarm",
+                        agent = %req.agent_name,
+                        "direct agent delete 404 — resolving via catalogue"
+                    );
+                    let catalogue = self
+                        .client
+                        .get("/agents")
+                        .await
+                        .map_err(SwarmError::into_tool_error)?;
+                    let found_id =
+                        catalogue
+                            .get("agents")
+                            .and_then(|a| a.as_array())
+                            .and_then(|arr| {
+                                arr.iter()
+                                    .find(|e| {
+                                        e.get("agent_id").and_then(|v| v.as_str())
+                                            == Some(req.agent_name.as_str())
+                                            || e.get("agent_name").and_then(|v| v.as_str())
+                                                == Some(req.agent_name.as_str())
+                                    })
+                                    .and_then(|e| {
+                                        e.get("agent_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(str::to_string)
+                                    })
+                            });
+                    let Some(found_id) = found_id else {
+                        return Err(McpToolError::not_found(format!(
+                            "agent '{}' not found",
+                            req.agent_name
+                        )));
+                    };
+                    self.client
+                        .delete(&format!("/agents/{}", url_encode_segment(&found_id)))
+                        .await
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "deleted": req.agent_name,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1626,33 +1538,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_delete_swarm",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .delete(&format!("/teams/{}", url_encode_segment(&req.workspace_id)))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "deleted_workspace": req.workspace_id,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_delete_swarm", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .delete(&format!("/teams/{}", url_encode_segment(&req.workspace_id)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "deleted_workspace": req.workspace_id,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1685,117 +1593,113 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SearchKnowledgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_search_knowledge",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                if req.query.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "query must be non-empty".to_string(),
-                    ));
-                }
-                let agent_segment = url_encode_segment(&req.agent_name);
-                let query_lower = req.query.to_lowercase();
-                let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+        execute_tool(self, "swarm_search_knowledge", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            if req.query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "query must be non-empty".to_string(),
+                ));
+            }
+            let agent_segment = url_encode_segment(&req.agent_name);
+            let query_lower = req.query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
 
-                // Fetch semantic rules — the consolidated knowledge fragments
-                // produced by the dreaming/consolidation loop. These are the
-                // closest thing to "knowledge fragments" in fermi's KG.
-                let rules_path = format!("/agents/{agent_segment}/kg/rules");
-                let rules_data = self
-                    .client
-                    .request(
-                        reqwest::Method::GET,
-                        &rules_path,
-                        &[("active_only", "true")],
-                        None,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+            // Fetch semantic rules — the consolidated knowledge fragments
+            // produced by the dreaming/consolidation loop. These are the
+            // closest thing to "knowledge fragments" in fermi's KG.
+            let rules_path = format!("/agents/{agent_segment}/kg/rules");
+            let rules_data = self
+                .client
+                .request(
+                    reqwest::Method::GET,
+                    &rules_path,
+                    &[("active_only", "true")],
+                    None,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Fetch entities — the named nodes in the knowledge graph.
-                let entities_path = format!("/agents/{agent_segment}/kg/entities");
-                let entities_data = self
-                    .client
-                    .request(reqwest::Method::GET, &entities_path, &[], None)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
+            // Fetch entities — the named nodes in the knowledge graph.
+            let entities_path = format!("/agents/{agent_segment}/kg/entities");
+            let entities_data = self
+                .client
+                .request(reqwest::Method::GET, &entities_path, &[], None)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
 
-                // Client-side text matching: a fragment matches if any query
-                // term appears in its text fields (case-insensitive substring).
-                // This is a fallback for the missing server-side vector search;
-                // it is not semantic, but it surfaces relevant fragments.
-                let matches_any = |text: &str| {
-                    let text_lower = text.to_lowercase();
-                    query_terms.iter().any(|term| text_lower.contains(term))
-                };
+            // Client-side text matching: a fragment matches if any query
+            // term appears in its text fields (case-insensitive substring).
+            // This is a fallback for the missing server-side vector search;
+            // it is not semantic, but it surfaces relevant fragments.
+            let matches_any = |text: &str| {
+                let text_lower = text.to_lowercase();
+                query_terms.iter().any(|term| text_lower.contains(term))
+            };
 
-                let mut matching_rules: Vec<serde_json::Value> = Vec::new();
-                if let Some(rules) = rules_data.get("rules").and_then(|r| r.as_array()) {
-                    for rule in rules {
-                        let content = rule
-                            .get("rule_content")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let description = rule
-                            .get("rule_description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if matches_any(content) || matches_any(description) {
-                            matching_rules.push(rule.clone());
-                        }
+            let mut matching_rules: Vec<serde_json::Value> = Vec::new();
+            if let Some(rules) = rules_data.get("rules").and_then(|r| r.as_array()) {
+                for rule in rules {
+                    let content = rule
+                        .get("rule_content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let description = rule
+                        .get("rule_description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if matches_any(content) || matches_any(description) {
+                        matching_rules.push(rule.clone());
                     }
                 }
+            }
 
-                let mut matching_entities: Vec<serde_json::Value> = Vec::new();
-                if let Some(entities) = entities_data.get("entities").and_then(|e| e.as_array()) {
-                    for entity in entities {
-                        let name = entity
-                            .get("entity_name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let summary = entity.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-                        if matches_any(name) || matches_any(summary) {
-                            matching_entities.push(entity.clone());
-                        }
+            let mut matching_entities: Vec<serde_json::Value> = Vec::new();
+            if let Some(entities) = entities_data.get("entities").and_then(|e| e.as_array()) {
+                for entity in entities {
+                    let name = entity
+                        .get("entity_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let summary = entity.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    if matches_any(name) || matches_any(summary) {
+                        matching_entities.push(entity.clone());
                     }
                 }
+            }
 
-                let total_rules = rules_data
-                    .get("total")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let total_entities = entities_data
-                    .get("total")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+            let total_rules = rules_data
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let total_entities = entities_data
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
 
-                let result = serde_json::json!({
-                    "agent_id": req.agent_name,
-                    "query": req.query,
-                    "matching_rules": matching_rules,
-                    "matching_entities": matching_entities,
-                    "match_count": matching_rules.len() + matching_entities.len(),
-                    "searched_rules": total_rules,
-                    "searched_entities": total_entities,
-                    "search_method": "client_side_text_match",
-                    "note": "fermi does not expose a vector-search HTTP endpoint; \
-                             this tool fetches the KG rules + entities and matches \
-                             client-side. Switch to server-side vector search when \
-                             fermi adds the route.",
-                });
-                Ok(self.client.with_wallet(result).await)
-            },
-        )
+            let result = serde_json::json!({
+                "agent_id": req.agent_name,
+                "query": req.query,
+                "matching_rules": matching_rules,
+                "matching_entities": matching_entities,
+                "match_count": matching_rules.len() + matching_entities.len(),
+                "searched_rules": total_rules,
+                "searched_entities": total_entities,
+                "search_method": "client_side_text_match",
+                "note": "fermi does not expose a vector-search HTTP endpoint; \
+                         this tool fetches the KG rules + entities and matches \
+                         client-side. Switch to server-side vector search when \
+                         fermi adds the route.",
+            });
+            Ok(self.client.with_wallet(result).await)
+        })
         .await
     }
 
@@ -1809,30 +1713,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishChecksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_publish_checks",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/agents/{}/publish-checks",
-                        url_encode_segment(&req.agent_name)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self.client.with_wallet(data).await)
-            },
-        )
+        execute_tool(self, "swarm_publish_checks", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/agents/{}/publish-checks",
+                    url_encode_segment(&req.agent_name)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self.client.with_wallet(data).await)
+        })
         .await
     }
 
@@ -1847,48 +1747,44 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_publish_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let force = req.force.unwrap_or(false);
-                let reason = req.reason.unwrap_or_default();
-                if force && reason.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "reason is required when force is true (audited to admin_bypass_events)"
-                            .to_string(),
-                    ));
-                }
-                let path = format!("/agents/{}/publish", url_encode_segment(&req.agent_name));
-                let query: Vec<(&str, &str)> = if force {
-                    vec![("force", "true"), ("reason", reason.as_str())]
-                } else {
-                    Vec::new()
-                };
-                let data = self
-                    .client
-                    .request(reqwest::Method::POST, &path, &query, None)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "published": req.agent_name,
-                        "force_used": force,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_publish_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let force = req.force.unwrap_or(false);
+            let reason = req.reason.unwrap_or_default();
+            if force && reason.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "reason is required when force is true (audited to admin_bypass_events)"
+                        .to_string(),
+                ));
+            }
+            let path = format!("/agents/{}/publish", url_encode_segment(&req.agent_name));
+            let query: Vec<(&str, &str)> = if force {
+                vec![("force", "true"), ("reason", reason.as_str())]
+            } else {
+                Vec::new()
+            };
+            let data = self
+                .client
+                .request(reqwest::Method::POST, &path, &query, None)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "published": req.agent_name,
+                    "force_used": force,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1916,40 +1812,36 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fork_agent",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let payload = serde_json::json!({
-                    "include_ontology": req.include_ontology.unwrap_or(false),
-                    "include_embeddings": req.include_embeddings.unwrap_or(false),
-                });
-                let data = self
-                    .client
-                    .post(
-                        &format!("/agents/{}/fork", url_encode_segment(&req.agent_name)),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "forked_from": req.agent_name,
-                        "result": data,
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_fork_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let payload = serde_json::json!({
+                "include_ontology": req.include_ontology.unwrap_or(false),
+                "include_embeddings": req.include_embeddings.unwrap_or(false),
+            });
+            let data = self
+                .client
+                .post(
+                    &format!("/agents/{}/fork", url_encode_segment(&req.agent_name)),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "forked_from": req.agent_name,
+                    "result": data,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1968,30 +1860,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_get_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!("/apps/{}", url_encode_segment(&req.slug)))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_get_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!("/apps/{}", url_encode_segment(&req.slug)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2005,67 +1893,63 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAppDirectRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_app_direct",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({
-                    "slug": req.slug,
-                });
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.name {
-                    obj.insert("name".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.tagline {
-                    obj.insert("tagline".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.description {
-                    obj.insert("description".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.homepage_url {
-                    obj.insert("homepage_url".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.icon_url {
-                    obj.insert("icon_url".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.composition_slug {
-                    obj.insert("composition_slug".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.schema_slug {
-                    obj.insert("schema_slug".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.schema_json {
-                    obj.insert("schema_json".into(), v);
-                }
-                if let Some(v) = req.workspace_template {
-                    obj.insert("workspace_template".into(), v);
-                }
-                if let Some(v) = req.metadata {
-                    obj.insert("metadata".into(), v);
-                }
-                if let Some(v) = req.visibility {
-                    obj.insert("visibility".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post("/apps", &payload)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_create_app_direct", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({
+                "slug": req.slug,
+            });
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.name {
+                obj.insert("name".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.tagline {
+                obj.insert("tagline".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.description {
+                obj.insert("description".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.homepage_url {
+                obj.insert("homepage_url".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.icon_url {
+                obj.insert("icon_url".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.composition_slug {
+                obj.insert("composition_slug".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.schema_slug {
+                obj.insert("schema_slug".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.schema_json {
+                obj.insert("schema_json".into(), v);
+            }
+            if let Some(v) = req.workspace_template {
+                obj.insert("workspace_template".into(), v);
+            }
+            if let Some(v) = req.metadata {
+                obj.insert("metadata".into(), v);
+            }
+            if let Some(v) = req.visibility {
+                obj.insert("visibility".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post("/apps", &payload)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2077,70 +1961,66 @@ impl SwarmServer {
         &self,
         parameters: Parameters<UpdateAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_update_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({});
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.name {
-                    obj.insert("name".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.tagline {
-                    obj.insert("tagline".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.homepage_url {
-                    obj.insert("homepage_url".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.icon_url {
-                    obj.insert("icon_url".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.composition_slug {
-                    obj.insert("composition_slug".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.schema_slug {
-                    obj.insert("schema_slug".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.schema_json {
-                    obj.insert("schema_json".into(), v);
-                }
-                if let Some(v) = req.workspace_template {
-                    obj.insert("workspace_template".into(), v);
-                }
-                if let Some(v) = req.description {
-                    obj.insert("description".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.metadata {
-                    obj.insert("metadata".into(), v);
-                }
-                if let Some(v) = req.visibility {
-                    obj.insert("visibility".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .request(
-                        reqwest::Method::PUT,
-                        &format!("/apps/{}", url_encode_segment(&req.slug)),
-                        &[],
-                        Some(&payload),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_update_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({});
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.name {
+                obj.insert("name".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.tagline {
+                obj.insert("tagline".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.homepage_url {
+                obj.insert("homepage_url".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.icon_url {
+                obj.insert("icon_url".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.composition_slug {
+                obj.insert("composition_slug".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.schema_slug {
+                obj.insert("schema_slug".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.schema_json {
+                obj.insert("schema_json".into(), v);
+            }
+            if let Some(v) = req.workspace_template {
+                obj.insert("workspace_template".into(), v);
+            }
+            if let Some(v) = req.description {
+                obj.insert("description".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.metadata {
+                obj.insert("metadata".into(), v);
+            }
+            if let Some(v) = req.visibility {
+                obj.insert("visibility".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .request(
+                    reqwest::Method::PUT,
+                    &format!("/apps/{}", url_encode_segment(&req.slug)),
+                    &[],
+                    Some(&payload),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2153,36 +2033,32 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_publish_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!("/apps/{}/publish", url_encode_segment(&req.slug)),
-                        &serde_json::json!({}),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "published": req.slug,
-                        "result": sanitize_workspace_payload(data),
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_publish_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!("/apps/{}/publish", url_encode_segment(&req.slug)),
+                    &serde_json::json!({}),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "published": req.slug,
+                    "result": sanitize_workspace_payload(data),
+                }))
+                .await)
+        })
         .await
     }
 
@@ -2195,36 +2071,32 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ArchiveAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_archive_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!("/apps/{}/archive", url_encode_segment(&req.slug)),
-                        &serde_json::json!({}),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "archived": req.slug,
-                        "result": sanitize_workspace_payload(data),
-                    }))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_archive_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!("/apps/{}/archive", url_encode_segment(&req.slug)),
+                    &serde_json::json!({}),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "archived": req.slug,
+                    "result": sanitize_workspace_payload(data),
+                }))
+                .await)
+        })
         .await
     }
 
@@ -2237,53 +2109,49 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SpawnAppWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_spawn_app_workspace",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({});
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.name {
-                    obj.insert("name".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.description {
-                    obj.insert("description".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.extra_budget {
-                    obj.insert("extra_budget".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.auto_hire_override {
-                    obj.insert("auto_hire_override".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.params {
-                    obj.insert("params".into(), v);
-                }
-                if let Some(v) = req.depends_on {
-                    obj.insert("depends_on".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!("/apps/{}/workspaces", url_encode_segment(&req.slug)),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_spawn_app_workspace", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({});
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.name {
+                obj.insert("name".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.description {
+                obj.insert("description".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.extra_budget {
+                obj.insert("extra_budget".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.auto_hire_override {
+                obj.insert("auto_hire_override".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.params {
+                obj.insert("params".into(), v);
+            }
+            if let Some(v) = req.depends_on {
+                obj.insert("depends_on".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!("/apps/{}/workspaces", url_encode_segment(&req.slug)),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2295,33 +2163,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAppWorkspacesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_list_app_workspaces",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/apps/{}/workspaces",
-                        url_encode_segment(&req.slug)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_list_app_workspaces", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/apps/{}/workspaces",
+                    url_encode_segment(&req.slug)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2333,30 +2197,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAppSchemaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_get_app_schema",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.slug.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "slug must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!("/apps/{}/schema", url_encode_segment(&req.slug)))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_get_app_schema", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.slug.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!("/apps/{}/schema", url_encode_segment(&req.slug)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2370,36 +2230,32 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkWorkspaceToAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fork_workspace_to_app",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/fork-to-app",
-                            url_encode_segment(&req.workspace_id)
-                        ),
-                        &serde_json::json!({}),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_fork_workspace_to_app", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/fork-to-app",
+                        url_encode_segment(&req.workspace_id)
+                    ),
+                    &serde_json::json!({}),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2418,33 +2274,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListWorkspaceActionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_list_actions",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/actions",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_list_actions", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/actions",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2457,33 +2309,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListPendingActionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_pending_actions",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/actions/pending",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_pending_actions", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/actions/pending",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2497,64 +2345,60 @@ impl SwarmServer {
         &self,
         parameters: Parameters<MutateDocumentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_mutate_document",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.path.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "path must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({
-                    "path": req.path,
-                    "patch": req.patch,
-                });
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.app_schema {
-                    obj.insert("app_schema".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.rationale {
-                    obj.insert("rationale".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.confirmation {
-                    obj.insert("confirmation".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.force_ask {
-                    obj.insert("force_ask".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.content {
-                    obj.insert("content".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.source_message_id {
-                    obj.insert("source_message_id".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/actions/mutate_document",
-                            url_encode_segment(&req.workspace_id)
-                        ),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_mutate_document", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.path.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "path must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({
+                "path": req.path,
+                "patch": req.patch,
+            });
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.app_schema {
+                obj.insert("app_schema".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.rationale {
+                obj.insert("rationale".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.confirmation {
+                obj.insert("confirmation".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.force_ask {
+                obj.insert("force_ask".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.content {
+                obj.insert("content".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.source_message_id {
+                obj.insert("source_message_id".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/actions/mutate_document",
+                        url_encode_segment(&req.workspace_id)
+                    ),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2567,58 +2411,54 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkStateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_fork_state",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "name must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({
-                    "name": req.name,
-                    "patch": req.patch,
-                });
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.app_schema {
-                    obj.insert("app_schema".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.from {
-                    obj.insert("from".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.hypothesis {
-                    obj.insert("hypothesis".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.source_message_id {
-                    obj.insert("source_message_id".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/actions/fork_state",
-                            url_encode_segment(&req.workspace_id)
-                        ),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_fork_state", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({
+                "name": req.name,
+                "patch": req.patch,
+            });
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.app_schema {
+                obj.insert("app_schema".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.from {
+                obj.insert("from".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.hypothesis {
+                obj.insert("hypothesis".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.source_message_id {
+                obj.insert("source_message_id".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/actions/fork_state",
+                        url_encode_segment(&req.workspace_id)
+                    ),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2630,50 +2470,46 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AcceptActionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_accept_action",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.action_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "action_id must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({});
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.content {
-                    obj.insert("content".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.apply_result {
-                    obj.insert("apply_result".into(), v);
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/actions/{}/accept",
-                            url_encode_segment(&req.workspace_id),
-                            url_encode_segment(&req.action_id)
-                        ),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_accept_action", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.action_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "action_id must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({});
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.content {
+                obj.insert("content".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.apply_result {
+                obj.insert("apply_result".into(), v);
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/actions/{}/accept",
+                        url_encode_segment(&req.workspace_id),
+                        url_encode_segment(&req.action_id)
+                    ),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2685,47 +2521,43 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RejectActionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_reject_action",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.action_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "action_id must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({});
-                if let Some(v) = req.note {
-                    let obj = payload.as_object_mut().expect("just constructed object");
-                    obj.insert("note".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/actions/{}/reject",
-                            url_encode_segment(&req.workspace_id),
-                            url_encode_segment(&req.action_id)
-                        ),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_reject_action", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.action_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "action_id must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({});
+            if let Some(v) = req.note {
+                let obj = payload.as_object_mut().expect("just constructed object");
+                obj.insert("note".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/actions/{}/reject",
+                        url_encode_segment(&req.workspace_id),
+                        url_encode_segment(&req.action_id)
+                    ),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2738,59 +2570,55 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AnnotateWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_annotate",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.kind.trim().is_empty()
-                    || req.target.trim().is_empty()
-                    || req.body.trim().is_empty()
-                {
-                    return Err(McpToolError::invalid_argument(
-                        "kind, target, and body must be non-empty".to_string(),
-                    ));
-                }
-                let mut payload = serde_json::json!({
-                    "kind": req.kind,
-                    "target": req.target,
-                    "body": req.body,
-                });
-                let obj = payload.as_object_mut().expect("just constructed object");
-                if let Some(v) = req.app_schema {
-                    obj.insert("app_schema".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.severity {
-                    obj.insert("severity".into(), serde_json::json!(v));
-                }
-                if let Some(v) = req.source_message_id {
-                    obj.insert("source_message_id".into(), serde_json::json!(v));
-                }
-                let data = self
-                    .client
-                    .post(
-                        &format!(
-                            "/workspaces/{}/actions/annotate",
-                            url_encode_segment(&req.workspace_id)
-                        ),
-                        &payload,
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_annotate", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.kind.trim().is_empty()
+                || req.target.trim().is_empty()
+                || req.body.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "kind, target, and body must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({
+                "kind": req.kind,
+                "target": req.target,
+                "body": req.body,
+            });
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.app_schema {
+                obj.insert("app_schema".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.severity {
+                obj.insert("severity".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.source_message_id {
+                obj.insert("source_message_id".into(), serde_json::json!(v));
+            }
+            let data = self
+                .client
+                .post(
+                    &format!(
+                        "/workspaces/{}/actions/annotate",
+                        url_encode_segment(&req.workspace_id)
+                    ),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2802,33 +2630,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAnnotationsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_list_annotations",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/annotations",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_list_annotations", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/annotations",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2846,33 +2670,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListWorkspaceFilesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_list_files",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/files",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_list_files", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/files",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2884,39 +2704,35 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ReadWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_read_file",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.path.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "path must be non-empty".to_string(),
-                    ));
-                }
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}/files/{}",
-                        url_encode_segment(&req.workspace_id),
-                        req.path
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_read_file", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.path.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "path must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/files/{}",
+                    url_encode_segment(&req.workspace_id),
+                    req.path
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 
@@ -2930,47 +2746,43 @@ impl SwarmServer {
         &self,
         parameters: Parameters<WriteWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_workspace_write_file",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.path.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "path must be non-empty".to_string(),
-                    ));
-                }
-                let payload = serde_json::json!({
-                    "content": req.content,
-                });
-                let data = self
-                    .client
-                    .request(
-                        reqwest::Method::PUT,
-                        &format!(
-                            "/workspaces/{}/files/{}",
-                            url_encode_segment(&req.workspace_id),
-                            req.path
-                        ),
-                        &[],
-                        Some(&payload),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
-            },
-        )
+        execute_tool(self, "swarm_workspace_write_file", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.path.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "path must be non-empty".to_string(),
+                ));
+            }
+            let payload = serde_json::json!({
+                "content": req.content,
+            });
+            let data = self
+                .client
+                .request(
+                    reqwest::Method::PUT,
+                    &format!(
+                        "/workspaces/{}/files/{}",
+                        url_encode_segment(&req.workspace_id),
+                        req.path
+                    ),
+                    &[],
+                    Some(&payload),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
+        })
         .await
     }
 }

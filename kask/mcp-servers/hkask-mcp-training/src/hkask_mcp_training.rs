@@ -302,7 +302,6 @@ impl TrainingServer {
             + Self::validate_router()
             + Self::rollout_bridge_router()
     }
-
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]

@@ -134,38 +134,33 @@ impl crate::CorpusServer {
         &self,
         Parameters(params): Parameters<ComposeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_compose",
-            async {
-                let gen_model = generation_model();
-                let config =
-                    resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
+        execute_tool(self, "corpus_compose", async {
+            let gen_model = generation_model();
+            let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
-                let inference_ctx =
-                    InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
+            let inference_ctx =
+                InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
 
-                let request = crate::compose::ComposeRequest {
-                    prompt: params.prompt,
-                    db_path: PathBuf::from(&params.db_path),
-                    db_passphrase: params.passphrase,
-                    cognition: config,
-                    inference_ctx,
-                    no_validate: params.no_validate,
-                };
+            let request = crate::compose::ComposeRequest {
+                prompt: params.prompt,
+                db_path: PathBuf::from(&params.db_path),
+                db_passphrase: params.passphrase,
+                cognition: config,
+                inference_ctx,
+                no_validate: params.no_validate,
+            };
 
-                let result = crate::compose::ComposeService::compose(request)
-                    .await
-                    .map_err(|e| map_service_error(e, "Compose failed"))?;
+            let result = crate::compose::ComposeService::compose(request)
+                .await
+                .map_err(|e| map_service_error(e, "Compose failed"))?;
 
-                Ok(json!({
-                    "prose": result.generated_prose,
-                    "exemplar_count": result.exemplar_count,
-                    "centroid_distance": result.validation.as_ref().map(|v| v.distance),
-                    "style_passed": result.validation.map(|v| v.passed),
-                }))
-            },
-        )
+            Ok(json!({
+                "prose": result.generated_prose,
+                "exemplar_count": result.exemplar_count,
+                "centroid_distance": result.validation.as_ref().map(|v| v.distance),
+                "style_passed": result.validation.map(|v| v.passed),
+            }))
+        })
         .await
     }
 

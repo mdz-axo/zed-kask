@@ -49,190 +49,179 @@ impl TrainingServer {
         &self,
         parameters: Parameters<BridgeRolloutsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "training_bridge_rollouts",
-            async {
-                let req = parameters.0;
-                let mode = req.mode.as_deref().unwrap_or("both");
-                if !matches!(mode, "sft" | "preference" | "both") {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "mode must be 'sft', 'preference', or 'both'; got '{mode}'"
-                    )));
-                }
-                let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        hkask_types::agent_paths::resolve_under_data_dir(
-                            &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
-                        )
-                        .to_string_lossy()
-                        .to_string()
-                    });
-                if !std::path::Path::new(&events_path).exists() {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "event store not found at '{events_path}' — run the rollout harness \
-                         (swarm_eval_agent_local) first"
-                    )));
-                }
-                let manager = r2d2_sqlite::SqliteConnectionManager::file(&events_path)
-                    .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
-                let pool = r2d2::Pool::builder()
-                    .max_size(2)
-                    .build(manager)
-                    .map_err(|e| {
-                        McpToolError::internal(format!("failed to open event store: {e}"))
-                    })?;
-                let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
-                    std::sync::Arc::new(SqliteDriver::new(pool));
-                let store = hkask_event_store::EventStore::from_driver(driver).map_err(|e| {
-                    McpToolError::internal(format!("failed to init event store: {e}"))
-                })?;
-
-                // Read verdicts (the labels) and the rollout grouping.
-                let limit = req.limit.unwrap_or(1000);
-                let verdicts = store
-                    .query(&hkask_event_store::EventFilter {
-                        kind: Some("verdict".to_string()),
-                        limit: Some(limit),
-                        ..hkask_event_store::EventFilter::default()
-                    })
-                    .map_err(|e| {
-                        McpToolError::internal(format!("event store query failed: {e}"))
-                    })?;
-
-                // Group verdicts by task (harness runs stamp task_index on the
-                // verdict payload). A rollout is usable when its verdict names
-                // a harness task — the bridge pairs by (harness_run_id, task_index).
-                let mut by_task: std::collections::BTreeMap<(String, i64), TaskRollouts> =
-                    std::collections::BTreeMap::new();
-                for event in &verdicts {
-                    let Some(harness_run_id) =
-                        event.payload.get("harness_run_id").and_then(|v| v.as_str())
-                    else {
-                        continue;
-                    };
-                    let Some(task_index) = event.payload.get("task_index").and_then(|v| v.as_i64())
-                    else {
-                        continue;
-                    };
-                    if let Some(agent) = &req.agent_name
-                        && !event
-                            .rollout_id
-                            .starts_with(&format!("delegation-{agent}-"))
-                    {
-                        continue;
-                    }
-                    let passed = event
-                        .payload
-                        .get("pass")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let entry = by_task
-                        .entry((harness_run_id.to_string(), task_index))
-                        .or_default();
-                    if passed {
-                        entry.passed.push(event.rollout_id.clone());
-                    } else {
-                        entry.failed.push(event.rollout_id.clone());
-                    }
-                }
-
-                // Fetch the bodies: one query per rollout group, keyed by
-                // rollout id. The FINAL model_request of a rollout carries
-                // the terminal request/response pair — the training example.
-                // Rollouts without bodies (captured before body retention
-                // landed, or dropped captures) are skipped and COUNTED —
-                // never fabricated, never silently omitted.
-                let mut rollout_bodies: std::collections::HashMap<String, (String, String)> =
-                    std::collections::HashMap::new();
-                for event in store
-                    .query(&hkask_event_store::EventFilter {
-                        kind: Some("model_request".to_string()),
-                        limit: Some(limit * 8),
-                        ..hkask_event_store::EventFilter::default()
-                    })
-                    .map_err(|e| McpToolError::internal(format!("event store query failed: {e}")))?
-                {
-                    let request_body = event
-                        .payload
-                        .get("request_body")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let response_body = event
-                        .payload
-                        .get("response_body")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if response_body.is_empty() {
-                        continue;
-                    }
-                    // Later positions overwrite earlier ones — the LAST
-                    // model_request of a rollout is the terminal exchange.
-                    rollout_bodies.insert(
-                        event.rollout_id.clone(),
-                        (request_body.to_string(), response_body.to_string()),
-                    );
-                }
-
-                // Emit the datasets. The line construction is pure (no I/O) so it
-                // lives in `build_dataset_lines`, which the tests exercise directly
-                // — the pairing invariants are pinned there.
-                let (sft_lines, preference_lines, skipped_no_bodies) =
-                    build_dataset_lines(&by_task, &rollout_bodies, mode);
-
-                let output = contain_for_write(&req.output_path)?;
-                let mut written = serde_json::Map::new();
-                if mode == "sft" || mode == "both" {
-                    let sft_path = output.with_extension("sft.jsonl");
-                    std::fs::write(&sft_path, sft_lines.join("\n") + "\n").map_err(|e| {
-                        hkask_mcp_server::map_io_error(
-                            e,
-                            &format!("Failed to write SFT dataset '{}'", sft_path.display()),
-                        )
-                    })?;
-                    written.insert(
-                        "sft_path".into(),
-                        serde_json::json!(sft_path.display().to_string()),
-                    );
-                    written.insert("sft_examples".into(), serde_json::json!(sft_lines.len()));
-                }
-                if mode == "preference" || mode == "both" {
-                    let pref_path = output.with_extension("preference.jsonl");
-                    std::fs::write(&pref_path, preference_lines.join("\n") + "\n").map_err(
-                        |e| {
-                            hkask_mcp_server::map_io_error(
-                                e,
-                                &format!(
-                                    "Failed to write preference dataset '{}'",
-                                    pref_path.display()
-                                ),
-                            )
-                        },
-                    )?;
-                    written.insert(
-                        "preference_path".into(),
-                        serde_json::json!(pref_path.display().to_string()),
-                    );
-                    written.insert(
-                        "preference_examples".into(),
-                        serde_json::json!(preference_lines.len()),
-                    );
-                }
-                let mut report = serde_json::json!({
-                    "mode": mode,
-                    "events_path": events_path,
-                    "verdicts_read": verdicts.len(),
-                    "tasks_with_verdicts": by_task.len(),
-                    "skipped_no_bodies": skipped_no_bodies,
+        execute_tool(self, "training_bridge_rollouts", async {
+            let req = parameters.0;
+            let mode = req.mode.as_deref().unwrap_or("both");
+            if !matches!(mode, "sft" | "preference" | "both") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "mode must be 'sft', 'preference', or 'both'; got '{mode}'"
+                )));
+            }
+            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| {
+                    hkask_types::agent_paths::resolve_under_data_dir(
+                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
+                    )
+                    .to_string_lossy()
+                    .to_string()
                 });
-                if let serde_json::Value::Object(map) = &mut report {
-                    map.extend(written);
+            if !std::path::Path::new(&events_path).exists() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "event store not found at '{events_path}' — run the rollout harness \
+                         (swarm_eval_agent_local) first"
+                )));
+            }
+            let manager = r2d2_sqlite::SqliteConnectionManager::file(&events_path)
+                .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
+            let pool = r2d2::Pool::builder()
+                .max_size(2)
+                .build(manager)
+                .map_err(|e| McpToolError::internal(format!("failed to open event store: {e}")))?;
+            let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
+                std::sync::Arc::new(SqliteDriver::new(pool));
+            let store = hkask_event_store::EventStore::from_driver(driver)
+                .map_err(|e| McpToolError::internal(format!("failed to init event store: {e}")))?;
+
+            // Read verdicts (the labels) and the rollout grouping.
+            let limit = req.limit.unwrap_or(1000);
+            let verdicts = store
+                .query(&hkask_event_store::EventFilter {
+                    kind: Some("verdict".to_string()),
+                    limit: Some(limit),
+                    ..hkask_event_store::EventFilter::default()
+                })
+                .map_err(|e| McpToolError::internal(format!("event store query failed: {e}")))?;
+
+            // Group verdicts by task (harness runs stamp task_index on the
+            // verdict payload). A rollout is usable when its verdict names
+            // a harness task — the bridge pairs by (harness_run_id, task_index).
+            let mut by_task: std::collections::BTreeMap<(String, i64), TaskRollouts> =
+                std::collections::BTreeMap::new();
+            for event in &verdicts {
+                let Some(harness_run_id) =
+                    event.payload.get("harness_run_id").and_then(|v| v.as_str())
+                else {
+                    continue;
+                };
+                let Some(task_index) = event.payload.get("task_index").and_then(|v| v.as_i64())
+                else {
+                    continue;
+                };
+                if let Some(agent) = &req.agent_name
+                    && !event
+                        .rollout_id
+                        .starts_with(&format!("delegation-{agent}-"))
+                {
+                    continue;
                 }
-                Ok(report)
-            },
-        )
+                let passed = event
+                    .payload
+                    .get("pass")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let entry = by_task
+                    .entry((harness_run_id.to_string(), task_index))
+                    .or_default();
+                if passed {
+                    entry.passed.push(event.rollout_id.clone());
+                } else {
+                    entry.failed.push(event.rollout_id.clone());
+                }
+            }
+
+            // Fetch the bodies: one query per rollout group, keyed by
+            // rollout id. The FINAL model_request of a rollout carries
+            // the terminal request/response pair — the training example.
+            // Rollouts without bodies (captured before body retention
+            // landed, or dropped captures) are skipped and COUNTED —
+            // never fabricated, never silently omitted.
+            let mut rollout_bodies: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
+            for event in store
+                .query(&hkask_event_store::EventFilter {
+                    kind: Some("model_request".to_string()),
+                    limit: Some(limit * 8),
+                    ..hkask_event_store::EventFilter::default()
+                })
+                .map_err(|e| McpToolError::internal(format!("event store query failed: {e}")))?
+            {
+                let request_body = event
+                    .payload
+                    .get("request_body")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let response_body = event
+                    .payload
+                    .get("response_body")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if response_body.is_empty() {
+                    continue;
+                }
+                // Later positions overwrite earlier ones — the LAST
+                // model_request of a rollout is the terminal exchange.
+                rollout_bodies.insert(
+                    event.rollout_id.clone(),
+                    (request_body.to_string(), response_body.to_string()),
+                );
+            }
+
+            // Emit the datasets. The line construction is pure (no I/O) so it
+            // lives in `build_dataset_lines`, which the tests exercise directly
+            // — the pairing invariants are pinned there.
+            let (sft_lines, preference_lines, skipped_no_bodies) =
+                build_dataset_lines(&by_task, &rollout_bodies, mode);
+
+            let output = contain_for_write(&req.output_path)?;
+            let mut written = serde_json::Map::new();
+            if mode == "sft" || mode == "both" {
+                let sft_path = output.with_extension("sft.jsonl");
+                std::fs::write(&sft_path, sft_lines.join("\n") + "\n").map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("Failed to write SFT dataset '{}'", sft_path.display()),
+                    )
+                })?;
+                written.insert(
+                    "sft_path".into(),
+                    serde_json::json!(sft_path.display().to_string()),
+                );
+                written.insert("sft_examples".into(), serde_json::json!(sft_lines.len()));
+            }
+            if mode == "preference" || mode == "both" {
+                let pref_path = output.with_extension("preference.jsonl");
+                std::fs::write(&pref_path, preference_lines.join("\n") + "\n").map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!(
+                            "Failed to write preference dataset '{}'",
+                            pref_path.display()
+                        ),
+                    )
+                })?;
+                written.insert(
+                    "preference_path".into(),
+                    serde_json::json!(pref_path.display().to_string()),
+                );
+                written.insert(
+                    "preference_examples".into(),
+                    serde_json::json!(preference_lines.len()),
+                );
+            }
+            let mut report = serde_json::json!({
+                "mode": mode,
+                "events_path": events_path,
+                "verdicts_read": verdicts.len(),
+                "tasks_with_verdicts": by_task.len(),
+                "skipped_no_bodies": skipped_no_bodies,
+            });
+            if let serde_json::Value::Object(map) = &mut report {
+                map.extend(written);
+            }
+            Ok(report)
+        })
         .await
     }
 }

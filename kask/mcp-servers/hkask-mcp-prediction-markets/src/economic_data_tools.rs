@@ -44,20 +44,16 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<FredSearchSeriesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "fred_search_series",
-            async {
-                self.record_call("fred_search_series");
-                let result = fred::search_series(
-                    &EconomicDataClient::new(&self.http),
-                    self.fred_api_key.as_deref(),
-                    &req,
-                )
-                .await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "fred_search_series", async {
+            self.record_call("fred_search_series");
+            let result = fred::search_series(
+                &EconomicDataClient::new(&self.http),
+                self.fred_api_key.as_deref(),
+                &req,
+            )
+            .await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -71,20 +67,16 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<FredGetObservationsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "fred_get_observations",
-            async {
-                self.record_call("fred_get_observations");
-                let result = fred::get_observations(
-                    &EconomicDataClient::new(&self.http),
-                    self.fred_api_key.as_deref(),
-                    &req,
-                )
-                .await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "fred_get_observations", async {
+            self.record_call("fred_get_observations");
+            let result = fred::get_observations(
+                &EconomicDataClient::new(&self.http),
+                self.fred_api_key.as_deref(),
+                &req,
+            )
+            .await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -96,20 +88,16 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<FredGetSeriesInfoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "fred_get_series_info",
-            async {
-                self.record_call("fred_get_series_info");
-                let result = fred::get_series_info(
-                    &EconomicDataClient::new(&self.http),
-                    self.fred_api_key.as_deref(),
-                    &req,
-                )
-                .await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "fred_get_series_info", async {
+            self.record_call("fred_get_series_info");
+            let result = fred::get_series_info(
+                &EconomicDataClient::new(&self.http),
+                self.fred_api_key.as_deref(),
+                &req,
+            )
+            .await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -121,20 +109,16 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<FredListCategoriesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "fred_list_categories",
-            async {
-                self.record_call("fred_list_categories");
-                let result = fred::list_categories(
-                    &EconomicDataClient::new(&self.http),
-                    self.fred_api_key.as_deref(),
-                    &req,
-                )
-                .await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "fred_list_categories", async {
+            self.record_call("fred_list_categories");
+            let result = fred::list_categories(
+                &EconomicDataClient::new(&self.http),
+                self.fred_api_key.as_deref(),
+                &req,
+            )
+            .await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -146,20 +130,16 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<FredGetReleaseRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "fred_get_release",
-            async {
-                self.record_call("fred_get_release");
-                let result = fred::get_release(
-                    &EconomicDataClient::new(&self.http),
-                    self.fred_api_key.as_deref(),
-                    &req,
-                )
-                .await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "fred_get_release", async {
+            self.record_call("fred_get_release");
+            let result = fred::get_release(
+                &EconomicDataClient::new(&self.http),
+                self.fred_api_key.as_deref(),
+                &req,
+            )
+            .await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -176,16 +156,12 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<WbSearchIndicatorsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "wb_search_indicators",
-            async {
-                self.record_call("wb_search_indicators");
-                let result =
-                    worldbank::search_indicators(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "wb_search_indicators", async {
+            self.record_call("wb_search_indicators");
+            let result =
+                worldbank::search_indicators(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -198,16 +174,12 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<WbGetObservationsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "wb_get_observations",
-            async {
-                self.record_call("wb_get_observations");
-                let result =
-                    worldbank::get_observations(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "wb_get_observations", async {
+            self.record_call("wb_get_observations");
+            let result =
+                worldbank::get_observations(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -219,16 +191,12 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<WbListCountriesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "wb_list_countries",
-            async {
-                self.record_call("wb_list_countries");
-                let result =
-                    worldbank::list_countries(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "wb_list_countries", async {
+            self.record_call("wb_list_countries");
+            let result =
+                worldbank::list_countries(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -240,16 +208,11 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<WbListTopicsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "wb_list_topics",
-            async {
-                self.record_call("wb_list_topics");
-                let result =
-                    worldbank::list_topics(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "wb_list_topics", async {
+            self.record_call("wb_list_topics");
+            let result = worldbank::list_topics(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -261,16 +224,12 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<WbGetIndicatorInfoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "wb_get_indicator_info",
-            async {
-                self.record_call("wb_get_indicator_info");
-                let result =
-                    worldbank::get_indicator_info(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "wb_get_indicator_info", async {
+            self.record_call("wb_get_indicator_info");
+            let result =
+                worldbank::get_indicator_info(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -287,15 +246,11 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<DbnomicsSearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "dbnomics_search",
-            async {
-                self.record_call("dbnomics_search");
-                let result = dbnomics::search(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "dbnomics_search", async {
+            self.record_call("dbnomics_search");
+            let result = dbnomics::search(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -307,16 +262,11 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<DbnomicsListProvidersRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "dbnomics_list_providers",
-            async {
-                self.record_call("dbnomics_list_providers");
-                let result =
-                    dbnomics::list_providers(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "dbnomics_list_providers", async {
+            self.record_call("dbnomics_list_providers");
+            let result = dbnomics::list_providers(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -328,16 +278,11 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<DbnomicsGetDatasetRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "dbnomics_get_dataset",
-            async {
-                self.record_call("dbnomics_get_dataset");
-                let result =
-                    dbnomics::get_dataset(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "dbnomics_get_dataset", async {
+            self.record_call("dbnomics_get_dataset");
+            let result = dbnomics::get_dataset(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -349,15 +294,11 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<DbnomicsGetSeriesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "dbnomics_get_series",
-            async {
-                self.record_call("dbnomics_get_series");
-                let result = dbnomics::get_series(&EconomicDataClient::new(&self.http), &req).await;
-                result.map_err(McpToolError::from)
-            },
-        )
+        execute_tool(self, "dbnomics_get_series", async {
+            self.record_call("dbnomics_get_series");
+            let result = dbnomics::get_series(&EconomicDataClient::new(&self.http), &req).await;
+            result.map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -376,19 +317,15 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<ScoreRationaleRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_score_rationale",
-            async {
-                self.record_call("market_score_rationale");
-                let result = eqm::score_rationale(self.inference_port.as_ref(), &req).await;
-                result.map_err(McpToolError::from).and_then(|eqm_result| {
-                    serde_json::to_value(&eqm_result).map_err(|e| {
-                        McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                    })
+        execute_tool(self, "market_score_rationale", async {
+            self.record_call("market_score_rationale");
+            let result = eqm::score_rationale(self.inference_port.as_ref(), &req).await;
+            result.map_err(McpToolError::from).and_then(|eqm_result| {
+                serde_json::to_value(&eqm_result).map_err(|e| {
+                    McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
                 })
-            },
-        )
+            })
+        })
         .await
     }
 }

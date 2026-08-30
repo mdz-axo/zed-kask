@@ -321,10 +321,14 @@ mod tests {
     /// "builder error" for this cause.
     #[test]
     fn auth_header_accepts_clean_key() {
-        let provider = FirecrawlProvider::new(Some("fc-b336f31c1e524cd4a9c6c4c515184483".to_string()))
-            .expect("provider");
+        let provider =
+            FirecrawlProvider::new(Some("fc-b336f31c1e524cd4a9c6c4c515184483".to_string()))
+                .expect("provider");
         let header = provider.auth_header().expect("clean key must validate");
-        assert_eq!(header.as_bytes(), b"Bearer fc-b336f31c1e524cd4a9c6c4c515184483");
+        assert_eq!(
+            header.as_bytes(),
+            b"Bearer fc-b336f31c1e524cd4a9c6c4c515184483"
+        );
     }
 
     /// A key with non-header bytes (e.g. a pasted trailing newline) must fail
@@ -332,12 +336,14 @@ mod tests {
     /// deferred bare "builder error" from reqwest's send().
     #[test]
     fn auth_header_rejects_dirty_key_with_shape() {
-        let provider =
-            FirecrawlProvider::new(Some("fc-dirty\n".to_string())).expect("provider");
+        let provider = FirecrawlProvider::new(Some("fc-dirty\n".to_string())).expect("provider");
         let error = provider.auth_header().expect_err("dirty key must fail");
         let message = error.to_string();
         assert!(message.contains("not valid HTTP header bytes"), "{message}");
-        assert!(message.contains("length 9"), "must name the length: {message}");
+        assert!(
+            message.contains("length 9"),
+            "must name the length: {message}"
+        );
         assert!(message.contains("ascii"), "must name ascii-ness: {message}");
     }
 }

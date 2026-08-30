@@ -19,8 +19,7 @@ use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters, default_embedding_model,
-    default_owner, execute_tool, extract_json_from_response, json, read_jsonl, tool,
-    tool_router,
+    default_owner, execute_tool, extract_json_from_response, json, read_jsonl, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::parse_qa_response;
@@ -132,20 +131,16 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_generate_qa_batch",
-            async {
-                crate::services::qa_batch::QaBatchService::new(Arc::clone(&self.inference_router))
-                    .generate_qa_batch(crate::services::qa_batch::QaBatchRequest {
-                        prompts_jsonl,
-                        output,
-                        concurrency,
-                        model,
-                    })
-                    .await
-            },
-        )
+        execute_tool(self, "corpus_generate_qa_batch", async {
+            crate::services::qa_batch::QaBatchService::new(Arc::clone(&self.inference_router))
+                .generate_qa_batch(crate::services::qa_batch::QaBatchRequest {
+                    prompts_jsonl,
+                    output,
+                    concurrency,
+                    model,
+                })
+                .await
+        })
         .await
     }
 
@@ -164,23 +159,19 @@ impl CorpusServer {
             concurrency,
         }): Parameters<ExtractAssertionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_extract_assertions",
-            async {
-                AssertionsService::new(Arc::clone(&self.inference_router))
-                    .extract(AssertionsRequest {
-                        chunks_jsonl,
-                        tagged_jsonl,
-                        max_assertions,
-                        db_path,
-                        passphrase,
-                        owner,
-                        concurrency,
-                    })
-                    .await
-            },
-        )
+        execute_tool(self, "corpus_extract_assertions", async {
+            AssertionsService::new(Arc::clone(&self.inference_router))
+                .extract(AssertionsRequest {
+                    chunks_jsonl,
+                    tagged_jsonl,
+                    max_assertions,
+                    db_path,
+                    passphrase,
+                    owner,
+                    concurrency,
+                })
+                .await
+        })
         .await
     }
 
@@ -198,21 +189,17 @@ impl CorpusServer {
             batch_size,
         }): Parameters<EmbedRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_embed",
-            async {
-                self.embed_batch_from_jsonl(
-                    &chunks_jsonl,
-                    tagged_jsonl.as_deref(),
-                    model,
-                    &db_path,
-                    &passphrase,
-                    batch_size,
-                )
-                .await
-            },
-        )
+        execute_tool(self, "corpus_embed", async {
+            self.embed_batch_from_jsonl(
+                &chunks_jsonl,
+                tagged_jsonl.as_deref(),
+                model,
+                &db_path,
+                &passphrase,
+                batch_size,
+            )
+            .await
+        })
         .await
     }
 

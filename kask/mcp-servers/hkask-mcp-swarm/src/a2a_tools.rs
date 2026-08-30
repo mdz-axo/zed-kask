@@ -31,53 +31,48 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aSendRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_a2a_send",
-            async {
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() || req.message.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name and message must be non-empty".to_string(),
-                    ));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "agent '{}' not found in local registry",
-                        req.agent_name
-                    ))
-                })?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
-                let result = runtime
-                    .delegate(&agent, &req.message, req.credits_authorized, ceiling)
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                self.validate_produces(&req.agent_name, &agent.produces, &result.response);
-                let mut task = a2a::task_from_response(
-                    &result.response,
-                    req.context_id.clone(),
-                    &result.model,
-                    result.tokens_used,
-                    result.cost,
-                );
-                // Record the inbound user message in the task history. This is the
-                // consumer of `a2a::message_from_text` (the in-process counterpart
-                // of the HTTP gateway's inbound `Message`) — without it the helper
-                // is dead code.
-                task.history = Some(vec![a2a::message_from_text(
-                    &req.message,
-                    req.context_id.clone(),
-                )]);
-                Ok(serde_json::to_value(&task).unwrap_or_else(
-                    |_| serde_json::json!({ "error": "failed to serialize A2A task" }),
+        execute_tool(self, "swarm_a2a_send", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.message.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and message must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
                 ))
-            },
-        )
+            })?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let result = runtime
+                .delegate(&agent, &req.message, req.credits_authorized, ceiling)
+                .await
+                .map_err(map_local_swarm_error)?;
+            self.validate_produces(&req.agent_name, &agent.produces, &result.response);
+            let mut task = a2a::task_from_response(
+                &result.response,
+                req.context_id.clone(),
+                &result.model,
+                result.tokens_used,
+                result.cost,
+            );
+            // Record the inbound user message in the task history. This is the
+            // consumer of `a2a::message_from_text` (the in-process counterpart
+            // of the HTTP gateway's inbound `Message`) — without it the helper
+            // is dead code.
+            task.history = Some(vec![a2a::message_from_text(
+                &req.message,
+                req.context_id.clone(),
+            )]);
+            Ok(serde_json::to_value(&task)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize A2A task" })))
+        })
         .await
     }
 
@@ -89,39 +84,35 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aCardRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_a2a_card",
-            async {
-                let req = parameters.0;
-                let base_url = "local://swarm/agents".to_string();
-                match req.agent_name {
-                    Some(name) if !name.trim().is_empty() => {
-                        let card = self.local_registry.get(&name).ok_or_else(|| {
-                            McpToolError::not_found(format!(
-                                "agent '{}' not found in local registry",
-                                name
-                            ))
-                        })?;
-                        let a2a_card = a2a::to_a2a_card(&card, &base_url);
-                        Ok(serde_json::to_value(&a2a_card).unwrap_or_else(
-                            |_| serde_json::json!({ "error": "failed to serialize agent card" }),
+        execute_tool(self, "swarm_a2a_card", async {
+            let req = parameters.0;
+            let base_url = "local://swarm/agents".to_string();
+            match req.agent_name {
+                Some(name) if !name.trim().is_empty() => {
+                    let card = self.local_registry.get(&name).ok_or_else(|| {
+                        McpToolError::not_found(format!(
+                            "agent '{}' not found in local registry",
+                            name
                         ))
-                    }
-                    _ => {
-                        let cards = self.local_registry.list();
-                        let a2a_cards: Vec<_> = cards
-                            .iter()
-                            .map(|c| a2a::to_a2a_card(c, &base_url))
-                            .collect();
-                        Ok(serde_json::json!({
-                            "count": a2a_cards.len(),
-                            "agent_cards": a2a_cards,
-                        }))
-                    }
+                    })?;
+                    let a2a_card = a2a::to_a2a_card(&card, &base_url);
+                    Ok(serde_json::to_value(&a2a_card).unwrap_or_else(
+                        |_| serde_json::json!({ "error": "failed to serialize agent card" }),
+                    ))
                 }
-            },
-        )
+                _ => {
+                    let cards = self.local_registry.list();
+                    let a2a_cards: Vec<_> = cards
+                        .iter()
+                        .map(|c| a2a::to_a2a_card(c, &base_url))
+                        .collect();
+                    Ok(serde_json::json!({
+                        "count": a2a_cards.len(),
+                        "agent_cards": a2a_cards,
+                    }))
+                }
+            }
+        })
         .await
     }
 
@@ -140,95 +131,91 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aBroadcastRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_a2a_broadcast",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() || req.message.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id and message must be non-empty".to_string(),
-                    ));
-                }
-                // Look up the swarm roster.
-                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-                })?;
-                if swarm.members.is_empty() {
-                    return Ok(serde_json::json!({
-                        "tasks": [],
-                        "broadcast_count": 0,
-                        "note": "swarm has no members",
-                    }));
-                }
-                if swarm.members.len() > crate::local_runtime::MAX_FANOUT {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "broadcast cap is {} members, swarm '{}' has {}",
-                        crate::local_runtime::MAX_FANOUT,
-                        req.swarm_id,
-                        swarm.members.len()
-                    )));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
+        execute_tool(self, "swarm_a2a_broadcast", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.message.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and message must be non-empty".to_string(),
+                ));
+            }
+            // Look up the swarm roster.
+            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+            })?;
+            if swarm.members.is_empty() {
+                return Ok(serde_json::json!({
+                    "tasks": [],
+                    "broadcast_count": 0,
+                    "note": "swarm has no members",
+                }));
+            }
+            if swarm.members.len() > crate::local_runtime::MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "broadcast cap is {} members, swarm '{}' has {}",
+                    crate::local_runtime::MAX_FANOUT,
+                    req.swarm_id,
+                    swarm.members.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let context_id = req.context_id.clone().unwrap_or_else(new_context_id);
+            let mut tasks = Vec::new();
+            let mut failed = 0usize;
+            for member_id in &swarm.members {
+                let agent = match self.local_registry.get(member_id) {
+                    Some(card) => card,
+                    None => {
+                        failed += 1;
+                        tasks.push(serde_json::json!({
+                            "agent_id": member_id,
+                            "ok": false,
+                            "error": format!(
+                                "agent '{}' not found in local registry",
+                                member_id
+                            ),
+                        }));
+                        continue;
+                    }
+                };
+                match runtime
+                    .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                     .await
-                    .map_err(map_local_swarm_error)?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
-                let context_id = req.context_id.clone().unwrap_or_else(new_context_id);
-                let mut tasks = Vec::new();
-                let mut failed = 0usize;
-                for member_id in &swarm.members {
-                    let agent = match self.local_registry.get(member_id) {
-                        Some(card) => card,
-                        None => {
-                            failed += 1;
-                            tasks.push(serde_json::json!({
-                                "agent_id": member_id,
-                                "ok": false,
-                                "error": format!(
-                                    "agent '{}' not found in local registry",
-                                    member_id
-                                ),
-                            }));
-                            continue;
-                        }
-                    };
-                    match runtime
-                        .delegate(&agent, &req.message, req.credits_authorized, ceiling)
-                        .await
-                    {
-                        Ok(result) => {
-                            self.validate_produces(member_id, &agent.produces, &result.response);
-                            let task = a2a::task_from_response(
-                                &result.response,
-                                Some(context_id.clone()),
-                                &result.model,
-                                result.tokens_used,
-                                result.cost,
-                            );
-                            tasks.push(serde_json::to_value(&task).unwrap_or_else(
-                                |_| serde_json::json!({ "error": "failed to serialize A2A task" }),
-                            ));
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            tasks.push(serde_json::json!({
-                                "agent_id": member_id,
-                                "ok": false,
-                                "error": e.to_string(),
-                            }));
-                        }
+                {
+                    Ok(result) => {
+                        self.validate_produces(member_id, &agent.produces, &result.response);
+                        let task = a2a::task_from_response(
+                            &result.response,
+                            Some(context_id.clone()),
+                            &result.model,
+                            result.tokens_used,
+                            result.cost,
+                        );
+                        tasks.push(serde_json::to_value(&task).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "failed to serialize A2A task" }),
+                        ));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        tasks.push(serde_json::json!({
+                            "agent_id": member_id,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
                     }
                 }
-                Ok(serde_json::json!({
-                    "tasks": tasks,
-                    "broadcast_count": swarm.members.len() - failed,
-                    "failed": failed,
-                    "context_id": context_id,
-                }))
-            },
-        )
+            }
+            Ok(serde_json::json!({
+                "tasks": tasks,
+                "broadcast_count": swarm.members.len() - failed,
+                "failed": failed,
+                "context_id": context_id,
+            }))
+        })
         .await
     }
 }

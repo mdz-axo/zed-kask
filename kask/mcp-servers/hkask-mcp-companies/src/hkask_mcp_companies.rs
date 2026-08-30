@@ -288,14 +288,6 @@ impl CompaniesServer {
             + Self::transcript_router()
             + Self::artifacts_router()
     }
-
-    /// Map a tool name to its ontology concept URI for the `"ontology"` field
-    /// in the tool output JSON (via
-    /// `fibo::enrich_with_ontology`). Delegates to `fibo::tool_to_ontology` —
-    /// the single source of truth for the tool → concept mapping.
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        fibo::tool_to_ontology(tool)
-    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -476,15 +468,16 @@ mod tool_behavior_tests {
         assert_eq!(n, 43, "companies registered tool surface changed; got {n}");
     }
 
-    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Coverage: every registered tool must map to an ontology concept for
+    // the output-JSON `"ontology"` field baked by `fibo::enrich_with_ontology`.
     #[test]
-    fn ontology_anchor_covers_all_registered_tools() {
+    fn fibo_mapping_covers_all_registered_tools() {
         let router = CompaniesServer::combined_router();
         for tool in router.list_all() {
             assert!(
-                CompaniesServer::ontology_anchor(&tool.name).is_some(),
-                "ontology_anchor returned None for registered tool '{}'; \
-                 add an explicit arm in fibo::tool_to_ontology",
+                fibo::tool_to_ontology(&tool.name).is_some(),
+                "fibo::tool_to_ontology returned None for registered tool '{}'; \
+                 add an explicit arm",
                 tool.name
             );
         }

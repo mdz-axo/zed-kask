@@ -18,8 +18,7 @@ use crate::services::convert::{
 };
 use crate::{
     CorpusServer, McpToolError, Parameters, chunk_structure, chunk_word_bounds, convert,
-    execute_tool, json, sanitize_links, serialize_passages, tokens_to_words, tool,
-    tool_router,
+    execute_tool, json, sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -79,44 +78,40 @@ impl CorpusServer {
         &self,
         Parameters(OcrRequest { path, model }): Parameters<OcrRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_ocr",
-            async {
-                let resolved = crate::path_safety::contain_for_read(&path)?;
+        execute_tool(self, "corpus_ocr", async {
+            let resolved = crate::path_safety::contain_for_read(&path)?;
 
-                let service = ConvertService::from_corpus(self);
-                let model = match service.resolve_ocr_model(model.as_deref()).await {
-                    Ok(m) => m,
-                    Err(guidance) => {
-                        return Err(McpToolError::failed_precondition(guidance.to_string()));
-                    }
-                };
-
-                let file_bytes = match std::fs::read(&resolved) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        return Err(map_corpus_io_error(
-                            e,
-                            &format!("Failed to read file '{}'", path),
-                        ));
-                    }
-                };
-
-                match service.do_ocr(&file_bytes, &model).await {
-                    Ok(text) => {
-                        let result = serde_json::json!({
-                            "path": path,
-                            "model": model,
-                            "text": text,
-                            "word_count": text.split_whitespace().count(),
-                        });
-                        Ok(result)
-                    }
-                    Err(e) => Err(McpToolError::unavailable(e.to_string())),
+            let service = ConvertService::from_corpus(self);
+            let model = match service.resolve_ocr_model(model.as_deref()).await {
+                Ok(m) => m,
+                Err(guidance) => {
+                    return Err(McpToolError::failed_precondition(guidance.to_string()));
                 }
-            },
-        )
+            };
+
+            let file_bytes = match std::fs::read(&resolved) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to read file '{}'", path),
+                    ));
+                }
+            };
+
+            match service.do_ocr(&file_bytes, &model).await {
+                Ok(text) => {
+                    let result = serde_json::json!({
+                        "path": path,
+                        "model": model,
+                        "text": text,
+                        "word_count": text.split_whitespace().count(),
+                    });
+                    Ok(result)
+                }
+                Err(e) => Err(McpToolError::unavailable(e.to_string())),
+            }
+        })
         .await
     }
 
@@ -135,62 +130,58 @@ impl CorpusServer {
         &self,
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_is_complex",
-            async {
-                let resolved = crate::path_safety::contain_for_read(&path)?;
-                let (format, _, _) = convert::detect_format(&path);
-                if format != "pdf" {
-                    return Err(McpToolError::invalid_argument(
-                        "corpus_is_complex supports PDF only",
-                    ));
-                }
-                let cfg = crate::ocr::TriageConfig::from_env();
-                let mut verdicts = crate::ocr::triage::triage_pdf(&resolved, &cfg)
-                    .await
-                    .map_err(crate::helpers::map_triage_error)?;
+        execute_tool(self, "corpus_is_complex", async {
+            let resolved = crate::path_safety::contain_for_read(&path)?;
+            let (format, _, _) = convert::detect_format(&path);
+            if format != "pdf" {
+                return Err(McpToolError::invalid_argument(
+                    "corpus_is_complex supports PDF only",
+                ));
+            }
+            let cfg = crate::ocr::TriageConfig::from_env();
+            let mut verdicts = crate::ocr::triage::triage_pdf(&resolved, &cfg)
+                .await
+                .map_err(crate::helpers::map_triage_error)?;
 
-                if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
-                    let target: std::collections::HashSet<usize> =
-                        crate::ocr::triage::parse_target_pages(spec)
-                            .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
-                            .into_iter()
-                            .collect();
-                    verdicts.retain(|v| target.contains(&v.page_number));
-                }
+            if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
+                let target: std::collections::HashSet<usize> =
+                    crate::ocr::triage::parse_target_pages(spec)
+                        .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
+                        .into_iter()
+                        .collect();
+                verdicts.retain(|v| target.contains(&v.page_number));
+            }
 
-                let needs_ocr = verdicts.iter().any(|v| v.needs_ocr);
-                let ocr_page_count = verdicts.iter().filter(|v| v.needs_ocr).count();
-                let pages: Vec<serde_json::Value> = verdicts
-                    .iter()
-                    .map(|v| {
-                        serde_json::json!({
-                            "page": v.page_number,
-                            "word_count": v.word_count,
-                            "needs_ocr": v.needs_ocr,
-                            "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
-                        })
+            let needs_ocr = verdicts.iter().any(|v| v.needs_ocr);
+            let ocr_page_count = verdicts.iter().filter(|v| v.needs_ocr).count();
+            let pages: Vec<serde_json::Value> = verdicts
+                .iter()
+                .map(|v| {
+                    serde_json::json!({
+                        "page": v.page_number,
+                        "word_count": v.word_count,
+                        "needs_ocr": v.needs_ocr,
+                        "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
                     })
-                    .collect();
-                tracing::info!(
-                    target: "reg.pipeline.triage",
-                    path = path,
-                    pages = verdicts.len(),
-                    ocr_pages = ocr_page_count,
-                    needs_ocr,
-                    "is-complex triage complete"
-                );
-                let result = serde_json::json!({
-                    "path": path,
-                    "pages": pages,
-                    "page_count": verdicts.len(),
-                    "ocr_pages": ocr_page_count,
-                    "needs_ocr": needs_ocr,
-                });
-                Ok(result)
-            },
-        )
+                })
+                .collect();
+            tracing::info!(
+                target: "reg.pipeline.triage",
+                path = path,
+                pages = verdicts.len(),
+                ocr_pages = ocr_page_count,
+                needs_ocr,
+                "is-complex triage complete"
+            );
+            let result = serde_json::json!({
+                "path": path,
+                "pages": pages,
+                "page_count": verdicts.len(),
+                "ocr_pages": ocr_page_count,
+                "needs_ocr": needs_ocr,
+            });
+            Ok(result)
+        })
         .await
     }
 
@@ -217,274 +208,259 @@ impl CorpusServer {
         }): Parameters<ChunkRequest>,
     ) -> Result<String, McpToolError> {
         if let Some(input_dir) = input_dir {
-            return execute_tool(
-                self,
-                "corpus_chunk",
-                async {
-                    ConvertService::from_corpus(self)
-                        .chunk_directory(
-                            &input_dir,
-                            output.as_deref(),
-                            &entity_ref_prefix,
-                            max_tokens,
-                            overlap_tokens,
-                            strip_gutenberg,
-                            index,
-                        )
-                        .await
-                },
-            )
+            return execute_tool(self, "corpus_chunk", async {
+                ConvertService::from_corpus(self)
+                    .chunk_directory(
+                        &input_dir,
+                        output.as_deref(),
+                        &entity_ref_prefix,
+                        max_tokens,
+                        overlap_tokens,
+                        strip_gutenberg,
+                        index,
+                    )
+                    .await
+            })
             .await;
         }
 
-        execute_tool(
-            self,
-            "corpus_chunk",
-            async {
-                // Exactly one of text or path must be provided
-                let has_text = text.as_ref().is_some_and(|t| !t.is_empty());
-                let has_path = path.as_ref().is_some_and(|p| !p.is_empty());
-                if has_text == has_path {
-                    return Err(McpToolError::invalid_argument(
-                        "Exactly one of 'text' or 'path' must be provided",
-                    ));
+        execute_tool(self, "corpus_chunk", async {
+            // Exactly one of text or path must be provided
+            let has_text = text.as_ref().is_some_and(|t| !t.is_empty());
+            let has_path = path.as_ref().is_some_and(|p| !p.is_empty());
+            if has_text == has_path {
+                return Err(McpToolError::invalid_argument(
+                    "Exactly one of 'text' or 'path' must be provided",
+                ));
+            }
+
+            if entity_ref_prefix.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "entity_ref_prefix must not be empty",
+                ));
+            }
+            hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
+                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+
+            let service = ConvertService::from_corpus(self);
+
+            // Resolve the source text
+            let source_text: String;
+            let source_label: String;
+            // Structure from office-format backends — enables section-aware chunking.
+            let mut source_structure: Option<hkask_types::document::DocStructure> = None;
+
+            if let Some(ref raw_text) = text
+                && !raw_text.is_empty()
+            {
+                source_text = raw_text.clone();
+                source_label = entity_ref_prefix.clone();
+            } else if let Some(ref file_path) = path
+                && !file_path.is_empty()
+            {
+                // Use shared extract_text for format detection + text extraction
+                let mut extract_outcome = extract_text(file_path).await?;
+                if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
+                    let target: std::collections::HashSet<usize> =
+                        crate::ocr::triage::parse_target_pages(spec)
+                            .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
+                            .into_iter()
+                            .collect();
+                    extract_outcome = filter_outcome_to_pages(extract_outcome, &target);
                 }
-
-                if entity_ref_prefix.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "entity_ref_prefix must not be empty",
-                    ));
-                }
-                hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
-                    .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
-
-                let service = ConvertService::from_corpus(self);
-
-                // Resolve the source text
-                let source_text: String;
-                let source_label: String;
-                // Structure from office-format backends — enables section-aware chunking.
-                let mut source_structure: Option<hkask_types::document::DocStructure> = None;
-
-                if let Some(ref raw_text) = text
-                    && !raw_text.is_empty()
-                {
-                    source_text = raw_text.clone();
-                    source_label = entity_ref_prefix.clone();
-                } else if let Some(ref file_path) = path
-                    && !file_path.is_empty()
-                {
-                    // Use shared extract_text for format detection + text extraction
-                    let mut extract_outcome = extract_text(file_path).await?;
-                    if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
-                        let target: std::collections::HashSet<usize> =
-                            crate::ocr::triage::parse_target_pages(spec)
-                                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
-                                .into_iter()
-                                .collect();
-                        extract_outcome = filter_outcome_to_pages(extract_outcome, &target);
-                    }
-                    match extract_outcome {
-                        ExtractOutcome::Success {
-                            text: extracted,
-                            structure: Some(doc_structure),
-                            ..
-                        } => {
-                            // Preserve structure for section-aware chunking later.
-                            let structure_text = doc_structure.text();
-                            source_text = if structure_text.split_whitespace().count()
-                                >= extracted.split_whitespace().count()
-                            {
-                                structure_text
-                            } else {
-                                extracted
-                            };
-                            source_structure = Some(doc_structure);
-                        }
-                        ExtractOutcome::Success {
-                            text: extracted, ..
-                        } => {
-                            source_text = extracted;
-                        }
-                        ExtractOutcome::NeedsOcr {
-                            partial_text,
-                            word_count: _,
-                        } => {
-                            // Try OCR fallback; use partial_text if OCR unavailable/fails
-                            if let Ok(model) = service.resolve_ocr_model(None).await {
-                                let file_bytes = std::fs::read(file_path).map_err(|e| {
-                                    map_corpus_io_error(
-                                        e,
-                                        &format!("Failed to read '{}'", file_path),
-                                    )
-                                })?;
-                                match service.do_ocr(&file_bytes, &model).await {
-                                    Ok(ocr_text) if !ocr_text.is_empty() => {
-                                        source_structure = Some(
-                                            crate::backend::markdown_to_structure(&ocr_text, "pdf"),
-                                        );
-                                        source_text = ocr_text;
-                                    }
-                                    _ => {
-                                        source_text = partial_text;
-                                    }
-                                }
-                            } else {
-                                source_text = partial_text;
-                            }
-                        }
-                        ExtractOutcome::PartialOcr {
-                            page_texts,
-                            ocr_pages,
-                            ..
-                        } => {
-                            // Mixed PDF: some pages text-native, some need OCR.
-                            // Chunk's selective-OCR optimization is deferred; for
-                            // now, fall back to whole-doc OCR (like NeedsOcr) so no
-                            // page is silently lost. The joined native text is the
-                            // fallback if OCR is unavailable.
-                            let partial = page_texts.join("\n\x0c");
-                            if !ocr_pages.is_empty()
-                                && let Ok(model) = service.resolve_ocr_model(None).await
-                            {
-                                let file_bytes = std::fs::read(file_path).map_err(|e| {
-                                    map_corpus_io_error(
-                                        e,
-                                        &format!("Failed to read '{}'", file_path),
-                                    )
-                                })?;
-                                match service.do_ocr(&file_bytes, &model).await {
-                                    Ok(ocr_text) if !ocr_text.is_empty() => {
-                                        source_structure = Some(
-                                            crate::backend::markdown_to_structure(&ocr_text, "pdf"),
-                                        );
-                                        source_text = ocr_text;
-                                    }
-                                    _ => source_text = partial,
-                                }
-                            } else {
-                                source_text = partial;
-                            }
-                        }
-                    }
-                    source_label = file_path.replace(['/', '\\', '.', ' '], "_");
-                } else {
-                    return Err(McpToolError::invalid_argument("No text or path provided"));
-                }
-
-                // Apply Gutenberg stripping if requested
-                let processed = if strip_gutenberg.unwrap_or(false) {
-                    crate::text::strip_gutenberg_headers(&source_text)
-                } else {
-                    source_text
-                };
-                let processed = sanitize_links(&processed);
-                let processed = crate::convert::decode_html_entities(&processed);
-                let processed = crate::convert::strip_html_comments(&processed);
-
-                let boundary = ".!? ";
-
-                if multi_tier.unwrap_or(false) {
-                    // Multi-tier: coarse / medium / fine
-                    let chunk_tier =
-                        |tier: &str, max_tok: Option<usize>, default: usize| -> Vec<_> {
-                            let w = tokens_to_words(max_tok.unwrap_or(default));
-                            crate::text::chunk_text(
-                                &processed,
-                                &format!("{source_label}:{tier}"),
-                                w / 4,
-                                w,
-                                boundary,
-                            )
+                match extract_outcome {
+                    ExtractOutcome::Success {
+                        text: extracted,
+                        structure: Some(doc_structure),
+                        ..
+                    } => {
+                        // Preserve structure for section-aware chunking later.
+                        let structure_text = doc_structure.text();
+                        source_text = if structure_text.split_whitespace().count()
+                            >= extracted.split_whitespace().count()
+                        {
+                            structure_text
+                        } else {
+                            extracted
                         };
-
-                    let coarse = chunk_tier("coarse", coarse_max_tokens, 2048);
-                    let medium = chunk_tier("medium", medium_max_tokens, 512);
-                    let fine = chunk_tier("fine", fine_max_tokens, 128);
-
-                    let result = json!({
-                        "source": source_label,
-                        "multi_tier": true,
-                        "coarse_max_tokens": coarse_max_tokens.unwrap_or(2048),
-                        "medium_max_tokens": medium_max_tokens.unwrap_or(512),
-                        "fine_max_tokens": fine_max_tokens.unwrap_or(128),
-                        "coarse": serialize_passages(&coarse),
-                        "medium": serialize_passages(&medium),
-                        "fine": serialize_passages(&fine),
-                    });
-
-                    // Auto-index if requested
-                    let (indexed, index_error) = if index {
-                        let all: Vec<_> = coarse.into_iter().chain(medium).chain(fine).collect();
-                        match service.index_passages(&all, &source_label).await {
-                            Ok(n) => (n, None),
-                            Err(e) => (0, Some(e)),
-                        }
-                    } else {
-                        (0, None)
-                    };
-
-                    let mut result = result;
-                    result["indexed"] = json!(indexed);
-                    if let Some(ref err) = index_error {
-                        result["index_error"] = json!(err);
+                        source_structure = Some(doc_structure);
                     }
-                    Ok(result)
-                } else {
-                    // Single-tier
-                    let (max_words, min_words) = chunk_word_bounds(max_tokens, overlap_tokens);
-
-                    // Use structure-aware chunking when a DocStructure is available
-                    // (office formats). Falls back to flat chunk_text otherwise.
-                    let passages = if let Some(ref structure) = source_structure {
-                        chunk_structure(
-                            structure,
-                            &entity_ref_prefix,
-                            min_words,
-                            max_words,
-                            boundary,
-                        )
-                    } else {
-                        crate::text::chunk_text(
-                            &processed,
-                            &entity_ref_prefix,
-                            min_words,
-                            max_words,
-                            boundary,
-                        )
-                    };
-
-                    let total_passages = passages.len();
-                    let serialized = serialize_passages(&passages);
-
-                    // Auto-index if requested
-                    let (indexed, index_error) = if index {
-                        match service.index_passages(&passages, &source_label).await {
-                            Ok(n) => (n, None),
-                            Err(e) => (0, Some(e)),
+                    ExtractOutcome::Success {
+                        text: extracted, ..
+                    } => {
+                        source_text = extracted;
+                    }
+                    ExtractOutcome::NeedsOcr {
+                        partial_text,
+                        word_count: _,
+                    } => {
+                        // Try OCR fallback; use partial_text if OCR unavailable/fails
+                        if let Ok(model) = service.resolve_ocr_model(None).await {
+                            let file_bytes = std::fs::read(file_path).map_err(|e| {
+                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
+                            })?;
+                            match service.do_ocr(&file_bytes, &model).await {
+                                Ok(ocr_text) if !ocr_text.is_empty() => {
+                                    source_structure = Some(crate::backend::markdown_to_structure(
+                                        &ocr_text, "pdf",
+                                    ));
+                                    source_text = ocr_text;
+                                }
+                                _ => {
+                                    source_text = partial_text;
+                                }
+                            }
+                        } else {
+                            source_text = partial_text;
                         }
-                    } else {
-                        (0, None)
-                    };
-
-                    let result = json!({
-                        "source": source_label,
-                        "multi_tier": false,
-                        "total_passages": total_passages,
-                        "passages": serialized,
-                        "max_tokens": max_tokens.unwrap_or(512),
-                        "overlap_tokens": overlap_tokens.unwrap_or(64),
-                        "max_words": max_words,
-                        "min_words": min_words,
-                        "sentence_boundary": boundary,
-                        "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
-                        "indexed": indexed,
-                        "index_error": index_error,
-                    });
-                    Ok(result)
+                    }
+                    ExtractOutcome::PartialOcr {
+                        page_texts,
+                        ocr_pages,
+                        ..
+                    } => {
+                        // Mixed PDF: some pages text-native, some need OCR.
+                        // Chunk's selective-OCR optimization is deferred; for
+                        // now, fall back to whole-doc OCR (like NeedsOcr) so no
+                        // page is silently lost. The joined native text is the
+                        // fallback if OCR is unavailable.
+                        let partial = page_texts.join("\n\x0c");
+                        if !ocr_pages.is_empty()
+                            && let Ok(model) = service.resolve_ocr_model(None).await
+                        {
+                            let file_bytes = std::fs::read(file_path).map_err(|e| {
+                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
+                            })?;
+                            match service.do_ocr(&file_bytes, &model).await {
+                                Ok(ocr_text) if !ocr_text.is_empty() => {
+                                    source_structure = Some(crate::backend::markdown_to_structure(
+                                        &ocr_text, "pdf",
+                                    ));
+                                    source_text = ocr_text;
+                                }
+                                _ => source_text = partial,
+                            }
+                        } else {
+                            source_text = partial;
+                        }
+                    }
                 }
-            },
-        )
+                source_label = file_path.replace(['/', '\\', '.', ' '], "_");
+            } else {
+                return Err(McpToolError::invalid_argument("No text or path provided"));
+            }
+
+            // Apply Gutenberg stripping if requested
+            let processed = if strip_gutenberg.unwrap_or(false) {
+                crate::text::strip_gutenberg_headers(&source_text)
+            } else {
+                source_text
+            };
+            let processed = sanitize_links(&processed);
+            let processed = crate::convert::decode_html_entities(&processed);
+            let processed = crate::convert::strip_html_comments(&processed);
+
+            let boundary = ".!? ";
+
+            if multi_tier.unwrap_or(false) {
+                // Multi-tier: coarse / medium / fine
+                let chunk_tier = |tier: &str, max_tok: Option<usize>, default: usize| -> Vec<_> {
+                    let w = tokens_to_words(max_tok.unwrap_or(default));
+                    crate::text::chunk_text(
+                        &processed,
+                        &format!("{source_label}:{tier}"),
+                        w / 4,
+                        w,
+                        boundary,
+                    )
+                };
+
+                let coarse = chunk_tier("coarse", coarse_max_tokens, 2048);
+                let medium = chunk_tier("medium", medium_max_tokens, 512);
+                let fine = chunk_tier("fine", fine_max_tokens, 128);
+
+                let result = json!({
+                    "source": source_label,
+                    "multi_tier": true,
+                    "coarse_max_tokens": coarse_max_tokens.unwrap_or(2048),
+                    "medium_max_tokens": medium_max_tokens.unwrap_or(512),
+                    "fine_max_tokens": fine_max_tokens.unwrap_or(128),
+                    "coarse": serialize_passages(&coarse),
+                    "medium": serialize_passages(&medium),
+                    "fine": serialize_passages(&fine),
+                });
+
+                // Auto-index if requested
+                let (indexed, index_error) = if index {
+                    let all: Vec<_> = coarse.into_iter().chain(medium).chain(fine).collect();
+                    match service.index_passages(&all, &source_label).await {
+                        Ok(n) => (n, None),
+                        Err(e) => (0, Some(e)),
+                    }
+                } else {
+                    (0, None)
+                };
+
+                let mut result = result;
+                result["indexed"] = json!(indexed);
+                if let Some(ref err) = index_error {
+                    result["index_error"] = json!(err);
+                }
+                Ok(result)
+            } else {
+                // Single-tier
+                let (max_words, min_words) = chunk_word_bounds(max_tokens, overlap_tokens);
+
+                // Use structure-aware chunking when a DocStructure is available
+                // (office formats). Falls back to flat chunk_text otherwise.
+                let passages = if let Some(ref structure) = source_structure {
+                    chunk_structure(
+                        structure,
+                        &entity_ref_prefix,
+                        min_words,
+                        max_words,
+                        boundary,
+                    )
+                } else {
+                    crate::text::chunk_text(
+                        &processed,
+                        &entity_ref_prefix,
+                        min_words,
+                        max_words,
+                        boundary,
+                    )
+                };
+
+                let total_passages = passages.len();
+                let serialized = serialize_passages(&passages);
+
+                // Auto-index if requested
+                let (indexed, index_error) = if index {
+                    match service.index_passages(&passages, &source_label).await {
+                        Ok(n) => (n, None),
+                        Err(e) => (0, Some(e)),
+                    }
+                } else {
+                    (0, None)
+                };
+
+                let result = json!({
+                    "source": source_label,
+                    "multi_tier": false,
+                    "total_passages": total_passages,
+                    "passages": serialized,
+                    "max_tokens": max_tokens.unwrap_or(512),
+                    "overlap_tokens": overlap_tokens.unwrap_or(64),
+                    "max_words": max_words,
+                    "min_words": min_words,
+                    "sentence_boundary": boundary,
+                    "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
+                    "indexed": indexed,
+                    "index_error": index_error,
+                });
+                Ok(result)
+            }
+        })
         .await
     }
 }

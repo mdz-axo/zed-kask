@@ -16,81 +16,77 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "moat_check",
-            async {
-                validate_symbol(&symbol)?;
+        execute_tool(self, "moat_check", async {
+            validate_symbol(&symbol)?;
 
-                // Fetch 10 years of key metrics for gross margin stability analysis
-                let limit = "10";
-                let metrics_result = self
-                    .fetch("key_metrics", &symbol, &[("limit", limit)])
-                    .await;
+            // Fetch 10 years of key metrics for gross margin stability analysis
+            let limit = "10";
+            let metrics_result = self
+                .fetch("key_metrics", &symbol, &[("limit", limit)])
+                .await;
 
-                let metrics = match metrics_result {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Err(e);
-                    }
-                };
-
-                // Fetch income statement for gross margin computation.
-                // The stable key-metrics endpoint does not include grossProfitMargin,
-                // so we compute it from grossProfit / revenue in the income statement.
-                let income_result = self
-                    .fetch("income_statement", &symbol, &[("limit", limit)])
-                    .await;
-
-                let income = match income_result {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Err(e);
-                    }
-                };
-
-                let gross_margins = analysis::extract_gross_margins(&income);
-                if gross_margins.is_empty() {
-                    let output = serde_json::json!({
-                        "symbol": symbol,
-                        "moat": "insufficient_data",
-                        "reason": "No gross margin data available for this symbol",
-                    });
-                    return Ok(output);
+            let metrics = match metrics_result {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(e);
                 }
+            };
 
-                let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
-                let stability = analysis::gross_margin_stability(&margin_values);
+            // Fetch income statement for gross margin computation.
+            // The stable key-metrics endpoint does not include grossProfitMargin,
+            // so we compute it from grossProfit / revenue in the income statement.
+            let income_result = self
+                .fetch("income_statement", &symbol, &[("limit", limit)])
+                .await;
 
-                let wc_data = analysis::extract_wc_days(&metrics);
-                let (wc_spread, dpo, dso) = match wc_data {
-                    Some((dpo_val, dso_val)) => (
-                        analysis::working_capital_spread(dpo_val, dso_val),
-                        Some(dpo_val),
-                        Some(dso_val),
-                    ),
-                    None => (0.0, None, None),
-                };
+            let income = match income_result {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(e);
+                }
+            };
 
-                let wc_label = analysis::wc_signal_label(wc_spread);
-                let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
-
+            let gross_margins = analysis::extract_gross_margins(&income);
+            if gross_margins.is_empty() {
                 let output = serde_json::json!({
                     "symbol": symbol,
-                    "moat": moat,
-                    "margin_stability": stability,
-                    "gross_margins": gross_margins,
-                    "working_capital": {
-                        "spread_days": wc_spread,
-                        "dpo": dpo,
-                        "dso": dso,
-                        "signal": wc_label,
-                    },
-                    "data_periods": gross_margins.len(),
+                    "moat": "insufficient_data",
+                    "reason": "No gross margin data available for this symbol",
                 });
-                Ok(fibo::enrich_with_ontology(output, "moat_check"))
-            },
-        )
+                return Ok(output);
+            }
+
+            let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
+            let stability = analysis::gross_margin_stability(&margin_values);
+
+            let wc_data = analysis::extract_wc_days(&metrics);
+            let (wc_spread, dpo, dso) = match wc_data {
+                Some((dpo_val, dso_val)) => (
+                    analysis::working_capital_spread(dpo_val, dso_val),
+                    Some(dpo_val),
+                    Some(dso_val),
+                ),
+                None => (0.0, None, None),
+            };
+
+            let wc_label = analysis::wc_signal_label(wc_spread);
+            let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
+
+            let output = serde_json::json!({
+                "symbol": symbol,
+                "moat": moat,
+                "margin_stability": stability,
+                "gross_margins": gross_margins,
+                "working_capital": {
+                    "spread_days": wc_spread,
+                    "dpo": dpo,
+                    "dso": dso,
+                    "signal": wc_label,
+                },
+                "data_periods": gross_margins.len(),
+            });
+            Ok(fibo::enrich_with_ontology(output, "moat_check"))
+        })
         .await
     }
 
@@ -333,34 +329,30 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::StockUniverseRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "stock_universe",
-            async {
-                let listings = providers::fetch_eodhd_screener_listing(
-                    &self.client,
-                    &self.eodhd_api_key,
-                    &req.exchange,
-                    req.min_market_cap,
-                )
-                .await?;
+        execute_tool(self, "stock_universe", async {
+            let listings = providers::fetch_eodhd_screener_listing(
+                &self.client,
+                &self.eodhd_api_key,
+                &req.exchange,
+                req.min_market_cap,
+            )
+            .await?;
 
-                let count = listings.len();
+            let count = listings.len();
 
-                let output = serde_json::json!({
-                    "exchange": req.exchange,
-                    "min_market_cap": req.min_market_cap,
-                    "count": count,
-                    "results": listings,
-                    "fibo": {
-                        "market_capitalization": fibo::MARKET_CAPITALIZATION,
-                    },
-                    "source": "EODHD Screener API",
-                });
+            let output = serde_json::json!({
+                "exchange": req.exchange,
+                "min_market_cap": req.min_market_cap,
+                "count": count,
+                "results": listings,
+                "fibo": {
+                    "market_capitalization": fibo::MARKET_CAPITALIZATION,
+                },
+                "source": "EODHD Screener API",
+            });
 
-                Ok(fibo::enrich_with_ontology(output, "company_screener"))
-            },
-        )
+            Ok(fibo::enrich_with_ontology(output, "company_screener"))
+        })
         .await
     }
     pub async fn company_research_search(

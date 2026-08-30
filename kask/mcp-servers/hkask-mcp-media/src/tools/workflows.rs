@@ -18,41 +18,33 @@ impl MediaServer {
         &self,
         Parameters(WorkflowSaveRequest { graph_json }): Parameters<WorkflowSaveRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "workflow_save",
-            async {
-                if graph_json.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "graph_json must not be empty",
-                    ));
-                }
-                let record = self
-                    .gallery_store
-                    .record_workflow(&graph_json)
-                    .map_err(|e| map_media_error(e.into()))?;
-                serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
-            },
-        )
+        execute_tool(self, "workflow_save", async {
+            if graph_json.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "graph_json must not be empty",
+                ));
+            }
+            let record = self
+                .gallery_store
+                .record_workflow(&graph_json)
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&record)
+                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
+        })
         .await
     }
 
     /// List all saved workflows, newest first.
     #[tool(description = "List all saved media generation workflows, newest first.")]
     pub async fn workflow_list(&self) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "workflow_list",
-            async {
-                let workflows = self
-                    .gallery_store
-                    .list_workflows()
-                    .map_err(|e| map_media_error(e.into()))?;
-                serde_json::to_value(&workflows)
-                    .map_err(|e| McpToolError::internal(format!("encode workflow list: {e}")))
-            },
-        )
+        execute_tool(self, "workflow_list", async {
+            let workflows = self
+                .gallery_store
+                .list_workflows()
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&workflows)
+                .map_err(|e| McpToolError::internal(format!("encode workflow list: {e}")))
+        })
         .await
     }
 
@@ -64,18 +56,14 @@ impl MediaServer {
         &self,
         Parameters(WorkflowLoadRequest { workflow_id }): Parameters<WorkflowLoadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "workflow_load",
-            async {
-                let record = self
-                    .gallery_store
-                    .get_workflow(&workflow_id)
-                    .map_err(|e| map_media_error(e.into()))?;
-                serde_json::to_value(&record)
-                    .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
-            },
-        )
+        execute_tool(self, "workflow_load", async {
+            let record = self
+                .gallery_store
+                .get_workflow(&workflow_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&record)
+                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
+        })
         .await
     }
 
@@ -88,19 +76,15 @@ impl MediaServer {
         &self,
         Parameters(WorkflowDeleteRequest { workflow_id }): Parameters<WorkflowDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "workflow_delete",
-            async {
-                self.gallery_store
-                    .delete_workflow(&workflow_id)
-                    .map_err(|e| map_media_error(e.into()))?;
-                Ok(serde_json::json!({
-                    "deleted": true,
-                    "workflow_id": workflow_id,
-                }))
-            },
-        )
+        execute_tool(self, "workflow_delete", async {
+            self.gallery_store
+                .delete_workflow(&workflow_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({
+                "deleted": true,
+                "workflow_id": workflow_id,
+            }))
+        })
         .await
     }
 }

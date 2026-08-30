@@ -17,8 +17,8 @@ use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
 use crate::{
-    Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool, json,
-    owner_webid, tool, tool_router,
+    Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool, json, owner_webid,
+    tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -103,25 +103,21 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_consolidate_chunks",
-            async {
-                ConsolidationService::new(Arc::clone(&self.inference_router))
-                    .consolidate(ChunkConsolidationRequest {
-                        tagged_jsonl: req.tagged_jsonl,
-                        output: req.output,
-                        db_path: req.db_path,
-                        passphrase: req.passphrase,
-                        prefix: req.prefix,
-                        threshold: req.threshold,
-                        concurrency: req.concurrency,
-                        max_chunks_per_cluster: req.max_chunks_per_cluster,
-                        dry_run: req.dry_run,
-                    })
-                    .await
-            },
-        )
+        execute_tool(self, "corpus_consolidate_chunks", async {
+            ConsolidationService::new(Arc::clone(&self.inference_router))
+                .consolidate(ChunkConsolidationRequest {
+                    tagged_jsonl: req.tagged_jsonl,
+                    output: req.output,
+                    db_path: req.db_path,
+                    passphrase: req.passphrase,
+                    prefix: req.prefix,
+                    threshold: req.threshold,
+                    concurrency: req.concurrency,
+                    max_chunks_per_cluster: req.max_chunks_per_cluster,
+                    dry_run: req.dry_run,
+                })
+                .await
+        })
         .await
     }
 
@@ -134,25 +130,21 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_build_prompts",
-            async {
-                PromptBuilderService::new()
-                    .build_prompts(ServiceBuildPromptsRequest {
-                        tagged_jsonl: req.tagged_jsonl,
-                        output: req.output,
-                        db_path: req.db_path,
-                        passphrase: req.passphrase,
-                        context_k: req.context_k,
-                        prompts_per_chunk: req.prompts_per_chunk,
-                        type_distribution: req.type_distribution,
-                        max_prompts: req.max_prompts,
-                        ontology_bloom_overrides: req.ontology_bloom_overrides,
-                    })
-                    .await
-            },
-        )
+        execute_tool(self, "corpus_build_prompts", async {
+            PromptBuilderService::new()
+                .build_prompts(ServiceBuildPromptsRequest {
+                    tagged_jsonl: req.tagged_jsonl,
+                    output: req.output,
+                    db_path: req.db_path,
+                    passphrase: req.passphrase,
+                    context_k: req.context_k,
+                    prompts_per_chunk: req.prompts_per_chunk,
+                    type_distribution: req.type_distribution,
+                    max_prompts: req.max_prompts,
+                    ontology_bloom_overrides: req.ontology_bloom_overrides,
+                })
+                .await
+        })
         .await
     }
 

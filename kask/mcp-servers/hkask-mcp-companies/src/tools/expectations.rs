@@ -20,101 +20,96 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ExpectationsGapRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "expectations_gap",
-            async {
-                validate_symbol(&req.symbol)?;
+        execute_tool(self, "expectations_gap", async {
+            validate_symbol(&req.symbol)?;
 
-                // ── 1. Fetch financial data for reverse DCF ──────────────────
-                //
-                // All five fetches are independent (no data dependency between
-                // them) and run concurrently via `tokio::join!`. This is not
-                // `try_join!` — we intentionally tolerate partial failures:
-                // a failed income_statement must not prevent fetching
-                // balance_sheet. The match below handles the Ok/Err cases
-                // per-fetch. Running them concurrently keeps the total under
-                // the 60s MCP `tools/call` cap (worst case = max single
-                // fetch timeout, not sum of all fetch timeouts).
-                let (req_income, req_balance, req_cf, req_metrics, req_profile) = tokio::join! {
-                    self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
-                    self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch_key_metrics(&req.symbol, 5),
-                    self.fetch_profile(&req.symbol),
-                };
+            // ── 1. Fetch financial data for reverse DCF ──────────────────
+            //
+            // All five fetches are independent (no data dependency between
+            // them) and run concurrently via `tokio::join!`. This is not
+            // `try_join!` — we intentionally tolerate partial failures:
+            // a failed income_statement must not prevent fetching
+            // balance_sheet. The match below handles the Ok/Err cases
+            // per-fetch. Running them concurrently keeps the total under
+            // the 60s MCP `tools/call` cap (worst case = max single
+            // fetch timeout, not sum of all fetch timeouts).
+            let (req_income, req_balance, req_cf, req_metrics, req_profile) = tokio::join! {
+                self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
+                self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
+                self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                self.fetch_key_metrics(&req.symbol, 5),
+                self.fetch_profile(&req.symbol),
+            };
 
-                // ── 2. Compute market-implied growth via reverse DCF ──────────
+            // ── 2. Compute market-implied growth via reverse DCF ──────────
 
-                let market_implied_growth = match (
-                    &req_income,
-                    &req_balance,
-                    &req_cf,
-                    &req_metrics,
-                    &req_profile,
-                ) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(met), Ok(prof)) => {
-                        compute_implied_growth(inc, bal, cf, met.raw(), prof.raw())
-                            .unwrap_or(f64::NAN)
-                    }
-                    _ => f64::NAN,
-                };
+            let market_implied_growth = match (
+                &req_income,
+                &req_balance,
+                &req_cf,
+                &req_metrics,
+                &req_profile,
+            ) {
+                (Ok(inc), Ok(bal), Ok(cf), Ok(met), Ok(prof)) => {
+                    compute_implied_growth(inc, bal, cf, met.raw(), prof.raw()).unwrap_or(f64::NAN)
+                }
+                _ => f64::NAN,
+            };
 
-                // ── 3. Fetch research claims for management guidance ──────────
+            // ── 3. Fetch research claims for management guidance ──────────
 
-                let company_name = match &req_profile {
-                    Ok(prof) => prof.company_name().unwrap_or(&req.symbol).to_string(),
-                    _ => req.symbol.clone(),
-                };
+            let company_name = match &req_profile {
+                Ok(prof) => prof.company_name().unwrap_or(&req.symbol).to_string(),
+                _ => req.symbol.clone(),
+            };
 
-                let research = research::search_fundamental(
-                    &self.client,
-                    &req.symbol,
-                    &company_name,
-                    "revenue guidance forecast growth outlook",
-                    self.exa_api_key.as_deref(),
-                    self.tavily_api_key.as_deref(),
-                    self.brave_api_key.as_deref(),
-                )
-                .await?;
+            let research = research::search_fundamental(
+                &self.client,
+                &req.symbol,
+                &company_name,
+                "revenue guidance forecast growth outlook",
+                self.exa_api_key.as_deref(),
+                self.tavily_api_key.as_deref(),
+                self.brave_api_key.as_deref(),
+            )
+            .await?;
 
-                let claims = research::ResearchClaimClassifier::classify_all(&research);
+            let claims = research::ResearchClaimClassifier::classify_all(&research);
 
-                // Extract growth numbers from revenue/earnings guidance claims
-                let management_growth = extract_management_growth(&claims.claims);
-                let management_narrative: Vec<String> = claims
-                    .claims
-                    .iter()
-                    .filter(|c| {
-                        matches!(
-                            c.category,
-                            research::ClaimCategory::RevenueGuidance
-                                | research::ClaimCategory::EarningsGuidance
-                        )
-                    })
-                    .map(|c| c.text.clone())
-                    .collect();
+            // Extract growth numbers from revenue/earnings guidance claims
+            let management_growth = extract_management_growth(&claims.claims);
+            let management_narrative: Vec<String> = claims
+                .claims
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c.category,
+                        research::ClaimCategory::RevenueGuidance
+                            | research::ClaimCategory::EarningsGuidance
+                    )
+                })
+                .map(|c| c.text.clone())
+                .collect();
 
-                // ── 4. User estimate ─────────────────────────────────────────
+            // ── 4. User estimate ─────────────────────────────────────────
 
-                let user_growth = req.growth_estimate.unwrap_or(0.05);
+            let user_growth = req.growth_estimate.unwrap_or(0.05);
 
-                // ── 5. Build gap analysis ────────────────────────────────────
+            // ── 5. Build gap analysis ────────────────────────────────────
 
-                let analysis = build_gap_analysis(
-                    &req.symbol,
-                    market_implied_growth,
-                    &management_growth,
-                    user_growth,
-                    &management_narrative,
-                    claims.claims.len(),
-                );
+            let analysis = build_gap_analysis(
+                &req.symbol,
+                market_implied_growth,
+                &management_growth,
+                user_growth,
+                &management_narrative,
+                claims.claims.len(),
+            );
 
-                let output = serde_json::json!(analysis);
+            let output = serde_json::json!(analysis);
 
-                Ok(fibo::enrich_with_ontology(output, "expectations_gap"))
-            },
-        )
+            Ok(fibo::enrich_with_ontology(output, "expectations_gap"))
+        })
         .await
     }
 }

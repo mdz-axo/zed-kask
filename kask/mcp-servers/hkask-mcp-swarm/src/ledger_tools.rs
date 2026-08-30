@@ -30,29 +30,25 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FundLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fund_local",
-            async {
-                let req = parameters.0;
-                if req.credits <= 0 {
-                    return Err(McpToolError::invalid_argument(
-                        "credits must be positive".to_string(),
-                    ));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let new_balance = runtime.fund(req.credits).map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "funded": req.credits,
-                    "balance": new_balance,
-                    "asset": "credits",
-                }))
-            },
-        )
+        execute_tool(self, "swarm_fund_local", async {
+            let req = parameters.0;
+            if req.credits <= 0 {
+                return Err(McpToolError::invalid_argument(
+                    "credits must be positive".to_string(),
+                ));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let new_balance = runtime.fund(req.credits).map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "funded": req.credits,
+                "balance": new_balance,
+                "asset": "credits",
+            }))
+        })
         .await
     }
 
@@ -71,28 +67,24 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<BalanceLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_balance_local",
-            async {
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                match runtime.balance() {
-                    // A failed measurement must be distinguishable from a measured
-                    // zero (the `.rules` trap) — surface it as an error, not 0.
-                    Some(balance) => Ok(serde_json::json!({
-                        "balance": balance,
-                        "asset": "credits",
-                    })),
-                    None => Err(McpToolError::unavailable(
-                        "local ledger balance query failed — cannot verify funds".to_string(),
-                    )),
-                }
-            },
-        )
+        execute_tool(self, "swarm_balance_local", async {
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            match runtime.balance() {
+                // A failed measurement must be distinguishable from a measured
+                // zero (the `.rules` trap) — surface it as an error, not 0.
+                Some(balance) => Ok(serde_json::json!({
+                    "balance": balance,
+                    "asset": "credits",
+                })),
+                None => Err(McpToolError::unavailable(
+                    "local ledger balance query failed — cannot verify funds".to_string(),
+                )),
+            }
+        })
         .await
     }
 
@@ -108,24 +100,20 @@ impl SwarmServer {
         &self,
         parameters: Parameters<LocalHistoryRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_local_history",
-            async {
-                let req = parameters.0;
-                let limit = req.limit.unwrap_or(50).min(500) as usize;
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let transactions = runtime.history(limit).map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "count": transactions.len(),
-                    "transactions": transactions,
-                }))
-            },
-        )
+        execute_tool(self, "swarm_local_history", async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(50).min(500) as usize;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let transactions = runtime.history(limit).map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "count": transactions.len(),
+                "transactions": transactions,
+            }))
+        })
         .await
     }
 }

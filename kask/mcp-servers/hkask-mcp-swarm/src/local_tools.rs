@@ -295,160 +295,70 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_fanout_local",
-            async {
-                let req = parameters.0;
-                if req.delegations.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "delegations must be non-empty".to_string(),
-                    ));
-                }
-                if req.delegations.len() > MAX_FANOUT {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "fanout cap is {MAX_FANOUT} agents, got {}",
-                        req.delegations.len()
-                    )));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
+        execute_tool(self, "swarm_fanout_local", async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "fanout cap is {MAX_FANOUT} agents, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
 
-                if req.parallel {
-                    // Parallel mode: run inference concurrently, debit
-                    // sequentially. Resolves the TOCTOU concern by deferring
-                    // the debit, not by serializing the inference.
-                    //
-                    // Save the side-effect context (agent_name, task, produces)
-                    // for each found delegation so we can run validate_produces +
-                    // ingest_turn after delegate_batch returns — the batch
-                    // consumes the owned cards.
-                    let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
-                    let mut delegations: Vec<(LocalAgentCard, String, u32)> = Vec::new();
-                    let mut not_found: Vec<String> = Vec::new();
-                    for entry in &req.delegations {
-                        match self.local_registry.get(&entry.agent_name) {
-                            Some(agent) => {
-                                found_context.push((entry, agent.clone()));
-                                delegations.push((
-                                    agent,
-                                    entry.task.clone(),
-                                    entry.credits_authorized,
-                                ));
-                            }
-                            None => {
-                                not_found.push(entry.agent_name.clone());
-                            }
+            if req.parallel {
+                // Parallel mode: run inference concurrently, debit
+                // sequentially. Resolves the TOCTOU concern by deferring
+                // the debit, not by serializing the inference.
+                //
+                // Save the side-effect context (agent_name, task, produces)
+                // for each found delegation so we can run validate_produces +
+                // ingest_turn after delegate_batch returns — the batch
+                // consumes the owned cards.
+                let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
+                let mut delegations: Vec<(LocalAgentCard, String, u32)> = Vec::new();
+                let mut not_found: Vec<String> = Vec::new();
+                for entry in &req.delegations {
+                    match self.local_registry.get(&entry.agent_name) {
+                        Some(agent) => {
+                            found_context.push((entry, agent.clone()));
+                            delegations.push((agent, entry.task.clone(), entry.credits_authorized));
+                        }
+                        None => {
+                            not_found.push(entry.agent_name.clone());
                         }
                     }
-                    let raw_results = runtime.delegate_batch(delegations, ceiling).await;
-                    let mut results = Vec::new();
-                    let mut failed = 0usize;
-                    let mut total_cost = 0i64;
-                    let mut total_cost_uncapped = 0i64;
-                    let mut total_tokens = 0i64;
-                    for name in &not_found {
-                        failed += 1;
-                        results.push(LocalDelegateResult::error_json(
-                            name,
-                            &format!("agent '{name}' not found in local registry"),
-                        ));
-                    }
-                    for (result, (entry, agent)) in
-                        raw_results.into_iter().zip(found_context.iter())
-                    {
-                        match result {
-                            Ok(r) => {
-                                self.validate_produces(
-                                    &entry.agent_name,
-                                    &agent.produces,
-                                    &r.response,
-                                );
-                                // Stigmergy (ACO pheromone trail) — mirrors
-                                // swarm_delegate_local so parallel fan-out
-                                // delegations record performance annotations.
-                                // Non-fatal.
-                                local_knowledge::record_delegation(
-                                    &self.local_memory,
-                                    &entry.agent_name,
-                                    r.latency_ms,
-                                    r.task_success.as_ref().map(|t| t.pass),
-                                    &r.response,
-                                )
-                                .await;
-                                // Episodic turn memory (shared knowledgebase) — mirrors
-                                // the sequential path so parallel fan-out delegations
-                                // build the KB too. Non-fatal.
-                                local_knowledge::ingest_turn(
-                                    &self.local_memory,
-                                    &runtime.inference(),
-                                    &entry.agent_name,
-                                    &entry.task,
-                                    &r.response,
-                                    &r.model,
-                                )
-                                .await;
-                                total_cost += r.cost;
-                                total_cost_uncapped += r.cost_uncapped;
-                                total_tokens += r.tokens_used;
-                                results.push(r.to_result_json(true));
-                            }
-                            Err(e) => {
-                                failed += 1;
-                                results.push(LocalDelegateResult::error_json(
-                                    &entry.agent_name,
-                                    &e.to_string(),
-                                ));
-                            }
-                        }
-                    }
-                    let balance: Option<i64> = runtime.balance();
-                    return Ok(serde_json::json!({
-                        "results": results,
-                        "total_cost": total_cost,
-                        "total_cost_uncapped": total_cost_uncapped,
-                        "total_tokens": total_tokens,
-                        "total_latency_ms": 0u64,
-                        "balance": balance,
-                        "failed": failed,
-                        "succeeded": req.delegations.len() - failed,
-                        "parallel": true,
-                    }));
                 }
-
-                // Sequential mode (default).
+                let raw_results = runtime.delegate_batch(delegations, ceiling).await;
                 let mut results = Vec::new();
                 let mut failed = 0usize;
                 let mut total_cost = 0i64;
-                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-                // capped costs, so it inherits their understatement. Reporting both
-                // keeps the aggregate reconciliation surface honest.
                 let mut total_cost_uncapped = 0i64;
                 let mut total_tokens = 0i64;
-                let mut total_latency_ms = 0u64;
-                for entry in &req.delegations {
-                    let agent = self.local_registry.get(&entry.agent_name);
-                    let Some(agent) = agent else {
-                        failed += 1;
-                        results.push(LocalDelegateResult::error_json(
-                            &entry.agent_name,
-                            &format!("agent '{}' not found in local registry", entry.agent_name),
-                        ));
-                        continue;
-                    };
-                    match runtime
-                        .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
-                        .await
-                    {
+                for name in &not_found {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        name,
+                        &format!("agent '{name}' not found in local registry"),
+                    ));
+                }
+                for (result, (entry, agent)) in raw_results.into_iter().zip(found_context.iter()) {
+                    match result {
                         Ok(r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             // Stigmergy (ACO pheromone trail) — mirrors
-                            // swarm_delegate_local so fan-out delegations
-                            // record performance annotations. Non-fatal.
+                            // swarm_delegate_local so parallel fan-out
+                            // delegations record performance annotations.
+                            // Non-fatal.
                             local_knowledge::record_delegation(
                                 &self.local_memory,
                                 &entry.agent_name,
@@ -458,8 +368,8 @@ impl SwarmServer {
                             )
                             .await;
                             // Episodic turn memory (shared knowledgebase) — mirrors
-                            // swarm_delegate_local so fan-out delegations build
-                            // the KB too. Non-fatal.
+                            // the sequential path so parallel fan-out delegations
+                            // build the KB too. Non-fatal.
                             local_knowledge::ingest_turn(
                                 &self.local_memory,
                                 &runtime.inference(),
@@ -472,7 +382,6 @@ impl SwarmServer {
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
-                            total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
                             results.push(r.to_result_json(true));
                         }
                         Err(e) => {
@@ -484,28 +393,105 @@ impl SwarmServer {
                         }
                     }
                 }
-                // The aggregate balance is best-effort: each delegation already
-                // returned its own post-debit `balance` in `LocalDelegateResult`,
-                // so this field is a convenience read after the loop. A failed
-                // ledger query is surfaced as `null` — NOT fabricated as `0`
-                // (the `.rules` trap: a failed measurement must be distinguishable
-                // from a measured zero; `swarm_balance_local` already returns an
-                // error on `None`, and the fan-out cannot error without discarding
-                // the per-delegation results that succeeded). `Option<i64>`
-                // serializes to `null` on `None`.
                 let balance: Option<i64> = runtime.balance();
-                Ok(serde_json::json!({
+                return Ok(serde_json::json!({
                     "results": results,
                     "total_cost": total_cost,
                     "total_cost_uncapped": total_cost_uncapped,
                     "total_tokens": total_tokens,
-                    "total_latency_ms": total_latency_ms,
+                    "total_latency_ms": 0u64,
                     "balance": balance,
                     "failed": failed,
                     "succeeded": req.delegations.len() - failed,
-                }))
-            },
-        )
+                    "parallel": true,
+                }));
+            }
+
+            // Sequential mode (default).
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
+            let mut total_tokens = 0i64;
+            let mut total_latency_ms = 0u64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        &entry.agent_name,
+                        &format!("agent '{}' not found in local registry", entry.agent_name),
+                    ));
+                    continue;
+                };
+                match runtime
+                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                    .await
+                {
+                    Ok(r) => {
+                        self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                        // Stigmergy (ACO pheromone trail) — mirrors
+                        // swarm_delegate_local so fan-out delegations
+                        // record performance annotations. Non-fatal.
+                        local_knowledge::record_delegation(
+                            &self.local_memory,
+                            &entry.agent_name,
+                            r.latency_ms,
+                            r.task_success.as_ref().map(|t| t.pass),
+                            &r.response,
+                        )
+                        .await;
+                        // Episodic turn memory (shared knowledgebase) — mirrors
+                        // swarm_delegate_local so fan-out delegations build
+                        // the KB too. Non-fatal.
+                        local_knowledge::ingest_turn(
+                            &self.local_memory,
+                            &runtime.inference(),
+                            &entry.agent_name,
+                            &entry.task,
+                            &r.response,
+                            &r.model,
+                        )
+                        .await;
+                        total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
+                        total_tokens += r.tokens_used;
+                        total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
+                        results.push(r.to_result_json(true));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(LocalDelegateResult::error_json(
+                            &entry.agent_name,
+                            &e.to_string(),
+                        ));
+                    }
+                }
+            }
+            // The aggregate balance is best-effort: each delegation already
+            // returned its own post-debit `balance` in `LocalDelegateResult`,
+            // so this field is a convenience read after the loop. A failed
+            // ledger query is surfaced as `null` — NOT fabricated as `0`
+            // (the `.rules` trap: a failed measurement must be distinguishable
+            // from a measured zero; `swarm_balance_local` already returns an
+            // error on `None`, and the fan-out cannot error without discarding
+            // the per-delegation results that succeeded). `Option<i64>`
+            // serializes to `null` on `None`.
+            let balance: Option<i64> = runtime.balance();
+            Ok(serde_json::json!({
+                "results": results,
+                "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
+                "total_tokens": total_tokens,
+                "total_latency_ms": total_latency_ms,
+                "balance": balance,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+            }))
+        })
         .await
     }
 
@@ -519,107 +505,103 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PipelineLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_pipeline_local",
-            async {
-                let req = parameters.0;
-                if req.steps.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "steps must be non-empty".to_string(),
-                    ));
-                }
-                const MAX_PIPELINE_STEPS: usize = 10;
-                if req.steps.len() > MAX_PIPELINE_STEPS {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
-                        req.steps.len()
-                    )));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
+        execute_tool(self, "swarm_pipeline_local", async {
+            let req = parameters.0;
+            if req.steps.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "steps must be non-empty".to_string(),
+                ));
+            }
+            const MAX_PIPELINE_STEPS: usize = 10;
+            if req.steps.len() > MAX_PIPELINE_STEPS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
+                    req.steps.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let mut results = Vec::new();
+            let mut prev_output = String::new();
+            let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
+            let mut total_tokens = 0i64;
+            for (i, step) in req.steps.iter().enumerate() {
+                // Substitute {prev_output} with the previous step's response.
+                let task = if i == 0 {
+                    step.task.clone()
+                } else {
+                    step.task.replace("{prev_output}", &prev_output)
+                };
+                let agent = self.local_registry.get(&step.agent_name);
+                let Some(agent) = agent else {
+                    results.push(serde_json::json!({
+                        "step": i,
+                        "agent_name": step.agent_name,
+                        "ok": false,
+                        "error": format!(
+                            "agent '{}' not found in local registry",
+                            step.agent_name
+                        ),
+                    }));
+                    break; // pipeline stops on agent-not-found
+                };
+                match runtime
+                    .delegate(&agent, &task, step.credits_authorized, ceiling)
                     .await
-                    .map_err(map_local_swarm_error)?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
-                let mut results = Vec::new();
-                let mut prev_output = String::new();
-                let mut total_cost = 0i64;
-                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-                // capped costs, so it inherits their understatement. Reporting both
-                // keeps the aggregate reconciliation surface honest.
-                let mut total_cost_uncapped = 0i64;
-                let mut total_tokens = 0i64;
-                for (i, step) in req.steps.iter().enumerate() {
-                    // Substitute {prev_output} with the previous step's response.
-                    let task = if i == 0 {
-                        step.task.clone()
-                    } else {
-                        step.task.replace("{prev_output}", &prev_output)
-                    };
-                    let agent = self.local_registry.get(&step.agent_name);
-                    let Some(agent) = agent else {
-                        results.push(serde_json::json!({
-                            "step": i,
-                            "agent_name": step.agent_name,
-                            "ok": false,
-                            "error": format!(
-                                "agent '{}' not found in local registry",
-                                step.agent_name
-                            ),
-                        }));
-                        break; // pipeline stops on agent-not-found
-                    };
-                    match runtime
-                        .delegate(&agent, &task, step.credits_authorized, ceiling)
-                        .await
-                    {
-                        Ok(r) => {
-                            self.validate_produces(&step.agent_name, &agent.produces, &r.response);
-                            // Episodic turn memory (shared knowledgebase) —
-                            // mirrors swarm_delegate_local so pipeline steps
-                            // build the KB too. `task` carries the
-                            // {prev_output}-substituted prompt the agent actually
-                            // received, so the recorded turn is the real input.
-                            // Non-fatal.
-                            local_knowledge::ingest_turn(
-                                &self.local_memory,
-                                &runtime.inference(),
-                                &step.agent_name,
-                                &task,
-                                &r.response,
-                                &r.model,
-                            )
-                            .await;
-                            prev_output = r.response.clone();
-                            total_cost += r.cost;
-                            total_cost_uncapped += r.cost_uncapped;
-                            total_tokens += r.tokens_used;
-                            let mut entry = r.to_result_json(false);
-                            entry["step"] = serde_json::json!(i);
-                            results.push(entry);
-                        }
-                        Err(e) => {
-                            let mut entry =
-                                LocalDelegateResult::error_json(&step.agent_name, &e.to_string());
-                            entry["step"] = serde_json::json!(i);
-                            results.push(entry);
-                            break; // pipeline stops on failure
-                        }
+                {
+                    Ok(r) => {
+                        self.validate_produces(&step.agent_name, &agent.produces, &r.response);
+                        // Episodic turn memory (shared knowledgebase) —
+                        // mirrors swarm_delegate_local so pipeline steps
+                        // build the KB too. `task` carries the
+                        // {prev_output}-substituted prompt the agent actually
+                        // received, so the recorded turn is the real input.
+                        // Non-fatal.
+                        local_knowledge::ingest_turn(
+                            &self.local_memory,
+                            &runtime.inference(),
+                            &step.agent_name,
+                            &task,
+                            &r.response,
+                            &r.model,
+                        )
+                        .await;
+                        prev_output = r.response.clone();
+                        total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
+                        total_tokens += r.tokens_used;
+                        let mut entry = r.to_result_json(false);
+                        entry["step"] = serde_json::json!(i);
+                        results.push(entry);
+                    }
+                    Err(e) => {
+                        let mut entry =
+                            LocalDelegateResult::error_json(&step.agent_name, &e.to_string());
+                        entry["step"] = serde_json::json!(i);
+                        results.push(entry);
+                        break; // pipeline stops on failure
                     }
                 }
-                let balance: Option<i64> = runtime.balance();
-                Ok(serde_json::json!({
-                    "steps_completed": results.len(),
-                    "results": results,
-                    "total_cost": total_cost,
-                    "total_cost_uncapped": total_cost_uncapped,
-                    "total_tokens": total_tokens,
-                    "final_output": prev_output,
-                    "balance": balance,
-                }))
-            },
-        )
+            }
+            let balance: Option<i64> = runtime.balance();
+            Ok(serde_json::json!({
+                "steps_completed": results.len(),
+                "results": results,
+                "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
+                "total_tokens": total_tokens,
+                "final_output": prev_output,
+                "balance": balance,
+            }))
+        })
         .await
     }
 
@@ -637,27 +619,23 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_list_local_agents",
-            async {
-                let req = parameters.0;
-                let limit = req.limit.unwrap_or(200) as usize;
-                let mut agents = self.local_registry.list();
-                // Optional type filter.
-                if let Some(agent_type) = req.agent_type
-                    && !agent_type.trim().is_empty()
-                {
-                    agents.retain(|a| a.agent_type == agent_type);
-                }
-                agents.truncate(limit);
-                let count = agents.len();
-                Ok(serde_json::json!({
-                    "agents": agents,
-                    "total": count,
-                }))
-            },
-        )
+        execute_tool(self, "swarm_list_local_agents", async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(200) as usize;
+            let mut agents = self.local_registry.list();
+            // Optional type filter.
+            if let Some(agent_type) = req.agent_type
+                && !agent_type.trim().is_empty()
+            {
+                agents.retain(|a| a.agent_type == agent_type);
+            }
+            agents.truncate(limit);
+            let count = agents.len();
+            Ok(serde_json::json!({
+                "agents": agents,
+                "total": count,
+            }))
+        })
         .await
     }
 
@@ -675,177 +653,173 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_clone_to_local",
-            async {
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                // Fetch the agent card from ABW.
-                let abw_card = self
-                    .client
-                    .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                // Build the local card from the ABW card.
-                let agent_id = abw_card
-                    .get("agent_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&req.agent_name)
-                    .to_string();
-                // Sanitize the agent_id for filesystem use — the ABW response is
-                // third-party data and could contain path traversal sequences
-                // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
-                // and dot. If the sanitized id is empty, fall back to the
-                // operator-supplied agent_name (also sanitized).
-                let safe_agent_id = sanitize_agent_id(&agent_id)
-                    .or_else(|| sanitize_agent_id(&req.agent_name))
-                    .ok_or_else(|| {
-                        McpToolError::invalid_argument(
-                            "agent_id from ABW contains no safe characters".to_string(),
-                        )
-                    })?;
-                // The local clone gets a distinct agent_id so it cannot collide
-                // with the cloud agent's id. This is the root-cause fix for the
-                // panel merge bug where a cloned card with `agent_id ==
-                // cloud_swarm_id` self-suppressed and never appeared as a Local
-                // row. The `-clone` suffix also differentiates the local card
-                // from the cloud card in `swarm_delegate_local` lookups.
-                let clone_agent_id = self.local_registry.unique_clone_id(&safe_agent_id);
-                // Display label: prefer the ABW agent_name (human-readable),
-                // append " (Clone)" so the operator can distinguish the local
-                // clone from the cloud original in the panel.
-                let display_name = format!("{} (Clone)", req.agent_name);
-                let agent_type = abw_card
-                    .get("agent_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("research")
-                    .to_string();
-                let description = abw_card
-                    .get("metadata")
-                    .and_then(|m| m.get("description"))
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let accepts: Vec<String> = abw_card
-                    .get("accepts")
-                    .and_then(|a| a.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let produces: Vec<String> = abw_card
-                    .get("produces")
-                    .and_then(|p| p.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let deps = abw_card
-                    .get("dependencies")
-                    .and_then(|d| d.as_object())
-                    .map(|obj| LocalAgentDependencies {
-                        required: obj
-                            .get("required")
-                            .and_then(|r| r.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        optional: obj
-                            .get("optional")
-                            .and_then(|o| o.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                    })
-                    .unwrap_or_default();
-                let model = abw_card
-                    .get("capabilities")
-                    .and_then(|c| c.get("model"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let system_prompt = abw_card
-                    .get("system_prompt")
-                    .and_then(|s| s.as_str())
-                    .map(sanitize_abw_text);
-                let string_list = |v: Option<&serde_json::Value>| {
-                    v.and_then(|x| x.as_array())
+        execute_tool(self, "swarm_clone_to_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Fetch the agent card from ABW.
+            let abw_card = self
+                .client
+                .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Build the local card from the ABW card.
+            let agent_id = abw_card
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&req.agent_name)
+                .to_string();
+            // Sanitize the agent_id for filesystem use — the ABW response is
+            // third-party data and could contain path traversal sequences
+            // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
+            // and dot. If the sanitized id is empty, fall back to the
+            // operator-supplied agent_name (also sanitized).
+            let safe_agent_id = sanitize_agent_id(&agent_id)
+                .or_else(|| sanitize_agent_id(&req.agent_name))
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "agent_id from ABW contains no safe characters".to_string(),
+                    )
+                })?;
+            // The local clone gets a distinct agent_id so it cannot collide
+            // with the cloud agent's id. This is the root-cause fix for the
+            // panel merge bug where a cloned card with `agent_id ==
+            // cloud_swarm_id` self-suppressed and never appeared as a Local
+            // row. The `-clone` suffix also differentiates the local card
+            // from the cloud card in `swarm_delegate_local` lookups.
+            let clone_agent_id = self.local_registry.unique_clone_id(&safe_agent_id);
+            // Display label: prefer the ABW agent_name (human-readable),
+            // append " (Clone)" so the operator can distinguish the local
+            // clone from the cloud original in the panel.
+            let display_name = format!("{} (Clone)", req.agent_name);
+            let agent_type = abw_card
+                .get("agent_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("research")
+                .to_string();
+            let description = abw_card
+                .get("metadata")
+                .and_then(|m| m.get("description"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let accepts: Vec<String> = abw_card
+                .get("accepts")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let produces: Vec<String> = abw_card
+                .get("produces")
+                .and_then(|p| p.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let deps = abw_card
+                .get("dependencies")
+                .and_then(|d| d.as_object())
+                .map(|obj| LocalAgentDependencies {
+                    required: obj
+                        .get("required")
+                        .and_then(|r| r.as_array())
                         .map(|arr| {
                             arr.iter()
-                                .filter_map(|x| x.as_str().map(String::from))
-                                .collect::<Vec<_>>()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
                         })
-                        .unwrap_or_default()
-                };
-                let abw_caps = abw_card.get("capabilities");
-                let mcp_tools = filter_mcp_tools(
-                    string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
-                    self.client.config().allowed_tool_servers.as_deref(),
-                );
-                let skills =
-                    filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
-                let import_labels: Vec<String> =
-                    accepts.iter().chain(produces.iter()).cloned().collect();
-                let local_card = LocalAgentCard {
-                    agent_id: clone_agent_id.clone(),
-                    agent_type,
-                    description,
-                    display_name,
-                    accepts,
-                    produces,
-                    dependencies: deps,
-                    capabilities: LocalAgentCapabilities {
-                        model,
-                        min_provider_class: "local".to_string(),
-                        system_prompt,
-                        mcp_tools,
-                        skills,
-                        ..Default::default()
-                    },
-                    cloud_swarm_id: Some(req.agent_name),
-                    tags: Vec::new(),
-                    sample_queries: Vec::new(),
-                    visibility: String::new(),
-                    valence: None,
-                };
-                // The ABW catalogue's port labels are the card's own
-                // taxonomy, not locally-authored free strings. Register them
-                // as persisted extension types so `write_card`'s typing gate
-                // (and every future load) resolves them. Labels that already
-                // resolve are no-ops.
-                self.local_registry
-                    .promote_imported_port_types(&import_labels)
-                    .map_err(map_local_swarm_error)?;
-                // write_card runs Rung 1 (Presence) + Rung 2 (Typing) +
-                // sanitize/canonicalize/dir-write/load — same invariant as
-                // `swarm_create_local_agent`.
-                let card_path = self
-                    .local_registry
-                    .write_card(&local_card)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "cloned": clone_agent_id,
-                    "cloud_id": local_card.cloud_swarm_id,
-                    "path": card_path,
-                    "synced": true,
-                }))
-            },
-        )
+                        .unwrap_or_default(),
+                    optional: obj
+                        .get("optional")
+                        .and_then(|o| o.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .unwrap_or_default();
+            let model = abw_card
+                .get("capabilities")
+                .and_then(|c| c.get("model"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            let system_prompt = abw_card
+                .get("system_prompt")
+                .and_then(|s| s.as_str())
+                .map(sanitize_abw_text);
+            let string_list = |v: Option<&serde_json::Value>| {
+                v.and_then(|x| x.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            let abw_caps = abw_card.get("capabilities");
+            let mcp_tools = filter_mcp_tools(
+                string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
+                self.client.config().allowed_tool_servers.as_deref(),
+            );
+            let skills =
+                filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
+            let import_labels: Vec<String> =
+                accepts.iter().chain(produces.iter()).cloned().collect();
+            let local_card = LocalAgentCard {
+                agent_id: clone_agent_id.clone(),
+                agent_type,
+                description,
+                display_name,
+                accepts,
+                produces,
+                dependencies: deps,
+                capabilities: LocalAgentCapabilities {
+                    model,
+                    min_provider_class: "local".to_string(),
+                    system_prompt,
+                    mcp_tools,
+                    skills,
+                    ..Default::default()
+                },
+                cloud_swarm_id: Some(req.agent_name),
+                tags: Vec::new(),
+                sample_queries: Vec::new(),
+                visibility: String::new(),
+                valence: None,
+            };
+            // The ABW catalogue's port labels are the card's own
+            // taxonomy, not locally-authored free strings. Register them
+            // as persisted extension types so `write_card`'s typing gate
+            // (and every future load) resolves them. Labels that already
+            // resolve are no-ops.
+            self.local_registry
+                .promote_imported_port_types(&import_labels)
+                .map_err(map_local_swarm_error)?;
+            // write_card runs Rung 1 (Presence) + Rung 2 (Typing) +
+            // sanitize/canonicalize/dir-write/load — same invariant as
+            // `swarm_create_local_agent`.
+            let card_path = self
+                .local_registry
+                .write_card(&local_card)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "cloned": clone_agent_id,
+                "cloud_id": local_card.cloud_swarm_id,
+                "path": card_path,
+                "synced": true,
+            }))
+        })
         .await
     }
 
@@ -861,85 +835,81 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushToCloudSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_push_to_cloud",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                // Look up the local card.
-                let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "agent '{}' not found in local registry",
-                        req.agent_name
-                    ))
-                })?;
-                // Build the ABW create/update payload from the local card.
-                let payload = serde_json::json!({
-                    "agent_id": local_card.agent_id,
-                    "agent_type": local_card.agent_type,
-                    "description": local_card.description,
-                    "accepts": local_card.accepts,
-                    "produces": local_card.produces,
-                    "dependencies": local_card.dependencies,
-                    "model": local_card.capabilities.model,
-                    "system_prompt": local_card.capabilities.system_prompt,
-                    "mcp_tools": local_card.capabilities.mcp_tools,
-                    "skills": local_card.capabilities.skills,
-                });
-                // POST to ABW. If the agent already exists (cloud_swarm_id is set),
-                // ABW updates it; otherwise a new agent is created.
-                let result = self
-                    .client
-                    .post("/agents", &payload)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                // Update the local card's cloud_swarm_id to mark it as synced.
-                let cloud_swarm_id = result
-                    .get("agent_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&local_card.agent_id)
-                    .to_string();
-                let mut updated_card = local_card.clone();
-                updated_card.cloud_swarm_id = Some(cloud_swarm_id.clone());
-                // Write the updated card back to the local registry. Sanitize
-                // the agent_id for filesystem use (defense-in-depth — the card
-                // came from disk, but a manually-placed malicious card could
-                // carry a path-traversal id).
-                let dir = self.client.config().local_agents_dir.clone();
-                let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "agent_id '{}' contains no safe characters",
-                        local_card.agent_id
-                    ))
-                })?;
-                let card_path = std::path::Path::new(&dir)
-                    .join(&safe_id)
-                    .join("agent_card.json");
-                let json = serde_json::to_string_pretty(&updated_card)
-                    .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
-                std::fs::write(&card_path, json).map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("failed to write {}", card_path.display()),
-                    )
-                })?;
-                self.local_registry.load().map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "pushed": local_card.agent_id,
-                    "cloud_id": cloud_swarm_id,
-                    "synced": true,
-                    "result": result,
-                }))
-            },
-        )
+        execute_tool(self, "swarm_push_to_cloud", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Look up the local card.
+            let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            // Build the ABW create/update payload from the local card.
+            let payload = serde_json::json!({
+                "agent_id": local_card.agent_id,
+                "agent_type": local_card.agent_type,
+                "description": local_card.description,
+                "accepts": local_card.accepts,
+                "produces": local_card.produces,
+                "dependencies": local_card.dependencies,
+                "model": local_card.capabilities.model,
+                "system_prompt": local_card.capabilities.system_prompt,
+                "mcp_tools": local_card.capabilities.mcp_tools,
+                "skills": local_card.capabilities.skills,
+            });
+            // POST to ABW. If the agent already exists (cloud_swarm_id is set),
+            // ABW updates it; otherwise a new agent is created.
+            let result = self
+                .client
+                .post("/agents", &payload)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Update the local card's cloud_swarm_id to mark it as synced.
+            let cloud_swarm_id = result
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&local_card.agent_id)
+                .to_string();
+            let mut updated_card = local_card.clone();
+            updated_card.cloud_swarm_id = Some(cloud_swarm_id.clone());
+            // Write the updated card back to the local registry. Sanitize
+            // the agent_id for filesystem use (defense-in-depth — the card
+            // came from disk, but a manually-placed malicious card could
+            // carry a path-traversal id).
+            let dir = self.client.config().local_agents_dir.clone();
+            let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(format!(
+                    "agent_id '{}' contains no safe characters",
+                    local_card.agent_id
+                ))
+            })?;
+            let card_path = std::path::Path::new(&dir)
+                .join(&safe_id)
+                .join("agent_card.json");
+            let json = serde_json::to_string_pretty(&updated_card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
+            std::fs::write(&card_path, json).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to write {}", card_path.display()),
+                )
+            })?;
+            self.local_registry.load().map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "pushed": local_card.agent_id,
+                "cloud_id": cloud_swarm_id,
+                "synced": true,
+                "result": result,
+            }))
+        })
         .await
     }
 
@@ -957,66 +927,62 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_remove_local",
-            async {
-                let req = parameters.0;
-                if req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_name must be non-empty".to_string(),
-                    ));
-                }
-                // Must exist locally (list/get reload from disk, so a freshly
-                // added card is seen).
-                let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "agent '{}' not found in local registry",
-                        req.agent_name
-                    ))
-                })?;
-                let safe_id = sanitize_agent_id(&card.agent_id).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "agent_id '{}' contains no safe characters",
-                        card.agent_id
-                    ))
-                })?;
-                let dir = self.client.config().local_agents_dir.clone();
-                let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+        execute_tool(self, "swarm_remove_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Must exist locally (list/get reload from disk, so a freshly
+            // added card is seen).
+            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            let safe_id = sanitize_agent_id(&card.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(format!(
+                    "agent_id '{}' contains no safe characters",
+                    card.agent_id
+                ))
+            })?;
+            let dir = self.client.config().local_agents_dir.clone();
+            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to resolve local agents dir {}", dir),
+                )
+            })?;
+            let card_dir = registry_root.join(&safe_id);
+            // Defense-in-depth: refuse to remove anything outside the registry
+            // root (the id is sanitized, but a canonicalized check costs
+            // nothing and pins the invariant).
+            let target = match std::fs::canonicalize(&card_dir) {
+                Ok(t) => t,
+                Err(_) => card_dir,
+            };
+            if !target.starts_with(&registry_root) {
+                return Err(McpToolError::invalid_argument(
+                    "refusing to remove a path outside the local agents dir".to_string(),
+                ));
+            }
+            if target.exists() {
+                std::fs::remove_dir_all(&target).map_err(|e| {
                     hkask_mcp_server::map_io_error(
                         e,
-                        &format!("failed to resolve local agents dir {}", dir),
+                        &format!("failed to remove local agent dir {}", target.display()),
                     )
                 })?;
-                let card_dir = registry_root.join(&safe_id);
-                // Defense-in-depth: refuse to remove anything outside the registry
-                // root (the id is sanitized, but a canonicalized check costs
-                // nothing and pins the invariant).
-                let target = match std::fs::canonicalize(&card_dir) {
-                    Ok(t) => t,
-                    Err(_) => card_dir,
-                };
-                if !target.starts_with(&registry_root) {
-                    return Err(McpToolError::invalid_argument(
-                        "refusing to remove a path outside the local agents dir".to_string(),
-                    ));
-                }
-                if target.exists() {
-                    std::fs::remove_dir_all(&target).map_err(|e| {
-                        hkask_mcp_server::map_io_error(
-                            e,
-                            &format!("failed to remove local agent dir {}", target.display()),
-                        )
-                    })?;
-                }
-                self.local_registry.load().map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "removed": card.agent_id,
-                    "cloud_id": card.cloud_swarm_id,
-                    "synced": card.cloud_swarm_id.is_some(),
-                }))
-            },
-        )
+            }
+            self.local_registry.load().map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "removed": card.agent_id,
+                "cloud_id": card.cloud_swarm_id,
+                "synced": card.cloud_swarm_id.is_some(),
+            }))
+        })
         .await
     }
 
@@ -1034,83 +1000,79 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_local_agent",
-            async {
-                let req = parameters.0;
-                if req.agent_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.agent_type.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "agent_type must be non-empty".to_string(),
-                    ));
-                }
-                if req.system_prompt.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "system_prompt must be non-empty".to_string(),
-                    ));
-                }
-                let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
-                    McpToolError::invalid_argument(
-                        "agent_id must contain only alphanumerics, dash, underscore, or dot"
-                            .to_string(),
-                    )
-                })?;
-                let model = if req.model.trim().is_empty() {
-                    self.client.config().default_agent_model.clone()
+        execute_tool(self, "swarm_create_local_agent", async {
+            let req = parameters.0;
+            if req.agent_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_id must be non-empty".to_string(),
+                ));
+            }
+            if req.agent_type.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_type must be non-empty".to_string(),
+                ));
+            }
+            if req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "system_prompt must be non-empty".to_string(),
+                ));
+            }
+            let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(
+                    "agent_id must contain only alphanumerics, dash, underscore, or dot"
+                        .to_string(),
+                )
+            })?;
+            let model = if req.model.trim().is_empty() {
+                self.client.config().default_agent_model.clone()
+            } else {
+                req.model.clone()
+            };
+            let card = LocalAgentCard {
+                agent_id: safe_id.clone(),
+                agent_type: req.agent_type,
+                description: req.description,
+                display_name: String::new(),
+                accepts: req.accepts,
+                produces: req.produces,
+                dependencies: LocalAgentDependencies::default(),
+                capabilities: LocalAgentCapabilities {
+                    model,
+                    min_provider_class: "local".to_string(),
+                    system_prompt: Some(req.system_prompt),
+                    mcp_tools: filter_mcp_tools(
+                        req.mcp_tools,
+                        self.client.config().allowed_tool_servers.as_deref(),
+                    ),
+                    skills: req.skills,
+                    output_contract: req.output_contract,
+                    evaluators: req.evaluators.unwrap_or_default(),
+                    reasoning: req.reasoning.unwrap_or(false),
+                },
+                cloud_swarm_id: None,
+                tags: req.tags,
+                sample_queries: req.sample_queries,
+                visibility: if req.visibility.trim().is_empty() {
+                    "private".to_string()
                 } else {
-                    req.model.clone()
-                };
-                let card = LocalAgentCard {
-                    agent_id: safe_id.clone(),
-                    agent_type: req.agent_type,
-                    description: req.description,
-                    display_name: String::new(),
-                    accepts: req.accepts,
-                    produces: req.produces,
-                    dependencies: LocalAgentDependencies::default(),
-                    capabilities: LocalAgentCapabilities {
-                        model,
-                        min_provider_class: "local".to_string(),
-                        system_prompt: Some(req.system_prompt),
-                        mcp_tools: filter_mcp_tools(
-                            req.mcp_tools,
-                            self.client.config().allowed_tool_servers.as_deref(),
-                        ),
-                        skills: req.skills,
-                        output_contract: req.output_contract,
-                        evaluators: req.evaluators.unwrap_or_default(),
-                        reasoning: req.reasoning.unwrap_or(false),
-                    },
-                    cloud_swarm_id: None,
-                    tags: req.tags,
-                    sample_queries: req.sample_queries,
-                    visibility: if req.visibility.trim().is_empty() {
-                        "private".to_string()
-                    } else {
-                        req.visibility
-                    },
-                    valence: req.valence.map(|v| LocalAgentValence {
-                        arousal: v.arousal,
-                        valence: v.valence,
-                        primary_affect: v.primary_affect,
-                        personality_traits: v.personality_traits.unwrap_or_default(),
-                    }),
-                };
-                let card_path = self
-                    .local_registry
-                    .write_card(&card)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({
-                    "created": safe_id,
-                    "path": card_path,
-                }))
-            },
-        )
+                    req.visibility
+                },
+                valence: req.valence.map(|v| LocalAgentValence {
+                    arousal: v.arousal,
+                    valence: v.valence,
+                    primary_affect: v.primary_affect,
+                    personality_traits: v.personality_traits.unwrap_or_default(),
+                }),
+            };
+            let card_path = self
+                .local_registry
+                .write_card(&card)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "created": safe_id,
+                "path": card_path,
+            }))
+        })
         .await
     }
 
@@ -1195,25 +1157,21 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_create_local_swarm",
-            async {
-                let req = parameters.0;
-                if req.name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "name must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self
-                    .local_swarms
-                    .create(&req.name, &req.mission, req.agents)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_create_local_swarm", async {
+            let req = parameters.0;
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .create(&req.name, &req.mission, req.agents)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
         .await
     }
 
@@ -1226,17 +1184,13 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<ListLocalSwarmsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_list_local_swarms",
-            async {
-                let swarms = self.local_swarms.list();
-                Ok(serde_json::json!({
-                    "count": swarms.len(),
-                    "swarms": swarms,
-                }))
-            },
-        )
+        execute_tool(self, "swarm_list_local_swarms", async {
+            let swarms = self.local_swarms.list();
+            Ok(serde_json::json!({
+                "count": swarms.len(),
+                "swarms": swarms,
+            }))
+        })
         .await
     }
 
@@ -1248,24 +1202,20 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_get_local_swarm",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-                })?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_get_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+            })?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
         .await
     }
 
@@ -1279,22 +1229,18 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_delete_local_swarm",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id must be non-empty".to_string(),
-                    ));
-                }
-                self.local_swarms
-                    .delete(&req.swarm_id)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::json!({ "deleted": req.swarm_id }))
-            },
-        )
+        execute_tool(self, "swarm_delete_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            self.local_swarms
+                .delete(&req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({ "deleted": req.swarm_id }))
+        })
         .await
     }
 
@@ -1310,25 +1256,21 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AddAgentToLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_add_agent_local",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id and agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self
-                    .local_swarms
-                    .add_member(&req.swarm_id, &req.agent_name)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_add_agent_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .add_member(&req.swarm_id, &req.agent_name)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
         .await
     }
 
@@ -1342,25 +1284,21 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_remove_agent_local",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id and agent_name must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self
-                    .local_swarms
-                    .remove_member(&req.swarm_id, &req.agent_name)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_remove_agent_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .remove_member(&req.swarm_id, &req.agent_name)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
         .await
     }
 
@@ -1376,30 +1314,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<UpdateLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_update_local_swarm",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id must be non-empty".to_string(),
-                    ));
-                }
-                if req.name.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "name must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self
-                    .local_swarms
-                    .update_metadata(&req.swarm_id, &req.name, &req.mission)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_update_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .update_metadata(&req.swarm_id, &req.name, &req.mission)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
         .await
     }
 
@@ -1415,25 +1349,21 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_clone_local_swarm",
-            async {
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self
-                    .local_swarms
-                    .clone_swarm(&req.swarm_id)
-                    .map_err(map_local_swarm_error)?;
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_clone_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .clone_swarm(&req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
         .await
     }
 
@@ -1449,133 +1379,129 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_push_local_swarm",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.swarm_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "swarm_id must be non-empty".to_string(),
-                    ));
-                }
-                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+        execute_tool(self, "swarm_push_local_swarm", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+            })?;
+
+            // Create the ABW workspace (free) — same pattern as
+            // `swarm_create_swarm`.
+            let slug_base: String = swarm
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
+            let team = self
+                .client
+                .post(
+                    "/teams",
+                    &serde_json::json!({
+                        "name": swarm.name,
+                        "slug": slug,
+                        "description": swarm.mission,
+                        "mission": swarm.mission,
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            let workspace_id = team
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    SwarmError::ApiVersionMismatch("team create returned no id".to_string())
+                        .into_tool_error()
                 })?;
 
-                // Create the ABW workspace (free) — same pattern as
-                // `swarm_create_swarm`.
-                let slug_base: String = swarm
-                    .name
-                    .to_lowercase()
-                    .chars()
-                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                    .collect();
-                let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
-                let team = self
-                    .client
-                    .post(
-                        "/teams",
-                        &serde_json::json!({
-                            "name": swarm.name,
-                            "slug": slug,
-                            "description": swarm.mission,
-                            "mission": swarm.mission,
-                        }),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-
-                let workspace_id = team
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .map(str::to_string)
-                    .ok_or_else(|| {
-                        SwarmError::ApiVersionMismatch("team create returned no id".to_string())
-                            .into_tool_error()
-                    })?;
-
-                // Hire each member agent, gated by consent tokens. Same
-                // spend_gate flow as `swarm_create_swarm`. A missing token for
-                // an agent is reported in hire_errors, not a hard abort — the
-                // workspace is already created.
-                let tokens = &req.consent_tokens;
-                let mut hired = Vec::new();
-                let mut hire_errors = Vec::new();
-                for (ix, agent) in swarm.members.iter().enumerate() {
-                    let spend_auth = match tokens.get(ix) {
-                        Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
-                        None => {
-                            hire_errors.push(serde_json::json!({
-                                "agent": agent,
-                                "error": "no consent token provided for this hire",
-                            }));
-                            continue;
-                        }
-                    };
-                    match spend_gate::authorize_hire(
+            // Hire each member agent, gated by consent tokens. Same
+            // spend_gate flow as `swarm_create_swarm`. A missing token for
+            // an agent is reported in hire_errors, not a hard abort — the
+            // workspace is already created.
+            let tokens = &req.consent_tokens;
+            let mut hired = Vec::new();
+            let mut hire_errors = Vec::new();
+            for (ix, agent) in swarm.members.iter().enumerate() {
+                let spend_auth = match tokens.get(ix) {
+                    Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
+                    None => {
+                        hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": "no consent token provided for this hire",
+                        }));
+                        continue;
+                    }
+                };
+                match spend_gate::authorize_hire(
+                    &self.client,
+                    &self.consent,
+                    spend_auth,
+                    agent,
+                    0,
+                    None,
+                    false,
+                )
+                .await
+                {
+                    Ok(auth) => match spend_gate::complete_hire(
                         &self.client,
                         &self.consent,
-                        spend_auth,
+                        auth,
+                        &workspace_id,
                         agent,
-                        0,
-                        None,
                         false,
                     )
                     .await
                     {
-                        Ok(auth) => match spend_gate::complete_hire(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &workspace_id,
-                            agent,
-                            false,
-                        )
-                        .await
-                        {
-                            Ok(_) => hired.push(agent.clone()),
-                            Err(e) => hire_errors.push(serde_json::json!({
-                                "agent": agent,
-                                "error": e.to_string(),
-                            })),
-                        },
+                        Ok(_) => hired.push(agent.clone()),
                         Err(e) => hire_errors.push(serde_json::json!({
                             "agent": agent,
                             "error": e.to_string(),
                         })),
-                    }
+                    },
+                    Err(e) => hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": e.to_string(),
+                    })),
                 }
+            }
 
-                // Store the ABW workspace_id back on the local swarm so the
-                // local↔cloud link is tracked. A failure here is logged, not
-                // fatal — the workspace was created; the link can be set
-                // manually.
-                if let Err(e) = self
-                    .local_swarms
-                    .set_cloud_workspace_id(&req.swarm_id, Some(workspace_id.clone()))
-                {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        "failed to store cloud_workspace_id on local swarm '{}': {e}",
-                        req.swarm_id
-                    );
-                }
+            // Store the ABW workspace_id back on the local swarm so the
+            // local↔cloud link is tracked. A failure here is logged, not
+            // fatal — the workspace was created; the link can be set
+            // manually.
+            if let Err(e) = self
+                .local_swarms
+                .set_cloud_workspace_id(&req.swarm_id, Some(workspace_id.clone()))
+            {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    "failed to store cloud_workspace_id on local swarm '{}': {e}",
+                    req.swarm_id
+                );
+            }
 
-                Ok(self
-                    .client
-                    .with_wallet(serde_json::json!({
-                        "workspace_id": workspace_id,
-                        "local_swarm_id": req.swarm_id,
-                        "hired": hired,
-                        "hire_errors": hire_errors,
-                    }))
-                    .await)
-            },
-        )
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "local_swarm_id": req.swarm_id,
+                    "hired": hired,
+                    "hire_errors": hire_errors,
+                }))
+                .await)
+        })
         .await
     }
 
@@ -1591,68 +1517,64 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PullSwarmToLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_pull_swarm_to_local",
-            async {
-                self.client
-                    .require_auth()
-                    .map_err(SwarmError::into_tool_error)?;
-                let req = parameters.0;
-                if req.workspace_id.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "workspace_id must be non-empty".to_string(),
-                    ));
-                }
+        execute_tool(self, "swarm_pull_swarm_to_local", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
 
-                // Fetch the ABW workspace.
-                let data = self
-                    .client
-                    .get(&format!(
-                        "/workspaces/{}",
-                        url_encode_segment(&req.workspace_id)
-                    ))
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                let workspace = sanitize_workspace_payload(data);
+            // Fetch the ABW workspace.
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}",
+                    url_encode_segment(&req.workspace_id)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            let workspace = sanitize_workspace_payload(data);
 
-                // Extract name, mission, and roster from the workspace payload.
-                // The roster shape varies (see `parse_swarm_roster` in the
-                // panel); extract agent ids defensively.
-                let name = workspace
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Pulled Swarm")
-                    .to_string();
-                let mission = workspace
-                    .get("mission")
-                    .or_else(|| workspace.get("description"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let members = extract_roster_member_ids(&workspace);
+            // Extract name, mission, and roster from the workspace payload.
+            // The roster shape varies (see `parse_swarm_roster` in the
+            // panel); extract agent ids defensively.
+            let name = workspace
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Pulled Swarm")
+                .to_string();
+            let mission = workspace
+                .get("mission")
+                .or_else(|| workspace.get("description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let members = extract_roster_member_ids(&workspace);
 
-                // Create the local swarm copy.
-                let swarm = self
-                    .local_swarms
-                    .create(&name, &mission, members)
-                    .map_err(map_local_swarm_error)?;
+            // Create the local swarm copy.
+            let swarm = self
+                .local_swarms
+                .create(&name, &mission, members)
+                .map_err(map_local_swarm_error)?;
 
-                // Store the ABW workspace_id on the new local swarm.
-                let swarm = self
-                    .local_swarms
-                    .set_cloud_workspace_id(&swarm.swarm_id, Some(req.workspace_id.clone()))
-                    .map_err(map_local_swarm_error)?;
+            // Store the ABW workspace_id on the new local swarm.
+            let swarm = self
+                .local_swarms
+                .set_cloud_workspace_id(&swarm.swarm_id, Some(req.workspace_id.clone()))
+                .map_err(map_local_swarm_error)?;
 
-                Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
-                    serde_json::json!({
-                        "swarm_id": swarm.swarm_id,
-                        "name": swarm.name,
-                        "cloud_workspace_id": req.workspace_id,
-                    })
-                }))
-            },
-        )
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "swarm_id": swarm.swarm_id,
+                    "name": swarm.name,
+                    "cloud_workspace_id": req.workspace_id,
+                })
+            }))
+        })
         .await
     }
     /// partial inputs or validates well-formedness. Authoring aid — read-only,
@@ -1904,34 +1826,29 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvaluateLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_evaluate_local",
-            async {
-                let req = parameters.0;
-                if req.response.trim().is_empty() || req.spec.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "response and spec must be non-empty".to_string(),
-                    ));
-                }
-                let pass = run_evaluator(&req.response, &req.evaluator, &req.spec).await?;
-                let detail = format!(
-                    "evaluator={}, spec_len={}, pass={}",
-                    req.evaluator,
-                    req.spec.len(),
-                    pass
-                );
-                let verdict = crate::local_runtime::TaskSuccessVerdict {
-                    pass,
-                    score: None,
-                    detail: Some(detail),
-                    provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
-                };
-                Ok(serde_json::to_value(&verdict).unwrap_or_else(
-                    |_| serde_json::json!({ "error": "failed to serialize verdict" }),
-                ))
-            },
-        )
+        execute_tool(self, "swarm_evaluate_local", async {
+            let req = parameters.0;
+            if req.response.trim().is_empty() || req.spec.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "response and spec must be non-empty".to_string(),
+                ));
+            }
+            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec).await?;
+            let detail = format!(
+                "evaluator={}, spec_len={}, pass={}",
+                req.evaluator,
+                req.spec.len(),
+                pass
+            );
+            let verdict = crate::local_runtime::TaskSuccessVerdict {
+                pass,
+                score: None,
+                detail: Some(detail),
+                provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
+            };
+            Ok(serde_json::to_value(&verdict)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize verdict" })))
+        })
         .await
     }
 
@@ -1950,62 +1867,147 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecutePlanLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_execute_plan_local",
-            async {
-                let req = parameters.0;
-                if req.delegations.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "delegations must be non-empty".to_string(),
-                    ));
-                }
-                if req.delegations.len() > MAX_FANOUT {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "plan cap is {MAX_FANOUT} delegations, got {}",
-                        req.delegations.len()
-                    )));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
-                // Load the task board when a swarm_id is provided so task
-                // progress persists across swarm-intelligence PDCA iterations.
-                let swarm_id = req.swarm_id.clone();
-                let mut task_board = if let Some(ref sid) = swarm_id {
-                    match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
-                        Ok(board) => Some(board),
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.swarm",
-                                swarm_id = %sid,
-                                error = %e,
-                                "Failed to load task board — task progress will not persist"
-                            );
-                            None
-                        }
+        execute_tool(self, "swarm_execute_plan_local", async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "plan cap is {MAX_FANOUT} delegations, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            // Load the task board when a swarm_id is provided so task
+            // progress persists across swarm-intelligence PDCA iterations.
+            let swarm_id = req.swarm_id.clone();
+            let mut task_board = if let Some(ref sid) = swarm_id {
+                match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
+                    Ok(board) => Some(board),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            swarm_id = %sid,
+                            error = %e,
+                            "Failed to load task board — task progress will not persist"
+                        );
+                        None
                     }
-                } else {
-                    None
+                }
+            } else {
+                None
+            };
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
+            let mut total_tokens = 0i64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        &entry.agent_name,
+                        &format!("agent '{}' not found in local registry", entry.agent_name),
+                    ));
+                    // Record the failure on the task board.
+                    if let Some(ref mut board) = task_board {
+                        let tid = entry.task_id.clone().unwrap_or_else(|| {
+                            crate::task_board::derive_task_id(&entry.agent_name, &entry.task)
+                        });
+                        board.record_failure(
+                            &tid,
+                            &entry.agent_name,
+                            &entry.task,
+                            "agent not found",
+                        );
+                    }
+                    continue;
                 };
-                let mut results = Vec::new();
-                let mut failed = 0usize;
-                let mut total_cost = 0i64;
-                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-                // capped costs, so it inherits their understatement. Reporting both
-                // keeps the aggregate reconciliation surface honest.
-                let mut total_cost_uncapped = 0i64;
-                let mut total_tokens = 0i64;
-                for entry in &req.delegations {
-                    let agent = self.local_registry.get(&entry.agent_name);
-                    let Some(agent) = agent else {
+                match runtime
+                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                    .await
+                {
+                    Ok(mut r) => {
+                        total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
+                        total_tokens += r.tokens_used;
+                        // Stamp the deterministic verdict when an evaluator is provided.
+                        if let Some(ev) = &entry.evaluator {
+                            let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
+                            r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
+                                pass,
+                                score: None,
+                                detail: Some(format!(
+                                    "evaluator={}, spec_len={}, pass={}",
+                                    ev.evaluator,
+                                    ev.spec.len(),
+                                    pass
+                                )),
+                                provenance:
+                                    crate::local_runtime::VerdictSource::DeterministicEvaluator,
+                            });
+                        }
+                        // Record stigmergy (same as swarm_delegate_local).
+                        self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                        local_knowledge::record_delegation(
+                            &self.local_memory,
+                            &entry.agent_name,
+                            r.latency_ms,
+                            r.task_success.as_ref().map(|t| t.pass),
+                            &r.response,
+                        )
+                        .await;
+                        // Episodic turn memory (shared knowledgebase) —
+                        // mirrors swarm_delegate_local so plan-executed
+                        // delegations build the KB too. Non-fatal.
+                        local_knowledge::ingest_turn(
+                            &self.local_memory,
+                            &runtime.inference(),
+                            &entry.agent_name,
+                            &entry.task,
+                            &r.response,
+                            &r.model,
+                        )
+                        .await;
+                        // Record on the task board.
+                        if let Some(ref mut board) = task_board {
+                            let tid = entry.task_id.clone().unwrap_or_else(|| {
+                                crate::task_board::derive_task_id(&entry.agent_name, &entry.task)
+                            });
+                            let summary = if r.response.len() > 200 {
+                                format!("{}...", &r.response[..200])
+                            } else {
+                                r.response.clone()
+                            };
+                            board.record_attempt(
+                                &tid,
+                                &entry.agent_name,
+                                &entry.task,
+                                r.task_success.as_ref().map(|t| t.pass),
+                                Some(summary),
+                            );
+                        }
+                        results.push(serde_json::to_value(&r).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "failed to serialize result" }),
+                        ));
+                    }
+                    Err(e) => {
                         failed += 1;
                         results.push(LocalDelegateResult::error_json(
                             &entry.agent_name,
-                            &format!("agent '{}' not found in local registry", entry.agent_name),
+                            &e.to_string(),
                         ));
                         // Record the failure on the task board.
                         if let Some(ref mut board) = task_board {
@@ -2016,9 +2018,163 @@ impl SwarmServer {
                                 &tid,
                                 &entry.agent_name,
                                 &entry.task,
-                                "agent not found",
+                                &e.to_string(),
                             );
                         }
+                    }
+                }
+            }
+            // Persist the task board if it was loaded.
+            if let Some(ref board) = task_board {
+                if let Some(ref sid) = swarm_id {
+                    if let Err(e) = board.save(self.local_swarms.dir(), sid) {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            swarm_id = %sid,
+                            error = %e,
+                            "Failed to save task board — task progress not persisted"
+                        );
+                    }
+                }
+            }
+            let balance: Option<i64> = runtime.balance();
+            let task_summary = task_board.as_ref().map(|b| {
+                let c = b.counts();
+                serde_json::json!({
+                    "total": c.total,
+                    "pending": c.pending,
+                    "in_progress": c.in_progress,
+                    "complete": c.complete,
+                    "failed": c.failed,
+                    "all_terminal": b.all_terminal(),
+                    "all_complete": b.all_complete(),
+                })
+            });
+            Ok(serde_json::json!({
+                "results": results,
+                "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
+                "total_tokens": total_tokens,
+                "balance": balance,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+                "task_board": task_summary,
+            }))
+        })
+        .await
+    }
+
+    /// Query a swarm's task board — the persistent record of task progress
+    /// across `swarm_execute_plan_local` invocations. Returns the full task
+    /// list with status, attempt counts, fail counts, and last result
+    /// summaries. The Curator's ORIENT phase uses this to see durable task
+    /// progress ("task 3 failed twice, task 5 succeeded") without
+    /// re-deriving it from delegate_results.
+    #[tool(
+        description = "Query a local swarm's task board for persistent task progress. Returns tasks with status, attempt_count, fail_count, and last_result_summary. Used by swarm-intelligence ORIENT to see durable task progress across PDCA iterations."
+    )]
+    pub(crate) async fn swarm_task_board(
+        &self,
+        parameters: Parameters<TaskBoardRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_task_board", async {
+            let req = parameters.0;
+            let board = crate::task_board::TaskBoard::load(self.local_swarms.dir(), &req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            let counts = board.counts();
+            Ok(serde_json::json!({
+                "swarm_id": req.swarm_id,
+                "tasks": board.tasks,
+                "counts": {
+                    "total": counts.total,
+                    "pending": counts.pending,
+                    "in_progress": counts.in_progress,
+                    "complete": counts.complete,
+                    "failed": counts.failed,
+                },
+                "all_terminal": board.all_terminal(),
+                "all_complete": board.all_complete(),
+            }))
+        })
+        .await
+    }
+
+    /// Regression-test a swarm composition across a dataset of cases. Each
+    /// case is a plan (list of delegations with evaluators). The suite runs
+    /// each case via `swarm_execute_plan_local`, aggregates pass/fail, and
+    /// returns a suite-level result. A case passes when ALL its delegations
+    /// pass their evaluators. There is no improve-then-re-evaluate outer
+    /// loop — the suite is measure-and-report, not measure-improve-remeasure.
+    /// Capped at 10 cases.
+    #[tool(
+        description = "Swarm eval suite: run a dataset of test cases against a swarm composition, aggregate pass/fail. Each case is a plan with delegations + evaluators. A case passes when all delegations pass. No improve-then-re-evaluate loop — measure-and-report only."
+    )]
+    pub(crate) async fn swarm_eval_suite_local(
+        &self,
+        parameters: Parameters<EvalSuiteLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_eval_suite_local", async {
+            let req = parameters.0;
+            if req.cases.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "cases must be non-empty".to_string(),
+                ));
+            }
+            const MAX_SUITE_CASES: usize = 10;
+            if req.cases.len() > MAX_SUITE_CASES {
+                return Err(McpToolError::invalid_argument(format!(
+                    "suite cap is {MAX_SUITE_CASES} cases, got {}",
+                    req.cases.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+
+            // Load the task board when a swarm_id is provided so eval
+            // results persist across regression runs.
+            let swarm_id = req.swarm_id.clone();
+            let mut task_board = if let Some(ref sid) = swarm_id {
+                match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
+                    Ok(board) => Some(board),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            swarm_id = %sid,
+                            error = %e,
+                            "Failed to load task board for eval suite — progress will not persist"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let mut case_results = Vec::with_capacity(req.cases.len());
+            let mut passed = 0usize;
+            let mut failed = 0usize;
+            let mut total_cost = 0i64;
+            let mut total_tokens = 0i64;
+
+            for case in &req.cases {
+                let mut case_pass = true;
+                let mut delegation_results = Vec::new();
+                let mut case_cost = 0i64;
+                let mut case_tokens = 0i64;
+
+                for entry in &case.delegations {
+                    let agent = self.local_registry.get(&entry.agent_name);
+                    let Some(agent) = agent else {
+                        case_pass = false;
+                        delegation_results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": false,
+                            "error": "agent not found",
+                        }));
                         continue;
                     };
                     match runtime
@@ -2026,10 +2182,9 @@ impl SwarmServer {
                         .await
                     {
                         Ok(mut r) => {
-                            total_cost += r.cost;
-                            total_cost_uncapped += r.cost_uncapped;
-                            total_tokens += r.tokens_used;
-                            // Stamp the deterministic verdict when an evaluator is provided.
+                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            case_cost += r.cost;
+                            case_tokens += r.tokens_used;
                             if let Some(ev) = &entry.evaluator {
                                 let pass =
                                     run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
@@ -2045,9 +2200,14 @@ impl SwarmServer {
                                     provenance:
                                         crate::local_runtime::VerdictSource::DeterministicEvaluator,
                                 });
+                                if !pass {
+                                    case_pass = false;
+                                }
                             }
-                            // Record stigmergy (same as swarm_delegate_local).
-                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            // Stigmergy + KB ingestion — mirrors
+                            // swarm_execute_plan_local so eval delegations
+                            // build the shared KB and pheromone trails.
+                            // Non-fatal.
                             local_knowledge::record_delegation(
                                 &self.local_memory,
                                 &entry.agent_name,
@@ -2056,9 +2216,6 @@ impl SwarmServer {
                                 &r.response,
                             )
                             .await;
-                            // Episodic turn memory (shared knowledgebase) —
-                            // mirrors swarm_delegate_local so plan-executed
-                            // delegations build the KB too. Non-fatal.
                             local_knowledge::ingest_turn(
                                 &self.local_memory,
                                 &runtime.inference(),
@@ -2068,7 +2225,7 @@ impl SwarmServer {
                                 &r.model,
                             )
                             .await;
-                            // Record on the task board.
+                            // Record on the task board when a swarm_id is set.
                             if let Some(ref mut board) = task_board {
                                 let tid = entry.task_id.clone().unwrap_or_else(|| {
                                     crate::task_board::derive_task_id(
@@ -2089,16 +2246,16 @@ impl SwarmServer {
                                     Some(summary),
                                 );
                             }
-                            results.push(serde_json::to_value(&r).unwrap_or_else(
-                                |_| serde_json::json!({ "error": "failed to serialize result" }),
-                            ));
+                            delegation_results.push(serde_json::json!({
+                                "agent_name": entry.agent_name,
+                                "ok": true,
+                                "pass": r.task_success.as_ref().map(|t| t.pass).unwrap_or(true),
+                                "response_len": r.response.len(),
+                                "tokens_used": r.tokens_used,
+                            }));
                         }
                         Err(e) => {
-                            failed += 1;
-                            results.push(LocalDelegateResult::error_json(
-                                &entry.agent_name,
-                                &e.to_string(),
-                            ));
+                            case_pass = false;
                             // Record the failure on the task board.
                             if let Some(ref mut board) = task_board {
                                 let tid = entry.task_id.clone().unwrap_or_else(|| {
@@ -2114,338 +2271,78 @@ impl SwarmServer {
                                     &e.to_string(),
                                 );
                             }
-                        }
-                    }
-                }
-                // Persist the task board if it was loaded.
-                if let Some(ref board) = task_board {
-                    if let Some(ref sid) = swarm_id {
-                        if let Err(e) = board.save(self.local_swarms.dir(), sid) {
-                            tracing::warn!(
-                                target: "hkask.mcp.swarm",
-                                swarm_id = %sid,
-                                error = %e,
-                                "Failed to save task board — task progress not persisted"
-                            );
-                        }
-                    }
-                }
-                let balance: Option<i64> = runtime.balance();
-                let task_summary = task_board.as_ref().map(|b| {
-                    let c = b.counts();
-                    serde_json::json!({
-                        "total": c.total,
-                        "pending": c.pending,
-                        "in_progress": c.in_progress,
-                        "complete": c.complete,
-                        "failed": c.failed,
-                        "all_terminal": b.all_terminal(),
-                        "all_complete": b.all_complete(),
-                    })
-                });
-                Ok(serde_json::json!({
-                    "results": results,
-                    "total_cost": total_cost,
-                    "total_cost_uncapped": total_cost_uncapped,
-                    "total_tokens": total_tokens,
-                    "balance": balance,
-                    "failed": failed,
-                    "succeeded": req.delegations.len() - failed,
-                    "task_board": task_summary,
-                }))
-            },
-        )
-        .await
-    }
-
-    /// Query a swarm's task board — the persistent record of task progress
-    /// across `swarm_execute_plan_local` invocations. Returns the full task
-    /// list with status, attempt counts, fail counts, and last result
-    /// summaries. The Curator's ORIENT phase uses this to see durable task
-    /// progress ("task 3 failed twice, task 5 succeeded") without
-    /// re-deriving it from delegate_results.
-    #[tool(
-        description = "Query a local swarm's task board for persistent task progress. Returns tasks with status, attempt_count, fail_count, and last_result_summary. Used by swarm-intelligence ORIENT to see durable task progress across PDCA iterations."
-    )]
-    pub(crate) async fn swarm_task_board(
-        &self,
-        parameters: Parameters<TaskBoardRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_task_board",
-            async {
-                let req = parameters.0;
-                let board =
-                    crate::task_board::TaskBoard::load(self.local_swarms.dir(), &req.swarm_id)
-                        .map_err(map_local_swarm_error)?;
-                let counts = board.counts();
-                Ok(serde_json::json!({
-                    "swarm_id": req.swarm_id,
-                    "tasks": board.tasks,
-                    "counts": {
-                        "total": counts.total,
-                        "pending": counts.pending,
-                        "in_progress": counts.in_progress,
-                        "complete": counts.complete,
-                        "failed": counts.failed,
-                    },
-                    "all_terminal": board.all_terminal(),
-                    "all_complete": board.all_complete(),
-                }))
-            },
-        )
-        .await
-    }
-
-    /// Regression-test a swarm composition across a dataset of cases. Each
-    /// case is a plan (list of delegations with evaluators). The suite runs
-    /// each case via `swarm_execute_plan_local`, aggregates pass/fail, and
-    /// returns a suite-level result. A case passes when ALL its delegations
-    /// pass their evaluators. There is no improve-then-re-evaluate outer
-    /// loop — the suite is measure-and-report, not measure-improve-remeasure.
-    /// Capped at 10 cases.
-    #[tool(
-        description = "Swarm eval suite: run a dataset of test cases against a swarm composition, aggregate pass/fail. Each case is a plan with delegations + evaluators. A case passes when all delegations pass. No improve-then-re-evaluate loop — measure-and-report only."
-    )]
-    pub(crate) async fn swarm_eval_suite_local(
-        &self,
-        parameters: Parameters<EvalSuiteLocalRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "swarm_eval_suite_local",
-            async {
-                let req = parameters.0;
-                if req.cases.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "cases must be non-empty".to_string(),
-                    ));
-                }
-                const MAX_SUITE_CASES: usize = 10;
-                if req.cases.len() > MAX_SUITE_CASES {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "suite cap is {MAX_SUITE_CASES} cases, got {}",
-                        req.cases.len()
-                    )));
-                }
-                let runtime = self
-                    .local_runtime
-                    .get_or_init()
-                    .await
-                    .map_err(map_local_swarm_error)?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
-
-                // Load the task board when a swarm_id is provided so eval
-                // results persist across regression runs.
-                let swarm_id = req.swarm_id.clone();
-                let mut task_board = if let Some(ref sid) = swarm_id {
-                    match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
-                        Ok(board) => Some(board),
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.swarm",
-                                swarm_id = %sid,
-                                error = %e,
-                                "Failed to load task board for eval suite — progress will not persist"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                let mut case_results = Vec::with_capacity(req.cases.len());
-                let mut passed = 0usize;
-                let mut failed = 0usize;
-                let mut total_cost = 0i64;
-                let mut total_tokens = 0i64;
-
-                for case in &req.cases {
-                    let mut case_pass = true;
-                    let mut delegation_results = Vec::new();
-                    let mut case_cost = 0i64;
-                    let mut case_tokens = 0i64;
-
-                    for entry in &case.delegations {
-                        let agent = self.local_registry.get(&entry.agent_name);
-                        let Some(agent) = agent else {
-                            case_pass = false;
                             delegation_results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": false,
-                                "error": "agent not found",
+                                "error": e.to_string(),
                             }));
-                            continue;
-                        };
-                        match runtime
-                            .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
-                            .await
-                        {
-                            Ok(mut r) => {
-                                self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
-                                case_cost += r.cost;
-                                case_tokens += r.tokens_used;
-                                if let Some(ev) = &entry.evaluator {
-                                    let pass =
-                                        run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
-                                    r.task_success =
-                                        Some(crate::local_runtime::TaskSuccessVerdict {
-                                            pass,
-                                            score: None,
-                                            detail: Some(format!(
-                                                "evaluator={}, spec_len={}, pass={}",
-                                                ev.evaluator,
-                                                ev.spec.len(),
-                                                pass
-                                            )),
-                                            provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
-                                        });
-                                    if !pass {
-                                        case_pass = false;
-                                    }
-                                }
-                                // Stigmergy + KB ingestion — mirrors
-                                // swarm_execute_plan_local so eval delegations
-                                // build the shared KB and pheromone trails.
-                                // Non-fatal.
-                                local_knowledge::record_delegation(
-                                    &self.local_memory,
-                                    &entry.agent_name,
-                                    r.latency_ms,
-                                    r.task_success.as_ref().map(|t| t.pass),
-                                    &r.response,
-                                )
-                                .await;
-                                local_knowledge::ingest_turn(
-                                    &self.local_memory,
-                                    &runtime.inference(),
-                                    &entry.agent_name,
-                                    &entry.task,
-                                    &r.response,
-                                    &r.model,
-                                )
-                                .await;
-                                // Record on the task board when a swarm_id is set.
-                                if let Some(ref mut board) = task_board {
-                                    let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                        crate::task_board::derive_task_id(
-                                            &entry.agent_name,
-                                            &entry.task,
-                                        )
-                                    });
-                                    let summary = if r.response.len() > 200 {
-                                        format!("{}...", &r.response[..200])
-                                    } else {
-                                        r.response.clone()
-                                    };
-                                    board.record_attempt(
-                                        &tid,
-                                        &entry.agent_name,
-                                        &entry.task,
-                                        r.task_success.as_ref().map(|t| t.pass),
-                                        Some(summary),
-                                    );
-                                }
-                                delegation_results.push(serde_json::json!({
-                                    "agent_name": entry.agent_name,
-                                    "ok": true,
-                                    "pass": r.task_success.as_ref().map(|t| t.pass).unwrap_or(true),
-                                    "response_len": r.response.len(),
-                                    "tokens_used": r.tokens_used,
-                                }));
-                            }
-                            Err(e) => {
-                                case_pass = false;
-                                // Record the failure on the task board.
-                                if let Some(ref mut board) = task_board {
-                                    let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                        crate::task_board::derive_task_id(
-                                            &entry.agent_name,
-                                            &entry.task,
-                                        )
-                                    });
-                                    board.record_failure(
-                                        &tid,
-                                        &entry.agent_name,
-                                        &entry.task,
-                                        &e.to_string(),
-                                    );
-                                }
-                                delegation_results.push(serde_json::json!({
-                                    "agent_name": entry.agent_name,
-                                    "ok": false,
-                                    "error": e.to_string(),
-                                }));
-                            }
-                        }
-                    }
-
-                    if case_pass {
-                        passed += 1;
-                    } else {
-                        failed += 1;
-                    }
-                    total_cost += case_cost;
-                    total_tokens += case_tokens;
-
-                    case_results.push(serde_json::json!({
-                        "name": case.name,
-                        "passed": case_pass,
-                        "delegations": delegation_results,
-                        "cost": case_cost,
-                        "tokens_used": case_tokens,
-                    }));
-                }
-
-                // Persist the task board if it was loaded.
-                if let Some(ref board) = task_board {
-                    if let Some(ref sid) = swarm_id {
-                        if let Err(e) = board.save(self.local_swarms.dir(), sid) {
-                            tracing::warn!(
-                                target: "hkask.mcp.swarm",
-                                swarm_id = %sid,
-                                error = %e,
-                                "Failed to save task board for eval suite — progress not persisted"
-                            );
                         }
                     }
                 }
-                let task_summary = task_board.as_ref().map(|b| {
-                    let c = b.counts();
-                    serde_json::json!({
-                        "total": c.total,
-                        "pending": c.pending,
-                        "in_progress": c.in_progress,
-                        "complete": c.complete,
-                        "failed": c.failed,
-                        "all_terminal": b.all_terminal(),
-                        "all_complete": b.all_complete(),
-                    })
-                });
 
-                let balance: Option<i64> = runtime.balance();
-                let pass_rate = if req.cases.is_empty() {
-                    0.0
+                if case_pass {
+                    passed += 1;
                 } else {
-                    passed as f64 / req.cases.len() as f64
-                };
+                    failed += 1;
+                }
+                total_cost += case_cost;
+                total_tokens += case_tokens;
 
-                Ok(serde_json::json!({
-                    "cases": case_results,
-                    "passed": passed,
-                    "failed": failed,
-                    "total": req.cases.len(),
-                    "pass_rate": pass_rate,
-                    "total_cost": total_cost,
-                    "total_tokens": total_tokens,
-                    "balance": balance,
-                    "status": if failed == 0 { "PASSED" } else { "FAILED" },
-                    "task_board": task_summary,
-                }))
-            },
-        )
+                case_results.push(serde_json::json!({
+                    "name": case.name,
+                    "passed": case_pass,
+                    "delegations": delegation_results,
+                    "cost": case_cost,
+                    "tokens_used": case_tokens,
+                }));
+            }
+
+            // Persist the task board if it was loaded.
+            if let Some(ref board) = task_board {
+                if let Some(ref sid) = swarm_id {
+                    if let Err(e) = board.save(self.local_swarms.dir(), sid) {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            swarm_id = %sid,
+                            error = %e,
+                            "Failed to save task board for eval suite — progress not persisted"
+                        );
+                    }
+                }
+            }
+            let task_summary = task_board.as_ref().map(|b| {
+                let c = b.counts();
+                serde_json::json!({
+                    "total": c.total,
+                    "pending": c.pending,
+                    "in_progress": c.in_progress,
+                    "complete": c.complete,
+                    "failed": c.failed,
+                    "all_terminal": b.all_terminal(),
+                    "all_complete": b.all_complete(),
+                })
+            });
+
+            let balance: Option<i64> = runtime.balance();
+            let pass_rate = if req.cases.is_empty() {
+                0.0
+            } else {
+                passed as f64 / req.cases.len() as f64
+            };
+
+            Ok(serde_json::json!({
+                "cases": case_results,
+                "passed": passed,
+                "failed": failed,
+                "total": req.cases.len(),
+                "pass_rate": pass_rate,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens,
+                "balance": balance,
+                "status": if failed == 0 { "PASSED" } else { "FAILED" },
+                "task_board": task_summary,
+            }))
+        })
         .await
     }
 

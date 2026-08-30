@@ -2,9 +2,7 @@ use crate::TrainingServer;
 use crate::dataset::DatasetPipeline;
 use crate::tools::error_mapping::map_dataset_error;
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
-use hkask_mcp_server::server::{
-    McpToolError, execute_tool, map_io_error, map_memory_store_error,
-};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error, map_memory_store_error};
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, Visibility};
 use rmcp::handler::server::wrapper::Parameters;

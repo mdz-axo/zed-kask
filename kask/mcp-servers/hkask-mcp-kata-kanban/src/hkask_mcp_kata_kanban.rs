@@ -25,9 +25,7 @@ pub(crate) use kanban::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{
-    McpToolError, ServerContext, execute_tool, resolve_db_passphrase,
-};
+use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool, resolve_db_passphrase};
 use hkask_mcp_swarm::{
     LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
 };
@@ -316,37 +314,33 @@ impl KanbanServer {
         &self,
         Parameters(BoardListRequest {}): Parameters<BoardListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_board_list",
-            async {
-                match self.service.board_list(&self.webid) {
-                    Ok(boards) => Ok(serde_json::to_value(BoardListResponse {
-                        boards: boards
-                            .into_iter()
-                            .map(|b| BoardInfo {
-                                board_id: b.id.to_string(),
-                                name: b.name,
-                                column_count: b.columns.len(),
-                                columns: b
-                                    .columns
-                                    .iter()
-                                    .map(|c| ColumnInfo {
-                                        id: c.id.to_string(),
-                                        name: c.name.clone(),
-                                        status: c.status.to_string(),
-                                        wip_limit: c.wip_limit,
-                                    })
-                                    .collect(),
-                                ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
-                            })
-                            .collect(),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_board_list", async {
+            match self.service.board_list(&self.webid) {
+                Ok(boards) => Ok(serde_json::to_value(BoardListResponse {
+                    boards: boards
+                        .into_iter()
+                        .map(|b| BoardInfo {
+                            board_id: b.id.to_string(),
+                            name: b.name,
+                            column_count: b.columns.len(),
+                            columns: b
+                                .columns
+                                .iter()
+                                .map(|c| ColumnInfo {
+                                    id: c.id.to_string(),
+                                    name: c.name.clone(),
+                                    status: c.status.to_string(),
+                                    wip_limit: c.wip_limit,
+                                })
+                                .collect(),
+                            ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
+                        })
+                        .collect(),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -365,32 +359,28 @@ impl KanbanServer {
         &self,
         Parameters(BoardDeleteRequest { board_id }): Parameters<BoardDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_board_delete",
-            async {
-                let bid = parse_board_id(&board_id)?;
-                // Verify ownership before delete — only the board owner can
-                // delete it (P12).
-                let board = self
-                    .service
-                    .board_get(bid)
-                    .map_err(map_kanban_error)?
-                    .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
-                if board.owner != self.webid {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "board {bid} is not owned by caller — cannot delete"
-                    )));
-                }
-                let tasks_deleted = self.service.board_delete(bid).map_err(map_kanban_error)?;
-                serde_json::to_value(BoardDeleteResponse {
-                    board_id: bid.to_string(),
-                    tasks_deleted,
-                    ontology: kanban_type_to_pko("kanban_board_delete").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
+        execute_tool(self, "kanban_board_delete", async {
+            let bid = parse_board_id(&board_id)?;
+            // Verify ownership before delete — only the board owner can
+            // delete it (P12).
+            let board = self
+                .service
+                .board_get(bid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
+            if board.owner != self.webid {
+                return Err(McpToolError::invalid_argument(format!(
+                    "board {bid} is not owned by caller — cannot delete"
+                )));
+            }
+            let tasks_deleted = self.service.board_delete(bid).map_err(map_kanban_error)?;
+            serde_json::to_value(BoardDeleteResponse {
+                board_id: bid.to_string(),
+                tasks_deleted,
+                ontology: kanban_type_to_pko("kanban_board_delete").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
         .await
     }
 
@@ -467,38 +457,34 @@ impl KanbanServer {
             reasoning,
         }): Parameters<GoalJudgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_goal_judge",
-            async {
-                let gid = parse_goal_id(&goal_id)?;
-                let verdict_value = parse_goal_verdict(&verdict)?;
-                let goal_verdict = GoalVerdict {
-                    verdict: verdict_value,
-                    confidence,
-                    criterion_results: criterion_results
-                        .into_iter()
-                        .map(|c| CriterionJudgment {
-                            index: c.index,
-                            passed: c.passed,
-                            note: c.note,
-                        })
-                        .collect(),
-                    reasoning,
-                    judged_at: chrono::Utc::now(),
-                };
-                match self.service.goal_judge(gid, goal_verdict, self.webid) {
-                    Ok(goal) => Ok(serde_json::to_value(GoalJudgeResponse {
-                        goal_id: goal.id.to_string(),
-                        verdict: verdict,
-                        verdict_count: goal.verdicts.len(),
-                        ontology: kanban_type_to_pko("kanban_goal_judge").map(|s| s.to_string()),
+        execute_tool(self, "kanban_goal_judge", async {
+            let gid = parse_goal_id(&goal_id)?;
+            let verdict_value = parse_goal_verdict(&verdict)?;
+            let goal_verdict = GoalVerdict {
+                verdict: verdict_value,
+                confidence,
+                criterion_results: criterion_results
+                    .into_iter()
+                    .map(|c| CriterionJudgment {
+                        index: c.index,
+                        passed: c.passed,
+                        note: c.note,
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+                    .collect(),
+                reasoning,
+                judged_at: chrono::Utc::now(),
+            };
+            match self.service.goal_judge(gid, goal_verdict, self.webid) {
+                Ok(goal) => Ok(serde_json::to_value(GoalJudgeResponse {
+                    goal_id: goal.id.to_string(),
+                    verdict: verdict,
+                    verdict_count: goal.verdicts.len(),
+                    ontology: kanban_type_to_pko("kanban_goal_judge").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -512,40 +498,35 @@ impl KanbanServer {
         &self,
         Parameters(GoalScoreRequest { goal_id, achieved }): Parameters<GoalScoreRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_goal_score",
-            async {
-                let gid = parse_goal_id(&goal_id)?;
-                match self.service.goal_score(gid, achieved, self.webid) {
-                    Ok(goal) => {
-                        let resolution = goal
-                            .resolution
-                            .as_ref()
-                            .expect("goal_score records a resolution");
-                        let note = if resolution.brier.is_none() {
-                            Some(
-                                "no intake prediction was recorded — Brier not computable \
+        execute_tool(self, "kanban_goal_score", async {
+            let gid = parse_goal_id(&goal_id)?;
+            match self.service.goal_score(gid, achieved, self.webid) {
+                Ok(goal) => {
+                    let resolution = goal
+                        .resolution
+                        .as_ref()
+                        .expect("goal_score records a resolution");
+                    let note = if resolution.brier.is_none() {
+                        Some(
+                            "no intake prediction was recorded — Brier not computable \
                                  (this is not a score of 0)"
-                                    .to_string(),
-                            )
-                        } else {
-                            None
-                        };
-                        Ok(serde_json::to_value(GoalScoreResponse {
-                            goal_id: goal.id.to_string(),
-                            achieved,
-                            brier: resolution.brier,
-                            note,
-                            ontology: kanban_type_to_pko("kanban_goal_score")
-                                .map(|s| s.to_string()),
-                        })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
-                    }
-                    Err(e) => Err(map_kanban_error(e)),
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    };
+                    Ok(serde_json::to_value(GoalScoreResponse {
+                        goal_id: goal.id.to_string(),
+                        achieved,
+                        brier: resolution.brier,
+                        note,
+                        ontology: kanban_type_to_pko("kanban_goal_score").map(|s| s.to_string()),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
                 }
-            },
-        )
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -559,36 +540,32 @@ impl KanbanServer {
         &self,
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_goal_list",
-            async {
-                match self.service.goal_list(&self.webid) {
-                    Ok(goals) => Ok(serde_json::to_value(GoalListResponse {
-                        goals: goals
-                            .into_iter()
-                            .map(|g| GoalInfo {
-                                goal_id: g.id.to_string(),
-                                goal_text: g.goal_text,
-                                criteria_count: g.criteria.len(),
-                                prediction: g.prediction,
-                                latest_verdict: g.verdicts.last().map(|v| v.verdict.to_string()),
-                                resolution: g.resolution.as_ref().map(|r| {
-                                    if r.achieved {
-                                        "achieved".to_string()
-                                    } else {
-                                        "not-achieved".to_string()
-                                    }
-                                }),
-                                created_at: g.created_at.to_rfc3339(),
-                            })
-                            .collect(),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_goal_list", async {
+            match self.service.goal_list(&self.webid) {
+                Ok(goals) => Ok(serde_json::to_value(GoalListResponse {
+                    goals: goals
+                        .into_iter()
+                        .map(|g| GoalInfo {
+                            goal_id: g.id.to_string(),
+                            goal_text: g.goal_text,
+                            criteria_count: g.criteria.len(),
+                            prediction: g.prediction,
+                            latest_verdict: g.verdicts.last().map(|v| v.verdict.to_string()),
+                            resolution: g.resolution.as_ref().map(|r| {
+                                if r.achieved {
+                                    "achieved".to_string()
+                                } else {
+                                    "not-achieved".to_string()
+                                }
+                            }),
+                            created_at: g.created_at.to_rfc3339(),
+                        })
+                        .collect(),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -657,51 +634,46 @@ impl KanbanServer {
             labels,
         }): Parameters<TaskUpdateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_update",
-            async {
-                let tid = parse_task_id(&task_id)?;
+        execute_tool(self, "kanban_task_update", async {
+            let tid = parse_task_id(&task_id)?;
 
-                // The MCP layer uses single-Option for description and priority:
-                // None means "no change," a present value means "set to this."
-                // An empty string for description clears the field; an empty
-                // string for priority clears the field.
-                let description_update =
-                    description.map(|d| if d.is_empty() { None } else { Some(d) });
-                let priority_update = match priority {
-                    None => None,
-                    Some(ref p) if p.is_empty() => Some(None),
-                    Some(p) => {
-                        let parsed = Priority::parse_str(&p).ok_or_else(|| {
-                            McpToolError::invalid_argument(format!("invalid priority: {p}"))
-                        })?;
-                        Some(Some(parsed))
-                    }
-                };
-
-                let criteria_update =
-                    criteria.map(|cs| cs.into_iter().map(VerificationCriterion::new).collect());
-
-                match self.service.task_update(
-                    tid,
-                    self.webid,
-                    title,
-                    description_update,
-                    criteria_update,
-                    priority_update,
-                    labels,
-                ) {
-                    Ok(task) => Ok(serde_json::to_value(TaskUpdateResponse {
-                        task_id: task.id.to_string(),
-                        title: task.title,
-                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
+            // The MCP layer uses single-Option for description and priority:
+            // None means "no change," a present value means "set to this."
+            // An empty string for description clears the field; an empty
+            // string for priority clears the field.
+            let description_update = description.map(|d| if d.is_empty() { None } else { Some(d) });
+            let priority_update = match priority {
+                None => None,
+                Some(ref p) if p.is_empty() => Some(None),
+                Some(p) => {
+                    let parsed = Priority::parse_str(&p).ok_or_else(|| {
+                        McpToolError::invalid_argument(format!("invalid priority: {p}"))
+                    })?;
+                    Some(Some(parsed))
                 }
-            },
-        )
+            };
+
+            let criteria_update =
+                criteria.map(|cs| cs.into_iter().map(VerificationCriterion::new).collect());
+
+            match self.service.task_update(
+                tid,
+                self.webid,
+                title,
+                description_update,
+                criteria_update,
+                priority_update,
+                labels,
+            ) {
+                Ok(task) => Ok(serde_json::to_value(TaskUpdateResponse {
+                    task_id: task.id.to_string(),
+                    title: task.title,
+                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -710,48 +682,44 @@ impl KanbanServer {
         &self,
         Parameters(TaskListRequest { board_id, status }): Parameters<TaskListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_list",
-            async {
-                let bid = parse_board_id(&board_id)?;
-                let filter = match status {
-                    Some(s) => match crate::TaskStatus::parse_str(&s) {
-                        Some(st) => TaskFilter::by_status(st),
-                        None => {
-                            return Err(McpToolError::invalid_argument(format!(
-                                "invalid status: {s}"
-                            )));
-                        }
-                    },
-                    None => TaskFilter::all(),
-                };
-                match self.service.task_list(bid, filter) {
-                    Ok(tasks) => Ok(serde_json::to_value(TaskListResponse {
-                        tasks: tasks
-                            .into_iter()
-                            .map(|t| {
-                                let activity = derive_task_activity(&t);
-                                TaskInfo {
-                                    task_id: t.id.to_string(),
-                                    board_id: t.board_id.to_string(),
-                                    title: t.title,
-                                    status: t.status.to_string(),
-                                    assignee: t.assignee.map(|a| a.to_string()),
-                                    criteria_count: t.criteria.len(),
-                                    rjoule_remaining: t.rjoule_remaining,
-                                    swarm_id: t.swarm_id,
-                                    activity,
-                                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                                }
-                            })
-                            .collect(),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_list", async {
+            let bid = parse_board_id(&board_id)?;
+            let filter = match status {
+                Some(s) => match crate::TaskStatus::parse_str(&s) {
+                    Some(st) => TaskFilter::by_status(st),
+                    None => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "invalid status: {s}"
+                        )));
+                    }
+                },
+                None => TaskFilter::all(),
+            };
+            match self.service.task_list(bid, filter) {
+                Ok(tasks) => Ok(serde_json::to_value(TaskListResponse {
+                    tasks: tasks
+                        .into_iter()
+                        .map(|t| {
+                            let activity = derive_task_activity(&t);
+                            TaskInfo {
+                                task_id: t.id.to_string(),
+                                board_id: t.board_id.to_string(),
+                                title: t.title,
+                                status: t.status.to_string(),
+                                assignee: t.assignee.map(|a| a.to_string()),
+                                criteria_count: t.criteria.len(),
+                                rjoule_remaining: t.rjoule_remaining,
+                                swarm_id: t.swarm_id,
+                                activity,
+                                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                            }
+                        })
+                        .collect(),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -767,49 +735,45 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         use pko::kanban_type_to_pko;
 
-        execute_tool(
-            self,
-            "kanban_task_move",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                let previous_status = match self.service.task_get(tid) {
-                    Ok(Some(t)) => t.status.to_string(),
-                    Ok(None) => {
-                        return Err(McpToolError::not_found(format!(
-                            "task not found: {task_id}"
-                        )));
-                    }
-                    Err(e) => return Err(map_kanban_error(e)),
-                };
-                let target = match crate::TaskStatus::parse_str(&target_status) {
-                    Some(s) => s,
-                    None => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid target_status: {target_status}"
-                        )));
-                    }
-                };
-                match self.service.task_move(tid, target, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskMoveResponse {
-                        task_id: task.id.to_string(),
-                        previous_status,
-                        new_status: task.status.to_string(),
-                        ontology: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
-                        // Execution axis: the new status as a PKO execution
-                        // status (the shared vocabulary mapper — not a local
-                        // re-implementation, so it cannot drift from the
-                        // bridge contract).
-                        pko_execution_status:
-                            hkask_bridge_ontology::pko::kanban_status_to_pko_execution(
-                                &task.status.to_string(),
-                            )
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
+        execute_tool(self, "kanban_task_move", async {
+            let tid = parse_task_id(&task_id)?;
+            let previous_status = match self.service.task_get(tid) {
+                Ok(Some(t)) => t.status.to_string(),
+                Ok(None) => {
+                    return Err(McpToolError::not_found(format!(
+                        "task not found: {task_id}"
+                    )));
                 }
-            },
-        )
+                Err(e) => return Err(map_kanban_error(e)),
+            };
+            let target = match crate::TaskStatus::parse_str(&target_status) {
+                Some(s) => s,
+                None => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "invalid target_status: {target_status}"
+                    )));
+                }
+            };
+            match self.service.task_move(tid, target, self.webid) {
+                Ok(task) => Ok(serde_json::to_value(TaskMoveResponse {
+                    task_id: task.id.to_string(),
+                    previous_status,
+                    new_status: task.status.to_string(),
+                    ontology: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
+                    // Execution axis: the new status as a PKO execution
+                    // status (the shared vocabulary mapper — not a local
+                    // re-implementation, so it cannot drift from the
+                    // bridge contract).
+                    pko_execution_status:
+                        hkask_bridge_ontology::pko::kanban_status_to_pko_execution(
+                            &task.status.to_string(),
+                        )
+                        .map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -818,22 +782,18 @@ impl KanbanServer {
         &self,
         Parameters(TaskAssignRequest { task_id }): Parameters<TaskAssignRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_assign",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_claim(tid, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskAssignResponse {
-                        task_id: task.id.to_string(),
-                        assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
-                        ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_assign", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_claim(tid, self.webid) {
+                Ok(task) => Ok(serde_json::to_value(TaskAssignResponse {
+                    task_id: task.id.to_string(),
+                    assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
+                    ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -844,19 +804,15 @@ impl KanbanServer {
         &self,
         Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_delete",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                self.service.task_delete(tid).map_err(map_kanban_error)?;
-                serde_json::to_value(TaskDeleteResponse {
-                    task_id: tid.to_string(),
-                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
+        execute_tool(self, "kanban_task_delete", async {
+            let tid = parse_task_id(&task_id)?;
+            self.service.task_delete(tid).map_err(map_kanban_error)?;
+            serde_json::to_value(TaskDeleteResponse {
+                task_id: tid.to_string(),
+                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
         .await
     }
 
@@ -867,21 +823,17 @@ impl KanbanServer {
         &self,
         Parameters(TaskUnassignRequest { task_id }): Parameters<TaskUnassignRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_unassign",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_unassign(tid, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskUnassignResponse {
-                        task_id: task.id.to_string(),
-                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_unassign", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_unassign(tid, self.webid) {
+                Ok(task) => Ok(serde_json::to_value(TaskUnassignResponse {
+                    task_id: task.id.to_string(),
+                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -892,27 +844,23 @@ impl KanbanServer {
         &self,
         Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_verify",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                if evidence.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument("evidence must not be empty"));
-                }
-                match self.service.task_verify(tid, &evidence, self.webid) {
-                    Ok((task, verification)) => Ok(serde_json::to_value(TaskVerifyResponse {
-                        task_id: task.id.to_string(),
-                        passed: verification.passed,
-                        reasoning: verification.reasoning,
-                        new_status: task.status.to_string(),
-                        ontology: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_verify", async {
+            let tid = parse_task_id(&task_id)?;
+            if evidence.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("evidence must not be empty"));
+            }
+            match self.service.task_verify(tid, &evidence, self.webid) {
+                Ok((task, verification)) => Ok(serde_json::to_value(TaskVerifyResponse {
+                    task_id: task.id.to_string(),
+                    passed: verification.passed,
+                    reasoning: verification.reasoning,
+                    new_status: task.status.to_string(),
+                    ontology: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -921,26 +869,21 @@ impl KanbanServer {
         &self,
         Parameters(TaskAddRjoulesRequest { task_id, amount }): Parameters<TaskAddRjoulesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_add_rjoules",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                if amount == 0 {
-                    return Err(McpToolError::invalid_argument("amount must be > 0"));
-                }
-                match self.service.task_add_rjoules(tid, amount, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskAddRjoulesResponse {
-                        task_id: task.id.to_string(),
-                        new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
-                        ontology: kanban_type_to_pko("kanban_task_add_rjoules")
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_add_rjoules", async {
+            let tid = parse_task_id(&task_id)?;
+            if amount == 0 {
+                return Err(McpToolError::invalid_argument("amount must be > 0"));
+            }
+            match self.service.task_add_rjoules(tid, amount, self.webid) {
+                Ok(task) => Ok(serde_json::to_value(TaskAddRjoulesResponse {
+                    task_id: task.id.to_string(),
+                    new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
+                    ontology: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -951,30 +894,26 @@ impl KanbanServer {
         &self,
         Parameters(TaskCommentRequest { task_id, body }): Parameters<TaskCommentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_comment",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                if body.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "comment body must not be empty",
-                    ));
-                }
-                match self.service.task_comment(tid, self.webid, &body) {
-                    Ok(comment) => Ok(serde_json::to_value(TaskCommentResponse {
-                        comment_id: comment.id.to_string(),
-                        task_id: comment.task_id.to_string(),
-                        author: comment.author.to_string(),
-                        body: comment.body,
-                        created_at: comment.created_at.to_rfc3339(),
-                        ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_comment", async {
+            let tid = parse_task_id(&task_id)?;
+            if body.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "comment body must not be empty",
+                ));
+            }
+            match self.service.task_comment(tid, self.webid, &body) {
+                Ok(comment) => Ok(serde_json::to_value(TaskCommentResponse {
+                    comment_id: comment.id.to_string(),
+                    task_id: comment.task_id.to_string(),
+                    author: comment.author.to_string(),
+                    body: comment.body,
+                    created_at: comment.created_at.to_rfc3339(),
+                    ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -988,36 +927,32 @@ impl KanbanServer {
             since_index,
         }): Parameters<TaskCommentsSinceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_comments_since",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_comments_since(tid, since_index) {
-                    Ok(comments) => {
-                        let total = comments.len() + since_index;
-                        let mapped: Vec<TaskCommentResponse> = comments
-                            .into_iter()
-                            .map(|c| TaskCommentResponse {
-                                comment_id: c.id.to_string(),
-                                task_id: c.task_id.to_string(),
-                                author: c.author.to_string(),
-                                body: c.body,
-                                created_at: c.created_at.to_rfc3339(),
-                                ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
-                            })
-                            .collect();
-                        Ok(serde_json::to_value(TaskCommentsSinceResponse {
-                            task_id: tid.to_string(),
-                            comments: mapped,
-                            total_count: total,
+        execute_tool(self, "kanban_task_comments_since", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_comments_since(tid, since_index) {
+                Ok(comments) => {
+                    let total = comments.len() + since_index;
+                    let mapped: Vec<TaskCommentResponse> = comments
+                        .into_iter()
+                        .map(|c| TaskCommentResponse {
+                            comment_id: c.id.to_string(),
+                            task_id: c.task_id.to_string(),
+                            author: c.author.to_string(),
+                            body: c.body,
+                            created_at: c.created_at.to_rfc3339(),
+                            ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                         })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
-                    }
-                    Err(e) => Err(map_kanban_error(e)),
+                        .collect();
+                    Ok(serde_json::to_value(TaskCommentsSinceResponse {
+                        task_id: tid.to_string(),
+                        comments: mapped,
+                        total_count: total,
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
                 }
-            },
-        )
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -1028,26 +963,22 @@ impl KanbanServer {
             TaskAddDeliverableRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_add_deliverable",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                if path.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument("path must not be empty"));
-                }
-                match self.service.task_add_deliverable(tid, &path, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskAddDeliverableResponse {
-                        task_id: task.id.to_string(),
-                        deliverable_count: task.deliverables.len(),
-                        ontology: kanban_type_to_pko("kanban_task_add_deliverable")
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_add_deliverable", async {
+            let tid = parse_task_id(&task_id)?;
+            if path.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("path must not be empty"));
+            }
+            match self.service.task_add_deliverable(tid, &path, self.webid) {
+                Ok(task) => Ok(serde_json::to_value(TaskAddDeliverableResponse {
+                    task_id: task.id.to_string(),
+                    deliverable_count: task.deliverables.len(),
+                    ontology: kanban_type_to_pko("kanban_task_add_deliverable")
+                        .map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -1061,35 +992,31 @@ impl KanbanServer {
             rjoule_budget,
         }): Parameters<TaskReopenRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_reopen",
-            async {
-                let tid = parse_task_id(&task_id)?;
+        execute_tool(self, "kanban_task_reopen", async {
+            let tid = parse_task_id(&task_id)?;
+            self.service
+                .task_reopen(tid, self.webid)
+                .map_err(map_kanban_error)?;
+            // Apply new budgets if specified
+            if let Some(r) = rjoule_budget {
                 self.service
-                    .task_reopen(tid, self.webid)
+                    .task_add_rjoules(tid, r, self.webid)
                     .map_err(map_kanban_error)?;
-                // Apply new budgets if specified
-                if let Some(r) = rjoule_budget {
-                    self.service
-                        .task_add_rjoules(tid, r, self.webid)
-                        .map_err(map_kanban_error)?;
-                }
-                // Re-read to get final state
-                let task = self
-                    .service
-                    .task_get(tid)
-                    .map_err(map_kanban_error)?
-                    .ok_or_else(|| McpToolError::not_found(format!("task {task_id}")))?;
-                serde_json::to_value(TaskReopenResponse {
-                    task_id: task.id.to_string(),
-                    new_status: task.status.to_string(),
-                    rjoule_remaining: task.rjoule_remaining,
-                    ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
+            }
+            // Re-read to get final state
+            let task = self
+                .service
+                .task_get(tid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("task {task_id}")))?;
+            serde_json::to_value(TaskReopenResponse {
+                task_id: task.id.to_string(),
+                new_status: task.status.to_string(),
+                rjoule_remaining: task.rjoule_remaining,
+                ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
         .await
     }
 
@@ -1100,23 +1027,19 @@ impl KanbanServer {
         &self,
         Parameters(TaskKataCoachingRequest { task_id }): Parameters<TaskKataCoachingRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_kata_coaching",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_coaching_prompt(tid) {
-                    Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                        task_id: tid.to_string(),
-                        prompt,
-                        ontology: kanban_type_to_pko("kanban_task_kata_coaching")
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_kata_coaching", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_coaching_prompt(tid) {
+                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
+                    task_id: tid.to_string(),
+                    prompt,
+                    ontology: kanban_type_to_pko("kanban_task_kata_coaching")
+                        .map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -1125,23 +1048,19 @@ impl KanbanServer {
         &self,
         Parameters(TaskKataImprovementRequest { task_id }): Parameters<TaskKataImprovementRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_kata_improvement",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_improvement_prompt(tid) {
-                    Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                        task_id: tid.to_string(),
-                        prompt,
-                        ontology: kanban_type_to_pko("kanban_task_kata_improvement")
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_kata_improvement", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_improvement_prompt(tid) {
+                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
+                    task_id: tid.to_string(),
+                    prompt,
+                    ontology: kanban_type_to_pko("kanban_task_kata_improvement")
+                        .map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -1153,23 +1072,19 @@ impl KanbanServer {
             sub_problem,
         }): Parameters<TaskKataPracticeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_kata_practice",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                match self.service.task_practice_prompt(tid, &sub_problem) {
-                    Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                        task_id: tid.to_string(),
-                        prompt,
-                        ontology: kanban_type_to_pko("kanban_task_kata_practice")
-                            .map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "kanban_task_kata_practice", async {
+            let tid = parse_task_id(&task_id)?;
+            match self.service.task_practice_prompt(tid, &sub_problem) {
+                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
+                    task_id: tid.to_string(),
+                    prompt,
+                    ontology: kanban_type_to_pko("kanban_task_kata_practice")
+                        .map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                Err(e) => Err(map_kanban_error(e)),
+            }
+        })
         .await
     }
 
@@ -1520,28 +1435,23 @@ impl KanbanServer {
         &self,
         Parameters(TaskDelegateResultRequest { task_id }): Parameters<TaskDelegateResultRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_task_delegate_result",
-            async {
-                let tid = parse_task_id(&task_id)?;
-                let task = self
-                    .service
-                    .task_get(tid)
-                    .map_err(map_kanban_error)?
-                    .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
-                serde_json::to_value(TaskDelegateResultResponse {
-                    task_id: tid.to_string(),
-                    has_result: task.delegate_result.is_some(),
-                    delegate_result: task.delegate_result.clone(),
-                    deterministic_verdict: task.deterministic_verdict.clone(),
-                    swarm_id: task.swarm_id,
-                    ontology: kanban_type_to_pko("kanban_task_delegate_result")
-                        .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
+        execute_tool(self, "kanban_task_delegate_result", async {
+            let tid = parse_task_id(&task_id)?;
+            let task = self
+                .service
+                .task_get(tid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
+            serde_json::to_value(TaskDelegateResultResponse {
+                task_id: tid.to_string(),
+                has_result: task.delegate_result.is_some(),
+                delegate_result: task.delegate_result.clone(),
+                deterministic_verdict: task.deterministic_verdict.clone(),
+                swarm_id: task.swarm_id,
+                ontology: kanban_type_to_pko("kanban_task_delegate_result").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
         .await
     }
 
@@ -1632,39 +1542,35 @@ impl KanbanServer {
         &self,
         Parameters(BoardExportRequest { board_id }): Parameters<BoardExportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "kanban_board_export",
-            async {
-                let bid = parse_board_id(&board_id)?;
-                let board = self
-                    .service
-                    .board_get(bid)
-                    .map_err(map_kanban_error)?
-                    .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
-                if board.owner != self.webid {
-                    return Err(McpToolError::permission_denied(format!(
-                        "board {bid} is not owned by caller — cannot export"
-                    )));
-                }
-                let tasks = self
-                    .service
-                    .task_list(bid, TaskFilter::all())
-                    .map_err(map_kanban_error)?;
-                let task_count = tasks.len();
-                let column_count = board.columns.len();
-                let markdown = kanban::mermaid::export_board_to_mermaid(&board, &tasks);
-                serde_json::to_value(BoardExportResponse {
-                    markdown,
-                    board_id: bid.to_string(),
-                    board_name: board.name,
-                    column_count,
-                    task_count,
-                    ontology: kanban_type_to_pko("kanban_board_export").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
+        execute_tool(self, "kanban_board_export", async {
+            let bid = parse_board_id(&board_id)?;
+            let board = self
+                .service
+                .board_get(bid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
+            if board.owner != self.webid {
+                return Err(McpToolError::permission_denied(format!(
+                    "board {bid} is not owned by caller — cannot export"
+                )));
+            }
+            let tasks = self
+                .service
+                .task_list(bid, TaskFilter::all())
+                .map_err(map_kanban_error)?;
+            let task_count = tasks.len();
+            let column_count = board.columns.len();
+            let markdown = kanban::mermaid::export_board_to_mermaid(&board, &tasks);
+            serde_json::to_value(BoardExportResponse {
+                markdown,
+                board_id: bid.to_string(),
+                board_name: board.name,
+                column_count,
+                task_count,
+                ontology: kanban_type_to_pko("kanban_board_export").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
         .await
     }
 

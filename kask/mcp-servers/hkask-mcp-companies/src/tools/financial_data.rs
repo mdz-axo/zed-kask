@@ -14,15 +14,11 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "company_profile",
-            async {
-                validate_symbol(&symbol)?;
-                let result = self.fetch("company_profile", &symbol, &[]).await?;
-                Ok(fibo::enrich_with_ontology(result, "company_profile"))
-            },
-        )
+        execute_tool(self, "company_profile", async {
+            validate_symbol(&symbol)?;
+            let result = self.fetch("company_profile", &symbol, &[]).await?;
+            Ok(fibo::enrich_with_ontology(result, "company_profile"))
+        })
         .await
     }
 
@@ -31,15 +27,11 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "stock_quote",
-            async {
-                validate_symbol(&symbol)?;
-                let result = self.fetch("stock_quote", &symbol, &[]).await?;
-                Ok(fibo::enrich_with_ontology(result, "stock_quote"))
-            },
-        )
+        execute_tool(self, "stock_quote", async {
+            validate_symbol(&symbol)?;
+            let result = self.fetch("stock_quote", &symbol, &[]).await?;
+            Ok(fibo::enrich_with_ontology(result, "stock_quote"))
+        })
         .await
     }
 
@@ -48,16 +40,12 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "income_statement",
-            async {
-                validate_symbol(&symbol)?;
-                let limit_str = limit.unwrap_or(5).to_string();
-                self.fetch("income_statement", &symbol, &[("limit", &limit_str)])
-                    .await
-            },
-        )
+        execute_tool(self, "income_statement", async {
+            validate_symbol(&symbol)?;
+            let limit_str = limit.unwrap_or(5).to_string();
+            self.fetch("income_statement", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -66,16 +54,12 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "balance_sheet",
-            async {
-                validate_symbol(&symbol)?;
-                let limit_str = limit.unwrap_or(5).to_string();
-                self.fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
-                    .await
-            },
-        )
+        execute_tool(self, "balance_sheet", async {
+            validate_symbol(&symbol)?;
+            let limit_str = limit.unwrap_or(5).to_string();
+            self.fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -84,16 +68,12 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "cash_flow_statement",
-            async {
-                validate_symbol(&symbol)?;
-                let limit_str = limit.unwrap_or(5).to_string();
-                self.fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
-                    .await
-            },
-        )
+        execute_tool(self, "cash_flow_statement", async {
+            validate_symbol(&symbol)?;
+            let limit_str = limit.unwrap_or(5).to_string();
+            self.fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -102,18 +82,14 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "key_metrics",
-            async {
-                validate_symbol(&symbol)?;
-                let limit_str = limit.unwrap_or(5).to_string();
-                let result = self
-                    .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
-                    .await?;
-                Ok(fibo::enrich_with_ontology(result, "key_metrics"))
-            },
-        )
+        execute_tool(self, "key_metrics", async {
+            validate_symbol(&symbol)?;
+            let limit_str = limit.unwrap_or(5).to_string();
+            let result = self
+                .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
+                .await?;
+            Ok(fibo::enrich_with_ontology(result, "key_metrics"))
+        })
         .await
     }
 
@@ -122,17 +98,13 @@ impl CompaniesServer {
         &self,
         Parameters(HistoricalRequest { symbol, from, to }): Parameters<HistoricalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "historical_price",
-            async {
-                validate_symbol(&symbol)?;
-                let result = self
-                    .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
-                    .await?;
-                Ok(fibo::enrich_with_ontology(result, "historical_price"))
-            },
-        )
+        execute_tool(self, "historical_price", async {
+            validate_symbol(&symbol)?;
+            let result = self
+                .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
+                .await?;
+            Ok(fibo::enrich_with_ontology(result, "historical_price"))
+        })
         .await
     }
 
@@ -141,34 +113,30 @@ impl CompaniesServer {
         &self,
         Parameters(SearchRequest { query, limit }): Parameters<SearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "symbol_search",
-            async {
-                if query.is_empty() {
-                    return Err(McpToolError::invalid_argument("query must not be empty"));
-                }
-                let limit_str = limit.unwrap_or(10).to_string();
-                // Search is special: it doesn't use a symbol, it uses a query.
-                // Route to FMP first (better US coverage), fall back to EODHD.
-                let fmp_result =
-                    providers::fmp_search_get(&self.client, &query, &limit_str, &self.fmp_api_key)
-                        .await;
+        execute_tool(self, "symbol_search", async {
+            if query.is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            let limit_str = limit.unwrap_or(10).to_string();
+            // Search is special: it doesn't use a symbol, it uses a query.
+            // Route to FMP first (better US coverage), fall back to EODHD.
+            let fmp_result =
+                providers::fmp_search_get(&self.client, &query, &limit_str, &self.fmp_api_key)
+                    .await;
 
-                match fmp_result {
-                    Ok(v) => Ok(v),
-                    Err(_fmp_err) => {
-                        providers::eodhd_search_get(
-                            &self.client,
-                            &query,
-                            &limit_str,
-                            &self.eodhd_api_key,
-                        )
-                        .await
-                    }
+            match fmp_result {
+                Ok(v) => Ok(v),
+                Err(_fmp_err) => {
+                    providers::eodhd_search_get(
+                        &self.client,
+                        &query,
+                        &limit_str,
+                        &self.eodhd_api_key,
+                    )
+                    .await
                 }
-            },
-        )
+            }
+        })
         .await
     }
 

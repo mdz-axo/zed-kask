@@ -60,23 +60,19 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "note_list",
-            async {
-                let notes = run_store(self.research.clone(), move |manager| {
-                    manager.list_notes(
-                        &portfolio,
-                        &symbol,
-                        date_from.as_deref(),
-                        date_to.as_deref(),
-                        tags.as_deref(),
-                    )
-                })
-                .await?;
-                Ok(serde_json::json!({"notes": notes}))
-            },
-        )
+        execute_tool(self, "note_list", async {
+            let notes = run_store(self.research.clone(), move |manager| {
+                manager.list_notes(
+                    &portfolio,
+                    &symbol,
+                    date_from.as_deref(),
+                    date_to.as_deref(),
+                    tags.as_deref(),
+                )
+            })
+            .await?;
+            Ok(serde_json::json!({"notes": notes}))
+        })
         .await
     }
 
@@ -85,18 +81,14 @@ impl CompaniesServer {
         &self,
         Parameters(NoteDeleteRequest { note_id }): Parameters<NoteDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "note_delete",
-            async {
-                let response_note_id = note_id.clone();
-                run_store(self.research.clone(), move |manager| {
-                    manager.delete_note(&note_id)
-                })
-                .await?;
-                Ok(serde_json::json!({"status": "deleted", "id": response_note_id}))
-            },
-        )
+        execute_tool(self, "note_delete", async {
+            let response_note_id = note_id.clone();
+            run_store(self.research.clone(), move |manager| {
+                manager.delete_note(&note_id)
+            })
+            .await?;
+            Ok(serde_json::json!({"status": "deleted", "id": response_note_id}))
+        })
         .await
     }
 
@@ -113,19 +105,15 @@ impl CompaniesServer {
             notes,
         }): Parameters<FileAttachRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "file_attach",
-            async {
-                let id = run_store(self.research.clone(), move |manager| {
-                    manager.attach_file(
-                        &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
-                    )
-                })
-                .await?;
-                Ok(serde_json::json!({"status": "attached", "id": id}))
-            },
-        )
+        execute_tool(self, "file_attach", async {
+            let id = run_store(self.research.clone(), move |manager| {
+                manager.attach_file(
+                    &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
+                )
+            })
+            .await?;
+            Ok(serde_json::json!({"status": "attached", "id": id}))
+        })
         .await
     }
 
@@ -134,17 +122,13 @@ impl CompaniesServer {
         &self,
         Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "file_list",
-            async {
-                let files = run_store(self.research.clone(), move |manager| {
-                    manager.list_files(&portfolio, &symbol)
-                })
-                .await?;
-                Ok(serde_json::json!({"files": files}))
-            },
-        )
+        execute_tool(self, "file_list", async {
+            let files = run_store(self.research.clone(), move |manager| {
+                manager.list_files(&portfolio, &symbol)
+            })
+            .await?;
+            Ok(serde_json::json!({"files": files}))
+        })
         .await
     }
 
@@ -153,18 +137,14 @@ impl CompaniesServer {
         &self,
         Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "file_delete",
-            async {
-                let response_file_id = file_id.clone();
-                run_store(self.research.clone(), move |manager| {
-                    manager.delete_file(&file_id)
-                })
-                .await?;
-                Ok(serde_json::json!({"status": "deleted", "id": response_file_id}))
-            },
-        )
+        execute_tool(self, "file_delete", async {
+            let response_file_id = file_id.clone();
+            run_store(self.research.clone(), move |manager| {
+                manager.delete_file(&file_id)
+            })
+            .await?;
+            Ok(serde_json::json!({"status": "deleted", "id": response_file_id}))
+        })
         .await
     }
 

@@ -14,16 +14,12 @@ impl TrainingServer {
         &self,
         Parameters(TrainCancelRequest { job_id }): Parameters<TrainCancelRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "training_cancel",
-            async {
-                match self.host.cancel(&job_id).await {
-                    Ok(()) => Ok(json!({ "job_id": job_id, "status": "cancelled" })),
-                    Err(e) => Err(map_host_provider_error(e)),
-                }
-            },
-        )
+        execute_tool(self, "training_cancel", async {
+            match self.host.cancel(&job_id).await {
+                Ok(()) => Ok(json!({ "job_id": job_id, "status": "cancelled" })),
+                Err(e) => Err(map_host_provider_error(e)),
+            }
+        })
         .await
     }
 }

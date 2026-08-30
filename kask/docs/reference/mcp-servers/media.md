@@ -224,7 +224,7 @@ Non-tool modules hold shared implementation, re-exported for the `tools/` group 
 
 ## OMC ontology anchoring
 
-Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`src/omc.rs:25-86`); the concept vocabulary lives in the shared `hkask-bridge-ontology` crate (`src/omc.rs:9-12`). `MediaServer::ontology_anchor` delegates to it (`src/hkask_mcp_media.rs:372-374`) and the concept tags the `reg.tool.*` span emitted by `execute_tool_semantic` for type-aware feedback routing (`src/hkask_mcp_media.rs:366-371`).
+Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`src/omc.rs:25-86`); the concept vocabulary lives in the shared `hkask-bridge-ontology` crate (`src/omc.rs:9-12`). The concept is baked into the tool output JSON's `"ontology"` field by `media_block::enrich_with_omc_and_provenance` (`src/media_block.rs`), which the media widget consumes for type-aware feedback routing. (The former `MediaServer::ontology_anchor` wrapper and the `execute_tool_semantic` span tag were removed with the reg.tool ontology-tag purge.)
 
 | Concept | Tools |
 |---------|-------|
@@ -238,7 +238,7 @@ Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`sr
 | `omc:Task` | lineage (`gallery_record_generation`, `gallery_lineage`, `gallery_reproduce`), job queue (`job_submit` … `job_cancel`), workflows (`workflow_save` … `workflow_delete`) |
 | `omc:Participant` | `model_list`, `model_info` — the model/provider is a participant in the creation task |
 
-Three tests pin the anchoring: `ontology_anchor_covers_all_registered_tools` (every registered tool has a non-`None` anchor — catches a new tool added without an `omc::tool_to_omc` arm, `src/hkask_mcp_media.rs:398-408`), `ontology_anchor_distinguishes_tool_families` (nine families anchor on nine distinct concepts, `src/hkask_mcp_media.rs:412-453`), and `omc_module_present_with_consumer` (the `media_block::enrich_with_omc_and_provenance` call site must keep referencing `omc::tool_to_omc` — a module without a consumer is dead surface, `src/hkask_mcp_media.rs:566-602`).
+Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every registered tool maps to a concept — catches a new tool added without an `omc::tool_to_omc` arm, `src/hkask_mcp_media.rs`), `omc_mapping_distinguishes_tool_families` (nine families map to nine distinct concepts, `src/hkask_mcp_media.rs`), and `omc_module_present_with_consumer` (the `media_block::enrich_with_omc_and_provenance` call site must keep referencing `omc::tool_to_omc` — a module without a consumer is dead surface, `src/hkask_mcp_media.rs`).
 
 ## Key paths
 

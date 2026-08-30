@@ -110,21 +110,17 @@ impl MediaServer {
         &self,
         Parameters(ModelListRequest { provider }): Parameters<ModelListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "model_list",
-            async {
-                let mut models = build_model_list();
-                if let Some(filter) = provider
-                    && !filter.is_empty()
-                {
-                    let filter_lower = filter.to_lowercase();
-                    models.retain(|m| m.provider == filter_lower);
-                }
-                serde_json::to_value(&models)
-                    .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))
-            },
-        )
+        execute_tool(self, "model_list", async {
+            let mut models = build_model_list();
+            if let Some(filter) = provider
+                && !filter.is_empty()
+            {
+                let filter_lower = filter.to_lowercase();
+                models.retain(|m| m.provider == filter_lower);
+            }
+            serde_json::to_value(&models)
+                .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))
+        })
         .await
     }
 
@@ -134,23 +130,19 @@ impl MediaServer {
         &self,
         Parameters(ModelInfoRequest { model_id }): Parameters<ModelInfoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "model_info",
-            async {
-                let models = build_model_list();
-                let model = models
-                    .into_iter()
-                    .find(|m| m.id == model_id)
-                    .ok_or_else(|| {
-                        McpToolError::not_found(format!(
-                            "Model not found: {model_id}. Call model_list to see available models."
-                        ))
-                    })?;
-                serde_json::to_value(&model)
-                    .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))
-            },
-        )
+        execute_tool(self, "model_info", async {
+            let models = build_model_list();
+            let model = models
+                .into_iter()
+                .find(|m| m.id == model_id)
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "Model not found: {model_id}. Call model_list to see available models."
+                    ))
+                })?;
+            serde_json::to_value(&model)
+                .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))
+        })
         .await
     }
 }

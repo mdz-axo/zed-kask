@@ -137,7 +137,6 @@ macro_rules! require_rss_db {
 
 #[tool_router(server_handler)]
 impl ResearchServer {
-
     // ═══════════════════ Web tools ═══════════════════
 
     #[tool(description = "Liveness and provider health check")]
@@ -174,185 +173,180 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<SearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "web_search",
-            async {
-                self.rate_limiter.check("web_search")?;
+        execute_tool(self, "web_search", async {
+            self.rate_limiter.check("web_search")?;
 
-                if req.query.is_empty() {
-                    return Err(McpToolError::invalid_argument("query must not be empty"));
-                }
-                if req.query.len() > MAX_QUERY_LENGTH {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "query exceeds maximum length of {} characters",
-                        MAX_QUERY_LENGTH
-                    )));
-                }
+            if req.query.is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            if req.query.len() > MAX_QUERY_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "query exceeds maximum length of {} characters",
+                    MAX_QUERY_LENGTH
+                )));
+            }
 
-                let strat = match req.strategy.as_deref() {
-                    Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
-                    None => SearchStrategy::Quick,
-                };
+            let strat = match req.strategy.as_deref() {
+                Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
+                None => SearchStrategy::Quick,
+            };
 
-                let num_results = req.num_results.unwrap_or(10).min(50);
+            let num_results = req.num_results.unwrap_or(10).min(50);
 
-                let freshness = match req.freshness.as_deref() {
-                    Some(f) => Some(
-                        f.parse::<crate::research::types::Freshness>()
-                            .map_err(McpToolError::from)?,
-                    ),
-                    None => None,
-                };
+            let freshness = match req.freshness.as_deref() {
+                Some(f) => Some(
+                    f.parse::<crate::research::types::Freshness>()
+                        .map_err(McpToolError::from)?,
+                ),
+                None => None,
+            };
 
-                let fingerprint = self.pool.provider_fingerprint();
-                let ckey = cache_key(
-                    &strat.to_string(),
+            let fingerprint = self.pool.provider_fingerprint();
+            let ckey = cache_key(
+                &strat.to_string(),
+                &req.query,
+                &serde_json::json!({
+                    "num_results": num_results,
+                    "freshness": freshness,
+                    "include_domains": req.include_domains,
+                    "exclude_domains": req.exclude_domains,
+                    "provider": req.provider,
+                }),
+                &fingerprint,
+            );
+
+            if let Some(cached) = self.cache.get(&ckey).await {
+                return Ok(cached);
+            }
+
+            let search_query = SearchQuery {
+                query: req.query.clone(),
+                num_results,
+                include_domains: req.include_domains.unwrap_or_default(),
+                exclude_domains: req.exclude_domains.unwrap_or_default(),
+                freshness,
+            };
+
+            let mut compound = self
+                .pool
+                .search(&search_query, strat, req.provider.as_deref())
+                .await
+                .map_err(McpToolError::from)?;
+
+            compound.results.truncate(num_results as usize);
+
+            // Deep strategy rerank stage: ONE templated rerank call
+            // carrying all candidates as documents, routed through the
+            // inference IPC bridge to the provider's rerank endpoint
+            // (default `OpenRouter/qwen/qwen3-reranker-8b`, override via
+            // `HKASK_RERANK_MODEL`). Every degraded outcome (call failed,
+            // or documents missing from the response) is surfaced in
+            // `rerank` — never a silent fallback.
+            let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
+                let outcome = llm_rerank(
+                    self.inference_port.as_ref(),
                     &req.query,
-                    &serde_json::json!({
-                        "num_results": num_results,
-                        "freshness": freshness,
-                        "include_domains": req.include_domains,
-                        "exclude_domains": req.exclude_domains,
-                        "provider": req.provider,
-                    }),
-                    &fingerprint,
-                );
-
-                if let Some(cached) = self.cache.get(&ckey).await {
-                    return Ok(cached);
-                }
-
-                let search_query = SearchQuery {
-                    query: req.query.clone(),
-                    num_results,
-                    include_domains: req.include_domains.unwrap_or_default(),
-                    exclude_domains: req.exclude_domains.unwrap_or_default(),
-                    freshness,
-                };
-
-                let mut compound = self
-                    .pool
-                    .search(&search_query, strat, req.provider.as_deref())
-                    .await
-                    .map_err(McpToolError::from)?;
-
-                compound.results.truncate(num_results as usize);
-
-                // Deep strategy rerank stage: ONE templated rerank call
-                // carrying all candidates as documents, routed through the
-                // inference IPC bridge to the provider's rerank endpoint
-                // (default `OpenRouter/qwen/qwen3-reranker-8b`, override via
-                // `HKASK_RERANK_MODEL`). Every degraded outcome (call failed,
-                // or documents missing from the response) is surfaced in
-                // `rerank` — never a silent fallback.
-                let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
-                    let outcome = llm_rerank(
-                        self.inference_port.as_ref(),
-                        &req.query,
-                        &mut compound.results,
-                    )
-                    .await;
-                    if outcome.scored == 0 {
-                        tracing::warn!(
-                            target: "hkask.web",
-                            error = ?outcome.first_error,
-                            "LLM rerank failed — keeping heuristic RRF order"
-                        );
-                        Some(RerankInfo {
-                            mode: "heuristic".to_string(),
-                            reason: outcome
-                                .first_error
-                                .or_else(|| Some("no candidates scored".to_string())),
-                        })
-                    } else if outcome.failed > 0 {
-                        Some(RerankInfo {
-                            mode: "llm".to_string(),
-                            reason: Some(format!(
-                                "{} of {} rerank scoring calls failed; unscored results \
+                    &mut compound.results,
+                )
+                .await;
+                if outcome.scored == 0 {
+                    tracing::warn!(
+                        target: "hkask.web",
+                        error = ?outcome.first_error,
+                        "LLM rerank failed — keeping heuristic RRF order"
+                    );
+                    Some(RerankInfo {
+                        mode: "heuristic".to_string(),
+                        reason: outcome
+                            .first_error
+                            .or_else(|| Some("no candidates scored".to_string())),
+                    })
+                } else if outcome.failed > 0 {
+                    Some(RerankInfo {
+                        mode: "llm".to_string(),
+                        reason: Some(format!(
+                            "{} of {} rerank scoring calls failed; unscored results \
                                  kept heuristic order at the end",
-                                outcome.failed,
-                                outcome.scored + outcome.failed
-                            )),
-                        })
-                    } else {
-                        Some(RerankInfo {
-                            mode: "llm".to_string(),
-                            reason: None,
-                        })
-                    }
+                            outcome.failed,
+                            outcome.scored + outcome.failed
+                        )),
+                    })
                 } else {
-                    None
-                };
-
-                // Surface which provider was actually used when a single
-                // provider was selected (explicit override or quick strategy).
-                let selected_provider = if req.provider.is_some() || strat == SearchStrategy::Quick
-                {
-                    compound
-                        .providers_succeeded
-                        .first()
-                        .cloned()
-                        .or_else(|| req.provider.clone())
-                } else {
-                    None
-                };
-
-                // Surface the static profiles of all configured providers so
-                // the model has metacognitive context for its next call.
-                let provider_profiles: Vec<ProviderProfileOutput> = self
-                    .pool
-                    .provider_kinds()
-                    .iter()
-                    .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
-                    .collect();
-
-                let metadata = SearchMetadata::from(&compound);
-                tracing::info!(
-                    target: "hkask.web",
-                    strategy = %metadata.strategy,
-                    selected_provider = ?selected_provider.as_ref(),
-                    providers_queried = ?metadata.providers_queried,
-                    providers_succeeded = ?metadata.providers_succeeded,
-                    providers_failed = ?metadata.providers_failed,
-                    total_before_dedup = metadata.total_before_dedup,
-                    duplicates_removed = metadata.duplicates_removed,
-                    top_rrf_scores = ?metadata.top_rrf_scores,
-                    "Regulation web_search metadata"
-                );
-
-                let search_output = SearchOutput {
-                    query: compound.query.clone(),
-                    strategy: compound.strategy.clone(),
-                    results: compound
-                        .results
-                        .iter()
-                        .map(SearchResultOutput::from)
-                        .collect(),
-                    answer_box: compound.answer_box.clone(),
-                    related_questions: compound.related_questions.clone(),
-                    count: compound.results.len(),
-                    providers_failed: compound.providers_failed.clone(),
-                    selected_provider,
-                    provider_profiles,
-                    rerank,
-                };
-
-                let output = serde_json::to_value(&search_output)
-                    .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
-
-                // Cache only clean responses. A compound carrying provider
-                // failures — in single-provider mode that is an empty result
-                // plus a failure record — must not be cached: a transient
-                // provider failure would otherwise be replayed as a
-                // "successful" empty result for the full cache TTL.
-                if compound.providers_failed.is_empty() {
-                    self.cache.insert(ckey, output.clone()).await;
+                    Some(RerankInfo {
+                        mode: "llm".to_string(),
+                        reason: None,
+                    })
                 }
+            } else {
+                None
+            };
 
-                Ok(output)
-            },
-        )
+            // Surface which provider was actually used when a single
+            // provider was selected (explicit override or quick strategy).
+            let selected_provider = if req.provider.is_some() || strat == SearchStrategy::Quick {
+                compound
+                    .providers_succeeded
+                    .first()
+                    .cloned()
+                    .or_else(|| req.provider.clone())
+            } else {
+                None
+            };
+
+            // Surface the static profiles of all configured providers so
+            // the model has metacognitive context for its next call.
+            let provider_profiles: Vec<ProviderProfileOutput> = self
+                .pool
+                .provider_kinds()
+                .iter()
+                .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
+                .collect();
+
+            let metadata = SearchMetadata::from(&compound);
+            tracing::info!(
+                target: "hkask.web",
+                strategy = %metadata.strategy,
+                selected_provider = ?selected_provider.as_ref(),
+                providers_queried = ?metadata.providers_queried,
+                providers_succeeded = ?metadata.providers_succeeded,
+                providers_failed = ?metadata.providers_failed,
+                total_before_dedup = metadata.total_before_dedup,
+                duplicates_removed = metadata.duplicates_removed,
+                top_rrf_scores = ?metadata.top_rrf_scores,
+                "Regulation web_search metadata"
+            );
+
+            let search_output = SearchOutput {
+                query: compound.query.clone(),
+                strategy: compound.strategy.clone(),
+                results: compound
+                    .results
+                    .iter()
+                    .map(SearchResultOutput::from)
+                    .collect(),
+                answer_box: compound.answer_box.clone(),
+                related_questions: compound.related_questions.clone(),
+                count: compound.results.len(),
+                providers_failed: compound.providers_failed.clone(),
+                selected_provider,
+                provider_profiles,
+                rerank,
+            };
+
+            let output = serde_json::to_value(&search_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+
+            // Cache only clean responses. A compound carrying provider
+            // failures — in single-provider mode that is an empty result
+            // plus a failure record — must not be cached: a transient
+            // provider failure would otherwise be replayed as a
+            // "successful" empty result for the full cache TTL.
+            if compound.providers_failed.is_empty() {
+                self.cache.insert(ckey, output.clone()).await;
+            }
+
+            Ok(output)
+        })
         .await
     }
 
@@ -369,39 +363,35 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<RecommendProviderRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "web_recommend_provider",
-            async {
-                self.rate_limiter.check("web_recommend_provider")?;
+        execute_tool(self, "web_recommend_provider", async {
+            self.rate_limiter.check("web_recommend_provider")?;
 
-                if req.query.is_empty() {
-                    return Err(McpToolError::invalid_argument("query must not be empty"));
-                }
-                if req.query.len() > MAX_QUERY_LENGTH {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "query exceeds maximum length of {} characters",
-                        MAX_QUERY_LENGTH
-                    )));
-                }
+            if req.query.is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            if req.query.len() > MAX_QUERY_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "query exceeds maximum length of {} characters",
+                    MAX_QUERY_LENGTH
+                )));
+            }
 
-                let recommendations = self.pool.score_providers(&req.query, req.intent.as_deref());
-                let recommended = recommendations
-                    .iter()
-                    .find(|r| r.configured)
-                    .map(|r| r.kind.clone());
+            let recommendations = self.pool.score_providers(&req.query, req.intent.as_deref());
+            let recommended = recommendations
+                .iter()
+                .find(|r| r.configured)
+                .map(|r| r.kind.clone());
 
-                let output = RecommendProviderOutput {
-                    query: req.query,
-                    intent: req.intent,
-                    recommendations,
-                    recommended,
-                };
+            let output = RecommendProviderOutput {
+                query: req.query,
+                intent: req.intent,
+                recommendations,
+                recommended,
+            };
 
-                Ok(serde_json::to_value(&output)
-                    .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" })))
-            },
-        )
+            Ok(serde_json::to_value(&output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" })))
+        })
         .await
     }
 
@@ -410,55 +400,50 @@ impl ResearchServer {
         &self,
         Parameters(FindSimilarRequest { url, num_results }): Parameters<FindSimilarRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "web_find_similar",
-            async {
-                self.rate_limiter.check("web_find_similar")?;
+        execute_tool(self, "web_find_similar", async {
+            self.rate_limiter.check("web_find_similar")?;
 
-                validate_tool_url_with_dns(&url).await?;
+            validate_tool_url_with_dns(&url).await?;
 
-                let num = num_results.unwrap_or(5).min(20);
+            let num = num_results.unwrap_or(5).min(20);
 
-                // Not cached: web_find_similar skips the response cache (unlike
-                // web_search and web_extract). A find-similar result is sensitive
-                // to the source URL's evolving neighbourhood and stale quickly.
-                tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
+            // Not cached: web_find_similar skips the response cache (unlike
+            // web_search and web_extract). A find-similar result is sensitive
+            // to the source URL's evolving neighbourhood and stale quickly.
+            tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
 
-                self.pool
-                    .find_similar(&url, num)
-                    .await
-                    .map(|output| {
-                        let results: Vec<FindSimilarResultOutput> = output
-                            .results
-                            .into_iter()
-                            .map(|r| {
-                                let key = r.url.to_lowercase();
-                                FindSimilarResultOutput {
-                                    title: r.title,
-                                    url: r.url,
-                                    description: r.description,
-                                    source: r.source,
-                                    published: r.published,
-                                    semantic_score: output.semantic_scores.get(&key).copied(),
-                                    content_preview: output.content_previews.get(&key).cloned(),
-                                }
-                            })
-                            .collect();
+            self.pool
+                .find_similar(&url, num)
+                .await
+                .map(|output| {
+                    let results: Vec<FindSimilarResultOutput> = output
+                        .results
+                        .into_iter()
+                        .map(|r| {
+                            let key = r.url.to_lowercase();
+                            FindSimilarResultOutput {
+                                title: r.title,
+                                url: r.url,
+                                description: r.description,
+                                source: r.source,
+                                published: r.published,
+                                semantic_score: output.semantic_scores.get(&key).copied(),
+                                content_preview: output.content_previews.get(&key).cloned(),
+                            }
+                        })
+                        .collect();
 
-                        let fs_output = FindSimilarOutput {
-                            source_url: url,
-                            count: results.len(),
-                            results,
-                        };
+                    let fs_output = FindSimilarOutput {
+                        source_url: url,
+                        count: results.len(),
+                        results,
+                    };
 
-                        serde_json::to_value(&fs_output).unwrap_or_else(
-                            |_| serde_json::json!({ "error": "serialization failed" }),
-                        )
-                    })
-                    .map_err(McpToolError::from)
-            },
-        )
+                    serde_json::to_value(&fs_output)
+                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
+                })
+                .map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -474,93 +459,88 @@ impl ResearchServer {
             wait_for_ms,
         }): Parameters<ExtractRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "web_extract",
-            async {
-                self.rate_limiter.check("web_extract")?;
+        execute_tool(self, "web_extract", async {
+            self.rate_limiter.check("web_extract")?;
 
-                if url.len() > MAX_URL_LENGTH {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "url exceeds maximum length of {} characters",
-                        MAX_URL_LENGTH
-                    )));
-                }
-                if let Some(ref prompt) = json_prompt
-                    && prompt.len() > MAX_JSON_PROMPT_LENGTH
-                {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "json_prompt exceeds maximum length of {} characters",
-                        MAX_JSON_PROMPT_LENGTH
-                    )));
-                }
-                if let Some(ref schema) = json_schema
-                    && let Ok(bytes) = serde_json::to_string(schema)
-                    && bytes.len() > MAX_JSON_SCHEMA_BYTES
-                {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "json_schema exceeds maximum size of {} bytes",
-                        MAX_JSON_SCHEMA_BYTES
-                    )));
-                }
+            if url.len() > MAX_URL_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "url exceeds maximum length of {} characters",
+                    MAX_URL_LENGTH
+                )));
+            }
+            if let Some(ref prompt) = json_prompt
+                && prompt.len() > MAX_JSON_PROMPT_LENGTH
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "json_prompt exceeds maximum length of {} characters",
+                    MAX_JSON_PROMPT_LENGTH
+                )));
+            }
+            if let Some(ref schema) = json_schema
+                && let Ok(bytes) = serde_json::to_string(schema)
+                && bytes.len() > MAX_JSON_SCHEMA_BYTES
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "json_schema exceeds maximum size of {} bytes",
+                    MAX_JSON_SCHEMA_BYTES
+                )));
+            }
 
-                validate_tool_url_with_dns(&url).await?;
+            validate_tool_url_with_dns(&url).await?;
 
-                let fmt = format.unwrap_or_else(|| "markdown".to_string());
-                let main_content_only = main_content_only.unwrap_or(true);
-                let wait_for_ms_val = wait_for_ms.unwrap_or(0);
-                // Compute the cache key before moving json_schema into opts.
-                let json_schema_str = json_schema
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok());
-                let json_schema_inner = json_schema.map(serde_json::Value::from);
+            let fmt = format.unwrap_or_else(|| "markdown".to_string());
+            let main_content_only = main_content_only.unwrap_or(true);
+            let wait_for_ms_val = wait_for_ms.unwrap_or(0);
+            // Compute the cache key before moving json_schema into opts.
+            let json_schema_str = json_schema
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok());
+            let json_schema_inner = json_schema.map(serde_json::Value::from);
 
-                let fingerprint = self.pool.provider_fingerprint();
-                let cache_params = serde_json::json!({
-                    "format": fmt,
-                    "main_content_only": main_content_only,
-                    "json_prompt": json_prompt,
-                    "json_schema": json_schema_str,
-                    "wait_for_ms": wait_for_ms_val,
-                });
-                let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
+            let fingerprint = self.pool.provider_fingerprint();
+            let cache_params = serde_json::json!({
+                "format": fmt,
+                "main_content_only": main_content_only,
+                "json_prompt": json_prompt,
+                "json_schema": json_schema_str,
+                "wait_for_ms": wait_for_ms_val,
+            });
+            let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
 
-                let opts = ExtractOptions {
-                    format: fmt,
-                    json_prompt,
-                    json_schema: json_schema_inner,
-                    main_content_only,
-                    wait_for_ms: wait_for_ms_val,
-                };
+            let opts = ExtractOptions {
+                format: fmt,
+                json_prompt,
+                json_schema: json_schema_inner,
+                main_content_only,
+                wait_for_ms: wait_for_ms_val,
+            };
 
-                if let Some(cached) = self.cache.get(&ckey).await {
-                    return Ok(cached);
-                }
+            if let Some(cached) = self.cache.get(&ckey).await {
+                return Ok(cached);
+            }
 
-                let json_result = self
-                    .pool
-                    .extract(&url, &opts)
-                    .await
-                    .map(|result| {
-                        let output = ExtractOutput {
-                            url: result.url,
-                            format: result.format,
-                            content: result.content,
-                            metadata: result.metadata,
-                        };
-                        serde_json::to_value(&output).unwrap_or_else(
-                            |_| serde_json::json!({ "error": "serialization failed" }),
-                        )
-                    })
-                    .map_err(McpToolError::from);
+            let json_result = self
+                .pool
+                .extract(&url, &opts)
+                .await
+                .map(|result| {
+                    let output = ExtractOutput {
+                        url: result.url,
+                        format: result.format,
+                        content: result.content,
+                        metadata: result.metadata,
+                    };
+                    serde_json::to_value(&output)
+                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
+                })
+                .map_err(McpToolError::from);
 
-                if let Ok(ref json) = json_result {
-                    self.cache.insert(ckey, json.clone()).await;
-                }
+            if let Ok(ref json) = json_result {
+                self.cache.insert(ckey, json.clone()).await;
+            }
 
-                json_result
-            },
-        )
+            json_result
+        })
         .await
     }
 
@@ -573,55 +553,50 @@ impl ResearchServer {
             timeout_secs,
         }): Parameters<BrowseRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "web_browse",
-            async {
-                self.rate_limiter.check("web_browse")?;
+        execute_tool(self, "web_browse", async {
+            self.rate_limiter.check("web_browse")?;
 
-                // Not cached: web_browse skips the response cache (unlike
-                // web_search and web_extract). Browsed content is interactive and
-                // session-specific; a cached snapshot would mislead on re-browse.
-                tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
+            // Not cached: web_browse skips the response cache (unlike
+            // web_search and web_extract). Browsed content is interactive and
+            // session-specific; a cached snapshot would mislead on re-browse.
+            tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
 
-                if url.len() > MAX_URL_LENGTH {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "url exceeds maximum length of {} characters",
-                        MAX_URL_LENGTH
-                    )));
-                }
-                if let Some(ref instr) = instruction
-                    && instr.len() > MAX_INSTRUCTION_LENGTH
-                {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "instruction exceeds maximum length of {} characters",
-                        MAX_INSTRUCTION_LENGTH
-                    )));
-                }
+            if url.len() > MAX_URL_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "url exceeds maximum length of {} characters",
+                    MAX_URL_LENGTH
+                )));
+            }
+            if let Some(ref instr) = instruction
+                && instr.len() > MAX_INSTRUCTION_LENGTH
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "instruction exceeds maximum length of {} characters",
+                    MAX_INSTRUCTION_LENGTH
+                )));
+            }
 
-                validate_tool_url_with_dns(&url).await?;
+            validate_tool_url_with_dns(&url).await?;
 
-                let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
-                let timeout =
-                    Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
+            let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
+            let timeout =
+                Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
 
-                self.pool
-                    .browse(&url, &instr, timeout)
-                    .await
-                    .map(|result| {
-                        let output = BrowseOutput {
-                            url: result.url,
-                            content: result.content,
-                            instruction: result.instruction,
-                            actions_taken: result.actions_taken,
-                        };
-                        serde_json::to_value(&output).unwrap_or_else(
-                            |_| serde_json::json!({ "error": "serialization failed" }),
-                        )
-                    })
-                    .map_err(McpToolError::from)
-            },
-        )
+            self.pool
+                .browse(&url, &instr, timeout)
+                .await
+                .map(|result| {
+                    let output = BrowseOutput {
+                        url: result.url,
+                        content: result.content,
+                        instruction: result.instruction,
+                        actions_taken: result.actions_taken,
+                    };
+                    serde_json::to_value(&output)
+                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
+                })
+                .map_err(McpToolError::from)
+        })
         .await
     }
 
@@ -873,19 +848,15 @@ impl ResearchServer {
         &self,
         Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_mark_all_read",
-            async {
-                let db = require_rss_db!(self);
-                let sid = stream_id.clone();
-                let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
-                handle_db_result!(
-                    result,
-                    |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
-                )
-            },
-        )
+        execute_tool(self, "rss_mark_all_read", async {
+            let db = require_rss_db!(self);
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
+            handle_db_result!(
+                result,
+                |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
+            )
+        })
         .await
     }
 
@@ -894,19 +865,15 @@ impl ResearchServer {
         &self,
         Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_get_unread_count",
-            async {
-                let db = require_rss_db!(self);
-                let sid = stream_id.clone();
-                let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
-                handle_db_result!(
-                    result,
-                    |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
-                )
-            },
-        )
+        execute_tool(self, "rss_get_unread_count", async {
+            let db = require_rss_db!(self);
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
+            handle_db_result!(
+                result,
+                |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
+            )
+        })
         .await
     }
 
@@ -931,15 +898,11 @@ impl ResearchServer {
 
     #[tool(description = "Export subscriptions as OPML 2.0")]
     pub async fn rss_export_opml(&self) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_export_opml",
-            async {
-                let db = require_rss_db!(self);
-                let result = spawn_db(db, export_opml).await;
-                handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
-            },
-        )
+        execute_tool(self, "rss_export_opml", async {
+            let db = require_rss_db!(self);
+            let result = spawn_db(db, export_opml).await;
+            handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
+        })
         .await
     }
 
@@ -948,15 +911,11 @@ impl ResearchServer {
         &self,
         Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_import_opml",
-            async {
-                let db = require_rss_db!(self);
-                let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
-                handle_db_result!(result, |v| v)
-            },
-        )
+        execute_tool(self, "rss_import_opml", async {
+            let db = require_rss_db!(self);
+            let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
+            handle_db_result!(result, |v| v)
+        })
         .await
     }
 
@@ -965,20 +924,16 @@ impl ResearchServer {
         &self,
         Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_discover_feeds",
-            async {
-                self.rate_limiter.check("rss_discover_feeds")?;
-                validate_tool_url_with_dns(&url).await?;
-                match discover_feeds(&self.rss_client, &url).await {
-                    Ok(feeds) => {
-                        Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
-                    }
-                    Err(e) => Err(McpToolError::unavailable(e.to_string())),
+        execute_tool(self, "rss_discover_feeds", async {
+            self.rate_limiter.check("rss_discover_feeds")?;
+            validate_tool_url_with_dns(&url).await?;
+            match discover_feeds(&self.rss_client, &url).await {
+                Ok(feeds) => {
+                    Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
                 }
-            },
-        )
+                Err(e) => Err(McpToolError::unavailable(e.to_string())),
+            }
+        })
         .await
     }
 
@@ -987,15 +942,11 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<EditTagRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_edit_tag",
-            async {
-                let db = require_rss_db!(self);
-                let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
-                handle_db_result!(result, |v| v)
-            },
-        )
+        execute_tool(self, "rss_edit_tag", async {
+            let db = require_rss_db!(self);
+            let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
+            handle_db_result!(result, |v| v)
+        })
         .await
     }
 
@@ -1232,32 +1183,28 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<FetchSyntheticRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_fetch_synthetic",
-            async {
-                self.rate_limiter.check("rss_fetch_synthetic")?;
-                let db = require_rss_db!(self);
+        execute_tool(self, "rss_fetch_synthetic", async {
+            self.rate_limiter.check("rss_fetch_synthetic")?;
+            let db = require_rss_db!(self);
 
-                // Resolve the feed URL from the stream_id.
-                let sid = req.stream_id.clone();
-                let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
-                let (feed_url, _etag, _lm) = match lookup {
-                    Ok(Ok(v)) => v,
-                    Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
-                    Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
-                };
+            // Resolve the feed URL from the stream_id.
+            let sid = req.stream_id.clone();
+            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
+            let (feed_url, _etag, _lm) = match lookup {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
+                Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
+            };
 
-                // Check if this is a synthetic feed.
-                if !feed_url.starts_with("synthetic://") {
-                    return Err(McpToolError::invalid_argument(
-                        "not a synthetic feed; use rss_fetch instead",
-                    ));
-                }
+            // Check if this is a synthetic feed.
+            if !feed_url.starts_with("synthetic://") {
+                return Err(McpToolError::invalid_argument(
+                    "not a synthetic feed; use rss_fetch instead",
+                ));
+            }
 
-                self.fetch_synthetic_inner(&req.stream_id, feed_url).await
-            },
-        )
+            self.fetch_synthetic_inner(&req.stream_id, feed_url).await
+        })
         .await
     }
 
@@ -1434,18 +1381,14 @@ impl ResearchServer {
 
     #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
     pub async fn rss_list_synthetic(&self) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_list_synthetic",
-            async {
-                let db = require_rss_db!(self);
-                let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
-                handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
-                    "count": feeds.len(),
-                    "synthetic_feeds": feeds
-                }))
-            },
-        )
+        execute_tool(self, "rss_list_synthetic", async {
+            let db = require_rss_db!(self);
+            let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
+            handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
+                "count": feeds.len(),
+                "synthetic_feeds": feeds
+            }))
+        })
         .await
     }
 
@@ -1515,90 +1458,86 @@ impl ResearchServer {
             artifacts,
         }): Parameters<EvaluateEvidenceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "evaluate_evidence",
-            async {
-                if question.trim().is_empty() {
-                    return Err(McpToolError::invalid_argument("question must not be empty"));
-                }
-                if artifacts.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "artifacts must not be empty",
-                    ));
-                }
+        execute_tool(self, "evaluate_evidence", async {
+            if question.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("question must not be empty"));
+            }
+            if artifacts.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "artifacts must not be empty",
+                ));
+            }
 
-                // Deterministic signal computation (not LLM relay — G3 contract).
-                // Corroboration: count artifacts sharing the same source domain.
-                let mut source_counts: std::collections::HashMap<&str, usize> =
-                    std::collections::HashMap::new();
-                for a in &artifacts {
-                    if let Some(src) = &a.source {
-                        *source_counts.entry(src.as_str()).or_default() += 1;
-                    }
+            // Deterministic signal computation (not LLM relay — G3 contract).
+            // Corroboration: count artifacts sharing the same source domain.
+            let mut source_counts: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for a in &artifacts {
+                if let Some(src) = &a.source {
+                    *source_counts.entry(src.as_str()).or_default() += 1;
                 }
+            }
 
-                let evaluations: Vec<serde_json::Value> = artifacts
-                    .iter()
-                    .map(|a| {
-                        let corroboration = a
-                            .source
-                            .as_deref()
-                            .and_then(|s| source_counts.get(s))
-                            .copied()
-                            .unwrap_or(1);
-                        // Recency: presence of a published date is a positive signal.
-                        let has_date = a.published.is_some();
-                        // Confidence: deterministic composite — corroboration +
-                        // recency + has_content. Not an LLM score.
-                        let has_content = a.content.is_some();
-                        let confidence = (corroboration as f64 * 0.3)
-                            + (if has_date { 0.2 } else { 0.0 })
-                            + (if has_content { 0.2 } else { 0.0 })
-                            + 0.3; // base confidence
-                        let confidence = confidence.min(1.0);
+            let evaluations: Vec<serde_json::Value> = artifacts
+                .iter()
+                .map(|a| {
+                    let corroboration = a
+                        .source
+                        .as_deref()
+                        .and_then(|s| source_counts.get(s))
+                        .copied()
+                        .unwrap_or(1);
+                    // Recency: presence of a published date is a positive signal.
+                    let has_date = a.published.is_some();
+                    // Confidence: deterministic composite — corroboration +
+                    // recency + has_content. Not an LLM score.
+                    let has_content = a.content.is_some();
+                    let confidence = (corroboration as f64 * 0.3)
+                        + (if has_date { 0.2 } else { 0.0 })
+                        + (if has_content { 0.2 } else { 0.0 })
+                        + 0.3; // base confidence
+                    let confidence = confidence.min(1.0);
 
-                        serde_json::json!({
-                            "url": a.url,
-                            "title": a.title,
-                            "confidence": (confidence * 100.0).round() / 100.0,
-                            "corroboration_count": corroboration,
-                            "has_published_date": has_date,
-                            "has_content": has_content,
-                            "SEPIO:0000167": format!("{:.2}", confidence),
-                            "SEPIO:0000440": if corroboration > 1 {
-                                serde_json::Value::String(format!(
-                                    "{} independent sources on same domain",
-                                    corroboration
-                                ))
-                            } else {
-                                serde_json::Value::Null
-                            },
-                        })
+                    serde_json::json!({
+                        "url": a.url,
+                        "title": a.title,
+                        "confidence": (confidence * 100.0).round() / 100.0,
+                        "corroboration_count": corroboration,
+                        "has_published_date": has_date,
+                        "has_content": has_content,
+                        "SEPIO:0000167": format!("{:.2}", confidence),
+                        "SEPIO:0000440": if corroboration > 1 {
+                            serde_json::Value::String(format!(
+                                "{} independent sources on same domain",
+                                corroboration
+                            ))
+                        } else {
+                            serde_json::Value::Null
+                        },
                     })
-                    .collect();
+                })
+                .collect();
 
-                // Overall assessment: the question's evidence base.
-                let total = evaluations.len();
-                let avg_confidence: f64 = if total > 0 {
-                    evaluations
-                        .iter()
-                        .filter_map(|e| e.get("confidence").and_then(|c| c.as_f64()))
-                        .sum::<f64>()
-                        / total as f64
-                } else {
-                    0.0
-                };
+            // Overall assessment: the question's evidence base.
+            let total = evaluations.len();
+            let avg_confidence: f64 = if total > 0 {
+                evaluations
+                    .iter()
+                    .filter_map(|e| e.get("confidence").and_then(|c| c.as_f64()))
+                    .sum::<f64>()
+                    / total as f64
+            } else {
+                0.0
+            };
 
-                Ok(serde_json::json!({
-                    "question": question,
-                    "artifacts_evaluated": total,
-                    "average_confidence": (avg_confidence * 100.0).round() / 100.0,
-                    "evaluations": evaluations,
-                    "pko:stepVerification": "evidence_quality_assessed",
-                }))
-            },
-        )
+            Ok(serde_json::json!({
+                "question": question,
+                "artifacts_evaluated": total,
+                "average_confidence": (avg_confidence * 100.0).round() / 100.0,
+                "evaluations": evaluations,
+                "pko:stepVerification": "evidence_quality_assessed",
+            }))
+        })
         .await
     }
 

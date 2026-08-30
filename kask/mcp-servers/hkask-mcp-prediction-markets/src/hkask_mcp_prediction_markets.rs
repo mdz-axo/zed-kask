@@ -16,9 +16,7 @@
 use std::collections::HashSet;
 
 use hkask_mcp_portfolio::map_portfolio_error;
-use hkask_mcp_server::server::{
-    CredentialRequirement, McpToolError, execute_tool, map_join_error,
-};
+use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool, map_join_error};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
@@ -121,25 +119,21 @@ impl PredictionMarketsServer {
         &self,
         Parameters(_req): Parameters<StatusRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "prediction_markets_status",
-            async {
-                self.record_call("prediction_markets_status");
-                Ok(serde_json::json!({
-                    "server": "hkask-mcp-prediction-markets",
-                    "cache_ttl_secs": self.cache_ttl_secs,
-                    "ontology_mapping_version": ontology::MAPPING_VERSION,
-                    "called_tools": self
-                        .called_tools
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>(),
-                }))
-            },
-        )
+        execute_tool(self, "prediction_markets_status", async {
+            self.record_call("prediction_markets_status");
+            Ok(serde_json::json!({
+                "server": "hkask-mcp-prediction-markets",
+                "cache_ttl_secs": self.cache_ttl_secs,
+                "ontology_mapping_version": ontology::MAPPING_VERSION,
+                "called_tools": self
+                    .called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            }))
+        })
         .await
     }
 
@@ -151,23 +145,19 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketLookupRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_lookup",
-            async {
-                self.record_call("market_lookup");
-                let mut records = self.gather_candidates().await?;
-                Self::substring_filter(&mut records, &req.query);
-                if let Some(category) = &req.category {
-                    let cat = category.to_lowercase();
-                    records.retain(|r| r.category.to_lowercase().contains(&cat));
-                }
-                records.truncate(req.limit.unwrap_or(10).min(50) as usize);
-                serde_json::to_value(&records).map_err(|e| {
-                    McpToolError::internal(format!("record serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+        execute_tool(self, "market_lookup", async {
+            self.record_call("market_lookup");
+            let mut records = self.gather_candidates().await?;
+            Self::substring_filter(&mut records, &req.query);
+            if let Some(category) = &req.category {
+                let cat = category.to_lowercase();
+                records.retain(|r| r.category.to_lowercase().contains(&cat));
+            }
+            records.truncate(req.limit.unwrap_or(10).min(50) as usize);
+            serde_json::to_value(&records).map_err(|e| {
+                McpToolError::internal(format!("record serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -180,19 +170,15 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketMatchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_match",
-            async {
-                self.record_call("market_match");
-                let records = self.gather_candidates().await?;
-                let mut matches = matcher::rank_matches(&req.question, &records);
-                matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
-                serde_json::to_value(&matches).map_err(|e| {
-                    McpToolError::internal(format!("match serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+        execute_tool(self, "market_match", async {
+            self.record_call("market_match");
+            let records = self.gather_candidates().await?;
+            let mut matches = matcher::rank_matches(&req.question, &records);
+            matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
+            serde_json::to_value(&matches).map_err(|e| {
+                McpToolError::internal(format!("match serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -204,14 +190,10 @@ impl PredictionMarketsServer {
         &self,
         Parameters(_req): Parameters<MarketOntologyMapRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_ontology_map",
-            async {
-                self.record_call("market_ontology_map");
-                Ok(ontology::mapping_document())
-            },
-        )
+        execute_tool(self, "market_ontology_map", async {
+            self.record_call("market_ontology_map");
+            Ok(ontology::mapping_document())
+        })
         .await
     }
 
@@ -223,21 +205,17 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCalibrationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_calibration",
-            async {
-                self.record_call("market_calibration");
-                let store = self
-                    .calibration_store
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                let reading = calibration::read_calibration(&store, &req.bucket);
-                serde_json::to_value(&reading).map_err(|e| {
-                    McpToolError::internal(format!("calibration serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+        execute_tool(self, "market_calibration", async {
+            self.record_call("market_calibration");
+            let store = self
+                .calibration_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let reading = calibration::read_calibration(&store, &req.bucket);
+            serde_json::to_value(&reading).map_err(|e| {
+                McpToolError::internal(format!("calibration serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -360,26 +338,66 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketLadderRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_ladder",
-            async {
-                self.record_call("market_ladder");
-                let now = chrono::Utc::now();
-                let mut rungs: Vec<serde_json::Value> = Vec::new();
-                let mut warnings: Vec<String> = Vec::new();
+        execute_tool(self, "market_ladder", async {
+            self.record_call("market_ladder");
+            let now = chrono::Utc::now();
+            let mut rungs: Vec<serde_json::Value> = Vec::new();
+            let mut warnings: Vec<String> = Vec::new();
 
-                match provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await {
-                    Ok(markets) => {
-                        for market in &markets {
-                            if let Some(record) = types::MarketRecord::from_kalshi(
+            match provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await {
+                Ok(markets) => {
+                    for market in &markets {
+                        if let Some(record) = types::MarketRecord::from_kalshi(
+                            market,
+                            None,
+                            types::calibration_for(None, ""),
+                            &now,
+                        ) {
+                            rungs.push(serde_json::json!({
+                                "source": "kalshi",
+                                "market_id": record.market_id,
+                                "question": record.question,
+                                "deadline": record.deadline,
+                                "time_to_maturity": record.time_to_maturity,
+                            }));
+                        }
+                    }
+                }
+                Err(e) => warnings.push(format!("kalshi: {e}")),
+            }
+
+            match provider_polymarket::fetch_events(&self.http, 100).await {
+                Ok(events) => {
+                    for event in &events {
+                        if event.slug != req.series && event.ticker != req.series {
+                            continue;
+                        }
+                        let event_tags: Vec<String> =
+                            event.tags.iter().map(|t| t.label.clone()).collect();
+                        let bucket = types::canonical_bucket(
+                            event_tags.first().map(String::as_str).unwrap_or(""),
+                        );
+                        let reading = {
+                            let guard = self
+                                .calibration_store
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            calibration::read_calibration(&guard, &bucket)
+                        };
+                        for market in &event.markets {
+                            let calibration_block = types::calibration_for(Some(&reading), &bucket);
+                            if let Some(record) = types::MarketRecord::from_polymarket(
                                 market,
-                                None,
-                                types::calibration_for(None, ""),
+                                &event.id,
+                                &event.slug,
+                                event.volume,
+                                event.liquidity,
+                                &event_tags,
+                                calibration_block,
                                 &now,
                             ) {
                                 rungs.push(serde_json::json!({
-                                    "source": "kalshi",
+                                    "source": "polymarket",
                                     "market_id": record.market_id,
                                     "question": record.question,
                                     "deadline": record.deadline,
@@ -388,71 +406,26 @@ impl PredictionMarketsServer {
                             }
                         }
                     }
-                    Err(e) => warnings.push(format!("kalshi: {e}")),
                 }
+                Err(e) => warnings.push(format!("polymarket: {e}")),
+            }
 
-                match provider_polymarket::fetch_events(&self.http, 100).await {
-                    Ok(events) => {
-                        for event in &events {
-                            if event.slug != req.series && event.ticker != req.series {
-                                continue;
-                            }
-                            let event_tags: Vec<String> =
-                                event.tags.iter().map(|t| t.label.clone()).collect();
-                            let bucket = types::canonical_bucket(
-                                event_tags.first().map(String::as_str).unwrap_or(""),
-                            );
-                            let reading = {
-                                let guard = self
-                                    .calibration_store
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner());
-                                calibration::read_calibration(&guard, &bucket)
-                            };
-                            for market in &event.markets {
-                                let calibration_block =
-                                    types::calibration_for(Some(&reading), &bucket);
-                                if let Some(record) = types::MarketRecord::from_polymarket(
-                                    market,
-                                    &event.id,
-                                    &event.slug,
-                                    event.volume,
-                                    event.liquidity,
-                                    &event_tags,
-                                    calibration_block,
-                                    &now,
-                                ) {
-                                    rungs.push(serde_json::json!({
-                                        "source": "polymarket",
-                                        "market_id": record.market_id,
-                                        "question": record.question,
-                                        "deadline": record.deadline,
-                                        "time_to_maturity": record.time_to_maturity,
-                                    }));
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => warnings.push(format!("polymarket: {e}")),
-                }
+            // Sort by maturity; unparsable deadlines (null) last.
+            rungs.sort_by(|a, b| {
+                let ma = a["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
+                let mb = b["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
+                ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
+            });
 
-                // Sort by maturity; unparsable deadlines (null) last.
-                rungs.sort_by(|a, b| {
-                    let ma = a["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
-                    let mb = b["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
-                    ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
-                });
-
-                serde_json::to_value(serde_json::json!({
-                    "series": req.series,
-                    "rungs": rungs,
-                    "warnings": warnings,
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("ladder serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+            serde_json::to_value(serde_json::json!({
+                "series": req.series,
+                "rungs": rungs,
+                "warnings": warnings,
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("ladder serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
     #[tool(
@@ -515,47 +488,39 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketResidualRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_residual",
-            async {
-                self.record_call("market_residual");
-                let window = i64::from(req.window_days.unwrap_or(90));
-                let now = chrono::Utc::now().timestamp();
-                let start = (now - window * 86_400).max(0) as u64;
-                let end = now as u64;
-                let niche_history = provider_kalshi::fetch_price_history(
-                    &self.http,
-                    &req.market_ticker,
-                    start,
-                    end,
-                )
-                .await?;
-                let base_history =
-                    provider_kalshi::fetch_price_history(&self.http, &req.base_ticker, start, end)
-                        .await?;
-                // Align on shared period timestamps.
-                let observations: Vec<(f64, f64)> = niche_history
-                    .iter()
-                    .filter_map(|n| {
-                        base_history
-                            .iter()
-                            .find(|b| b.ts == n.ts)
-                            .map(|b| (n.price, b.price))
-                    })
-                    .collect();
-                let analysis = residual::residual_analysis(&observations).ok_or_else(|| {
-                    hkask_mcp_server::server::McpToolError::failed_precondition(format!(
-                        "insufficient_overlap: {} shared observations (minimum {})",
-                        observations.len(),
-                        residual::MIN_OBSERVATIONS
-                    ))
-                })?;
-                serde_json::to_value(&analysis).map_err(|e| {
-                    McpToolError::internal(format!("residual serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+        execute_tool(self, "market_residual", async {
+            self.record_call("market_residual");
+            let window = i64::from(req.window_days.unwrap_or(90));
+            let now = chrono::Utc::now().timestamp();
+            let start = (now - window * 86_400).max(0) as u64;
+            let end = now as u64;
+            let niche_history =
+                provider_kalshi::fetch_price_history(&self.http, &req.market_ticker, start, end)
+                    .await?;
+            let base_history =
+                provider_kalshi::fetch_price_history(&self.http, &req.base_ticker, start, end)
+                    .await?;
+            // Align on shared period timestamps.
+            let observations: Vec<(f64, f64)> = niche_history
+                .iter()
+                .filter_map(|n| {
+                    base_history
+                        .iter()
+                        .find(|b| b.ts == n.ts)
+                        .map(|b| (n.price, b.price))
                 })
-            },
-        )
+                .collect();
+            let analysis = residual::residual_analysis(&observations).ok_or_else(|| {
+                hkask_mcp_server::server::McpToolError::failed_precondition(format!(
+                    "insufficient_overlap: {} shared observations (minimum {})",
+                    observations.len(),
+                    residual::MIN_OBSERVATIONS
+                ))
+            })?;
+            serde_json::to_value(&analysis).map_err(|e| {
+                McpToolError::internal(format!("residual serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -588,115 +553,103 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCheckResolutionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_check_resolutions",
-            async {
-                self.record_call("market_check_resolutions");
-                let limit = req.limit.unwrap_or(100).min(500);
-                let mut recorded = 0u32;
-                let mut skipped_ambiguous = 0u32;
-                let mut already_known = 0u32;
-                let mut warnings: Vec<String> = Vec::new();
+        execute_tool(self, "market_check_resolutions", async {
+            self.record_call("market_check_resolutions");
+            let limit = req.limit.unwrap_or(100).min(500);
+            let mut recorded = 0u32;
+            let mut skipped_ambiguous = 0u32;
+            let mut already_known = 0u32;
+            let mut warnings: Vec<String> = Vec::new();
 
-                match provider_kalshi::fetch_markets_by_status(
-                    &self.http,
-                    req.series.as_deref(),
-                    "settled",
-                    limit,
-                )
-                .await
-                {
-                    Ok(markets) => {
-                        let observations: Vec<(String, calibration::ResolvedObservation)> = markets
-                            .iter()
-                            .filter_map(|market| {
-                                let outcome = match market.result.as_str() {
-                                    "yes" => Some(true),
-                                    "no" => Some(false),
-                                    _ => None,
-                                }?;
-                                let bucket = types::canonical_bucket(&market.event_ticker);
-                                let probability =
-                                    provider_kalshi::parse_fp(&market.last_price_dollars)?;
-                                Some((
-                                    bucket,
-                                    calibration::ResolvedObservation {
-                                        probability,
-                                        outcome,
-                                    },
-                                ))
-                            })
-                            .collect();
-                        self.scan_and_record_provider(
-                            observations,
-                            &mut recorded,
-                            &mut already_known,
-                        )?;
-                    }
-                    Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
-                }
-
-                match provider_polymarket::fetch_markets(&self.http, limit, true).await {
-                    Ok(markets) => {
-                        let mut observations: Vec<(String, calibration::ResolvedObservation)> =
-                            Vec::new();
-                        for market in &markets {
-                            if market.uma_resolution_status != "resolved" {
-                                continue;
-                            }
-                            let Some(price) = market.yes_probability() else {
-                                continue;
-                            };
-                            let outcome = if price >= 0.99 {
-                                Some(true)
-                            } else if price <= 0.01 {
-                                Some(false)
-                            } else {
-                                skipped_ambiguous += 1;
-                                None
-                            };
-                            let Some(outcome) = outcome else { continue };
-                            observations.push((
-                                types::canonical_bucket(&market.slug),
+            match provider_kalshi::fetch_markets_by_status(
+                &self.http,
+                req.series.as_deref(),
+                "settled",
+                limit,
+            )
+            .await
+            {
+                Ok(markets) => {
+                    let observations: Vec<(String, calibration::ResolvedObservation)> = markets
+                        .iter()
+                        .filter_map(|market| {
+                            let outcome = match market.result.as_str() {
+                                "yes" => Some(true),
+                                "no" => Some(false),
+                                _ => None,
+                            }?;
+                            let bucket = types::canonical_bucket(&market.event_ticker);
+                            let probability =
+                                provider_kalshi::parse_fp(&market.last_price_dollars)?;
+                            Some((
+                                bucket,
                                 calibration::ResolvedObservation {
-                                    probability: price,
+                                    probability,
                                     outcome,
                                 },
-                            ));
+                            ))
+                        })
+                        .collect();
+                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
+                }
+                Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
+            }
+
+            match provider_polymarket::fetch_markets(&self.http, limit, true).await {
+                Ok(markets) => {
+                    let mut observations: Vec<(String, calibration::ResolvedObservation)> =
+                        Vec::new();
+                    for market in &markets {
+                        if market.uma_resolution_status != "resolved" {
+                            continue;
                         }
-                        self.scan_and_record_provider(
-                            observations,
-                            &mut recorded,
-                            &mut already_known,
-                        )?;
+                        let Some(price) = market.yes_probability() else {
+                            continue;
+                        };
+                        let outcome = if price >= 0.99 {
+                            Some(true)
+                        } else if price <= 0.01 {
+                            Some(false)
+                        } else {
+                            skipped_ambiguous += 1;
+                            None
+                        };
+                        let Some(outcome) = outcome else { continue };
+                        observations.push((
+                            types::canonical_bucket(&market.slug),
+                            calibration::ResolvedObservation {
+                                probability: price,
+                                outcome,
+                            },
+                        ));
                     }
-                    Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
+                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
                 }
+                Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
+            }
 
-                if recorded > 0
-                    && let Some(path) = &self.calibration_path
-                {
-                    let store = self
-                        .calibration_store
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    if let Err(e) = store.save(std::path::Path::new(path)) {
-                        warnings.push(format!("journal save failed: {e}"));
-                    }
+            if recorded > 0
+                && let Some(path) = &self.calibration_path
+            {
+                let store = self
+                    .calibration_store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = store.save(std::path::Path::new(path)) {
+                    warnings.push(format!("journal save failed: {e}"));
                 }
+            }
 
-                serde_json::to_value(serde_json::json!({
-                    "recorded": recorded,
-                    "already_known": already_known,
-                    "skipped_ambiguous": skipped_ambiguous,
-                    "warnings": warnings,
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("scan serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+            serde_json::to_value(serde_json::json!({
+                "recorded": recorded,
+                "already_known": already_known,
+                "skipped_ambiguous": skipped_ambiguous,
+                "warnings": warnings,
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("scan serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -708,56 +661,45 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketHistoryRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_history",
-            async {
-                self.record_call("market_history");
-                let source = req.source.as_deref().unwrap_or("kalshi");
-                let prices: Vec<f64> = match source {
-                    "kalshi" => {
-                        let window = i64::from(req.window_days.unwrap_or(90));
-                        let now = chrono::Utc::now().timestamp();
-                        let start = (now - window * 86_400).max(0) as u64;
-                        provider_kalshi::fetch_price_history(
-                            &self.http,
-                            &req.market,
-                            start,
-                            now as u64,
-                        )
+        execute_tool(self, "market_history", async {
+            self.record_call("market_history");
+            let source = req.source.as_deref().unwrap_or("kalshi");
+            let prices: Vec<f64> = match source {
+                "kalshi" => {
+                    let window = i64::from(req.window_days.unwrap_or(90));
+                    let now = chrono::Utc::now().timestamp();
+                    let start = (now - window * 86_400).max(0) as u64;
+                    provider_kalshi::fetch_price_history(&self.http, &req.market, start, now as u64)
                         .await?
                         .iter()
                         .map(|p| p.price)
                         .collect()
-                    }
-                    "polymarket" => {
-                        provider_polymarket::fetch_prices_history(&self.http, &req.market)
-                            .await?
-                            .iter()
-                            .map(|p| p.price)
-                            .collect()
-                    }
-                    other => {
-                        return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                            format!("unknown source '{other}' (expected kalshi|polymarket)"),
-                        ));
-                    }
-                };
-                let variance = types::realized_variance(&prices);
-                let regime = hkask_forecast::volatility_regime(&prices);
-                serde_json::to_value(serde_json::json!({
-                    "market": req.market,
-                    "source": source,
-                    "observations": prices.len(),
-                    "realized_variance": variance,
-                    "volatility_regime": format!("{regime:?}"),
-                    "insufficient_history": variance.is_none(),
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("history serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+                }
+                "polymarket" => provider_polymarket::fetch_prices_history(&self.http, &req.market)
+                    .await?
+                    .iter()
+                    .map(|p| p.price)
+                    .collect(),
+                other => {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!("unknown source '{other}' (expected kalshi|polymarket)"),
+                    ));
+                }
+            };
+            let variance = types::realized_variance(&prices);
+            let regime = hkask_forecast::volatility_regime(&prices);
+            serde_json::to_value(serde_json::json!({
+                "market": req.market,
+                "source": source,
+                "observations": prices.len(),
+                "realized_variance": variance,
+                "volatility_regime": format!("{regime:?}"),
+                "insufficient_history": variance.is_none(),
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("history serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 

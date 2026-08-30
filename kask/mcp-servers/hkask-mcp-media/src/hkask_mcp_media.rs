@@ -348,15 +348,6 @@ impl MediaServer {
             + Self::jobs_router()
             + Self::workflows_router()
     }
-
-    /// Map a tool name to its OMC concept URI for the output-JSON
-    /// `"ontology"` tag baked by
-    /// `media_block::enrich_with_omc_and_provenance` (which the media widget
-    /// consumes for UI dispatch). Delegates to `omc::tool_to_omc` — the single
-    /// source of truth for the tool → concept mapping.
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        crate::omc::tool_to_omc(tool)
-    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -376,34 +367,34 @@ mod tool_surface_tests {
         assert_eq!(n, 68, "media registered tool surface changed; got {n}");
     }
 
-    // Coverage: every registered tool must have a non-None ontology anchor.
-    // Catches the silent-drop failure mode where a new tool is added to the
-    // router without a corresponding arm in omc::tool_to_omc.
+    // Coverage: every registered tool must map to an OMC concept. Catches
+    // the silent-drop failure mode where a new tool is added to the router
+    // without a corresponding arm in omc::tool_to_omc.
     #[test]
-    fn ontology_anchor_covers_all_registered_tools() {
+    fn omc_mapping_covers_all_registered_tools() {
         let router = MediaServer::combined_router();
         for tool in router.list_all() {
             assert!(
-                MediaServer::ontology_anchor(&tool.name).is_some(),
-                "ontology_anchor returned None for registered tool '{}'; \
-                 add an explicit arm in omc::tool_to_omc",
+                omc::tool_to_omc(&tool.name).is_some(),
+                "omc::tool_to_omc returned None for registered tool '{}'; \
+                 add an explicit arm",
                 tool.name
             );
         }
     }
 
-    // Regression: distinct tool families must anchor on distinct concepts.
+    // Regression: distinct tool families must map to distinct concepts.
     #[test]
-    fn ontology_anchor_distinguishes_tool_families() {
-        let creative = MediaServer::ontology_anchor("generate_image");
-        let version = MediaServer::ontology_anchor("transform_image");
-        let scene = MediaServer::ontology_anchor("describe_image");
-        let asset = MediaServer::ontology_anchor("gallery_organize");
-        let source = MediaServer::ontology_anchor("generate_speech");
-        let sequence = MediaServer::ontology_anchor("video_clip");
-        let shot = MediaServer::ontology_anchor("video_extract_frames");
-        let task = MediaServer::ontology_anchor("gallery_record_generation");
-        let participant = MediaServer::ontology_anchor("model_list");
+    fn omc_mapping_distinguishes_tool_families() {
+        let creative = omc::tool_to_omc("generate_image");
+        let version = omc::tool_to_omc("transform_image");
+        let scene = omc::tool_to_omc("describe_image");
+        let asset = omc::tool_to_omc("gallery_organize");
+        let source = omc::tool_to_omc("generate_speech");
+        let sequence = omc::tool_to_omc("video_clip");
+        let shot = omc::tool_to_omc("video_extract_frames");
+        let task = omc::tool_to_omc("gallery_record_generation");
+        let participant = omc::tool_to_omc("model_list");
         // Nine distinct concepts across nine tool families.
         let concepts = [
             creative,
