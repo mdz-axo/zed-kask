@@ -459,12 +459,15 @@ API keys are stored in zed's `CredentialsProvider` keychain namespace
 (`kask://credentials/<key>`). `build_mcp_server_env` reads from this
 namespace and injects as env vars into MCP server child processes. The
 server's `resolve_credential` reads API keys from env only — there is no
-`service=hkask` keychain fallback for API keys. `HKASK_DB_PASSPHRASE` and
-`HKASK_SWARM_MEMORY_PASSPHRASE` have dedicated `hkask-keystore` resolvers
-(env → `service=hkask` keychain) because they predate the zed integration.
+keychain fallback for API keys. `HKASK_DB_PASSPHRASE` resolves via the
+canonical 2-tier helper (ctx.credentials → env →
+`kask://credentials/hkask_db_passphrase`); there is no
+`HKASK_SWARM_MEMORY_PASSPHRASE` — one passphrase covers every SQLCipher DB.
+The legacy `service=hkask` namespace is fully removed and purged at startup
+(`hkask-keystore/src/keychain.rs`).
 Writes/deletes to the `kask://credentials/...` namespace must call
 `nudge_mcp_servers` to re-fire the `SettingsStore` observer and restart
-changed servers. Verified current.
+changed servers. Verified current 2026-08-29 (D-seam truth audit).
 
 ```mermaid
 erDiagram
