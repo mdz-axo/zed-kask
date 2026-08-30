@@ -5065,6 +5065,543 @@ fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> 
         .collect()
 }
 
+/// A minimal MCP tool declaration for the surface-pinning tests below —
+/// the tool's name is the load-bearing part; the schema is the empty
+/// object schema the sanitized-names test uses.
+fn plain_mcp_tool(name: &str) -> context_server::types::Tool {
+    context_server::types::Tool {
+        name: name.into(),
+        title: None,
+        description: None,
+        input_schema: json!({"type": "object", "properties": {}}),
+        output_schema: None,
+        annotations: None,
+    }
+}
+
+/// Override the settings file so the `test` profile enables every
+/// context-server tool and tool-permission prompts default to allow —
+/// the MCP-surface pins below assert on the tool list the model sees.
+/// The profile enables no built-in tools, so the completion's tool list
+/// contains only the fake MCP servers' tools.
+async fn enable_all_context_servers_profile(fs: &Arc<FakeFs>, cx: &mut TestAppContext) {
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+}
+
+/// Pin D2 (per-tab MCP server scoping, `with_mcp_server_scope`): a thread
+/// scoped to one MCP server excludes every other server's tools from the
+/// surface the model sees, while an unscoped (upstream default) thread
+/// surfaces both servers' tools.
+#[gpui::test]
+async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let _scoped_calls = setup_context_server(
+        "scoped_server",
+        vec![plain_mcp_tool("in_scope_tool")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "other_server",
+        vec![plain_mcp_tool("out_of_scope_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Unscoped (upstream default): both servers' tools surface.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after unscoped send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"in_scope_tool".to_string()),
+        "unscoped thread must see the scoped server's tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"out_of_scope_tool".to_string()),
+        "unscoped thread must see the other server's tool: {names:?}"
+    );
+    fake_model.end_last_completion_stream();
+
+    // Scoped to `scoped_server`: the other server's tools are excluded.
+    thread.update(cx, |thread, _| {
+        thread
+            .kask
+            .set_mcp_server_scope(Some("scoped_server".into()));
+    });
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools again"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after scoped send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"in_scope_tool".to_string()),
+        "the scoped server's own tool must remain visible: {names:?}"
+    );
+    assert!(
+        !names.contains(&"out_of_scope_tool".to_string()),
+        "an out-of-scope server's tool must be excluded from a scoped thread: {names:?}"
+    );
+    fake_model.end_last_completion_stream();
+}
+
+/// Pin D6 (curator-thread gating of `enabled_tools`): the three curator
+/// memory-edit tools are excluded from a plain thread's tool surface
+/// while the read-only `curator_memory_recall` remains available; a
+/// curator-agent thread (agent_id == CURATOR_AGENT_ID) surfaces all four.
+/// The classification predicate itself is pinned by
+/// `test_curator_memory_edit_tool_classification` in `thread.rs` — this
+/// pins the GATING in `enabled_tools`.
+#[gpui::test]
+async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let _curator_calls = setup_context_server(
+        "curator",
+        vec![
+            plain_mcp_tool("memory_insert"),
+            plain_mcp_tool("memory_update"),
+            plain_mcp_tool("memory_resolve_contradiction"),
+            plain_mcp_tool("curator_memory_recall"),
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    // Plain thread: read-only recall surfaces, the memory-edit tools do not.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["recall"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after plain-thread send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"curator_memory_recall".to_string()),
+        "read-only curator tools must remain available to plain threads: {names:?}"
+    );
+    for edit_tool in [
+        "memory_insert",
+        "memory_update",
+        "memory_resolve_contradiction",
+    ] {
+        assert!(
+            !names.contains(&edit_tool.to_string()),
+            "memory-edit tool {edit_tool} must be excluded from a plain thread: {names:?}"
+        );
+    }
+    fake_model.end_last_completion_stream();
+
+    // Curator thread: all four tools surface.
+    thread.update(cx, |thread, _| {
+        thread.kask.set_agent_id(CURATOR_AGENT_ID.clone());
+    });
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["recall again"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after curator-thread send");
+    let names = tool_names_for_completion(&completion);
+    for tool in [
+        "memory_insert",
+        "memory_update",
+        "memory_resolve_contradiction",
+        "curator_memory_recall",
+    ] {
+        assert!(
+            names.contains(&tool.to_string()),
+            "curator thread must surface {tool}: {names:?}"
+        );
+    }
+    fake_model.end_last_completion_stream();
+}
+
+/// A router that drops exactly one marker tool (`model_list`) and retains
+/// everything else. While wired it is observationally inert for parallel
+/// tests (no other test in this binary exposes a tool named `model_list`),
+/// and dropping the marker proves the router is actually active — which is
+/// what makes the scoped-bypass assertion below load-bearing. The test
+/// keeps a second MCP tool (`job_status`) that the router retains, so the
+/// router's selection is never empty — an empty selection is the documented
+/// no-confidence fail-open, which would retain `model_list` and vacuous the
+/// control.
+struct DropMarkerToolRouter;
+
+impl crate::tool_router::ToolRouter for DropMarkerToolRouter {
+    fn select_tools(
+        &self,
+        context: &crate::tool_router::ToolSelectionContext,
+    ) -> Option<Vec<gpui::SharedString>> {
+        Some(
+            context
+                .candidates
+                .iter()
+                .map(|candidate| candidate.name.clone())
+                .filter(|name| name.as_ref() != "model_list")
+                .collect(),
+        )
+    }
+}
+
+/// Pin (Steer scope bypass): a thread scoped to one MCP server keeps its
+/// full — deliberately narrowed — tool surface even while a tool router is
+/// wired: the router must not double-filter a scoped surface. The
+/// unscoped control in the same test proves the router IS active (it
+/// drops `model_list` when there is no scope), so the scoped assertion
+/// pins the bypass, not router inactivity.
+#[gpui::test]
+async fn test_scoped_thread_bypasses_tool_router(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let _media_calls = setup_context_server(
+        "media",
+        vec![plain_mcp_tool("model_list"), plain_mcp_tool("job_status")],
+        &context_server_store,
+        cx,
+    );
+
+    crate::set_tool_router(Some(Arc::new(DropMarkerToolRouter)));
+
+    // Scoped to `media`: the router is bypassed — `model_list` survives.
+    thread.update(cx, |thread, _| {
+        thread.kask.set_mcp_server_scope(Some("media".into()));
+    });
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["check on my running job"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after scoped send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"model_list".to_string()),
+        "a scoped thread must bypass the router — the deliberately narrowed surface must survive: {names:?}"
+    );
+    assert!(
+        names.contains(&"job_status".to_string()),
+        "the scoped surface must keep its other tools too: {names:?}"
+    );
+    fake_model.end_last_completion_stream();
+
+    // Unscoped control: the same router drops `model_list` — proving the
+    // bypass above was the scope's doing, not router inactivity.
+    thread.update(cx, |thread, _| {
+        thread.kask.set_mcp_server_scope(None);
+    });
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(
+                ClientUserMessageId::new(),
+                ["check on my running job again"],
+                cx,
+            )
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after unscoped send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"model_list".to_string()),
+        "unscoped control: the router must drop model_list — otherwise the bypass assertion above is vacuous: {names:?}"
+    );
+    assert!(
+        names.contains(&"job_status".to_string()),
+        "unscoped control: the router retains the tools it selected — this proves the drop was the router's verdict, not a fail-open: {names:?}"
+    );
+    fake_model.end_last_completion_stream();
+
+    // Restore the process-global router so later/parallel tests are unaffected.
+    crate::set_tool_router(None);
+}
+
+/// Like [`setup_context_server`], but starts the server with an explicit
+/// request timeout so a never-responding tool call fails with the client's
+/// "Context server request timeout" error on a test-controllable clock.
+fn setup_context_server_with_timeout(
+    name: &'static str,
+    tools: Vec<context_server::types::Tool>,
+    request_timeout: Duration,
+    context_server_store: &Entity<ContextServerStore>,
+    cx: &mut TestAppContext,
+) -> mpsc::UnboundedReceiver<(
+    context_server::types::CallToolParams,
+    oneshot::Sender<context_server::types::CallToolResponse>,
+)> {
+    cx.update(|cx| {
+        let mut settings = ProjectSettings::get_global(cx).clone();
+        settings.context_servers.insert(
+            name.into(),
+            project::project_settings::ContextServerSettings::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: Vec::new(),
+                    env: None,
+                    timeout: None,
+                },
+            },
+        );
+        ProjectSettings::override_global(settings, cx);
+    });
+
+    let (mcp_tool_calls_tx, mcp_tool_calls_rx) = mpsc::unbounded();
+    let fake_transport = context_server::test::create_fake_transport(name, cx.executor())
+        .on_request::<context_server::types::requests::Initialize, _>(move |_params| async move {
+            context_server::types::InitializeResponse {
+                protocol_version: context_server::types::ProtocolVersion(
+                    context_server::types::LATEST_PROTOCOL_VERSION.to_string(),
+                ),
+                server_info: context_server::types::Implementation {
+                    name: name.into(),
+                    title: None,
+                    version: "1.0.0".to_string(),
+                    description: None,
+                },
+                capabilities: context_server::types::ServerCapabilities {
+                    tools: Some(context_server::types::ToolsCapabilities {
+                        list_changed: Some(true),
+                    }),
+                    ..Default::default()
+                },
+                meta: None,
+            }
+        })
+        .on_request::<context_server::types::requests::ListTools, _>(move |_params| {
+            let tools = tools.clone();
+            async move {
+                context_server::types::ListToolsResponse {
+                    tools,
+                    next_cursor: None,
+                    meta: None,
+                }
+            }
+        })
+        .on_request::<context_server::types::requests::CallTool, _>(move |params| {
+            let mcp_tool_calls_tx = mcp_tool_calls_tx.clone();
+            async move {
+                let (response_tx, response_rx) = oneshot::channel();
+                mcp_tool_calls_tx
+                    .unbounded_send((params, response_tx))
+                    .unwrap();
+                // The client times out and cancels the request before the
+                // test responds — a cancelled response channel is the
+                // normal end state for this server, not an error.
+                response_rx
+                    .await
+                    .unwrap_or_else(|_| context_server::types::CallToolResponse {
+                        content: vec![],
+                        is_error: Some(true),
+                        meta: None,
+                        structured_content: None,
+                    })
+            }
+        });
+    context_server_store.update(cx, |store, cx| {
+        store.start_server(
+            Arc::new(ContextServer::new_with_timeout(
+                ContextServerId(name.into()),
+                Arc::new(fake_transport),
+                Some(request_timeout),
+            )),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    mcp_tool_calls_rx
+}
+
+/// Pin (D-seam, `run_inner` retry classification — full path): when a
+/// context-server tool call times out, the tool result surfaces the
+/// timeout error to the model and the server sees exactly ONE request —
+/// the timeout verdict bails immediately and does NOT enter the 30s
+/// restart-and-retry loop. The transport-death half of the classification
+/// (retry-eligible) is pinned at the predicate level in
+/// `context_server_registry::tests::timeout_and_transport_death_classify_into_distinct_retry_verdicts`.
+#[gpui::test]
+async fn test_mcp_tool_timeout_does_not_retry(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // A server with a 1s request timeout whose tool never responds.
+    let mut mcp_tool_calls = setup_context_server_with_timeout(
+        "slow_server",
+        vec![plain_mcp_tool("slow_tool")],
+        Duration::from_secs(1),
+        &context_server_store,
+        cx,
+    );
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["call the slow tool"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    // Simulate the model calling the slow tool.
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+    assert_eq!(tool_names_for_completion(&completion), vec!["slow_tool"]);
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "slow_tool".into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Fire the 1s request timeout on the fake clock.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    // The server saw exactly one request — the timeout verdict does not
+    // trigger a restart-and-retry second call.
+    let (params, _response_tx) = mcp_tool_calls
+        .try_recv()
+        .expect("the tool call was dispatched to the server");
+    assert_eq!(params.name, "slow_tool");
+    assert!(
+        mcp_tool_calls.try_recv().is_err(),
+        "a timeout must NOT trigger a second (retry) request — the server is alive but slow"
+    );
+
+    // The tool result surfaces the timeout error to the model.
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after the tool result");
+    let last_message = completion
+        .messages
+        .last()
+        .expect("the tool result is fed back to the model");
+    match last_message.content.first() {
+        Some(MessageContent::ToolResult(result)) => {
+            assert!(
+                result.is_error,
+                "the timed-out tool call must surface as an error"
+            );
+            let output = match &result.output {
+                Some(serde_json::Value::String(text)) => text.clone(),
+                Some(other) => other.to_string(),
+                None => result
+                    .content
+                    .iter()
+                    .find_map(|content| match content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            Some(text.to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+            };
+            assert!(
+                output.contains("Context server request timeout"),
+                "the error must name the timeout, got: {output:?}"
+            );
+        }
+        other => panic!("expected a tool result message, got: {other:?}"),
+    }
+    fake_model.end_last_completion_stream();
+}
+
 struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,

@@ -522,6 +522,18 @@ fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, 
     }
 }
 
+/// zed-kask: D-seam — whether a failed context-server tool call is a
+/// request timeout (server alive but slow) rather than a transport death
+/// (connection reset, process death). Timeouts must NOT enter the
+/// restart-and-retry loop: restarting a live-but-slow server wastes 30s
+/// and does not fix the slowness. The timeout message is produced by
+/// `context_server::client` (`"Context server request timeout"`); it is
+/// matched on the string to avoid adding a public error variant to the
+/// `context_server` crate.
+fn is_context_server_timeout(error_text: &str) -> bool {
+    error_text.contains("Context server request timeout")
+}
+
 /// Extract the error text from a failed MCP tool run. The error message
 /// lives in the LLM-facing text parts of the output; an output with no text
 /// at all reports "unknown error" rather than an empty classification.
@@ -747,11 +759,8 @@ impl ContextServerTool {
                         // But a timeout means the server is alive but slow (or its upstream
                         // is slow) — restarting it wastes 30s and doesn't fix the slowness.
                         // Only retry on actual transport errors (connection reset, process
-                        // death), where a restart can actually help. The timeout bail
-                        // message ("Context server request timeout") comes from
-                        // `client.rs:483`; matching on the string avoids adding a new
-                        // error variant to the context_server crate's public API.
-                        let is_timeout = e.to_string().contains("Context server request timeout");
+                        // death), where a restart can actually help.
+                        let is_timeout = is_context_server_timeout(&e.to_string());
                         if is_timeout {
                             log::warn!(
                                 "Context server '{}' tool '{}' timed out — not retrying (server is alive but slow)",
@@ -1151,5 +1160,248 @@ mod tests {
         let (success, error_kind) = mcp_run_outcome(&Err(output));
         assert!(!success);
         assert_eq!(error_kind.as_deref(), Some("unavailable"));
+    }
+
+    // ── zed-kask pinning tests (KaskToolSource D-seam, I1) ──────────────
+
+    /// A controllable `KaskToolSource` for pinning the hook surface and
+    /// the `KaskServerTool` dispatch. `invocations` records every dispatch
+    /// so tests can assert the agent's tool call reached the source with
+    /// the right server id, tool name, and arguments.
+    struct FakeKaskToolSource {
+        descriptors: Vec<KaskToolDescriptor>,
+        invocations: std::sync::Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+    }
+
+    impl FakeKaskToolSource {
+        /// A source exposing zero tools — wiring it is observationally inert
+        /// for any registry constructed in parallel tests.
+        fn empty() -> std::sync::Arc<dyn KaskToolSource> {
+            std::sync::Arc::new(Self {
+                descriptors: Vec::new(),
+                invocations: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            })
+        }
+    }
+
+    impl KaskToolSource for FakeKaskToolSource {
+        fn tools(&self) -> Vec<KaskToolDescriptor> {
+            self.descriptors.clone()
+        }
+
+        fn invoke(
+            &self,
+            server_id: &str,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+        > {
+            let record = (server_id.to_string(), tool.to_string(), args);
+            self.invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(record);
+            let is_failing = tool == "failing_tool";
+            Box::pin(async move {
+                if is_failing {
+                    Err("[unavailable] upstream is down".to_string())
+                } else {
+                    Ok(serde_json::json!({"status": "ok"}))
+                }
+            })
+        }
+    }
+
+    /// Pin: the `KaskToolSource` process-global hook (wired in `main.rs` to
+    /// the governed `McpRuntime`) is settable and replaceable (Mutex slot,
+    /// same pattern as the mcp outcome recorder), and — the documented
+    /// degradation — `kask_tool_source()` reads `None` while unwired, which
+    /// makes `reload_kask_tools` a no-op so kask tools do not surface in
+    /// tests and lightweight embedders. The fakes used for the
+    /// set/replace assertions expose zero tools so parallel tests are
+    /// unaffected; the slot is reset to `None` at the end.
+    ///
+    /// NOT covered: the degradation is silent by design (the doc on
+    /// `kask_tool_source` says tools "simply do not surface" — there is no
+    /// operator-visible note/status for the unwired state), and the
+    /// registry-level merge (`reload_kask_tools` inserting into
+    /// `registered_servers`) is not pinned end-to-end: a source with real
+    /// tools would leak into any registry constructed by a parallel test
+    /// in this process, making that test flaky.
+    #[test]
+    fn kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired() {
+        // All assertions on the shared slot stay in ONE test (the recorder
+        // pattern) so parallel tests cannot race it.
+        let source_a = FakeKaskToolSource::empty();
+        set_kask_tool_source(source_a.clone());
+        let wired = kask_tool_source().expect("source must be wired after set");
+        assert!(
+            std::sync::Arc::ptr_eq(&wired, &source_a),
+            "set_kask_tool_source must install the given source"
+        );
+
+        // Replaceable (Mutex, not OnceLock): a second wiring replaces the
+        // first — the deferred re-wiring pattern depends on this.
+        let source_b = FakeKaskToolSource::empty();
+        set_kask_tool_source(source_b.clone());
+        let wired = kask_tool_source().expect("source must remain wired after replace");
+        assert!(
+            std::sync::Arc::ptr_eq(&wired, &source_b),
+            "the slot must be replaceable, not one-shot"
+        );
+        assert!(!std::sync::Arc::ptr_eq(&wired, &source_a));
+
+        // Absent-source degradation: unset the slot (in-crate tests reach
+        // the private static directly) and confirm the hook reads None.
+        *KASK_TOOL_SOURCE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        assert!(
+            kask_tool_source().is_none(),
+            "unwired source must read None — kask tools do not surface"
+        );
+    }
+
+    /// Pin: `KaskServerTool` — the agent-visible surface of a kask MCP
+    /// server tool — passes the descriptor's name/description through and
+    /// dispatches `run` through `KaskToolSource::invoke` (the
+    /// single-spawn-authority path, I1: dispatch goes to the governed
+    /// runtime, never the per-project `ContextServerStore`). `Ok(value)`
+    /// surfaces as the tool's LLM text; `Err(text)` surfaces as the error
+    /// text verbatim. The source is passed directly (no process-global
+    /// wiring), so this test cannot perturb parallel tests.
+    #[gpui::test]
+    async fn kask_server_tool_dispatches_through_kask_tool_source(cx: &mut gpui::TestAppContext) {
+        // `run` authorizes via `authorize_third_party_tool`, which consults
+        // the tool-permission settings — default allow, like the MCP tests
+        // in `tests/mod.rs`.
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
+
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let descriptors = vec![
+            KaskToolDescriptor {
+                server_id: "kask-test".to_string(),
+                name: "hello_tool".to_string(),
+                description: "A governed kask tool".to_string(),
+                input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            },
+            KaskToolDescriptor {
+                server_id: "kask-test".to_string(),
+                name: "failing_tool".to_string(),
+                description: "A governed kask tool that fails".to_string(),
+                input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            },
+        ];
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: descriptors.clone(),
+            invocations: invocations.clone(),
+        });
+
+        // Descriptor passthrough: the surfaced tool keeps the descriptor's
+        // name and description (the merge in `reload_kask_tools` wraps
+        // exactly this tool shape).
+        let hello = std::sync::Arc::new(KaskServerTool {
+            source: source.clone(),
+            descriptor: descriptors[0].clone(),
+        });
+        assert_eq!(hello.name().as_ref(), "hello_tool");
+        assert_eq!(hello.description().as_ref(), "A governed kask tool");
+
+        // Success path: dispatch reaches the source with the right server
+        // id, tool name, and arguments; the source's value surfaces as the
+        // LLM-facing text.
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({"query": "hi"}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| hello.run(input, event_stream, cx));
+        let output = match task.await {
+            Ok(output) => output,
+            Err(_) => panic!("successful invoke should return Ok"),
+        };
+        assert_eq!(
+            output.llm_output,
+            vec![LanguageModelToolResultContent::Text(
+                serde_json::json!({"status": "ok"}).to_string().into(),
+            )],
+            "the source's Ok(value) must surface as the tool's LLM text"
+        );
+        {
+            let recorded = invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert_eq!(
+                recorded.as_slice(),
+                &[(
+                    "kask-test".to_string(),
+                    "hello_tool".to_string(),
+                    serde_json::json!({"query": "hi"}),
+                )],
+                "the dispatch must carry the descriptor's server id and tool name"
+            );
+        }
+
+        // Error path: the source's Err(text) surfaces verbatim as the
+        // tool's error text (kask errors carry the typed kind as a
+        // `[kind] message` prefix).
+        let failing = std::sync::Arc::new(KaskServerTool {
+            source,
+            descriptor: descriptors[1].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| failing.run(input, event_stream, cx));
+        let error = match task.await {
+            Ok(_) => panic!("failing invoke should return Err"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.llm_output,
+            vec![LanguageModelToolResultContent::Text(
+                "[unavailable] upstream is down".into(),
+            )],
+            "the source's Err(text) must surface verbatim as the error text"
+        );
+    }
+
+    /// Pin (D-seam, `run_inner` retry classification): a request timeout
+    /// ("server alive but slow") and a transport death produce DISTINCT
+    /// retry verdicts. Only the timeout text classifies as a timeout — the
+    /// verdict that makes `run_inner` bail immediately without the 30s
+    /// restart-and-retry loop. Transport-death errors classify as
+    /// retryable, entering the restart-then-retry-once path. The full-path
+    /// timeout half is pinned in `tests/mod.rs`
+    /// (`test_mcp_tool_timeout_does_not_retry`); the restart-then-retry
+    /// half needs a killable-and-restartable mock server and is pinned
+    /// only at this predicate.
+    #[test]
+    fn timeout_and_transport_death_classify_into_distinct_retry_verdicts() {
+        assert!(is_context_server_timeout("Context server request timeout"));
+        // The message may carry context after the canonical prefix.
+        assert!(is_context_server_timeout(
+            "error: Context server request timeout (after 60s)"
+        ));
+
+        // Transport-death errors must NOT classify as timeouts — they are
+        // the retryable kind, where a restart can actually help.
+        for transport_death in [
+            "connection reset by peer",
+            "broken pipe",
+            "child process exited unexpectedly",
+            "transport closed while awaiting response",
+        ] {
+            assert!(
+                !is_context_server_timeout(transport_death),
+                "{transport_death:?} is a transport death, not a timeout — it must classify as retryable"
+            );
+        }
     }
 }

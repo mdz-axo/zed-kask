@@ -833,4 +833,102 @@ mod tests {
             "expected denial to surface as an error: {result:?}"
         );
     }
+
+    /// Pin (zed-kask dependency pre-check): a skill declaring dependencies
+    /// that are not installed fails fast with an error naming EVERY missing
+    /// dependency — before authorization and before the SKILL.md body is
+    /// read, so no tokens are wasted on a skill that would fail mid-execution
+    /// when a delegate is missing. A skill whose dependencies are all
+    /// installed proceeds to render normally.
+    #[gpui::test]
+    async fn test_skill_tool_missing_dependency_fails_fast(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // A dependency that IS installed (present in the snapshot) — only
+        // its name matters for the pre-check, never its body.
+        let installed_dep = Skill {
+            name: "present-dep".to_string(),
+            description: "An installed dependency".to_string(),
+            source: SkillSource::Global,
+            directory_path: Path::new("/skills/present-dep").to_path_buf(),
+            skill_file_path: Path::new("/skills/present-dep/SKILL.md").to_path_buf(),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        };
+
+        // Missing dependencies → fail fast, naming both.
+        let (mut parent, fs) = create_test_skill(
+            cx,
+            "parent-skill",
+            "Depends on other skills",
+            "# Body\n\nDo the thing.",
+        )
+        .await;
+        parent.dependencies = vec!["missing-dep".to_string(), "also-missing".to_string()];
+        let skills = Arc::new(vec![parent, installed_dep.clone()]);
+        let tool = Arc::new(SkillTool::new(
+            move |_cx| skills.clone(),
+            fs.clone() as Arc<dyn Fs>,
+        ));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "parent-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        match task.await {
+            Ok(SkillToolOutput::Found { rendered }) => {
+                panic!("missing dependency must fail fast, got a rendered envelope: {rendered}");
+            }
+            Ok(SkillToolOutput::Error { error }) | Err(SkillToolOutput::Error { error }) => {
+                assert!(
+                    error.contains("missing-dep") && error.contains("also-missing"),
+                    "the error must name every missing dependency: {error}"
+                );
+                assert!(
+                    error.contains("not installed"),
+                    "the error must say the dependencies are not installed: {error}"
+                );
+                assert!(
+                    error.contains("parent-skill"),
+                    "the error must name the skill whose dependencies are missing: {error}"
+                );
+            }
+            Err(_) => unreachable!("SkillTool::run only yields SkillToolOutput"),
+        }
+
+        // All dependencies installed → the pre-check passes and the skill
+        // renders (the fail-fast gate does not over-block).
+        let (mut satisfied, fs) = create_test_skill(
+            cx,
+            "satisfied-skill",
+            "All dependencies present",
+            "# Body\n\nDo it.",
+        )
+        .await;
+        satisfied.dependencies = vec!["present-dep".to_string()];
+        let skills = Arc::new(vec![satisfied, installed_dep]);
+        let tool = Arc::new(SkillTool::new(
+            move |_cx| skills.clone(),
+            fs.clone() as Arc<dyn Fs>,
+        ));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "satisfied-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        match task.await {
+            Ok(SkillToolOutput::Found { rendered }) => {
+                assert!(
+                    rendered.contains("<skill_content name=\"satisfied-skill\">"),
+                    "a skill with all dependencies installed must render: {rendered}"
+                );
+            }
+            Ok(SkillToolOutput::Error { error }) | Err(SkillToolOutput::Error { error }) => {
+                panic!("installed dependencies must not block the skill, got error: {error}");
+            }
+            Err(_) => unreachable!("SkillTool::run only yields SkillToolOutput"),
+        }
+    }
 }

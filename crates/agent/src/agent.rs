@@ -4651,6 +4651,91 @@ mod internal_tests {
         );
     }
 
+    /// An injector that recalls nothing. Wiring it must be observationally
+    /// inert for the turn loop — `inject_context` returns no messages, so the
+    /// `!injected.is_empty()` guard in `run_turn_internal` splices nothing.
+    /// This lets the dispatch test below wire the process-global OnceLock
+    /// hooks without perturbing parallel tests in this binary.
+    struct InertInjector;
+
+    impl ContextInjector for InertInjector {
+        fn inject_context(
+            &self,
+            _thread_id: &str,
+            _user_prompt: &str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+    }
+
+    /// Pin D6: `context_injector_for` dispatches by agent id — the Curator
+    /// agent's threads get the curator injector, every other thread
+    /// (including the default Zed agent, `agent_id == None`) gets the user
+    /// injector, and the curator falls back to the user injector while the
+    /// curator injector is unwired (graceful degradation — curator-scoped
+    /// recall degrades to user-scoped recall, not to none). The unwired
+    /// state reads `None` for every thread. The hooks are OnceLocks, so all
+    /// wiring assertions stay in ONE test; the injectors are inert so the
+    /// permanent wiring cannot change any other test's behavior.
+    ///
+    /// NOT covered: the turn-loop injection site (`thread.rs`
+    /// `run_turn_internal` — splicing the injected messages into the
+    /// request after the system prompt) is not pinned here; this pins the
+    /// dispatch function the site calls.
+    #[test]
+    fn context_injector_dispatches_by_agent_id() {
+        // Unwired degradation: no injector for any thread.
+        assert!(
+            context_injector_for(None).is_none(),
+            "unwired hooks must read None for the default thread"
+        );
+        assert!(
+            context_injector_for(Some(&CURATOR_AGENT_ID)).is_none(),
+            "unwired hooks must read None for curator threads too"
+        );
+        assert!(
+            context_injector_for(Some(&AgentId::new("other"))).is_none(),
+            "unwired hooks must read None for any agent"
+        );
+
+        // Wire the user injector only: the curator falls back to it.
+        let user_injector: Arc<dyn ContextInjector> = Arc::new(InertInjector);
+        set_context_injector(Some(user_injector.clone()));
+        let dispatched = context_injector_for(Some(&CURATOR_AGENT_ID)).expect(
+            "curator must fall back to the user injector while the curator injector is unwired",
+        );
+        assert!(
+            Arc::ptr_eq(dispatched, &user_injector),
+            "unwired curator injector must degrade to the user injector, not to none"
+        );
+        let dispatched =
+            context_injector_for(None).expect("default thread must get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+        let dispatched = context_injector_for(Some(&AgentId::new("other")))
+            .expect("non-curator agent must get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+
+        // Wire the curator injector: the curator now gets its own recall;
+        // every other thread still gets the user injector.
+        let curator_injector: Arc<dyn ContextInjector> = Arc::new(InertInjector);
+        set_curator_context_injector(Some(curator_injector.clone()));
+        let dispatched = context_injector_for(Some(&CURATOR_AGENT_ID))
+            .expect("curator thread must get the curator injector once wired");
+        assert!(
+            Arc::ptr_eq(dispatched, &curator_injector),
+            "a wired curator thread must get curator-scoped recall, not user-scoped"
+        );
+        let dispatched =
+            context_injector_for(None).expect("default thread must still get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+    }
+
     #[test]
     fn test_ambiguous_mcp_prompt_names() {
         // Reserving the built-in `/compact` forces a same-named MCP prompt to be
