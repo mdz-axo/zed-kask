@@ -1330,9 +1330,7 @@ fn main() {
         // deferred launch task once servers actually start — an empty
         // baseline means "not launched yet", and the observer no-ops.
         let kask_mcp_restart_env: std::sync::Arc<
-            std::sync::Mutex<
-                std::collections::HashMap<String, std::collections::HashMap<String, String>>,
-            >,
+            std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
         > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let mcp_runtime_for_restart = tool_port.clone();
         let restart_env_for_observer = kask_mcp_restart_env.clone();
@@ -2949,25 +2947,6 @@ fn main() {
 // app-level ContextServerDescriptorRegistry. This makes kask MCP tools appear
 // in the agent tool picker and available to zed's agent thread. The servers
 // are launched as stdio child processes by zed's ContextServerStore.
-
-/// Resolve an MCP server binary to an absolute path.
-///
-/// GUI-launched apps (Finder/Spotlight/Dock/.desktop) do not inherit the
-/// user's shell PATH, so a bare binary name like `hkask-mcp-swarm`
-/// fails to spawn — the server lands in `ContextServerState::Error` and
-/// is unavailable to the agent. Resolution order:
-///
-/// 1. `HKASK_MCP_{ID}_BIN` env var (explicit operator override; previously
-///    advertised in error messages and docs but never implemented — this
-///    is the enforcement point for that advertised invariant).
-/// 2. Sibling of the running `zed-kask` binary (`current_exe().parent()`).
-///    In a standard install, `hkask-mcp-*` binaries live side-by-side with
-///    `zed-kask` in `~/.local/bin` (or `$INSTALL_DIR/bin`).
-/// 3. Bare binary name (last resort — relies on PATH; works for CLI
-///    launches, not GUI).
-///
-/// This respects the `.rules` trap "Advertised invariants need enforcement
-/// points" — the `HKASK_MCP_*_BIN` mechanism is now real, not fiction.
 
 /// zed-kask: D24 — wire the kask edit-prediction port.
 ///
@@ -4720,12 +4699,7 @@ mod tests {
             as fn(
                 std::sync::Arc<hkask_mcp::McpRuntime>,
                 std::sync::Arc<
-                    std::sync::Mutex<
-                        std::collections::HashMap<
-                            String,
-                            std::collections::HashMap<String, String>,
-                        >,
-                    >,
+                    std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
                 >,
                 &mut gpui::App,
             );

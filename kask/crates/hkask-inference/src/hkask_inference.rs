@@ -235,7 +235,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         Box::pin(async move {
             // Try the IPC bridge first — re-attempt on each call. The IPC
             // client passes the message array directly to the provider
-            // (role-taged), preserving multi-turn conversation structure.
+            // (role-tagged), preserving multi-turn conversation structure.
             // Without this override, the trait default flattens messages to
             // a single string and calls generate_with_model — the provider
             // sees "system: ...\n\nuser: ..." instead of proper role-tagged

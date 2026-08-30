@@ -25,6 +25,7 @@ pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
 
 /// A kask MCP server tool descriptor, surfaced from the governed
 /// `McpRuntime` into the agent's tool list.
+#[derive(Clone)]
 pub struct KaskToolDescriptor {
     pub server_id: String,
     pub name: String,
