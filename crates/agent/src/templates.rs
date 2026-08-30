@@ -382,6 +382,77 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_wires_four_moves_to_goal_tools_when_available() {
+        // Pins the loop-closing wiring: when the kata-kanban goal tools are
+        // in the turn's tool registry, the Division section tells the model
+        // to run the four moves on the native system (create at intake,
+        // judge at report, score at resolution). Without this, the tools
+        // exist but nothing tells the model to use them (the recorded
+        // P3 = 0.25 prediction: unwired machinery doesn't get used).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec![
+                "echo".into(),
+                "kanban_goal_create".into(),
+                "kanban_goal_judge".into(),
+                "kanban_goal_score".into(),
+            ],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("run the loop on the native system"),
+            "the tool wiring must be present when the goal tools are available"
+        );
+        for wiring in [
+            "Move 1 → `kanban_goal_create`",
+            "Move 3 → `kanban_goal_judge`",
+            "Move 4 → `kanban_goal_score`",
+        ] {
+            assert!(
+                rendered.contains(wiring),
+                "every move-to-tool mapping must be present; missing: {wiring}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable() {
+        // The conditional-section principle (skills-and-composition.md
+        // §3.1): the model is never told about a capability it does not
+        // have. Without the kata-kanban server, the wiring text must vanish
+        // — advertising tools that aren't callable degrades to "tool not
+        // found" at dispatch.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            !rendered.contains("run the loop on the native system"),
+            "the goal-tool wiring must be absent when the tools are not available"
+        );
+        // The four moves themselves are unconditional — the loop survives
+        // without the tools.
+        assert!(rendered.contains("Point at the same target"));
+    }
+
+    #[test]
     fn test_system_prompt_mermaid_list_uses_renderer_directives() {
         // Supersedes an earlier test that asserted `kanban` was NOT a mermaid
         // type. That was wrong: `kanban` is in the renderer's allowlist

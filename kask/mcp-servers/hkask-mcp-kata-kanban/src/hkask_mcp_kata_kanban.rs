@@ -397,7 +397,7 @@ impl KanbanServer {
     /// for the four-moves interaction loop
     /// (`kask/docs/architecture/functional-interaction-spec.md`).
     #[tool(
-        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction."
+        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals are EPHEMERAL (in-memory, die with the session) — the curator's memory is the durable record."
     )]
     pub async fn kanban_goal_create(
         &self,
@@ -552,7 +552,7 @@ impl KanbanServer {
     /// for Move 4 (bank the learning): the next bit of work starts from
     /// these.
     #[tool(
-        description = "List the caller's functional goals with latest verdicts and resolution state, newest first."
+        description = "List the caller's functional goals (this session's in-memory store) with latest verdicts and resolution state, newest first."
     )]
     pub async fn kanban_goal_list(
         &self,

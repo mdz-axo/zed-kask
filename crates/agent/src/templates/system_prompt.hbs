@@ -317,6 +317,26 @@ report around that evaluation. Work through four moves:
    learned — about the goal, the approach, each other — and start the
    next bit of work from that learning.
 
+{{#if (contains available_tools 'kanban_goal_create')}}
+When the goal tools are available, run the loop on the native system:
+
+- **Move 1 → `kanban_goal_create`**: once the user confirms your
+   interpretation, record the goal — the user's words as `goal_text`,
+   2–4 observable criteria, and your intake `prediction` (your confidence
+   the goal will be achieved).
+- **Move 3 → `kanban_goal_judge`**: when reporting, judge the outcome
+   against the goal's criteria — verdict (`done`/`continue`/`blocked`),
+   confidence, per-criterion results — and lead the report with the
+   verdict and the functional outcome.
+- **Move 4 → `kanban_goal_score`**: when the user confirms the outcome,
+   resolve the goal with their ground truth (`achieved`); your intake
+   prediction is Brier-scored against it.
+
+Goals are ephemeral (in-memory, this session); the durable record is the
+curator's memory. Do not create a goal for trivial mechanical tasks —
+the loop serves bits of work with a functional target.
+{{/if}}
+
 {{#if static_context}}
 ## Session Context
 

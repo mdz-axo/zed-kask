@@ -8228,6 +8228,88 @@ mod tests {
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
 
+    // ── Goal-event extraction (D6: ephemeral goals → curator memory) ───
+
+    fn tool_use(id: &str, name: &str) -> AgentMessageContent {
+        AgentMessageContent::ToolUse(language_model::LanguageModelToolUse {
+            id: LanguageModelToolUseId::from(id),
+            name: Arc::from(name),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        })
+    }
+
+    fn tool_result(
+        id: &str,
+        name: &str,
+        output: Option<serde_json::Value>,
+    ) -> language_model::LanguageModelToolResult {
+        language_model::LanguageModelToolResult {
+            tool_use_id: LanguageModelToolUseId::from(id),
+            tool_name: Arc::from(name),
+            is_error: false,
+            content: vec![],
+            output,
+        }
+    }
+
+    #[test]
+    fn extract_goal_events_filters_and_preserves_output() {
+        // The goal store is ephemeral (operator ruling 2026-08-29); these
+        // events are the durable record the curator's memory stores. Pins:
+        // (1) only kanban_goal_* tools are extracted; (2) the raw output
+        // JSON is preferred; (3) a missing result (turn ended mid-call) is
+        // skipped — an unobserved result is not a goal event; (4) a
+        // non-JSON text result is preserved as a string, never dropped.
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            LanguageModelToolUseId::from("g1"),
+            tool_result(
+                "g1",
+                "kanban_goal_create",
+                Some(json!({"goal_id": "g-1", "goal_text": "user can filter"})),
+            ),
+        );
+        tool_results.insert(
+            LanguageModelToolUseId::from("t1"),
+            tool_result("t1", "read_file", Some(json!({"ok": true}))),
+        );
+        tool_results.insert(
+            LanguageModelToolUseId::from("g2"),
+            tool_result("g2", "kanban_goal_judge", None),
+        );
+        let message = AgentMessage {
+            content: vec![
+                tool_use("g1", "kanban_goal_create"),
+                tool_use("t1", "read_file"),
+                tool_use("g2", "kanban_goal_judge"),
+                // A goal tool with no recorded result — skipped.
+                tool_use("g3", "kanban_goal_score"),
+            ],
+            tool_results,
+            reasoning_details: None,
+        };
+
+        let events = extract_goal_events(&message);
+        assert_eq!(
+            events.len(),
+            2,
+            "two goal events: g1 + g2 (g3 has no result)"
+        );
+        assert_eq!(events[0].tool_name, "kanban_goal_create");
+        assert_eq!(
+            events[0].output.get("goal_text").and_then(|v| v.as_str()),
+            Some("user can filter")
+        );
+        // g2's result has no raw output and empty text content — the
+        // fallback stores the empty text as a JSON string, preserving the
+        // event rather than dropping it.
+        assert_eq!(events[1].tool_name, "kanban_goal_judge");
+        assert!(events[1].output.is_string());
+    }
+
     // ── Kask panel per-tab MCP scoping ──────────────────────────────────
 
     /// The scoping contract: no scope = all servers pass; a scope passes

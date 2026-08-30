@@ -313,12 +313,20 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   evaluation axis: "the user evaluates this work by what it lets them do")
   rather than prohibition-framed, per the spec's gradient-over-constraint
   principle: constraint walls habituate and provoke escape-seeking.
+- **Loop-closing wiring (2026-08-29):** a conditional block inside the
+  section — `{{#if (contains available_tools 'kanban_goal_create')}}` —
+  maps the moves to the native goal tools (Move 1 → `kanban_goal_create`,
+  Move 3 → `kanban_goal_judge`, Move 4 → `kanban_goal_score`) when the
+  kata-kanban server is connected, and vanishes when it isn't (§3.1: never
+  advertise a capability the turn doesn't have).
 - **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
   (section + all four moves + the authority boundary),
   `test_system_prompt_autonomy_bullet_includes_experience_trigger`,
   `test_system_prompt_autonomy_bullet_reframes_prematurely`,
-  `test_system_prompt_vagueness_resolved_with_user`, and
-  `test_system_prompt_final_message_leads_with_functional_outcome`.
+  `test_system_prompt_vagueness_resolved_with_user`,
+  `test_system_prompt_final_message_leads_with_functional_outcome`,
+  `test_system_prompt_wires_four_moves_to_goal_tools_when_available`, and
+  `test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable`.
 
 ## 6. Divergence-free sections
 

@@ -1267,9 +1267,11 @@ pub(crate) mod tests {
             .expect("ingest should succeed");
         let curator_store = port.curator_store.get().expect("curator store");
 
-        // Shared copy exists — curator recall sees the goal event.
+        // Shared copy exists — curator recall sees the goal event. Shared
+        // records are recalled via the perspective-free query (the same
+        // path as `curator:thread:` shared copies).
         let shared = curator_store
-            .query_for_deduped_untouched("curator:goal:g-123", curator_webid)
+            .query_deduped_untouched("curator:goal:g-123")
             .expect("query should succeed");
         assert_eq!(shared.len(), 1, "one shared goal h_mem");
         assert_eq!(shared[0].attribute, "kanban_goal_create");
@@ -1334,14 +1336,14 @@ pub(crate) mod tests {
             Some(0.04)
         );
 
-        // Shared copies for both events.
+        // Shared copies for both events (perspective-free recall path).
         let shared_score = curator_store
-            .query_for_deduped_untouched("curator:goal:g-456", curator_webid)
+            .query_deduped_untouched("curator:goal:g-456")
             .expect("query should succeed");
         assert_eq!(shared_score.len(), 1);
         // The list event (no goal_id) lands under the list entity.
         let shared_list = curator_store
-            .query_for_deduped_untouched("curator:goal:list", curator_webid)
+            .query_deduped_untouched("curator:goal:list")
             .expect("query should succeed");
         assert_eq!(shared_list.len(), 1, "goal_list event uses the list entity");
     }
@@ -1565,6 +1567,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("ingest succeeds");
@@ -1655,6 +1658,7 @@ pub(crate) mod tests {
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: Some("Curator".to_string()),
+                goal_events: Vec::new(),
             },
             TurnRecord {
                 thread_id: "t-python".to_string(),
@@ -2259,6 +2263,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("ingest succeeds");
@@ -2376,6 +2381,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
         })
         .await
         .expect("ingestion during outage succeeds");

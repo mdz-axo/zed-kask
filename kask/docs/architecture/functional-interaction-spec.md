@@ -178,16 +178,29 @@ When a user works with the agent:
   interpretation, functional-first reporting, choice surfacing), plus the
   amended autonomy, ambition, and Final Message bullets. Pinned by five
   template tests.
-- **Phase B — the work-tracking layer (goal slice landed 2026-08-29).** The
-  native goal system in the kata-kanban MCP server: `kanban_goal_create`
-  (functional goal + observable criteria + intake prediction),
-  `kanban_goal_judge` (recorded verdicts with confidence — the history IS
-  the learning), `kanban_goal_score` (resolution + Brier of the intake
-  prediction; `null` surfaced when no prediction was recorded), and
-  `kanban_goal_list` (cross-session recall). Schema lifted from the
-  validated `goal-analysis` skill; Brier via `hkask_forecast::brier_score`.
-  The kanban Steer prompt advertises all four tools (the
+- **Phase B — the work-tracking layer (goal slice landed 2026-08-29;
+  ephemerality ruling applied same day).** The native goal system in the
+  kata-kanban MCP server: `kanban_goal_create` (functional goal +
+  observable criteria + intake prediction), `kanban_goal_judge`
+  (recorded verdicts with confidence — the history IS the learning),
+  `kanban_goal_score` (resolution + Brier of the intake prediction;
+  `null` surfaced when no prediction was recorded), and
+  `kanban_goal_list` (session recall). Schema lifted from the validated
+  `goal-analysis` skill; Brier via `hkask_forecast::brier_score`. The
+  kanban Steer prompt advertises all four tools (the
   `server_tools_are_all_advertised` gate).
+
+  **Goals are ephemeral; curator memory is the vehicle (operator ruling
+  2026-08-29).** The goal store is in-memory and dies with the process —
+  conversational goals leave no persistent clutter. The durable record is
+  the curator's memory: every `kanban_goal_*` tool result in a turn is
+  extracted by the thread-side record builder
+  (`ThreadTurnRecord.goal_events`) and written by the bridge's ingestion
+  path (`kask_bridge/src/memory/ingest.rs`) as first-class goal h_mems —
+  curator-perspective Private for curator turns ("the curator remembers all
+  goals it is involved with"), shared copy for zed-agent turns (recallable,
+  not sovereign). Lessons are learned in `therapy` and `algedonic-review`
+  sessions with the curator, not from a persistent goal store.
 - A without B stays per-conversation; B without A changes tracking but
   not the conversation the user sits in. Both are now landed; the
   remaining Phase B work is wiring the conversational moves (Phase A's

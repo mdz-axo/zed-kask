@@ -333,9 +333,11 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          with observable criteria + intake prediction), `kanban_goal_judge` (record a \
          done/continue/blocked verdict with confidence), `kanban_goal_score` (resolve: \
          achieved/not-achieved, Brier-scores the intake prediction), `kanban_goal_list` \
-         (recall goals with latest verdicts — the banked learning). Goals are the kata \
-         target condition: the user's functional requirement in the user's words, judged \
-         against observable criteria, never revised by the agent.
+         (this session's goals with latest verdicts). Goals are the kata target condition: \
+         the user's functional requirement in the user's words, judged against observable \
+         criteria, never revised by the agent. Goals are EPHEMERAL (in-memory, die with \
+         the session) — the curator's memory is the durable record; lessons are learned \
+         in therapy / algedonic reviews, not from a persistent goal store.
 \
          **Contract grounding**: `contract_propose_expect` (creates tasks for contracts missing expect: annotations).
          \n\
