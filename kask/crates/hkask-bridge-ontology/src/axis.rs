@@ -19,6 +19,7 @@ use crate::dc_bibo;
 use crate::golem;
 use crate::pko;
 use crate::sdmx;
+use crate::sepio;
 use crate::sumo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,8 +49,9 @@ pub enum OntologyAxis {
 pub enum OntologyNamespace {
     /// Financial Industry Business Ontology — financial / company analysis.
     Fibo,
-    /// Epistemic Science Ontology — scientific reasoning, hypotheses, evidence.
-    Eso,
+    /// SEPIO — scientific evidence and provenance: evidence, support,
+    /// dispute, contradiction, confidence.
+    Sepio,
     /// GOLEM narrative ontology — literature, narrative, persona.
     Golem,
     /// ML-Schema — machine-learning experiments.
@@ -68,7 +70,7 @@ impl OntologyNamespace {
     pub fn dc_concept(&self) -> DcConcept {
         match self {
             OntologyNamespace::Fibo => dc_bibo::DATASET,
-            OntologyNamespace::Eso => dc_bibo::TEXT,
+            OntologyNamespace::Sepio => dc_bibo::TEXT,
             OntologyNamespace::Golem => dc_bibo::TEXT,
             OntologyNamespace::MlSchema => dc_bibo::DATASET,
             OntologyNamespace::Sdmx => dc_bibo::DATASET,
@@ -80,7 +82,7 @@ impl OntologyNamespace {
     pub fn pko_concept(&self) -> PkoConcept {
         match self {
             OntologyNamespace::Fibo => pko::PROCEDURE,
-            OntologyNamespace::Eso => pko::STEP_VERIFICATION,
+            OntologyNamespace::Sepio => pko::STEP_VERIFICATION,
             OntologyNamespace::Golem => pko::PROCEDURE,
             OntologyNamespace::MlSchema => pko::PROCEDURE,
             OntologyNamespace::Sdmx => pko::PROCEDURE,
@@ -94,7 +96,7 @@ impl std::str::FromStr for OntologyNamespace {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "fibo" => Ok(OntologyNamespace::Fibo),
-            "eso" => Ok(OntologyNamespace::Eso),
+            "sepio" => Ok(OntologyNamespace::Sepio),
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
             "sdmx" => Ok(OntologyNamespace::Sdmx),
@@ -108,7 +110,7 @@ impl std::fmt::Display for OntologyNamespace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OntologyNamespace::Fibo => write!(f, "fibo"),
-            OntologyNamespace::Eso => write!(f, "eso"),
+            OntologyNamespace::Sepio => write!(f, "sepio"),
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
             OntologyNamespace::Sdmx => write!(f, "sdmx"),
@@ -169,7 +171,7 @@ impl OntologyAnchor {
             },
             OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
                 OntologyNamespace::Fibo => 1.3,
-                OntologyNamespace::Eso => 1.0,
+                OntologyNamespace::Sepio => 1.0,
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
                 OntologyNamespace::Sdmx => 1.1,
@@ -264,7 +266,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::DATASET.to_string(),
         };
     }
-    // Scientific reasoning → ESO.
+    // Scientific reasoning → SEPIO.
     if [
         "science",
         "scientific",
@@ -276,7 +278,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     .any(|kw| matches_kw(kw))
     {
         return OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Eso,
+            namespace: OntologyNamespace::Sepio,
             concept: dc_bibo::TEXT.to_string(),
         };
     }

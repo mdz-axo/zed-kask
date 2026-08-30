@@ -3076,6 +3076,13 @@ async fn try_wire_edit_prediction_port(
 /// The `ContextServerStore` (per-project) observes the registry and will
 /// start/stop/restart the actual server processes to match.
 fn sync_kask_mcp_servers(cx: &mut gpui::App) {
+    // zed-kask: diagnostic for the settings-reactivity defect (2026-08-29):
+    // live probes showed this function's effects on settings CHANGES never
+    // happen (no shadowing removal, no override re-sync) while the startup
+    // direct calls demonstrably run. This line makes every invocation
+    // observable in Zed-Kask.log — paired with the watcher-reload line in
+    // settings_store.rs, one settings change pins whether the observer fires.
+    log::info!("Kask MCP sync fired (startup call or settings change)");
     let settings = kask_bridge::KaskSettings::get_global(cx).clone();
     let registry =
         project::context_server_store::registry::ContextServerDescriptorRegistry::default_global(

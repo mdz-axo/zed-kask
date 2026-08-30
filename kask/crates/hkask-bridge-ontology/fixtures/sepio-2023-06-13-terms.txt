@@ -1,0 +1,36 @@
+# Official SEPIO term list — fabrication guard fixture.
+#
+# Source: SEPIO (Scientific Evidence and Provenance Information Ontology),
+#   Monarch Initiative. https://github.com/monarch-initiative/SEPIO-ontology
+#   OWL release: https://raw.githubusercontent.com/monarch-initiative/SEPIO-ontology/master/sepio.owl
+#   (version IRI .../releases/2023-06-13/sepio.owl)
+#   Namespace: http://purl.obolibrary.org/obo/SEPIO_  (OBO namespace,
+#   prefix SEPIO). The repo README warns the OWL lags the newer linkML
+#   information model; terms below are from the fetched OWL release.
+# Fetched: 2026-08-29 (transcribed from the fetched sepio.owl; each line is
+#   the OBO CURIE followed by the rdfs:label of the term).
+#
+# Terms used by the hKask bridge (object properties relevant to
+# assertion-extraction predicates):
+SEPIO:0000030	asserts_proposition
+SEPIO:0000041	was_specified_by
+SEPIO:0000008	has_disputing_evidence_line
+SEPIO:0000101	contradicts
+SEPIO:0000167	has_confidence_level
+SEPIO:0000189	has_evidence
+SEPIO:0000440	has_supporting_evidence
+SEPIO:0000441	has_disputing_evidence
+#
+# Other verified terms in the artifact (for future mapping; do not use in
+# code without adding to the bridge and re-verifying):
+SEPIO:0000000	proposition
+SEPIO:0000001	assertion
+SEPIO:0000002	evidence line
+SEPIO:0000003	assertion process
+SEPIO:0000037	assertion method
+SEPIO:0000149	evidence item
+SEPIO:0000187	confidence level
+SEPIO:0000388	has_subject
+SEPIO:0000389	has_predicate
+SEPIO:0000390	has_object
+SEPIO:0000432	hypothesis

@@ -392,7 +392,14 @@ impl ResearchServer {
                 let output = serde_json::to_value(&search_output)
                     .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
 
-                self.cache.insert(ckey, output.clone()).await;
+                // Cache only clean responses. A compound carrying provider
+                // failures — in single-provider mode that is an empty result
+                // plus a failure record — must not be cached: a transient
+                // provider failure would otherwise be replayed as a
+                // "successful" empty result for the full cache TTL.
+                if compound.providers_failed.is_empty() {
+                    self.cache.insert(ckey, output.clone()).await;
+                }
 
                 Ok(output)
             },

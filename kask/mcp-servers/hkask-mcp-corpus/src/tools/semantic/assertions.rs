@@ -2,9 +2,9 @@
 //!
 //! Used by `corpus_extract_assertions` in `mod.rs`.
 
-use hkask_bridge_ontology::eso;
 use hkask_bridge_ontology::fibo;
 use hkask_bridge_ontology::golem;
+use hkask_bridge_ontology::sepio;
 
 /// Map an abstract-namespace predicate prefix to the chunk-tag namespace
 /// key it must have been tagged with to bypass the subject/object-in-text
@@ -17,7 +17,7 @@ pub(crate) fn abstract_namespace_tag_key(pred_ns: &str) -> Option<&'static str> 
         return Some(family);
     }
     match pred_ns {
-        "eso" => Some("eso"),
+        "sepio" => Some("sepio"),
         "fibo" => Some("fibo"),
         "pko" => Some("pko"),
         "epistemic" => Some("epistemic"),
@@ -56,8 +56,9 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         "schema:author" | "schema:creator" | "schema:contributor" | "schema:actor"
         | "rdf:creator" => Who,
 
-        // Who — ESO epistemic agents
-        eso::HAS_COUNTERARGUMENT => Who,
+        // Who — SEPIO epistemic agents (disputing evidence lines are
+        // independent arguments — agents of the debate)
+        sepio::HAS_DISPUTING_EVIDENCE_LINE => Who,
 
         // When — temporal
         "schema:datecreated"
@@ -66,8 +67,8 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         | "dcterms:created"
         | "dcterms:issued" => When,
 
-        // When — ESO temporal epistemic
-        eso::HAS_CONFIDENCE => When,
+        // When — SEPIO temporal epistemic
+        sepio::HAS_CONFIDENCE_LEVEL => When,
 
         // Where — spatial
         "schema:location" | "dcterms:spatial" => Where,
@@ -75,18 +76,17 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         // Why — causation, motivation, interpretive reference
         "schema:causes" | "schema:resultof" | fibo::HAS_RISK => Why,
 
-        // Why — ESO epistemic causation
-        eso::IMPLIES
-        | eso::CONTRADICTS
-        | eso::FALSIFIED_BY
-        | eso::CORROBORATED_BY
-        | eso::GENERALIZES_TO => Why,
+        // Why — SEPIO epistemic causation
+        sepio::CONTRADICTS
+        | sepio::HAS_DISPUTING_EVIDENCE
+        | sepio::HAS_SUPPORTING_EVIDENCE
+        | sepio::ASSERTS_PROPOSITION => Why,
 
         // How — methods, processes
         "schema:uses" | "schema:method" => How,
 
-        // How — ESO methods and evidence
-        eso::USES_METHOD | eso::HAS_EVIDENCE | eso::HAS_LIMITATION => How,
+        // How — SEPIO methods and evidence
+        sepio::WAS_SPECIFIED_BY | sepio::HAS_EVIDENCE => How,
 
         // What — default for everything else
         _ => What,
@@ -99,10 +99,10 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 /// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
 /// - Abstract-namespace predicates (GOLEM family — `gc`/`crm`/`dlp`/`lrmoo`,
-///   plus `eso`/`fibo`/`pko`/`epistemic`/`other`) bypass the
+///   plus `sepio`/`fibo`/`pko`/`epistemic`/`other`) bypass the
 ///   subject/object-in-text check ONLY if the predicate's tag family was
 ///   actually tagged for this chunk. Without that cross-check, the LLM could
-///   emit any `gc:`/`eso:` predicate to bypass the guard for chunks where
+///   emit any `gc:`/`SEPIO:` predicate to bypass the guard for chunks where
 ///   that ontology was never detected — admitting hallucinated assertions
 ///   at full LLM-reported confidence (the M4 fix).
 /// - All other assertions: subject and object strings must appear in the chunk

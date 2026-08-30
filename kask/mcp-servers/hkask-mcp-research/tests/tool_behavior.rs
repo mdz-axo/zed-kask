@@ -31,8 +31,9 @@ use hkask_mcp_research::research::rss_types::{
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
-    ExtractedContent, FindSimilarRequest, ProviderHealthEntry, ProviderRecommendation,
-    RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
+    ExtractedContent, FindSimilarRequest, ProviderFailureRecord, ProviderHealthEntry,
+    ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy,
+    WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -836,5 +837,152 @@ async fn quick_search_has_no_rerank_field() {
     assert!(
         output.get("rerank").is_none(),
         "quick strategy must not claim a rerank stage"
+    );
+}
+
+/// A pool whose first search carries a provider failure (as single-provider
+/// mode maps an Err into an Ok compound with `providers_failed`), then
+/// succeeds. Pins the cache gate: the failure must NOT be cached — the second
+/// identical call must see the recovered results, not a replayed empty
+/// "success". Before the gate, a transient provider failure was replayed as
+/// a successful empty result for the full cache TTL.
+struct FailThenSucceedPool {
+    failed_once: std::sync::Mutex<bool>,
+}
+
+#[async_trait]
+impl WebSearchPort for FailThenSucceedPool {
+    async fn search(
+        &self,
+        query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        let mut failed_once = self.failed_once.lock().unwrap_or_else(|e| e.into_inner());
+        if *failed_once {
+            return Ok(CompoundSearchResult {
+                query: query.query.clone(),
+                strategy: "quick".to_string(),
+                results: vec![RankedResult {
+                    title: "Recovered".to_string(),
+                    url: "https://example.com/recovered".to_string(),
+                    description: None,
+                    source: None,
+                    published: None,
+                    rrf_score: 1.0,
+                    provider_count: 1,
+                    providers: vec!["stub".to_string()],
+                    best_rank: None,
+                    content_preview: None,
+                    semantic_score: None,
+                    extracted_content: None,
+                }],
+                answer_box: None,
+                related_questions: Vec::new(),
+                providers_queried: Vec::new(),
+                providers_succeeded: vec!["stub".to_string()],
+                providers_failed: Vec::new(),
+                total_before_dedup: 1,
+                duplicates_removed: 0,
+            });
+        }
+        *failed_once = true;
+        Ok(CompoundSearchResult {
+            query: query.query.clone(),
+            strategy: "quick".to_string(),
+            results: Vec::new(),
+            answer_box: None,
+            related_questions: Vec::new(),
+            providers_queried: Vec::new(),
+            providers_succeeded: Vec::new(),
+            providers_failed: vec![ProviderFailureRecord {
+                kind: "stub".to_string(),
+                error: "transient failure".to_string(),
+            }],
+            total_before_dedup: 0,
+            duplicates_removed: 0,
+        })
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured("stub".to_string()))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-fail-then-succeed".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
+#[tokio::test]
+async fn web_search_does_not_cache_provider_failures() {
+    let server = make_server_with_pool_and_port(
+        Arc::new(FailThenSucceedPool {
+            failed_once: std::sync::Mutex::new(false),
+        }),
+        Arc::new(FailingInferencePort),
+    );
+    let make_request = || SearchRequest {
+        query: "cache gate".to_string(),
+        num_results: Some(5),
+        include_domains: None,
+        exclude_domains: None,
+        freshness: None,
+        strategy: Some("quick".to_string()),
+        provider: None,
+    };
+
+    // First call: the failure is surfaced (degradation contract)…
+    let first = parse(&ok(server.web_search(Parameters(make_request())).await));
+    assert!(
+        first["providers_failed"]
+            .as_array()
+            .is_some_and(|f| !f.is_empty()),
+        "the transient failure must be surfaced in the first response"
+    );
+
+    // …and must NOT be replayed from cache on the identical second call.
+    let second = parse(&ok(server.web_search(Parameters(make_request())).await));
+    assert_eq!(
+        second["count"], 1,
+        "the recovered result must reach the caller — a cached failure would return count 0"
+    );
+    assert!(
+        second["providers_failed"]
+            .as_array()
+            .is_some_and(|f| f.is_empty()),
+        "the second response must carry no failure record"
     );
 }

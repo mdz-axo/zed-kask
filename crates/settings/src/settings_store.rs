@@ -396,6 +396,17 @@ impl SettingsStore {
                         SettingsFile::Global => store.set_global_settings(&content, cx),
                         _ => return,
                     };
+                    // zed-kask: diagnostic for the settings-reactivity defect
+                    // (2026-08-29): file changes were observed reaching the
+                    // store only intermittently, and SettingsStore global
+                    // observers registered in `main()` never fired on them.
+                    // This line makes watcher delivery observable on disk —
+                    // with the sync-fired line in `main.rs`, one settings
+                    // change after restart pins which half is broken.
+                    log::info!(
+                        "Settings file reloaded by watcher: {settings_file:?} — parse {:?}",
+                        result.parse_status
+                    );
                     settings_changed(settings_file, result, cx);
                     cx.refresh_windows();
                 });

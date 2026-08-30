@@ -116,7 +116,7 @@ impl AssertionsService {
         // Read ontology namespace sets per chunk (M4 fix). Used to cross-check
         // that a assertion's predicate namespace was actually tagged for the
         // chunk before bypassing the text-containment hallucination guard.
-        // Without this, any `golem:`/`eso:`/`fibo:`/`pko:` predicate bypasses
+        // Without this, any `golem:`/`SEPIO:`/`fibo:`/`pko:` predicate bypasses
         // the guard regardless of whether the chunk was tagged with that
         // ontology — allowing the LLM to emit abstract-namespace predicates
         // for chunks where that ontology was never detected.

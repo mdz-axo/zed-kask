@@ -315,7 +315,7 @@ pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'st
             ..
         } => vec!["run", "model", "training", "evaluation"],
         crate::types::OntologyAnchor::DomainSupplement {
-            namespace: crate::types::OntologyNamespace::Eso,
+            namespace: crate::types::OntologyNamespace::Sepio,
             ..
         } => vec!["hypothesis", "evidence", "falsification", "corroboration"],
         crate::types::OntologyAnchor::DomainSupplement {

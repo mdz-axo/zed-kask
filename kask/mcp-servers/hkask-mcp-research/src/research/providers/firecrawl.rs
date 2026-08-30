@@ -20,11 +20,21 @@ impl FirecrawlProvider {
         })
     }
 
-    fn auth_header(&self) -> Result<String, WebError> {
-        self.api_key
-            .as_ref()
-            .map(|k| format!("Bearer {k}"))
-            .ok_or(WebError::NoProvider)
+    fn auth_header(&self) -> Result<reqwest::header::HeaderValue, WebError> {
+        let key = self.api_key.as_ref().ok_or(WebError::NoProvider)?;
+        let value = format!("Bearer {key}");
+        // Pre-validate instead of letting reqwest defer the failure to send()
+        // as a bare "builder error". If the key ever holds non-header bytes
+        // (e.g. a pasted trailing newline), this names the key's shape so the
+        // operator can distinguish a dirty credential from a broken request.
+        reqwest::header::HeaderValue::from_str(&value).map_err(|_| {
+            WebError::ProviderError(format!(
+                "firecrawl api key is not valid HTTP header bytes \
+                 (length {}, ascii: {}) — re-set the key via the kask settings UI",
+                key.len(),
+                key.is_ascii()
+            ))
+        })
     }
 }
 
@@ -69,7 +79,7 @@ impl WebSearchProvider for FirecrawlProvider {
         let resp = self
             .client
             .post(format!("{FIRECRAWL_API_BASE}/search"))
-            .header("Authorization", &auth)
+            .header("Authorization", auth)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -149,7 +159,7 @@ impl WebExtractProvider for FirecrawlProvider {
         let resp = self
             .client
             .post(format!("{FIRECRAWL_API_BASE}/scrape"))
-            .header("Authorization", &auth)
+            .header("Authorization", auth)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -219,7 +229,7 @@ impl WebBrowseProvider for FirecrawlProvider {
         let resp = self
             .client
             .post(format!("{FIRECRAWL_API_BASE}/scrape"))
-            .header("Authorization", &auth)
+            .header("Authorization", auth)
             .header("Content-Type", "application/json")
             .json(&payload)
             .timeout(timeout)
@@ -304,5 +314,30 @@ mod tests {
             parse_v2_search_results(&v1_body).is_empty(),
             "v1-shaped data array must yield no results â v2 nests under data.web"
         );
+    }
+
+    /// A clean ASCII key must pre-validate into a HeaderValue — and the
+    /// request path must not be able to fail later with reqwest's deferred
+    /// "builder error" for this cause.
+    #[test]
+    fn auth_header_accepts_clean_key() {
+        let provider = FirecrawlProvider::new(Some("fc-b336f31c1e524cd4a9c6c4c515184483".to_string()))
+            .expect("provider");
+        let header = provider.auth_header().expect("clean key must validate");
+        assert_eq!(header.as_bytes(), b"Bearer fc-b336f31c1e524cd4a9c6c4c515184483");
+    }
+
+    /// A key with non-header bytes (e.g. a pasted trailing newline) must fail
+    /// at `auth_header` with an error naming the key's shape — never as a
+    /// deferred bare "builder error" from reqwest's send().
+    #[test]
+    fn auth_header_rejects_dirty_key_with_shape() {
+        let provider =
+            FirecrawlProvider::new(Some("fc-dirty\n".to_string())).expect("provider");
+        let error = provider.auth_header().expect_err("dirty key must fail");
+        let message = error.to_string();
+        assert!(message.contains("not valid HTTP header bytes"), "{message}");
+        assert!(message.contains("length 9"), "must name the length: {message}");
+        assert!(message.contains("ascii"), "must name ascii-ness: {message}");
     }
 }

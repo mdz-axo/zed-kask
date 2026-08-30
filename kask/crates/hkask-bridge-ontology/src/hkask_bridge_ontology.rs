@@ -21,7 +21,9 @@
 //! Domain supplements (P8.1) — layered on top where the universal axes aren't
 //! specific enough for a domain:
 //! - **FIBO** (`fibo`): financial / company analysis.
-//! - **ESO** (`eso`): scientific reasoning, hypotheses, evidence.
+//! - **SEPIO** (`sepio`): scientific evidence and provenance — evidence,
+//!   support, dispute, contradiction, confidence. Official terms pinned by
+//!   `fixtures/sepio-2023-06-13-terms.txt`.
 //! - **GOLEM** (`golem`): literature, narrative, persona. Official v1.1
 //!   vocabulary in `golem` (prefix `gc:`, reusing `crm:`/`dlp:`/`lrmoo:`),
 //!   pinned by `fixtures/golem-v1.1-terms.txt`.
@@ -52,20 +54,20 @@
 //! - SUMO: <https://github.com/ontologyportal/sumo> — Pease, A. (2010).
 //!   Ontology: A Practical Guide. Articulate Software Press.
 //! - FIBO: <https://spec.edmcouncil.org/fibo/>
-//! - ESO: <https://w3id.org/eso/>
+//! - SEPIO: https://github.com/monarch-initiative/SEPIO-ontology
 //! - GOLEM: Pianzola et al. (GOLEM Lab, 2024). <https://ontology.golemlab.eu/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
 //! - SDMX: <https://sdmx.org/> (ISO 17369)
 
 pub mod axis;
 pub mod dc_bibo;
-pub mod eso;
 pub mod fibo;
 pub mod golem;
 pub mod ml_schema;
 pub mod omc;
 pub mod pko;
 pub mod sdmx;
+pub mod sepio;
 pub mod sumo;
 
 // Re-export the universal-axis type aliases at the crate root for ergonomic
