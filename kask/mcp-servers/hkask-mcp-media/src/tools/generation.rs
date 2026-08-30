@@ -15,10 +15,9 @@ impl MediaServer {
             style,
         }): Parameters<GenerateImageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "generate_image",
-            Self::ontology_anchor("generate_image"),
             async {
                 if prompt.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("prompt must not be empty"));
@@ -90,10 +89,9 @@ impl MediaServer {
             style,
         }): Parameters<TransformImageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "transform_image",
-            Self::ontology_anchor("transform_image"),
             async {
                 validate_tool_url_with_dns(&image_url).await?;
                 if let Some(s) = strength
@@ -156,10 +154,9 @@ impl MediaServer {
         &self,
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "upscale_image",
-            Self::ontology_anchor("upscale_image"),
             async {
                 validate_tool_url_with_dns(&image_url).await?;
                 let media_params = hkask_types::MediaGenerateParams {
@@ -210,10 +207,9 @@ impl MediaServer {
             style,
         }): Parameters<GenerateVideoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "generate_video",
-            Self::ontology_anchor("generate_video"),
             async {
                 if prompt.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("prompt must not be empty"));
@@ -272,7 +268,7 @@ impl MediaServer {
         &self,
         Parameters(ExpandPromptRequest { prompt, style }): Parameters<ExpandPromptRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "expand_prompt", Self::ontology_anchor("expand_prompt"), async {
+        execute_tool(self, "expand_prompt", async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -342,10 +338,9 @@ impl MediaServer {
             style,
         }): Parameters<GenerateVariantsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "generate_variants",
-            Self::ontology_anchor("generate_variants"),
             async {
                 if prompt.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("prompt must not be empty"));
@@ -473,10 +468,9 @@ impl MediaServer {
             strength,
         }): Parameters<ImageEditRegionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "image_edit_region",
-            Self::ontology_anchor("image_edit_region"),
             async {
                 validate_tool_url_with_dns(&image_url).await?;
                 if prompt.trim().is_empty() {

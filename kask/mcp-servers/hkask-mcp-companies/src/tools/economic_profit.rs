@@ -329,14 +329,6 @@ fn build_ep_response(
             "summary": valuation.signal.summary,
         },
         "projections": period_summary,
-        "fibo": {
-            "intrinsic_value_per_share": fibo::INTRINSIC_VALUE_PER_SHARE,
-            "return_on_invested_capital": fibo::RETURN_ON_INVESTED_CAPITAL,
-            "discount_rate": fibo::DISCOUNT_RATE,
-            "book_value": fibo::TOTAL_EQUITY,
-            "treasury_stock": fibo::TREASURY_STOCK,
-            "margin_of_safety": fibo::MARGIN_OF_SAFETY,
-        },
         "balance_sheet_adjustment": {
             "method": "hKask non-standard treatment: Treasury Stock is treated as committed capital, increasing Owner's Equity, Invested Capital, and Total Assets by 2× |treasury stock|. Intangible assets are correspondingly increased to preserve A = L + E.",
             "treasury_stock_abs": inputs.treasury_stock,

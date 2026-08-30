@@ -4,7 +4,7 @@ use crate::{
     types::{HistoricalRequest, SearchRequest, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = financial_data_router, vis = "pub")]
@@ -14,10 +14,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "company_profile",
-            Self::ontology_anchor("company_profile"),
             async {
                 validate_symbol(&symbol)?;
                 let result = self.fetch("company_profile", &symbol, &[]).await?;
@@ -32,10 +31,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "stock_quote",
-            Self::ontology_anchor("stock_quote"),
             async {
                 validate_symbol(&symbol)?;
                 let result = self.fetch("stock_quote", &symbol, &[]).await?;
@@ -50,10 +48,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "income_statement",
-            Self::ontology_anchor("income_statement"),
             async {
                 validate_symbol(&symbol)?;
                 let limit_str = limit.unwrap_or(5).to_string();
@@ -69,10 +66,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "balance_sheet",
-            Self::ontology_anchor("balance_sheet"),
             async {
                 validate_symbol(&symbol)?;
                 let limit_str = limit.unwrap_or(5).to_string();
@@ -88,10 +84,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "cash_flow_statement",
-            Self::ontology_anchor("cash_flow_statement"),
             async {
                 validate_symbol(&symbol)?;
                 let limit_str = limit.unwrap_or(5).to_string();
@@ -107,10 +102,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "key_metrics",
-            Self::ontology_anchor("key_metrics"),
             async {
                 validate_symbol(&symbol)?;
                 let limit_str = limit.unwrap_or(5).to_string();
@@ -128,10 +122,9 @@ impl CompaniesServer {
         &self,
         Parameters(HistoricalRequest { symbol, from, to }): Parameters<HistoricalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "historical_price",
-            Self::ontology_anchor("historical_price"),
             async {
                 validate_symbol(&symbol)?;
                 let result = self
@@ -148,10 +141,9 @@ impl CompaniesServer {
         &self,
         Parameters(SearchRequest { query, limit }): Parameters<SearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "symbol_search",
-            Self::ontology_anchor("symbol_search"),
             async {
                 if query.is_empty() {
                     return Err(McpToolError::invalid_argument("query must not be empty"));
@@ -187,10 +179,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "resolve_symbol",
-            Self::ontology_anchor("symbol_search"),
             async {
                 if symbol.is_empty() {
                     return Err(McpToolError::invalid_argument("symbol must not be empty"));

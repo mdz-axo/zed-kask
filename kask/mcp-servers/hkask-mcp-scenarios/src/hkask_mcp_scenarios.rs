@@ -41,7 +41,7 @@
 use std::collections::HashSet;
 
 use hkask_bridge_ontology::dc_bibo;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) mod superforecast;
@@ -114,7 +114,7 @@ hkask_mcp_server::mcp_server!(
 
 impl ScenariosServer {
     /// Map a tool name to its ontology concept URI. The concept URI is used
-    /// both as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
+    /// both as the `reg.tool.*` span ontology tag (via `execute_tool`)
     /// and as the `"ontology"` field in the tool output JSON.
     ///
     /// PKO = Procedural Knowledge Ontology (process/experience — agent's actions)
@@ -278,7 +278,7 @@ impl ScenariosServer {
         &self,
         _parameters: Parameters<StatusRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_status", Self::ontology_anchor("scenario_status"), async {
+        execute_tool(self, "scenario_status", async {
             let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
             let total = store.len();
             let resolved: Vec<_> = store.resolved();
@@ -383,7 +383,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<FullPipelineRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_full", Self::ontology_anchor("scenario_full"), async {
+        execute_tool(self, "scenario_full", async {
             let events = &req.events;
             // The pipeline anchors synthesis on the first event, so an empty
             // array is refused up front rather than indexed later. `build_event_tree`
@@ -505,7 +505,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<MarketsBridgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_from_markets", Self::ontology_anchor("scenario_from_markets"), async {
+        execute_tool(self, "scenario_from_markets", async {
             let record_value = decode_json_param(&req.market_record, "market record")?;
             let record: hkask_mcp_prediction_markets::types::MarketRecord =
                 serde_json::from_value(record_value)
@@ -568,7 +568,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<MarketsSetBridgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_from_markets_set", Self::ontology_anchor("scenario_from_markets_set"), async {
+        execute_tool(self, "scenario_from_markets_set", async {
             let records_value = decode_json_param(&req.market_records, "market records")?;
             let records: Vec<hkask_mcp_prediction_markets::types::MarketRecord> =
                 serde_json::from_value(records_value)
@@ -635,7 +635,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<CmpBridgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_from_cmp_indices", Self::ontology_anchor("scenario_from_cmp_indices"), async {
+        execute_tool(self, "scenario_from_cmp_indices", async {
             let indices: Vec<hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex> =
                 serde_json::from_value(req.cmp_indices.into())
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid cmp_indices JSON array: {e}")))?;
@@ -718,7 +718,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<ContractCoherenceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "contract_price_coherence", Self::ontology_anchor("contract_price_coherence"), async {
+        execute_tool(self, "contract_price_coherence", async {
             if !(0.0..=1.0).contains(&req.market_price) {
                 return Err(McpToolError::invalid_argument("market_price must be in [0, 1]"));
             }
@@ -780,7 +780,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<CrossValidateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_cross_validate", Self::ontology_anchor("scenario_cross_validate"), async {
+        execute_tool(self, "scenario_cross_validate", async {
             let validation = superforecast::cross_validate(
                 &req.event_id,
                 &req.source_a, req.estimate_a, &req.sub_questions_a,
@@ -851,7 +851,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<FrameRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_frame", Self::ontology_anchor("scenario_frame"), async {
+        execute_tool(self, "scenario_frame", async {
             let protocol = templates::generate_framing_session(&req.subject);
 
             // If prior answers were provided, merge them into the template
@@ -890,7 +890,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<FrameDocumentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_frame_document", Self::ontology_anchor("scenario_frame_document"), async {
+        execute_tool(self, "scenario_frame_document", async {
             let answers: serde_json::Value = req.answers.into();
 
             let document = superforecast::structure_framing_document(&req.subject, &answers)
@@ -943,7 +943,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<BrainstormRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_brainstorm", Self::ontology_anchor("scenario_brainstorm"), async {
+        execute_tool(self, "scenario_brainstorm", async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
             let research = req.research_context.as_deref().unwrap_or("No research context provided. Use scenario_research to gather web search results first, or provide context manually.");
 
@@ -1045,7 +1045,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<BuildEventsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_build", Self::ontology_anchor("scenario_build"), async {
+        execute_tool(self, "scenario_build", async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
             let scenario_type = parse_scenario_type(req.scenario_type.as_deref());
             let max_events = req.max_events.unwrap_or(6);
@@ -1162,7 +1162,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<ResearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_research", Self::ontology_anchor("scenario_research"), async {
+        execute_tool(self, "scenario_research", async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
             let scenario_type = parse_scenario_type(req.scenario_type.as_deref());
             let max_events = req.max_events.unwrap_or(6);
@@ -1282,7 +1282,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<QuantifyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_quantify", Self::ontology_anchor("scenario_quantify"), async {
+        execute_tool(self, "scenario_quantify", async {
             let tree = superforecast::build_event_tree(&req.events)
                 .map_err(map_scenario_error)?;
 
@@ -1347,7 +1347,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<PropagateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_propagate", Self::ontology_anchor("scenario_propagate"), async {
+        execute_tool(self, "scenario_propagate", async {
             let result = superforecast::propagate_prior_update(&req.events, &req.event_id, req.new_prior)
                 .map_err(map_scenario_error)?;
 
@@ -1396,7 +1396,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<UpdateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_update", Self::ontology_anchor("scenario_update"), async {
+        execute_tool(self, "scenario_update", async {
             if !(0.0..=1.0).contains(&req.prior_probability) {
                 return Err(McpToolError::invalid_argument("prior_probability must be in [0, 1]"));
             }
@@ -1448,7 +1448,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<ScoreRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_score", Self::ontology_anchor("scenario_score"), async {
+        execute_tool(self, "scenario_score", async {
             let events = &req.events;
             let outcome_pairs: Vec<(String, bool)> = req.outcomes
                 .into_iter()
@@ -1561,7 +1561,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<CalibrateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_calibrate", Self::ontology_anchor("scenario_calibrate"), async {
+        execute_tool(self, "scenario_calibrate", async {
             if req.sub_questions.is_empty() {
                 return Err(McpToolError::invalid_argument("at least one sub_question is required"));
             }
@@ -1690,7 +1690,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<SensitivityRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_sensitivity", Self::ontology_anchor("scenario_sensitivity"), async {
+        execute_tool(self, "scenario_sensitivity", async {
             let events = &req.events;
             let tree = superforecast::build_event_tree(events)
                 .map_err(map_scenario_error)?;
@@ -1735,7 +1735,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<SynthesizeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_synthesize", Self::ontology_anchor("scenario_synthesize"), async {
+        execute_tool(self, "scenario_synthesize", async {
             let synthesis = superforecast::synthesize_perspectives(&req.event_id, &req.perspectives)
                 .map_err(map_scenario_error)?;
 
@@ -1785,7 +1785,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<CalibrationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_calibration", Self::ontology_anchor("scenario_calibration"), async {
+        execute_tool(self, "scenario_calibration", async {
             let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
 
             let filtered_store = req
@@ -1847,7 +1847,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<TriageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_triage", Self::ontology_anchor("scenario_triage"), async {
+        execute_tool(self, "scenario_triage", async {
             let assessment = superforecast::triage_question(
                 &req.question,
                 req.has_deadline.unwrap_or(false),
@@ -1888,7 +1888,7 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<AssessRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_assess", Self::ontology_anchor("scenario_assess"), async {
+        execute_tool(self, "scenario_assess", async {
             let perspective_count = req.perspective_count.unwrap_or(1);
             let disagreement = req.disagreement_score.unwrap_or(0.0);
             let event_count = req.event_count.unwrap_or(0);

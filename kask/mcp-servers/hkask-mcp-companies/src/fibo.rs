@@ -132,7 +132,7 @@ pub(crate) fn fmp_field_to_metric(field: &str) -> Option<&'static str> {
 /// the concept that represents *what the artifact is* (not the per-field
 /// metric identifiers). This is the unified `"ontology"` field the widget
 /// reads for the "I" pattern dispatch and the compose-back body, AND the
-/// concept tagged on the `reg.tool.*` span via `execute_tool_semantic` for
+/// concept tagged on the `reg.tool.*` span via `execute_tool` for
 /// type-aware feedback routing.
 ///
 /// Anchoring policy (operator decision 2026-08-29): tools whose concept
@@ -201,7 +201,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
 /// `enrich_with_omc_and_provenance` — it bakes the ontology concept into the
 /// tool output so the portfolio widget can read it for the "I" pattern dispatch
 /// and the compose-back body. The `reg.tool.*` span carries the same concept
-/// via `execute_tool_semantic` (wired separately).
+/// via `execute_tool` (wired separately).
 pub(crate) fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
     if let Some(concept) = tool_to_ontology(tool) {
         if let Some(obj) = result.as_object_mut() {

@@ -52,7 +52,7 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 
 use crate::ocr::ThresholdConfig;
 use hkask_bridge_ontology::{dc_bibo, golem, pko};
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_services_core::standalone_settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
@@ -277,7 +277,7 @@ impl CorpusServer {
     }
 
     /// Map a tool name to its ontology concept URI. The concept tags the
-    /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
+    /// `reg.tool.*` span (via `execute_tool`) for type-aware feedback
     /// routing. Delegates to the canonical bridge mappers — the single source
     /// of truth, so this mapping cannot drift from the bridge contract (same
     /// pattern as companies → `fibo::tool_to_ontology` and media →

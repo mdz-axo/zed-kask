@@ -62,16 +62,17 @@ impl BaseEconomicObject {
     /// FIBO-anchored concept URI for this object (the process axis).
     ///
     /// Returns the canonical FIBO concept from the shared
-    /// `hkask-bridge-ontology` crate. Where FIBO has no exact class, the
-    /// nearest indicator/index concept is used.
+    /// `hkask-bridge-ontology` crate (fixture-verified against the FIBO
+    /// master ontology). Where FIBO has no exact class, the nearest
+    /// verified indicator/index concept is used — never an invented URI.
     pub fn fibo_concept(self) -> fibo::FiboConcept {
         match self {
-            BaseEconomicObject::PolicyInterestRate => fibo::POLICY_INTEREST_RATE,
+            BaseEconomicObject::PolicyInterestRate => fibo::REFERENCE_INTEREST_RATE,
             BaseEconomicObject::ConsumerPriceInflation => fibo::CONSUMER_PRICE_INDEX,
-            BaseEconomicObject::CrudeOilPrice => fibo::COMMODITY_PRICE_INDEX,
-            BaseEconomicObject::NaturalGasPrice => fibo::COMMODITY_PRICE_INDEX,
-            BaseEconomicObject::BitcoinPrice => fibo::MARKET_INDEX,
-            BaseEconomicObject::EthereumPrice => fibo::MARKET_INDEX,
+            BaseEconomicObject::CrudeOilPrice => fibo::ECONOMIC_INDICATOR,
+            BaseEconomicObject::NaturalGasPrice => fibo::ECONOMIC_INDICATOR,
+            BaseEconomicObject::BitcoinPrice => fibo::REFERENCE_INDEX,
+            BaseEconomicObject::EthereumPrice => fibo::REFERENCE_INDEX,
             BaseEconomicObject::RealGdpGrowth => fibo::GROSS_DOMESTIC_PRODUCT,
         }
     }

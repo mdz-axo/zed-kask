@@ -4,7 +4,7 @@ use crate::{
     types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = analysis_router, vis = "pub")]
@@ -16,10 +16,9 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "moat_check",
-            Self::ontology_anchor("moat_check"),
             async {
                 validate_symbol(&symbol)?;
 
@@ -102,7 +101,7 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "management_scorecard", Self::ontology_anchor("management_scorecard"), async {
+        execute_tool(self, "management_scorecard", async {
             validate_symbol(&symbol)?;
 
             let limit = "10";
@@ -168,7 +167,7 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "working_capital_cycle", Self::ontology_anchor("working_capital_cycle"), async {
+        execute_tool(self, "working_capital_cycle", async {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
 
@@ -256,7 +255,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScreenerRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "company_screener", Self::ontology_anchor("company_screener"), async {
+        execute_tool(self, "company_screener", async {
             // Parse the natural language prompt into structured criteria
             let mut criteria = screener::parse_screening_prompt(&req.prompt);
 
@@ -334,10 +333,9 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::StockUniverseRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "stock_universe",
-            Self::ontology_anchor("company_screener"),
             async {
                 let listings = providers::fetch_eodhd_screener_listing(
                     &self.client,
@@ -369,7 +367,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "company_research_search", Self::ontology_anchor("company_research_search"), async {
+        execute_tool(self, "company_research_search", async {
             // 1. Fetch company profile for name (typed view — `companyName`
             //    knowledge lives in the `CompanyProfile` accessor).
             let profile = self.fetch_profile(&req.symbol).await?;

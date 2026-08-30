@@ -1,6 +1,6 @@
 use crate::TrainingServer;
 use crate::types::TrainEvaluateRequest;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::template::LLMParameters;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -21,7 +21,7 @@ impl TrainingServer {
             max_examples,
         }): Parameters<TrainEvaluateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_evaluate", Self::ontology_anchor("training_evaluate"), async {
+        execute_tool(self, "training_evaluate", async {
             // Contain the LLM-supplied test dataset path before reading
             // (CWE-200): an absolute path like /etc/passwd or ~/.ssh/id_rsa must
             // not flow back into the evaluation context.

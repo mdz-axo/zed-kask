@@ -10,7 +10,7 @@ use crate::{
     ReturnsReport, Transaction, export_csv, export_json, import_csv, import_json, parse_ymd,
     returns,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, map_join_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -50,7 +50,7 @@ where
 }
 
 /// Map a tool name to its ontology concept URI. The concept is used both
-/// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and as
+/// as the `reg.tool.*` span ontology tag (via `execute_tool`) and as
 /// the `"ontology"` field in the tool output JSON. The portfolio widget reads
 /// this field to drive its "Explain" affordance (the "I" pattern).
 ///
@@ -177,7 +177,7 @@ impl PortfolioServer {
         &self,
         Parameters(PortfolioCreateRequest { name, asset_type }): Parameters<PortfolioCreateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "portfolio_create", ontology_anchor("portfolio_create"), async {
+        execute_tool(self, "portfolio_create", async {
             let response_name = name.clone();
             run_store(self.store.clone(), move |store| store.create(&name, asset_type)).await?;
             Ok(serde_json::json!({"status": "created", "name": response_name, "asset_type": asset_type.to_string()}))
@@ -190,10 +190,9 @@ impl PortfolioServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_delete",
-            ontology_anchor("portfolio_delete"),
             async {
                 let response_name = name.clone();
                 run_store(self.store.clone(), move |store| store.delete(&name)).await?;
@@ -205,10 +204,9 @@ impl PortfolioServer {
 
     #[tool(description = "List all portfolios in this owner's store.")]
     pub async fn portfolio_list(&self) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_list",
-            ontology_anchor("portfolio_list"),
             async {
                 let names = run_store(self.store.clone(), |store| store.list()).await?;
                 Ok(serde_json::json!({"portfolios": names}))
@@ -227,7 +225,7 @@ impl PortfolioServer {
             transaction,
         }): Parameters<LedgerApplyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "ledger_apply", ontology_anchor("ledger_apply"), async {
+        execute_tool(self, "ledger_apply", async {
             let tx_id = transaction.id.clone();
             let response_portfolio = portfolio.clone();
             run_store(self.store.clone(), move |store| {
@@ -253,7 +251,7 @@ impl PortfolioServer {
             to_date,
         }): Parameters<LedgerReadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "ledger_read", ontology_anchor("ledger_read"), async {
+        execute_tool(self, "ledger_read", async {
             let txs = run_store(self.store.clone(), move |store| {
                 store.ledger(
                     &portfolio,
@@ -281,10 +279,9 @@ impl PortfolioServer {
             PortfolioSnapshotRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_snapshot",
-            ontology_anchor("portfolio_snapshot"),
             async {
                 // Validate the date up front — never silently epoch-substitute
                 // (the SF-4 bug: a malformed date produced garbage projections
@@ -321,10 +318,9 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_returns",
-            ontology_anchor("portfolio_returns"),
             async {
                 // Validate dates up front (SF-4).
                 parse_ymd(&from, "from").map_err(map_portfolio_error)?;
@@ -384,10 +380,9 @@ impl PortfolioServer {
             data,
         }): Parameters<LedgerImportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "ledger_import",
-            ontology_anchor("ledger_import"),
             async {
                 let ids = run_store(self.store.clone(), move |store| match format {
                     ImportFormat::Csv => import_csv(&store, &portfolio, asset_type, &data),
@@ -405,10 +400,9 @@ impl PortfolioServer {
         &self,
         Parameters(LedgerExportRequest { portfolio, format }): Parameters<LedgerExportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "ledger_export",
-            ontology_anchor("ledger_export"),
             async {
                 let output_format = format.clone();
                 let data = run_store(self.store.clone(), move |store| match format {
@@ -435,10 +429,9 @@ impl PortfolioServer {
             source,
         }): Parameters<PriceSeedRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_seed_price",
-            ontology_anchor("portfolio_seed_price"),
             async {
                 let resolver = CachedPriceResolver::new(&self.store, &portfolio);
                 resolver
@@ -470,10 +463,9 @@ impl PortfolioServer {
             price,
         }): Parameters<PortfolioRollRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_roll",
-            ontology_anchor("portfolio_roll"),
             async {
                 parse_ymd(&date, "date").map_err(map_portfolio_error)?;
                 let response_portfolio = portfolio.clone();
@@ -518,10 +510,9 @@ impl PortfolioServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_rebuild_views",
-            ontology_anchor("portfolio_rebuild_views"),
             async {
                 let response_name = name.clone();
                 run_store(self.store.clone(), move |store| store.rebuild_views(&name)).await?;
@@ -542,10 +533,9 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_materialize_returns",
-            ontology_anchor("portfolio_materialize_returns"),
             async {
                 parse_ymd(&from, "from").map_err(map_portfolio_error)?;
                 parse_ymd(&to, "to").map_err(map_portfolio_error)?;
@@ -579,10 +569,9 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_daily_returns",
-            ontology_anchor("portfolio_daily_returns"),
             async {
                 parse_ymd(&from, "from").map_err(map_portfolio_error)?;
                 parse_ymd(&to, "to").map_err(map_portfolio_error)?;

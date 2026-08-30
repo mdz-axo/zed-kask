@@ -17,7 +17,7 @@ use crate::sanitize::{
     sanitize_workspace_payload,
 };
 use crate::spend_gate;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 /// Task-set cap for `swarm_eval_agent_local`. Bounds one harness call's
@@ -177,7 +177,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "swarm_delegate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_delegate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -295,7 +295,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fanout_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -520,7 +520,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PipelineLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_pipeline_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -639,7 +639,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_list_local_agents",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -678,7 +678,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_clone_to_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -865,7 +865,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushToCloudSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_push_to_cloud",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -962,7 +962,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_remove_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1040,7 +1040,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_local_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1137,7 +1137,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ReconfigureLocalAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "swarm_reconfigure_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_reconfigure_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -1202,7 +1202,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1234,7 +1234,7 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<ListLocalSwarmsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_list_local_swarms",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1257,7 +1257,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_get_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1289,7 +1289,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_delete_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1321,7 +1321,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AddAgentToLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_add_agent_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1354,7 +1354,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_remove_agent_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1389,7 +1389,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<UpdateLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_update_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1429,7 +1429,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_clone_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1464,7 +1464,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushLocalSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_push_local_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1607,7 +1607,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PullSwarmToLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_pull_swarm_to_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1682,7 +1682,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AiAssistRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "swarm_ai_assist", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_ai_assist", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             match req.action.as_str() {
                 "suggest" | "validate" => {}
@@ -1921,7 +1921,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvaluateLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_evaluate_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1968,7 +1968,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecutePlanLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_execute_plan_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2190,7 +2190,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<TaskBoardRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_task_board",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2232,7 +2232,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvalSuiteLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_eval_suite_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2487,7 +2487,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvalAgentLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_eval_agent_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),

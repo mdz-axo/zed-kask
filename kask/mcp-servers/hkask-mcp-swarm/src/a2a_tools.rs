@@ -6,7 +6,7 @@ use crate::SwarmServer;
 use crate::a2a;
 use crate::error::map_local_swarm_error;
 use crate::request_types::*;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 // `new_context_id` is imported privately in `crate::a2a` from the external
@@ -31,7 +31,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aSendRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_a2a_send",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -90,7 +90,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aCardRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_a2a_card",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -142,7 +142,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<A2aBroadcastRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_a2a_broadcast",
             Some(hkask_bridge_ontology::pko::PROCEDURE),

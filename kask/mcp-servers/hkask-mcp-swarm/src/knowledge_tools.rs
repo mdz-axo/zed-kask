@@ -6,7 +6,7 @@ use crate::SwarmServer;
 use crate::error::map_local_swarm_error;
 use crate::local_knowledge;
 use crate::request_types::*;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = knowledge_router, vis = "pub")]
@@ -24,7 +24,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SearchKnowledgeLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_search_knowledge_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -74,7 +74,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RecallLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_recall_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -129,7 +129,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GeneratePromptLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_generate_prompt_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -195,7 +195,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GenerateOntologyLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "swarm_generate_ontology_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_generate_ontology_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.domain_description.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(

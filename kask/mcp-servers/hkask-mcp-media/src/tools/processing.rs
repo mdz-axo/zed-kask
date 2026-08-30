@@ -15,10 +15,9 @@ impl MediaServer {
             new_bg_color: _new_bg_color,
         }): Parameters<RemoveBackgroundRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "image_remove_background",
-            Self::ontology_anchor("image_remove_background"),
             async {
                 let image_url = self
                     .resolve_image_url(image_index)
@@ -71,10 +70,9 @@ impl MediaServer {
             strength,
         }): Parameters<ApplyStyleRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "image_apply_style",
-            Self::ontology_anchor("image_apply_style"),
             async {
                 if style_prompt.trim().is_empty() {
                     return Err(McpToolError::invalid_argument(
@@ -125,7 +123,7 @@ impl MediaServer {
             canvas_size,
         }): Parameters<CreateCollageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "image_create_collage", Self::ontology_anchor("image_create_collage"), async {
+        execute_tool(self, "image_create_collage", async {
             let mode_count =
                 search_terms.is_some() as u8 + similar_to_index.is_some() as u8 + image_indices.is_some() as u8;
             if mode_count == 0 {
@@ -326,10 +324,9 @@ impl MediaServer {
             end_sec,
         }): Parameters<VideoClipRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_clip",
-            Self::ontology_anchor("video_clip"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
 
@@ -389,10 +386,9 @@ impl MediaServer {
             fps,
         }): Parameters<VideoToGifRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_to_gif",
-            Self::ontology_anchor("video_to_gif"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
 
@@ -463,10 +459,9 @@ impl MediaServer {
             model,
         }): Parameters<ImageToVideoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "image_to_video",
-            Self::ontology_anchor("image_to_video"),
             async {
                 if let Some(d) = duration
                     && d <= 0.0
@@ -513,10 +508,9 @@ impl MediaServer {
             font_size,
         }): Parameters<VideoAddCaptionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_add_caption",
-            Self::ontology_anchor("video_add_caption"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
 
@@ -572,10 +566,9 @@ impl MediaServer {
             caption_text,
         }): Parameters<VideoRemixRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_remix",
-            Self::ontology_anchor("video_remix"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
 
@@ -656,10 +649,9 @@ impl MediaServer {
             format,
         }): Parameters<VideoFromImagesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_from_images",
-            Self::ontology_anchor("video_from_images"),
             async {
                 if image_indices.is_empty() {
                     return Err(McpToolError::invalid_argument(
@@ -716,10 +708,9 @@ impl MediaServer {
         &self,
         Parameters(VideoConcatRequest { video_urls }): Parameters<VideoConcatRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_concat",
-            Self::ontology_anchor("video_concat"),
             async {
                 if video_urls.len() < 2 {
                     return Err(McpToolError::invalid_argument(
@@ -764,7 +755,7 @@ impl MediaServer {
         &self,
         Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "video_caption", Self::ontology_anchor("video_caption"), async {
+        execute_tool(self, "video_caption", async {
             validate_tool_url_with_dns(&video_url).await?;
 
             let style_str = style.as_deref().unwrap_or("descriptive");
@@ -838,10 +829,9 @@ impl MediaServer {
             max_frames,
         }): Parameters<VideoExtractFramesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_extract_frames",
-            Self::ontology_anchor("video_extract_frames"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
                 self.require_ffmpeg()?;
@@ -921,7 +911,7 @@ impl MediaServer {
             font_path,
         }): Parameters<VideoMemeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "video_meme", Self::ontology_anchor("video_meme"), async {
+        execute_tool(self, "video_meme", async {
             let image_path = self
                 .resolve_image_path(image_index)
                 .map_err(map_media_error)?;
@@ -1010,10 +1000,9 @@ impl MediaServer {
         &self,
         Parameters(VideoInfoRequest { video_url }): Parameters<VideoInfoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_info",
-            Self::ontology_anchor("video_info"),
             async {
                 validate_tool_url_with_dns(&video_url).await?;
                 let ffmpeg = self.require_ffmpeg()?;
@@ -1037,10 +1026,9 @@ impl MediaServer {
         &self,
         Parameters(VideoFetchRequest { url }): Parameters<VideoFetchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "video_fetch",
-            Self::ontology_anchor("video_fetch"),
             async {
                 if url.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("url must not be empty"));
@@ -1100,7 +1088,6 @@ impl MediaServer {
                 let block = crate::media_block::media_block_with_omc(
                     "video",
                     &local_path,
-                    Self::ontology_anchor("video_fetch"),
                     Some(&crate::media_block::Provenance::for_tool(
                         "video_fetch",
                         serde_json::json!({"url": url}),

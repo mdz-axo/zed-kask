@@ -2,7 +2,7 @@
 use crate::helpers::{map_corpus_io_error, map_memory_store_error};
 use crate::{
     CorpusServer, IndexedPassage, LLMParameters, McpToolError, Parameters, cosine_similarity,
-    execute_tool_semantic, json, render_docproc_template, tool, tool_router,
+    execute_tool, json, render_docproc_template, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -16,10 +16,9 @@ impl CorpusServer {
         &self,
         Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_cache",
-            Self::ontology_anchor("corpus_cache"),
             async {
                 if content.is_empty() {
                     return Err(McpToolError::invalid_argument("content must not be empty"));
@@ -107,7 +106,7 @@ impl CorpusServer {
             passphrase,
         }): Parameters<QueryRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_query", Self::ontology_anchor("corpus_query"), async {
+        execute_tool(self, "corpus_query", async {
             if query.is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "query must not be empty",
@@ -303,10 +302,9 @@ impl CorpusServer {
         &self,
         Parameters(ClearIndexRequest {}): Parameters<ClearIndexRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_clear_index",
-            Self::ontology_anchor("corpus_clear_index"),
             async {
                 let mut index = match self.index.lock() {
                     Ok(i) => i,
@@ -334,7 +332,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<PurgeQaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
+        execute_tool(self, "corpus_purge_qa", async {
             if req.passphrase.is_empty() {
                 return Err(McpToolError::permission_denied(
                     "HKASK_DB_PASSPHRASE not configured — corpus_purge_qa requires the DB passphrase. \

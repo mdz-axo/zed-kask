@@ -2362,13 +2362,16 @@ fn main() {
 
                 // Launch MCP servers via McpRuntime for app-global metered
                 // dispatch (call metering + regulation spans). These instances
-                // serve the skill execution and kask panel.
+                // serve the skill execution, the kask panel, AND the agent's
+                // tool surface.
                 //
-                // Zed's ContextServerStore (per-project) launches separate
-                // instances for the agent tool picker — registered via
-                // sync_kask_mcp_servers. The two systems serve different
-                // consumers with different governance requirements; the
-                // parallel instances are by design, not a bug.
+                // zed-kask (2026-08-29): the per-project ContextServerStore no
+                // longer launches kask servers — the runtime is the single
+                // spawn authority (invariant I1). The prior dual-instance
+                // design (store instances for the agent + runtime instances
+                // for the panel) shipped keyless per-project duplicates and
+                // crash-looping churn; the agent's tools now route through
+                // `agent::set_kask_tool_source`.
                 if !servers_to_start_clone.is_empty() {
                     // Build env + record baseline on the foreground
                     // (`kask_server_env` needs `AsyncApp`, not `Send`). The
@@ -2947,7 +2950,6 @@ fn main() {
 // in the agent tool picker and available to zed's agent thread. The servers
 // are launched as stdio child processes by zed's ContextServerStore.
 
-// zed-kask: D3/D7 — F22: resolve_mcp_binary fn definition.
 /// Resolve an MCP server binary to an absolute path.
 ///
 /// GUI-launched apps (Finder/Spotlight/Dock/.desktop) do not inherit the
@@ -2966,92 +2968,6 @@ fn main() {
 ///
 /// This respects the `.rules` trap "Advertised invariants need enforcement
 /// points" — the `HKASK_MCP_*_BIN` mechanism is now real, not fiction.
-fn resolve_mcp_binary(server_id: &str, binary: &str) -> String {
-    let env_var = format!(
-        "HKASK_MCP_{}_BIN",
-        server_id.to_uppercase().replace('-', "_")
-    );
-    if let Ok(path) = std::env::var(&env_var)
-        && !path.is_empty()
-    {
-        return path;
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let candidate = dir.join(binary);
-        if candidate.is_file() {
-            return candidate.to_string_lossy().into_owned();
-        }
-    }
-    binary.to_string()
-}
-
-/// A ContextServerDescriptor for a built-in kask MCP server.
-///
-/// Returns the binary path (`hkask-mcp-{id}`) and env vars (kask settings +
-/// credentials + inference socket) when `command()` is called. The env is
-/// resolved at call time so credentials are fresh.
-///
-/// Credentials are filtered per-server via `filter_credentials_for_server` —
-/// only env vars in the server's `BuiltinMcpServer::credentials` allowlist are
-/// injected. This limits the blast radius of a compromised MCP server.
-struct KaskMcpDescriptor {
-    id: &'static str,
-    binary: &'static str,
-}
-
-impl project::context_server_store::registry::ContextServerDescriptor for KaskMcpDescriptor {
-    fn command(
-        &self,
-        _worktree_store: gpui::Entity<project::worktree_store::WorktreeStore>,
-        cx: &gpui::AsyncApp,
-    ) -> gpui::Task<anyhow::Result<context_server::ContextServerCommand>> {
-        let binary = self.binary.to_string();
-        let server_id = self.id.to_string();
-        cx.spawn(async move |cx| {
-            // zed-kask: D3/D9 — F23: kask_server_env (env var resolution for MCP servers).
-            // Single canonical path: `build_mcp_server_env` filters config and
-            // credentials per-server in the correct order. The previous inline
-            // composition leaked the full unfiltered `mcp_env()` map (the
-            // `extend` only overwrote allowed keys, never removed disallowed
-            // ones), so servers received the curator's email config.
-            let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
-            let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-            let env_map = kask_bridge::build_mcp_server_env(
-                &server_id,
-                &settings,
-                credentials_provider.as_ref(),
-                kask_bridge::get_inference_socket_path().as_deref(),
-                kask_bridge::get_inference_timeout_secs(),
-                cx,
-            )
-            .await;
-            // `build_mcp_server_env` returns `ServerEnv` (the canonical-env
-            // invariant); `ContextServerCommand` expects zed's
-            // `collections::HashMap` (FxBuildHasher). `into_inner` is the
-            // documented escape hatch for non-kask types — this boundary is
-            // legitimate: the env was still composed by the canonical path.
-            let env_map: collections::HashMap<String, String> =
-                env_map.into_inner().into_iter().collect();
-
-            Ok(context_server::ContextServerCommand {
-                path: resolve_mcp_binary(&server_id, &binary).into(),
-                args: vec![],
-                env: Some(env_map),
-                timeout: None,
-            })
-        })
-    }
-
-    fn configuration(
-        &self,
-        _worktree_store: gpui::Entity<project::worktree_store::WorktreeStore>,
-        _cx: &gpui::AsyncApp,
-    ) -> gpui::Task<anyhow::Result<Option<extension::ContextServerConfiguration>>> {
-        gpui::Task::ready(Ok(None))
-    }
-}
 
 /// zed-kask: D24 — wire the kask edit-prediction port.
 ///
@@ -3189,10 +3105,10 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 ///
 /// Extracted so the deferred launch loop and the settings-change restart
 /// observer construct env identically — a divergence would restart servers
-/// with different env than the launch, or miss that the env changed. Both
-/// this and `KaskMcpDescriptor::command` now go through `build_mcp_server_env`,
-/// so the per-project `ContextServerStore` path and the governed `McpRuntime`
-/// path can no longer drift apart.
+/// with different env than the launch, or miss that the env changed. The
+/// per-project `ContextServerStore` path no longer composes env at all
+/// (single spawn authority, 2026-08-29) — the governed `McpRuntime` is the
+/// only spawn path and the only env consumer.
 /// The agent's kask tool source: the governed `McpRuntime` behind a
 /// synchronous cache. `tools()` is sync (the agent registry reads it on the
 /// foreground); a background tokio task refreshes the cache from the
@@ -4731,32 +4647,6 @@ mod tests {
         });
     }
 
-    /// `resolve_mcp_binary` honors the `HKASK_MCP_{ID}_BIN` env var — the
-    /// advertised invariant that was previously fiction (error messages and
-    /// docs referenced it, but no resolution existed). This test pins the
-    /// env-var path so a future refactor cannot silently drop it.
-    ///
-    /// Respects the `.rules` trap "Advertised invariants need enforcement
-    /// points."
-    ///
-    /// When no env var is set and the binary is not found next to the running
-    /// exe, `resolve_mcp_binary` falls back to the bare name. This pins the
-    /// last-resort fallback so GUI launches without the binary installed
-    /// produce a clear "binary not found" error rather than a silent wrong path.
-    #[test]
-    fn resolve_mcp_binary_falls_back_to_bare_name() {
-        // SAFETY: this test runs single-threaded; no other thread reads or writes
-        // `HKASK_MCP_NONEXISTENT_BIN` while this block executes.
-        unsafe {
-            std::env::remove_var("HKASK_MCP_NONEXISTENT_BIN");
-        }
-        let resolved = resolve_mcp_binary("nonexistent", "hkask-mcp-nonexistent");
-        assert_eq!(
-            resolved, "hkask-mcp-nonexistent",
-            "bare binary name is the last-resort fallback when no env var and no sibling binary exists"
-        );
-    }
-
     /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
     ///
     /// The kask wirings (F2–F25, see `kask/docs/upstream-rebase-process.md` §4)
@@ -4775,8 +4665,10 @@ mod tests {
     /// covered by the F2–F25 compile-time reachability of the `fs` value.
     #[test]
     fn kask_wiring_symbols_exist() {
-        // F22: resolve_mcp_binary — must be callable with the documented signature.
-        let _ = resolve_mcp_binary("test", "test-binary");
+        // F22: binary resolution now lives in the runtime's own
+        // `resolve_mcp_binary` (spawn time) — the per-project descriptor path
+        // that used main.rs's copy was deleted with the single-authority
+        // migration (2026-08-29). Pinned by the runtime's tests.
 
         // F23: kask_server_env — must be accessible. Referencing the fn
         // name forces the compiler to resolve it; renaming or deleting it

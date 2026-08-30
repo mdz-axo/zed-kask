@@ -22,7 +22,9 @@ pub(crate) struct SensitivityResult {
     pub intrinsic_low: f64,
     pub intrinsic_high: f64,
     pub delta_pct: f64,
-    pub fibo_concept: &'static str,
+    /// Internal metric identifier for the driver (hKask canonical metric
+    /// name — not an ontology URI).
+    pub metric: &'static str,
 }
 
 /// Run sensitivity analysis on all key DCF drivers.
@@ -88,7 +90,7 @@ pub(crate) fn sensitivity_analysis(
     ];
 
     let mut results = Vec::new();
-    for (key, label, getter, setter, fibo) in &drivers {
+    for (key, label, getter, setter, metric) in &drivers {
         let base_val = getter(base_assumptions);
         let low_val = base_val * (1.0 - range_pct);
         let high_val = base_val * (1.0 + range_pct);
@@ -116,7 +118,7 @@ pub(crate) fn sensitivity_analysis(
             intrinsic_low,
             intrinsic_high,
             delta_pct,
-            fibo_concept: fibo,
+            metric: fibo,
         });
     }
 

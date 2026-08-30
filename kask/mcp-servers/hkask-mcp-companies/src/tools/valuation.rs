@@ -660,10 +660,6 @@ impl CompaniesServer {
                     "prob_undervalued": result.prob_undervalued,
                     "histogram": histogram,
                 },
-                "fibo": {
-                    "monte_carlo": fibo::MONTE_CARLO_DCF,
-                    "probability_undervalued": fibo::PROBABILITY_OF_UNDERVALUATION
-                },
                 "framework": "Monte Carlo DCF. Runs N simulations with each assumption sampled uniformly within +/- configured ranges. Produces intrinsic value distribution (percentiles), probability of undervaluation, and histogram. Quantifies valuation uncertainty from assumption ranges."
             });
 

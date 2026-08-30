@@ -26,7 +26,7 @@ pub(crate) use kanban::{
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{
-    McpToolError, ServerContext, execute_tool_semantic, resolve_db_passphrase,
+    McpToolError, ServerContext, execute_tool, resolve_db_passphrase,
 };
 use hkask_mcp_swarm::{
     LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
@@ -254,10 +254,9 @@ impl KanbanServer {
             idempotency_key,
         }): Parameters<BoardCreateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_board_create",
-            kanban_type_to_pko("kanban_board_create"),
             with_idempotency(
                 &self.idempotency,
                 "kanban_board_create",
@@ -317,10 +316,9 @@ impl KanbanServer {
         &self,
         Parameters(BoardListRequest {}): Parameters<BoardListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_board_list",
-            kanban_type_to_pko("kanban_board_list"),
             async {
                 match self.service.board_list(&self.webid) {
                     Ok(boards) => Ok(serde_json::to_value(BoardListResponse {
@@ -367,10 +365,9 @@ impl KanbanServer {
         &self,
         Parameters(BoardDeleteRequest { board_id }): Parameters<BoardDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_board_delete",
-            kanban_type_to_pko("kanban_board_delete"),
             async {
                 let bid = parse_board_id(&board_id)?;
                 // Verify ownership before delete — only the board owner can
@@ -416,10 +413,9 @@ impl KanbanServer {
             idempotency_key,
         }): Parameters<GoalCreateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_goal_create",
-            kanban_type_to_pko("kanban_goal_create"),
             with_idempotency(
                 &self.goal_idempotency,
                 "kanban_goal_create",
@@ -471,10 +467,9 @@ impl KanbanServer {
             reasoning,
         }): Parameters<GoalJudgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_goal_judge",
-            kanban_type_to_pko("kanban_goal_judge"),
             async {
                 let gid = parse_goal_id(&goal_id)?;
                 let verdict_value = parse_goal_verdict(&verdict)?;
@@ -517,10 +512,9 @@ impl KanbanServer {
         &self,
         Parameters(GoalScoreRequest { goal_id, achieved }): Parameters<GoalScoreRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_goal_score",
-            kanban_type_to_pko("kanban_goal_score"),
             async {
                 let gid = parse_goal_id(&goal_id)?;
                 match self.service.goal_score(gid, achieved, self.webid) {
@@ -565,10 +559,9 @@ impl KanbanServer {
         &self,
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_goal_list",
-            kanban_type_to_pko("kanban_goal_list"),
             async {
                 match self.service.goal_list(&self.webid) {
                     Ok(goals) => Ok(serde_json::to_value(GoalListResponse {
@@ -611,10 +604,9 @@ impl KanbanServer {
             rjoule_budget,
         }): Parameters<TaskCreateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_create",
-            kanban_type_to_pko("kanban_task_create"),
             with_idempotency(
                 &self.idempotency,
                 "kanban_task_create",
@@ -665,10 +657,9 @@ impl KanbanServer {
             labels,
         }): Parameters<TaskUpdateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_update",
-            kanban_type_to_pko("kanban_task_update"),
             async {
                 let tid = parse_task_id(&task_id)?;
 
@@ -719,10 +710,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskListRequest { board_id, status }): Parameters<TaskListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_list",
-            kanban_type_to_pko("kanban_task_list"),
             async {
                 let bid = parse_board_id(&board_id)?;
                 let filter = match status {
@@ -777,10 +767,9 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         use pko::kanban_type_to_pko;
 
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_move",
-            kanban_type_to_pko("kanban_task_move"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 let previous_status = match self.service.task_get(tid) {
@@ -829,10 +818,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskAssignRequest { task_id }): Parameters<TaskAssignRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_assign",
-            kanban_type_to_pko("kanban_task_assign"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_claim(tid, self.webid) {
@@ -856,10 +844,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_delete",
-            kanban_type_to_pko("kanban_task_delete"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 self.service.task_delete(tid).map_err(map_kanban_error)?;
@@ -880,10 +867,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskUnassignRequest { task_id }): Parameters<TaskUnassignRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_unassign",
-            kanban_type_to_pko("kanban_task_unassign"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_unassign(tid, self.webid) {
@@ -906,10 +892,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_verify",
-            kanban_type_to_pko("kanban_task_verify"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 if evidence.trim().is_empty() {
@@ -936,10 +921,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskAddRjoulesRequest { task_id, amount }): Parameters<TaskAddRjoulesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_add_rjoules",
-            kanban_type_to_pko("kanban_task_add_rjoules"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 if amount == 0 {
@@ -967,10 +951,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskCommentRequest { task_id, body }): Parameters<TaskCommentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_comment",
-            kanban_type_to_pko("kanban_task_comment"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 if body.trim().is_empty() {
@@ -1005,10 +988,9 @@ impl KanbanServer {
             since_index,
         }): Parameters<TaskCommentsSinceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_comments_since",
-            kanban_type_to_pko("kanban_task_comments_since"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_comments_since(tid, since_index) {
@@ -1046,10 +1028,9 @@ impl KanbanServer {
             TaskAddDeliverableRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_add_deliverable",
-            kanban_type_to_pko("kanban_task_add_deliverable"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 if path.trim().is_empty() {
@@ -1080,10 +1061,9 @@ impl KanbanServer {
             rjoule_budget,
         }): Parameters<TaskReopenRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_reopen",
-            kanban_type_to_pko("kanban_task_reopen"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 self.service
@@ -1120,10 +1100,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskKataCoachingRequest { task_id }): Parameters<TaskKataCoachingRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_kata_coaching",
-            kanban_type_to_pko("kanban_task_kata_coaching"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_coaching_prompt(tid) {
@@ -1146,10 +1125,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskKataImprovementRequest { task_id }): Parameters<TaskKataImprovementRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_kata_improvement",
-            kanban_type_to_pko("kanban_task_kata_improvement"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_improvement_prompt(tid) {
@@ -1175,10 +1153,9 @@ impl KanbanServer {
             sub_problem,
         }): Parameters<TaskKataPracticeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_kata_practice",
-            kanban_type_to_pko("kanban_task_kata_practice"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 match self.service.task_practice_prompt(tid, &sub_problem) {
@@ -1219,10 +1196,9 @@ impl KanbanServer {
             swarm_id,
         }): Parameters<TaskSpawnRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_spawn",
-            kanban_type_to_pko("kanban_task_spawn"),
             with_idempotency(
                 &self.idempotency,
                 "kanban_task_spawn",
@@ -1544,10 +1520,9 @@ impl KanbanServer {
         &self,
         Parameters(TaskDelegateResultRequest { task_id }): Parameters<TaskDelegateResultRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_task_delegate_result",
-            kanban_type_to_pko("kanban_task_delegate_result"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 let task = self
@@ -1593,7 +1568,7 @@ impl KanbanServer {
             proposals,
         }): Parameters<ContractProposeExpect>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "contract_propose_expect", kanban_type_to_pko("contract_propose_expect"), async {
+        execute_tool(self, "contract_propose_expect", async {
             let bid = parse_board_id(&board_id)?;
 
             let proposals: Vec<hkask_types::ExpectProposal> =
@@ -1657,10 +1632,9 @@ impl KanbanServer {
         &self,
         Parameters(BoardExportRequest { board_id }): Parameters<BoardExportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_board_export",
-            kanban_type_to_pko("kanban_board_export"),
             async {
                 let bid = parse_board_id(&board_id)?;
                 let board = self
@@ -1715,10 +1689,9 @@ impl KanbanServer {
             idempotency_key,
         }): Parameters<BoardImportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "kanban_board_import",
-            kanban_type_to_pko("kanban_board_import"),
             with_idempotency(
                 &self.idempotency,
                 "kanban_board_import",

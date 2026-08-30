@@ -18,10 +18,9 @@ impl MediaServer {
         &self,
         Parameters(WorkflowSaveRequest { graph_json }): Parameters<WorkflowSaveRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "workflow_save",
-            Self::ontology_anchor("workflow_save"),
             async {
                 if graph_json.trim().is_empty() {
                     return Err(McpToolError::invalid_argument(
@@ -42,10 +41,9 @@ impl MediaServer {
     /// List all saved workflows, newest first.
     #[tool(description = "List all saved media generation workflows, newest first.")]
     pub async fn workflow_list(&self) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "workflow_list",
-            Self::ontology_anchor("workflow_list"),
             async {
                 let workflows = self
                     .gallery_store
@@ -66,10 +64,9 @@ impl MediaServer {
         &self,
         Parameters(WorkflowLoadRequest { workflow_id }): Parameters<WorkflowLoadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "workflow_load",
-            Self::ontology_anchor("workflow_load"),
             async {
                 let record = self
                     .gallery_store
@@ -91,10 +88,9 @@ impl MediaServer {
         &self,
         Parameters(WorkflowDeleteRequest { workflow_id }): Parameters<WorkflowDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "workflow_delete",
-            Self::ontology_anchor("workflow_delete"),
             async {
                 self.gallery_store
                     .delete_workflow(&workflow_id)

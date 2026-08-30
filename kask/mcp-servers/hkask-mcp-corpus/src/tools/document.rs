@@ -18,7 +18,7 @@ use crate::services::convert::{
 };
 use crate::{
     CorpusServer, McpToolError, Parameters, chunk_structure, chunk_word_bounds, convert,
-    execute_tool_semantic, json, sanitize_links, serialize_passages, tokens_to_words, tool,
+    execute_tool, json, sanitize_links, serialize_passages, tokens_to_words, tool,
     tool_router,
 };
 use schemars::JsonSchema;
@@ -44,10 +44,9 @@ impl CorpusServer {
                 .await;
         }
 
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_convert",
-            Self::ontology_anchor("corpus_convert"),
             async {
                 let result = ConvertService::from_corpus(self)
                     .convert(path, force_ocr, target_pages)
@@ -80,10 +79,9 @@ impl CorpusServer {
         &self,
         Parameters(OcrRequest { path, model }): Parameters<OcrRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_ocr",
-            Self::ontology_anchor("corpus_ocr"),
             async {
                 let resolved = crate::path_safety::contain_for_read(&path)?;
 
@@ -137,10 +135,9 @@ impl CorpusServer {
         &self,
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_is_complex",
-            Self::ontology_anchor("corpus_is_complex"),
             async {
                 let resolved = crate::path_safety::contain_for_read(&path)?;
                 let (format, _, _) = convert::detect_format(&path);
@@ -220,10 +217,9 @@ impl CorpusServer {
         }): Parameters<ChunkRequest>,
     ) -> Result<String, McpToolError> {
         if let Some(input_dir) = input_dir {
-            return execute_tool_semantic(
+            return execute_tool(
                 self,
                 "corpus_chunk",
-                Self::ontology_anchor("corpus_chunk"),
                 async {
                     ConvertService::from_corpus(self)
                         .chunk_directory(
@@ -241,10 +237,9 @@ impl CorpusServer {
             .await;
         }
 
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_chunk",
-            Self::ontology_anchor("corpus_chunk"),
             async {
                 // Exactly one of text or path must be provided
                 let has_text = text.as_ref().is_some_and(|t| !t.is_empty());
@@ -507,7 +502,7 @@ impl CorpusServer {
         output: Option<&str>,
         force_ocr: bool,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_convert", Self::ontology_anchor("corpus_convert"), async {
+        execute_tool(self, "corpus_convert", async {
             hkask_mcp_server::validate_path("path", path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
             let path = crate::path_safety::contain_for_read(path)?;

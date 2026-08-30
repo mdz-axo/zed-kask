@@ -169,7 +169,7 @@ fn resolve_kalshi_series(
         || series.starts_with("KXZERORATE")
     {
         return Some(Some((
-            fibo::POLICY_INTEREST_RATE,
+            fibo::REFERENCE_INTEREST_RATE,
             PolicyInterestRate,
             vec![
                 "interest rate".into(),
@@ -181,7 +181,7 @@ fn resolve_kalshi_series(
     // Treasury yields across the curve.
     if series.starts_with("KXUST") || series.starts_with("KXUSTYLD") {
         return Some(Some((
-            fibo::TREASURY_YIELD,
+            fibo::INTEREST_RATE_BENCHMARK,
             PolicyInterestRate,
             vec![
                 "treasury yield".into(),
@@ -219,7 +219,7 @@ fn resolve_kalshi_series(
         || series.starts_with("KXWTIVSBRENT")
     {
         return Some(Some((
-            fibo::COMMODITY_PRICE_INDEX,
+            fibo::ECONOMIC_INDICATOR,
             CrudeOilPrice,
             vec![
                 "crude oil".into(),
@@ -235,7 +235,7 @@ fn resolve_kalshi_series(
         || series.starts_with("KXAAAGAS")
     {
         return Some(Some((
-            fibo::COMMODITY_PRICE_INDEX,
+            fibo::ECONOMIC_INDICATOR,
             NaturalGasPrice,
             vec!["natural gas".into(), "henry hub".into(), "commodity".into()],
         )));
@@ -243,7 +243,7 @@ fn resolve_kalshi_series(
     // Bitcoin.
     if series.starts_with("KXBTC") {
         return Some(Some((
-            fibo::MARKET_INDEX,
+            fibo::REFERENCE_INDEX,
             BitcoinPrice,
             vec!["bitcoin".into(), "btc".into(), "cryptocurrency".into()],
         )));
@@ -251,7 +251,7 @@ fn resolve_kalshi_series(
     // Ethereum.
     if series.starts_with("KXETH") {
         return Some(Some((
-            fibo::MARKET_INDEX,
+            fibo::REFERENCE_INDEX,
             EthereumPrice,
             vec!["ethereum".into(), "eth".into(), "cryptocurrency".into()],
         )));
@@ -343,7 +343,7 @@ fn resolve_gamma_event(
         || title.contains("bank of canada rate")
     {
         return Some((
-            fibo::POLICY_INTEREST_RATE,
+            fibo::REFERENCE_INTEREST_RATE,
             PolicyInterestRate,
             vec![
                 "interest rate".into(),
@@ -371,7 +371,7 @@ fn resolve_gamma_event(
         || title.contains("oil price")
     {
         return Some((
-            fibo::COMMODITY_PRICE_INDEX,
+            fibo::ECONOMIC_INDICATOR,
             CrudeOilPrice,
             vec!["crude oil".into(), "wti".into(), "commodity".into()],
         ));
@@ -379,7 +379,7 @@ fn resolve_gamma_event(
     // Natural gas.
     if title.contains("natural gas") || title.contains("henry hub") {
         return Some((
-            fibo::COMMODITY_PRICE_INDEX,
+            fibo::ECONOMIC_INDICATOR,
             NaturalGasPrice,
             vec!["natural gas".into(), "commodity".into()],
         ));
@@ -387,7 +387,7 @@ fn resolve_gamma_event(
     // Bitcoin.
     if title.contains("bitcoin") || title.contains(" btc") || title.starts_with("btc") {
         return Some((
-            fibo::MARKET_INDEX,
+            fibo::REFERENCE_INDEX,
             BitcoinPrice,
             vec!["bitcoin".into(), "btc".into(), "cryptocurrency".into()],
         ));
@@ -395,7 +395,7 @@ fn resolve_gamma_event(
     // Ethereum.
     if title.contains("ethereum") || title.contains(" eth") {
         return Some((
-            fibo::MARKET_INDEX,
+            fibo::REFERENCE_INDEX,
             EthereumPrice,
             vec!["ethereum".into(), "eth".into(), "cryptocurrency".into()],
         ));
@@ -412,14 +412,14 @@ fn resolve_gamma_event(
     if tags.iter().any(|t| t.contains("crypto price")) {
         if title.contains("bitcoin") || title.contains("btc") {
             return Some((
-                fibo::MARKET_INDEX,
+                fibo::REFERENCE_INDEX,
                 BitcoinPrice,
                 vec!["bitcoin".into(), "btc".into(), "cryptocurrency".into()],
             ));
         }
         if title.contains("ethereum") || title.contains("eth") {
             return Some((
-                fibo::MARKET_INDEX,
+                fibo::REFERENCE_INDEX,
                 EthereumPrice,
                 vec!["ethereum".into(), "eth".into(), "cryptocurrency".into()],
             ));

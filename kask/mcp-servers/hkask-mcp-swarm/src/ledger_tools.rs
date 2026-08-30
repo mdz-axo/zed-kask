@@ -14,7 +14,7 @@
 use crate::SwarmServer;
 use crate::error::map_local_swarm_error;
 use crate::request_types::*;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = ledger_router, vis = "pub")]
@@ -30,7 +30,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FundLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fund_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -72,7 +72,7 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<BalanceLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_balance_local",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -110,7 +110,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<LocalHistoryRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_local_history",
             Some(hkask_bridge_ontology::pko::PROCEDURE),

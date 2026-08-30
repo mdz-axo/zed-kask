@@ -8,19 +8,20 @@
 //!
 //! FIBO concept URI constants anchor displayed metrics to the FIBO ontology;
 //! they match the `fibo` map entries the MCP server includes in its responses.
+//! Only verified FIBO terms are re-exported — metrics without a real FIBO
+//! concept carry no tag rather than an invented URI.
 
 use std::collections::HashMap;
 
 use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 
-// Re-export the FIBO constants from the shared `hkask_bridge_ontology` crate
-// — the single source of truth — so existing call sites (`crate::block::FIBO_*`)
-// keep resolving. These are NOT duplicated here.
+// Re-export the verified FIBO constants from the shared
+// `hkask_bridge_ontology` crate — the single source of truth — so existing
+// call sites (`crate::block::FIBO_*`) keep resolving. These are NOT
+// duplicated here.
 pub use hkask_bridge_ontology::fibo::{
     INTERNAL_RATE_OF_RETURN as FIBO_INTERNAL_RATE_OF_RETURN, PORTFOLIO as FIBO_PORTFOLIO,
-    TIME_WEIGHTED_RETURN as FIBO_TIME_WEIGHTED_RETURN,
-    TRANSACTION_LEDGER as FIBO_TRANSACTION_LEDGER,
 };
 
 /// The discriminator-tagged body of a ```` ```portfolio ```` block.
@@ -141,8 +142,11 @@ pub struct HoldingRow {
 pub struct CharacteristicField {
     #[serde(default)]
     pub value: Option<f64>,
-    #[serde(default)]
-    pub fibo: Option<String>,
+    /// Internal metric identifier (hKask canonical metric name — not an
+    /// ontology URI). `alias = "fibo"` keeps blocks emitted before the
+    /// 2026-08-29 FIBO remediation parsing.
+    #[serde(default, alias = "fibo")]
+    pub metric: Option<String>,
     #[serde(default)]
     pub method: Option<String>,
     #[serde(default)]

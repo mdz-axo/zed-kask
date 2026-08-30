@@ -3,7 +3,7 @@ use crate::dataset::DatasetPipeline;
 use crate::tools::error_mapping::map_dataset_error;
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
 use hkask_mcp_server::server::{
-    McpToolError, execute_tool_semantic, map_io_error, map_memory_store_error,
+    McpToolError, execute_tool, map_io_error, map_memory_store_error,
 };
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, Visibility};
@@ -25,7 +25,7 @@ impl TrainingServer {
             dataset,
         }): Parameters<IngestQaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_ingest_qa", Self::ontology_anchor("training_ingest_qa"), async {
+        execute_tool(self, "training_ingest_qa", async {
             let Some(store) = &self.store else {
                 return Err(McpToolError::permission_denied(
                     "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE",
@@ -86,7 +86,7 @@ impl TrainingServer {
             passphrase,
         }): Parameters<AssembleDatasetRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_assemble_dataset", Self::ontology_anchor("training_assemble_dataset"), async {
+        execute_tool(self, "training_assemble_dataset", async {
             // When db_path is provided, open that DB instead of using the
             // training server's default store. This bridges the corpus→training
             // gap: corpus_ingest_qa stores to the corpus DB (via its db_path
@@ -190,7 +190,7 @@ impl TrainingServer {
             cache_dir,
         }): Parameters<TrainIngestDatasetRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_ingest_dataset", Self::ontology_anchor("training_ingest_dataset"), async {
+        execute_tool(self, "training_ingest_dataset", async {
             // Contain the caller-supplied dataset read path (CWE-200) and the
             // optional cache_dir write target (CWE-73) before any pipeline op.
             let file_path = hkask_mcp_server::contain_for_read(&dataset_path)?;

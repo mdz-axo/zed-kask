@@ -7,7 +7,7 @@
 //! `serde_json::Value` the tool handler enriches with FIBO ontology.
 //!
 //! The tool handler retains only: fetch, validate, persist, and the
-//! `execute_tool_semantic` span. The assembly lives here.
+//! `execute_tool` span. The assembly lives here.
 
 use crate::data_quality::ModelInputQuality;
 use crate::financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};

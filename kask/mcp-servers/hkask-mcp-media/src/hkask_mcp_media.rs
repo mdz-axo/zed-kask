@@ -30,7 +30,7 @@ pub use error::{
 
 use gallery::GalleryState;
 use gallery::vision::{self};
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, validate_tool_url_with_dns};
+use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url_with_dns};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{GalleryMode, GalleryStore, GalleryStoreError};
 use hkask_types::InferencePort;
@@ -350,7 +350,7 @@ impl MediaServer {
     }
 
     /// Map a tool name to its OMC concept URI. The concept tags the
-    /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
+    /// `reg.tool.*` span (via `execute_tool`) for type-aware feedback
     /// routing — complementary to the output-JSON tag baked by
     /// `media_block::enrich_with_omc_and_provenance` (which the media widget
     /// consumes for UI dispatch). Delegates to `omc::tool_to_omc` — the single

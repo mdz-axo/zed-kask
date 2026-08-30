@@ -17,7 +17,7 @@ use std::collections::HashSet;
 
 use hkask_mcp_portfolio::map_portfolio_error;
 use hkask_mcp_server::server::{
-    CredentialRequirement, McpToolError, execute_tool_semantic, map_join_error,
+    CredentialRequirement, McpToolError, execute_tool, map_join_error,
 };
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -99,7 +99,7 @@ impl PredictionMarketsServer {
     }
 
     /// Map a tool name to its ontology concept URI. The concept is used both
-    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and
+    /// as the `reg.tool.*` span ontology tag (via `execute_tool`) and
     /// as the `"ontology"` field in some tool output JSON.
     ///
     /// Economic-data tools (FRED, World Bank, DBnomics) anchor on SDMX — the
@@ -173,10 +173,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(_req): Parameters<StatusRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "prediction_markets_status",
-            Self::ontology_anchor("prediction_markets_status"),
             async {
                 self.record_call("prediction_markets_status");
                 Ok(serde_json::json!({
@@ -204,10 +203,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketLookupRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_lookup",
-            Self::ontology_anchor("market_lookup"),
             async {
                 self.record_call("market_lookup");
                 let mut records = self.gather_candidates().await?;
@@ -234,10 +232,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketMatchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_match",
-            Self::ontology_anchor("market_match"),
             async {
                 self.record_call("market_match");
                 let records = self.gather_candidates().await?;
@@ -259,10 +256,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(_req): Parameters<MarketOntologyMapRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_ontology_map",
-            Self::ontology_anchor("market_ontology_map"),
             async {
                 self.record_call("market_ontology_map");
                 Ok(ontology::mapping_document())
@@ -279,10 +275,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCalibrationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_calibration",
-            Self::ontology_anchor("market_calibration"),
             async {
                 self.record_call("market_calibration");
                 let store = self
@@ -306,10 +301,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketRecordResolutionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_record_resolution",
-            Self::ontology_anchor("market_record_resolution"),
             async {
                 self.record_call("market_record_resolution");
                 if !(0.0..=1.0).contains(&req.probability) {
@@ -357,10 +351,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketSubscribeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_subscribe_resolutions",
-            Self::ontology_anchor("market_subscribe_resolutions"),
             async {
                 self.record_call("market_subscribe_resolutions");
                 let max = req.max_resolutions.unwrap_or(1).max(1);
@@ -419,10 +412,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketLadderRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_ladder",
-            Self::ontology_anchor("market_ladder"),
             async {
                 self.record_call("market_ladder");
                 let now = chrono::Utc::now();
@@ -522,10 +514,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCmpRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_cmp",
-            Self::ontology_anchor("market_cmp"),
             async {
                 self.record_call("market_cmp");
                 if !self.base_events.iter().any(|(_, series)| series == &req.series) {
@@ -576,10 +567,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketResidualRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_residual",
-            Self::ontology_anchor("market_residual"),
             async {
                 self.record_call("market_residual");
                 let window = i64::from(req.window_days.unwrap_or(90));
@@ -650,10 +640,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCheckResolutionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_check_resolutions",
-            Self::ontology_anchor("market_check_resolutions"),
             async {
                 self.record_call("market_check_resolutions");
                 let limit = req.limit.unwrap_or(100).min(500);
@@ -771,10 +760,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketHistoryRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_history",
-            Self::ontology_anchor("market_history"),
             async {
                 self.record_call("market_history");
                 let source = req.source.as_deref().unwrap_or("kalshi");
@@ -833,10 +821,9 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCmpIndexRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_cmp_index",
-            Self::ontology_anchor("market_cmp_index"),
             async {
                 self.record_call("market_cmp_index");
                 if !self.base_events.iter().any(|(_, series)| series == &req.series) {
@@ -906,10 +893,9 @@ impl PredictionMarketsServer {
             activity_proxy,
         }): Parameters<MarketVolatilityRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_volatility",
-            Self::ontology_anchor("market_volatility"),
             async {
                 self.record_call("market_volatility");
                 let config = volatility::DrasConfig {
@@ -973,10 +959,9 @@ impl PredictionMarketsServer {
             MarketCmpIndexStoreRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_cmp_index_store",
-            Self::ontology_anchor("market_cmp_index_store"),
             async {
                 self.record_call("market_cmp_index_store");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {
@@ -1331,10 +1316,9 @@ impl PredictionMarketsServer {
             date,
         }): Parameters<MarketCmpPortfolioStoreRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_cmp_portfolio_store",
-            Self::ontology_anchor("market_cmp_portfolio_store"),
             async {
                 self.record_call("market_cmp_portfolio_store");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {
@@ -1387,10 +1371,9 @@ impl PredictionMarketsServer {
             MarketCmpContextSuggestRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "market_cmp_context_suggest",
-            Self::ontology_anchor("market_cmp_context_suggest"),
             async {
                 self.record_call("market_cmp_context_suggest");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {

@@ -306,10 +306,5 @@ fn build_gap_analysis(
             "guidance_claims_found": management_growth.len(),
             "market_implied_available": market_implied.is_finite(),
         },
-        "fibo": {
-            "market_implied_growth": fibo::REVENUE_GROWTH_RATE,
-            "discount_rate": fibo::DISCOUNT_RATE,
-            "intrinsic_value_per_share": fibo::INTRINSIC_VALUE_PER_SHARE,
-        },
     })
 }

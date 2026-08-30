@@ -2,7 +2,7 @@ use crate::TrainingServer;
 use crate::lora_validation;
 use crate::types::TrainValidateConfigRequest;
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_server::server::execute_tool_semantic;
+use hkask_mcp_server::server::execute_tool;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
@@ -20,7 +20,7 @@ impl TrainingServer {
             base_model,
         }): Parameters<TrainValidateConfigRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_validate_config", Self::ontology_anchor("training_validate_config"), async {
+        execute_tool(self, "training_validate_config", async {
             let mut findings = lora_validation::validate_training_params(&params);
 
             let trainer_preference = params

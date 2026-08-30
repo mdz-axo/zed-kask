@@ -110,10 +110,9 @@ impl MediaServer {
         &self,
         Parameters(ModelListRequest { provider }): Parameters<ModelListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "model_list",
-            Self::ontology_anchor("model_list"),
             async {
                 let mut models = build_model_list();
                 if let Some(filter) = provider
@@ -135,10 +134,9 @@ impl MediaServer {
         &self,
         Parameters(ModelInfoRequest { model_id }): Parameters<ModelInfoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "model_info",
-            Self::ontology_anchor("model_info"),
             async {
                 let models = build_model_list();
                 let model = models

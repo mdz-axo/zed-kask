@@ -17,7 +17,7 @@
 //! operator-configurable via `HKASK_SWARM_EVENTS_PATH`.
 
 use crate::TrainingServer;
-use hkask_mcp_server::server::{McpToolError, contain_for_write, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, contain_for_write, execute_tool};
 use hkask_storage::database::sqlite::SqliteDriver;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -49,10 +49,9 @@ impl TrainingServer {
         &self,
         parameters: Parameters<BridgeRolloutsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "training_bridge_rollouts",
-            Self::ontology_anchor("training_bridge_rollouts"),
             async {
                 let req = parameters.0;
                 let mode = req.mode.as_deref().unwrap_or("both");

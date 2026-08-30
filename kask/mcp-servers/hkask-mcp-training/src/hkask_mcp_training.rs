@@ -304,7 +304,7 @@ impl TrainingServer {
     }
 
     /// Map a tool name to its ML-Schema ontology concept URI. The concept
-    /// tags the `reg.tool` span (via `execute_tool_semantic`) for type-aware
+    /// tags the `reg.tool` span (via `execute_tool`) for type-aware
     /// feedback routing. Training is an ML-experiment surface, so ML-Schema
     /// — the W3C Community Group standard for ML experiments — is the
     /// natural anchor: dataset tools anchor on `mls:Data`, run-lifecycle

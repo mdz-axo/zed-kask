@@ -461,7 +461,7 @@ fn default_db_paths_follow_standardized_layout() {
 // Inline (not a `tests/` file) so the tests can reach `pub(crate)` tool
 // methods and field types. They build a `SwarmServer` with throwaway paths and
 // the in-memory consent store, then drive the simplest read-only tools
-// end-to-end through `execute_tool_semantic` to confirm the server wires up
+// end-to-end through `execute_tool` to confirm the server wires up
 // and its tools return the canonical `{"content": …}` success envelope as
 // valid JSON. No ABW API key, no network, no on-disk ledger/events/memory —
 // the lazy stores are never initialized by these read-only tools.

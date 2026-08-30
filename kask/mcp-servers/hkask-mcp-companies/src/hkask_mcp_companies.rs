@@ -290,7 +290,7 @@ impl CompaniesServer {
     }
 
     /// Map a tool name to its ontology concept URI. The concept is used both
-    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
+    /// as the `reg.tool.*` span ontology tag (via `execute_tool`)
     /// and as the `"ontology"` field in the tool output JSON (via
     /// `fibo::enrich_with_ontology`). Delegates to `fibo::tool_to_ontology` —
     /// the single source of truth for the tool → concept mapping.

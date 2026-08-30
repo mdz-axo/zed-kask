@@ -19,7 +19,7 @@ use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters, default_embedding_model,
-    default_owner, execute_tool_semantic, extract_json_from_response, json, read_jsonl, tool,
+    default_owner, execute_tool, extract_json_from_response, json, read_jsonl, tool,
     tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
@@ -51,7 +51,7 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_generate_qa", Self::ontology_anchor("corpus_generate_qa"), async {
+        execute_tool(self, "corpus_generate_qa", async {
             let is_cross_ref = _texts.as_ref().is_some_and(|t| !t.is_empty());
             let single_text = _text.unwrap_or_default();
 
@@ -132,10 +132,9 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_generate_qa_batch",
-            Self::ontology_anchor("corpus_generate_qa_batch"),
             async {
                 crate::services::qa_batch::QaBatchService::new(Arc::clone(&self.inference_router))
                     .generate_qa_batch(crate::services::qa_batch::QaBatchRequest {
@@ -165,10 +164,9 @@ impl CorpusServer {
             concurrency,
         }): Parameters<ExtractAssertionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_extract_assertions",
-            Self::ontology_anchor("corpus_extract_assertions"),
             async {
                 AssertionsService::new(Arc::clone(&self.inference_router))
                     .extract(AssertionsRequest {
@@ -200,10 +198,9 @@ impl CorpusServer {
             batch_size,
         }): Parameters<EmbedRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_embed",
-            Self::ontology_anchor("corpus_embed"),
             async {
                 self.embed_batch_from_jsonl(
                     &chunks_jsonl,

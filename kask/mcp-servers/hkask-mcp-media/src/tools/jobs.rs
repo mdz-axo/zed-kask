@@ -68,10 +68,9 @@ impl MediaServer {
         &self,
         Parameters(JobSubmitRequest { op, params }): Parameters<JobSubmitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "job_submit",
-            Self::ontology_anchor("job_submit"),
             async {
                 if op.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("op must not be empty"));
@@ -199,7 +198,7 @@ impl MediaServer {
         &self,
         Parameters(JobListRequest { status, limit }): Parameters<JobListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "job_list", Self::ontology_anchor("job_list"), async {
+        execute_tool(self, "job_list", async {
             let store = self
                 .job_store
                 .lock()
@@ -228,10 +227,9 @@ impl MediaServer {
         &self,
         Parameters(JobStatusRequest { job_id }): Parameters<JobStatusRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "job_status",
-            Self::ontology_anchor("job_status"),
             async {
                 let store = self
                     .job_store
@@ -258,10 +256,9 @@ impl MediaServer {
         &self,
         Parameters(JobCancelRequest { job_id }): Parameters<JobCancelRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "job_cancel",
-            Self::ontology_anchor("job_cancel"),
             async {
                 let mut store = self
                     .job_store

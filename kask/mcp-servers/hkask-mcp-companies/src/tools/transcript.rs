@@ -10,7 +10,7 @@ use crate::{
     validate_symbol,
 };
 use chrono::Datelike;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = transcript_router, vis = "pub")]
@@ -22,7 +22,7 @@ impl CompaniesServer {
         &self,
         Parameters(request): Parameters<CompanyTranscriptRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "company_transcript", Self::ontology_anchor("company_transcript"), async {
+        execute_tool(self, "company_transcript", async {
             validate_symbol(&request.symbol)?;
 
             match request.mode {

@@ -5,7 +5,7 @@
 //! the hidden internal data dir. Users need to find their reports without
 //! digging through `~/.local/share/zed-kask/`.
 use crate::CompaniesServer;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir};
 use rmcp::{handler::server::wrapper::Parameters, schemars::JsonSchema, tool, tool_router};
 use serde::Deserialize;
@@ -89,10 +89,9 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportSaveRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "report_save",
-            Self::ontology_anchor("report_save"),
             async {
                 let kind_label = validate_kind(&req.kind)?;
                 let name = sanitize_artifact_name(&req.name)?;
@@ -125,10 +124,9 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportLoadRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "report_load",
-            Self::ontology_anchor("report_load"),
             async {
                 let kind_label = validate_kind(&req.kind)?;
                 let name = sanitize_artifact_name(&req.name)?;
@@ -161,10 +159,9 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<ReportListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "report_list",
-            Self::ontology_anchor("report_list"),
             async {
                 let kind_label = validate_kind(&req.kind)?;
                 let dir = artifact_dir(kind_label)?;

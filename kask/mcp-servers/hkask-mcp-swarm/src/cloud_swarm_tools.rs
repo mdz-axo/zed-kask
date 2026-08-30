@@ -16,7 +16,7 @@ use crate::sanitize::{
     sanitize_workspace_payload, unwrap_abw_envelope,
 };
 use crate::spend_gate;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 // Re-export the pure helpers from `cloud` so the `test_utils` module and
@@ -156,7 +156,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAgentsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_list_agents",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -220,7 +220,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_get_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -276,7 +276,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_get_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -334,7 +334,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAppsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_list_apps",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -376,7 +376,7 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<OntologyTemplatesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_ontology_templates",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -403,7 +403,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecuteAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_execute_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -466,7 +466,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<HireCostRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "swarm_hire_cost", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_hire_cost", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -542,7 +542,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RequestConsentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_request_consent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -596,7 +596,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AuthorizeSessionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_authorize_session",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -634,7 +634,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<HireRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_hire",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -701,7 +701,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_delegate",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -772,7 +772,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateAndWaitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_delegate_and_wait",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -890,7 +890,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SwarmRunRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_run_status",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -947,7 +947,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GeneratePromptRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_generate_prompt",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -997,7 +997,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GenerateOntologyRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_generate_ontology",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1042,7 +1042,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1094,7 +1094,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1245,7 +1245,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<XamanRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_xaman",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1329,7 +1329,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1398,7 +1398,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fanout",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1507,7 +1507,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FireRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fire",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1556,7 +1556,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_delete_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1647,7 +1647,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteSwarmRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_delete_swarm",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1707,7 +1707,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SearchKnowledgeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_search_knowledge",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1832,7 +1832,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishChecksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_publish_checks",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1871,7 +1871,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_publish_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1941,7 +1941,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkAgentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fork_agent",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -1994,7 +1994,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_get_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2032,7 +2032,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAppDirectRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_create_app_direct",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2105,7 +2105,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<UpdateAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_update_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2182,7 +2182,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_publish_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2225,7 +2225,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ArchiveAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_archive_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2268,7 +2268,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SpawnAppWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_spawn_app_workspace",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2327,7 +2327,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAppWorkspacesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_list_app_workspaces",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2366,7 +2366,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetAppSchemaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_get_app_schema",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2404,7 +2404,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkWorkspaceToAppRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_fork_workspace_to_app",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2453,7 +2453,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListWorkspaceActionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_list_actions",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2493,7 +2493,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListPendingActionsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_pending_actions",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2534,7 +2534,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<MutateDocumentRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_mutate_document",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2605,7 +2605,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkStateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_fork_state",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2669,7 +2669,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AcceptActionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_accept_action",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2725,7 +2725,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RejectActionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_reject_action",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2779,7 +2779,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AnnotateWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_annotate",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2844,7 +2844,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAnnotationsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_list_annotations",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2889,7 +2889,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListWorkspaceFilesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_list_files",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2928,7 +2928,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ReadWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_read_file",
             Some(hkask_bridge_ontology::pko::PROCEDURE),
@@ -2975,7 +2975,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<WriteWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "swarm_workspace_write_file",
             Some(hkask_bridge_ontology::pko::PROCEDURE),

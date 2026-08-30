@@ -28,8 +28,7 @@ use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use ui::prelude::*;
 
 use crate::block::{
-    AttributionRow, CharacteristicField, FIBO_INTERNAL_RATE_OF_RETURN, FIBO_TIME_WEIGHTED_RETURN,
-    FIBO_TRANSACTION_LEDGER, PortfolioBlockBody,
+    AttributionRow, CharacteristicField, FIBO_INTERNAL_RATE_OF_RETURN, PortfolioBlockBody,
 };
 
 /// Server that hosts the portfolio tools. Fallback dispatch target when a
@@ -135,11 +134,10 @@ impl PortfolioWidget {
         let border_color = cx.theme().colors().border;
 
         let tiles = [
-            (
-                "Total Return",
-                format_pct(returns.total_return),
-                Some(FIBO_TIME_WEIGHTED_RETURN),
-            ),
+            // Total Return has no FIBO concept (verified against the FIBO
+            // master ontology 2026-08-29) — no tag rather than an invented
+            // URI. IRR anchors on the real FIBO term.
+            ("Total Return", format_pct(returns.total_return), None),
             (
                 "IRR",
                 format_pct(returns.irr),
@@ -259,7 +257,7 @@ impl PortfolioWidget {
                     .value
                     .map(|value| format!("{value:.2}"))
                     .unwrap_or_else(|| "—".to_string());
-                let fibo = characteristic.fibo.clone().unwrap_or_default();
+                let metric = characteristic.metric.clone().unwrap_or_default();
                 let holdings = characteristic.holdings.unwrap_or(0);
                 v_flex()
                     .gap_0p5()
@@ -278,8 +276,12 @@ impl PortfolioWidget {
                                     .color(Color::Muted),
                             ),
                     )
-                    .when(!fibo.is_empty(), |this| {
-                        this.child(Label::new(fibo).size(LabelSize::XSmall).color(Color::Muted))
+                    .when(!metric.is_empty(), |this| {
+                        this.child(
+                            Label::new(metric)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
                     })
                     .into_any_element()
             })
@@ -789,7 +791,7 @@ impl Render for PortfolioWidget {
                     .gap_2()
                     .child(Label::new("Portfolio Dashboard").size(LabelSize::Large))
                     .child(
-                        Label::new(FIBO_TRANSACTION_LEDGER)
+                        Label::new("Ledger")
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )

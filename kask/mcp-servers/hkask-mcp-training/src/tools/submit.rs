@@ -7,7 +7,7 @@ use crate::tools::error_mapping::{
     map_training_artifact_error,
 };
 use crate::types::TrainSubmitRequest;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, map_io_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
@@ -38,7 +38,7 @@ impl TrainingServer {
             confirmed,
         }): Parameters<TrainSubmitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "training_submit", Self::ontology_anchor("training_submit"), async {
+        execute_tool(self, "training_submit", async {
             // P2 consent gate — enforce operator authorization before GPU spend.
             // The historical pipeline runner enforced this but was lost when the
             // runner was removed. The manifest's `requires_consent: true` is

@@ -423,23 +423,23 @@ Anchored to PKO (procedure execution) and the Conant-Ashby Good Regulator (the
 actuator must model the swarm it steers). Pairs with `swarm-intelligence` (the
 planner). Emits `reg.skill.swarm-steering.*` spans. Any userpod may invoke it.
 
-## Dual launch paths (by design — do not unify)
+## Single launch path (2026-08-29 migration)
 
-The swarm server — like all kask MCP servers — has two parallel launch paths
-that serve different consumers. **Both launching independent instances is
-correct; removing either breaks its consumers.**[^mcp-spec-swarm-dual]
+The swarm server — like all kask MCP servers — has ONE launch path: the
+governed `McpRuntime` (app-global). It serves every consumer: the skill
+body-injection path, the kask panel, and the agent's tool surface (routed
+via `agent::set_kask_tool_source`, a process-global `KaskToolSource` wired
+in `main.rs`).
 
-| Path                                   | Scope                                                                                  | Serves                                       | Governs                                                           |
-| -------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| **`McpRuntime`** (app-global)          | One copy of each server, app-global                                                    | The skill body-injection path + the kask panel | Per-agent call metering (runaway-loop breaker), `reg.tool.*` / `reg.mcp` spans. **No per-call authorization** — RR-0056 |
-| **`ContextServerStore`** (per-project) | Each project launches its own copies via `ContextServerDescriptorRegistry` descriptors | The agent tool picker                        | Project-scoped, no governance membrane                            |
-
-The `ContextServerDescriptorRegistry` is app-level (global), but the
-`ContextServerStore` that actually spawns processes is per-project. The
-`KaskMcpDescriptor::command()` method resolves env vars (credentials,
-inference socket) at call time. After `INFERENCE_SOCKET_PATH` is set (in a
-deferred task post-login), `sync_kask_mcp_servers` must be called again so the
-registry notifies `ContextServerStore` to restart servers with the updated env.
+The prior dual-path design (per-project `ContextServerStore` instances via
+`KaskMcpDescriptor` for the agent tool picker, plus `McpRuntime` instances
+for the panel) was retired: it shipped keyless per-project duplicates
+whose env came from raw settings entries, and crash-looping churn with no
+stop condition. `KaskMcpDescriptor` and the per-project spawn path are
+deleted; `sync_kask_mcp_servers` now only defensively unregisters stale
+descriptors and removes raw `context_servers` entries for kask IDs (the
+namespace guard). Env for every spawn is composed exclusively by
+`build_mcp_server_env` (the `ServerEnv` invariant).
 
 ## Configuration
 

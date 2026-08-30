@@ -16,7 +16,7 @@ use serde_json::json;
 
 use crate::helpers::map_service_error;
 use crate::inference_svc::InferenceContext;
-use crate::{McpToolError, Parameters, execute_tool_semantic, tool, tool_router};
+use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
 fn embedding_model() -> String {
@@ -134,10 +134,9 @@ impl crate::CorpusServer {
         &self,
         Parameters(params): Parameters<ComposeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_compose",
-            Self::ontology_anchor("corpus_compose"),
             async {
                 let gen_model = generation_model();
                 let config =
@@ -177,10 +176,9 @@ impl crate::CorpusServer {
         &self,
         Parameters(params): Parameters<RewriteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_rewrite",
-            Self::ontology_anchor("corpus_rewrite"),
             async {
                 let dimension_guidance = match params.dimension.to_lowercase().as_str() {
                     "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",

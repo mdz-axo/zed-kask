@@ -17,7 +17,7 @@ use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
 use crate::{
-    Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool_semantic, json,
+    Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool, json,
     owner_webid, tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -46,7 +46,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_dedup_chunks", Self::ontology_anchor("corpus_dedup_chunks"), async {
+        execute_tool(self, "corpus_dedup_chunks", async {
             let input = crate::services::cluster::load_clusters(
                 &req.tagged_jsonl,
                 &req.db_path,
@@ -103,10 +103,9 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_consolidate_chunks",
-            Self::ontology_anchor("corpus_consolidate_chunks"),
             async {
                 ConsolidationService::new(Arc::clone(&self.inference_router))
                     .consolidate(ChunkConsolidationRequest {
@@ -135,10 +134,9 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "corpus_build_prompts",
-            Self::ontology_anchor("corpus_build_prompts"),
             async {
                 PromptBuilderService::new()
                     .build_prompts(ServiceBuildPromptsRequest {
@@ -167,7 +165,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<IngestQaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_ingest_qa", Self::ontology_anchor("corpus_ingest_qa"), async {
+        execute_tool(self, "corpus_ingest_qa", async {
             let content = std::fs::read_to_string(&req.generated_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!("Cannot read generated_jsonl '{}': {e}", req.generated_jsonl))
             })?;
@@ -483,7 +481,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<PrepareTrainingDatasetRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "corpus_prepare_training_dataset", Self::ontology_anchor("corpus_prepare_training_dataset"), async {
+        execute_tool(self, "corpus_prepare_training_dataset", async {
             // Note: this site intentionally does NOT use `read_jsonl`/`read_jsonl_lenient`.
             // It collects per-line parse errors (with line numbers) into the tool
             // response (`parse_errors`), which is part of the external API. The

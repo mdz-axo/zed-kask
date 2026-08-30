@@ -17,10 +17,9 @@ impl MediaServer {
             auto_analyze,
         }): Parameters<GalleryOrganizeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_organize",
-            Self::ontology_anchor("gallery_organize"),
             async {
                 let gallery_mode = match mode.as_str() {
                     "read-only" => GalleryMode::ReadOnly,
@@ -159,10 +158,9 @@ impl MediaServer {
 
     #[tool(description = "Get gallery status: path, mode, image count, and total size.")]
     pub async fn gallery_status(&self) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_status",
-            Self::ontology_anchor("gallery_status"),
             async {
                 match self.access_gallery() {
                     Ok(ga) => Ok(serde_json::json!({
@@ -192,10 +190,9 @@ impl MediaServer {
             min_similarity,
         }): Parameters<GallerySearchRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_search",
-            Self::ontology_anchor("gallery_search"),
             async {
                 if query.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("query must not be empty"));
@@ -295,7 +292,7 @@ impl MediaServer {
             min_similarity,
         }): Parameters<GalleryFindSimilarRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "gallery_find_similar", Self::ontology_anchor("gallery_find_similar"), async {
+        execute_tool(self, "gallery_find_similar", async {
             let query_label = text
                 .clone()
                 .unwrap_or_else(|| format!("image_index={}", image_index.unwrap_or(0)));
@@ -444,10 +441,9 @@ impl MediaServer {
             max_images,
         }): Parameters<GalleryRefreshRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_refresh",
-            Self::ontology_anchor("gallery_refresh"),
             async {
                 let (gid, _old_count, added, total, persisted) = self
                     .rescan_existing_gallery(recursive)
@@ -566,10 +562,9 @@ impl MediaServer {
         &self,
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "describe_image",
-            Self::ontology_anchor("describe_image"),
             async {
                 validate_tool_url_with_dns(&image_url).await?;
 
@@ -608,10 +603,9 @@ impl MediaServer {
             max_images,
         }): Parameters<GalleryAnalyzeRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_analyze",
-            Self::ontology_anchor("gallery_analyze"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
 
@@ -691,10 +685,9 @@ impl MediaServer {
             face_id,
         }): Parameters<GalleryNameFaceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_name_face",
-            Self::ontology_anchor("gallery_name_face"),
             async {
                 let resolved_name = if let Some(ref fid) = face_id {
                     self.gallery_store
@@ -767,10 +760,9 @@ impl MediaServer {
         &self,
         Parameters(FaceValidateRequest { image_index }): Parameters<FaceValidateRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "face_validate",
-            Self::ontology_anchor("face_validate"),
             async {
                 let image_url = self
                     .resolve_image_url(image_index)
@@ -805,10 +797,9 @@ impl MediaServer {
             force,
         }): Parameters<FaceRegisterRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "face_register",
-            Self::ontology_anchor("face_register"),
             async {
                 let image_id = self
                     .resolve_image_id(image_index)
@@ -848,10 +839,9 @@ impl MediaServer {
         &self,
         Parameters(FaceScanFolderRequest { folder_path, force }): Parameters<FaceScanFolderRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "face_scan_folder",
-            Self::ontology_anchor("face_scan_folder"),
             async {
                 let folder = if let Some(p) = folder_path {
                     std::path::PathBuf::from(p)
@@ -883,10 +873,9 @@ impl MediaServer {
         &self,
         Parameters(FaceListRequest { status }): Parameters<FaceListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "face_list",
-            Self::ontology_anchor("face_list"),
             async {
                 let faces = self
                     .gallery_store
@@ -909,10 +898,9 @@ impl MediaServer {
         &self,
         Parameters(FaceRemoveRequest { face_id }): Parameters<FaceRemoveRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "face_remove",
-            Self::ontology_anchor("face_remove"),
             async {
                 self.gallery_store.remove_face(&face_id).map_err(|e| {
                     McpToolError::invalid_argument(format!("Face not found: {}", e))
@@ -938,10 +926,9 @@ impl MediaServer {
             search_terms,
         }): Parameters<GalleryTimelineRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_timeline",
-            Self::ontology_anchor("gallery_timeline"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
 
@@ -1047,10 +1034,9 @@ impl MediaServer {
             parent_image_index,
         }): Parameters<GalleryRecordGenerationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_record_generation",
-            Self::ontology_anchor("gallery_record_generation"),
             async {
                 if op.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("op must not be empty"));
@@ -1090,10 +1076,9 @@ impl MediaServer {
         &self,
         Parameters(GalleryLineageRequest { image_index }): Parameters<GalleryLineageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_lineage",
-            Self::ontology_anchor("gallery_lineage"),
             async {
                 let image_id = self
                     .resolve_image_id(image_index)
@@ -1122,10 +1107,9 @@ impl MediaServer {
             GalleryListAssetsRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_list_assets",
-            Self::ontology_anchor("gallery_list_assets"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let limit = limit.clamp(1, 500);
@@ -1172,10 +1156,9 @@ impl MediaServer {
             GalleryAssetDetailRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_asset_detail",
-            Self::ontology_anchor("gallery_asset_detail"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let image = self
@@ -1212,7 +1195,7 @@ impl MediaServer {
         &self,
         Parameters(GalleryReproduceRequest { image_index }): Parameters<GalleryReproduceRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "gallery_reproduce", Self::ontology_anchor("gallery_reproduce"), async {
+        execute_tool(self, "gallery_reproduce", async {
             let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
             let lineage = self
                 .gallery_store
@@ -1279,10 +1262,9 @@ impl MediaServer {
             delete_file,
         }): Parameters<GalleryDeleteImageRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_delete_image",
-            Self::ontology_anchor("gallery_delete_image"),
             async {
                 let image_id = self
                     .resolve_image_id(image_index)
@@ -1331,10 +1313,9 @@ impl MediaServer {
             height,
         }): Parameters<GalleryAddVideoRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_add_video",
-            Self::ontology_anchor("gallery_add_video"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let file_path = std::path::Path::new(&path);
@@ -1384,7 +1365,6 @@ impl MediaServer {
                         serde_json::Value::String(crate::media_block::media_block_with_omc(
                             "video",
                             &record.absolute_path,
-                            Self::ontology_anchor("gallery_add_video"),
                             Some(&crate::media_block::Provenance::for_tool(
                                 "gallery_add_video",
                                 serde_json::json!({"path": path}),
@@ -1408,10 +1388,9 @@ impl MediaServer {
         &self,
         Parameters(GalleryAddAudioRequest { path }): Parameters<GalleryAddAudioRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_add_audio",
-            Self::ontology_anchor("gallery_add_audio"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let file_path = std::path::Path::new(&path);
@@ -1460,7 +1439,6 @@ impl MediaServer {
                         serde_json::Value::String(crate::media_block::media_block_with_omc(
                             "audio",
                             &record.absolute_path,
-                            Self::ontology_anchor("gallery_add_audio"),
                             Some(&crate::media_block::Provenance::for_tool(
                                 "gallery_add_audio",
                                 serde_json::json!({"path": path}),
@@ -1487,10 +1465,9 @@ impl MediaServer {
             GalleryCreateAlbumRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_create_album",
-            Self::ontology_anchor("gallery_create_album"),
             async {
                 if name.trim().is_empty() {
                     return Err(McpToolError::invalid_argument(
@@ -1512,10 +1489,9 @@ impl MediaServer {
     /// List all albums in the current gallery.
     #[tool(description = "List all albums in the current gallery.")]
     pub async fn gallery_list_albums(&self) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_list_albums",
-            Self::ontology_anchor("gallery_list_albums"),
             async {
                 let ga = self.access_gallery().map_err(map_media_error)?;
                 let albums = self
@@ -1538,10 +1514,9 @@ impl MediaServer {
             album_id,
         }): Parameters<GalleryMoveToAlbumRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_move_to_album",
-            Self::ontology_anchor("gallery_move_to_album"),
             async {
                 let image_id = self
                     .resolve_image_id(image_index)
@@ -1570,10 +1545,9 @@ impl MediaServer {
             album_id,
         }): Parameters<GalleryRemoveFromAlbumRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_remove_from_album",
-            Self::ontology_anchor("gallery_remove_from_album"),
             async {
                 let image_id = self
                     .resolve_image_id(image_index)
@@ -1600,10 +1574,9 @@ impl MediaServer {
         &self,
         Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_delete_album",
-            Self::ontology_anchor("gallery_delete_album"),
             async {
                 self.gallery_store
                     .delete_album(&album_id)
@@ -1625,10 +1598,9 @@ impl MediaServer {
             GalleryListAlbumMembersRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "gallery_list_album_members",
-            Self::ontology_anchor("gallery_list_album_members"),
             async {
                 let image_ids = self
                     .gallery_store

@@ -7,7 +7,7 @@ use crate::{
         NoteListRequest,
     },
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, map_join_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) async fn run_store<T>(
@@ -39,7 +39,7 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteAddRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "note_add", Self::ontology_anchor("note_add"), async {
+        execute_tool(self, "note_add", async {
             let id = run_store(self.research.clone(), move |manager| {
                 manager.add_note(&portfolio, &symbol, &date, &title, &body, &tags)
             })
@@ -60,10 +60,9 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "note_list",
-            Self::ontology_anchor("note_list"),
             async {
                 let notes = run_store(self.research.clone(), move |manager| {
                     manager.list_notes(
@@ -86,10 +85,9 @@ impl CompaniesServer {
         &self,
         Parameters(NoteDeleteRequest { note_id }): Parameters<NoteDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "note_delete",
-            Self::ontology_anchor("note_delete"),
             async {
                 let response_note_id = note_id.clone();
                 run_store(self.research.clone(), move |manager| {
@@ -115,10 +113,9 @@ impl CompaniesServer {
             notes,
         }): Parameters<FileAttachRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "file_attach",
-            Self::ontology_anchor("file_attach"),
             async {
                 let id = run_store(self.research.clone(), move |manager| {
                     manager.attach_file(
@@ -137,10 +134,9 @@ impl CompaniesServer {
         &self,
         Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "file_list",
-            Self::ontology_anchor("file_list"),
             async {
                 let files = run_store(self.research.clone(), move |manager| {
                     manager.list_files(&portfolio, &symbol)
@@ -157,10 +153,9 @@ impl CompaniesServer {
         &self,
         Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "file_delete",
-            Self::ontology_anchor("file_delete"),
             async {
                 let response_file_id = file_id.clone();
                 run_store(self.research.clone(), move |manager| {

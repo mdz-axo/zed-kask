@@ -8,7 +8,7 @@ use crate::{
     validate_symbol,
 };
 use hkask_mcp_portfolio::TxType;
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<AttributionRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "portfolio_attribution", Self::ontology_anchor("portfolio_attribution"), async {
+        execute_tool(self, "portfolio_attribution", async {
             // Get transactions and compute positions at start and end
             let portfolio_name = req.portfolio.clone();
             let txs = run_store(self.research.clone(), move |portfolio| {
@@ -180,10 +180,9 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<CharacteristicsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(
+        execute_tool(
             self,
             "portfolio_characteristics",
-            Self::ontology_anchor("portfolio_characteristics"),
             async {
                 let portfolio_name = req.portfolio.clone();
                 let symbols = run_store(self.research.clone(), move |portfolio| {
@@ -402,7 +401,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::DcfValuationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "dcf_valuation", Self::ontology_anchor("dcf_valuation"), async {
+        execute_tool(self, "dcf_valuation", async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
@@ -536,7 +535,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ReverseDcfRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "reverse_dcf", Self::ontology_anchor("reverse_dcf"), async {
+        execute_tool(self, "reverse_dcf", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -678,7 +677,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScenarioAnalysisRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "scenario_analysis", Self::ontology_anchor("scenario_analysis"), async {
+        execute_tool(self, "scenario_analysis", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
