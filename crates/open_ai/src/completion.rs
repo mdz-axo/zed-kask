@@ -5288,4 +5288,95 @@ mod tests {
             "finish_reason \"length\" must map to MaxTokens, got {events:?}"
         );
     }
+
+    #[test]
+    fn stream_maps_stop_with_tool_calls_to_tool_use_stop() {
+        // zed-kask: D36 — Some models emit tool_call deltas during streaming
+        // but finish with "stop" instead of "tool_calls". Without the drain
+        // guard, the accumulated tool call is silently lost and only the
+        // preamble text appears in the chat — the tool never runs. This pins
+        // the OpenAI Chat Completions twin of the OpenRouter fix
+        // (test_tool_calls_drained_on_finish_reason_stop in language_models).
+        let events = map_completion_events(vec![
+            // Preamble text
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("Let me check:".into()),
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                        reasoning_details: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Tool call delta — accumulate id, name, and arguments
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("call_abc123".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("corpus_query".into()),
+                                arguments: Some(
+                                    r#"{"query":"investment philosophy","top_k":2}"#.into(),
+                                ),
+                                thought_signature: None,
+                            }),
+                        }]),
+                        reasoning_content: None,
+                        reasoning_details: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Stream ends with "stop" — NOT "tool_calls".
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("stop".into()),
+                }],
+                usage: None,
+            },
+        ]);
+
+        let has_drained_tool_use = events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ToolUse(tool_use)
+                    if tool_use.is_input_complete
+                        && tool_use.name.as_ref() == "corpus_query"
+                        && tool_use.id.to_string() == "call_abc123"
+            )
+        });
+        assert!(
+            has_drained_tool_use,
+            "finish_reason=\"stop\" with accumulated tool calls should drain a complete ToolUse, got {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+            )),
+            "finish_reason=\"stop\" with accumulated tool calls should emit Stop(ToolUse), got {events:?}"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+            )),
+            "finish_reason=\"stop\" with accumulated tool calls must NOT emit Stop(EndTurn), got {events:?}"
+        );
+    }
 }

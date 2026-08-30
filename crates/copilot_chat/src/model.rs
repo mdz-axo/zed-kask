@@ -1421,6 +1421,94 @@ mod tests {
         );
     }
 
+    /// D20 pin for the chat-completions streaming path
+    /// (`map_to_language_model_completion_events`): the `TokenUsage`
+    /// constructed from the chat-completions `usage` object must carry
+    /// `cost: None` — Copilot doesn't report USD cost there either.
+    #[test]
+    fn chat_completion_usage_carries_no_cost() {
+        use crate::{ResponseChoice, ResponseDelta, ResponseEvent, Role, Usage};
+
+        let events = vec![ResponseEvent {
+            choices: vec![ResponseChoice {
+                index: Some(0),
+                finish_reason: Some("stop".to_string()),
+                delta: Some(ResponseDelta {
+                    content: Some("Hello".to_string()),
+                    role: Some(Role::Assistant),
+                    tool_calls: vec![],
+                    reasoning_opaque: None,
+                    reasoning_text: None,
+                }),
+                message: None,
+            }],
+            id: "chatcmpl-123".to_string(),
+            usage: Some(Usage {
+                completion_tokens: 3,
+                prompt_tokens: 5,
+                total_tokens: 8,
+            }),
+        }];
+
+        let mapped = futures::executor::block_on(async {
+            map_to_language_model_completion_events(
+                Box::pin(futures::stream::iter(events.into_iter().map(Ok))),
+                true,
+            )
+            .collect::<Vec<_>>()
+            .await
+        });
+
+        let usage_event = mapped
+            .iter()
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => Some(usage),
+                _ => None,
+            })
+            .next()
+            .expect("a UsageUpdate event should be emitted");
+        assert_eq!(usage_event.input_tokens, 5);
+        assert_eq!(usage_event.output_tokens, 3);
+        assert_eq!(
+            usage_event.cost, None,
+            "Copilot Chat must not report USD cost (D20): cost must be None"
+        );
+    }
+
+    /// D20 pin for the responses-stream `Incomplete` path: the `TokenUsage`
+    /// constructed when a response ends incomplete (e.g. max_output_tokens)
+    /// must also carry `cost: None`.
+    #[test]
+    fn incomplete_stream_usage_carries_no_cost() {
+        let events = vec![responses::StreamEvent::Incomplete {
+            response: responses::Response {
+                usage: Some(responses::ResponseUsage {
+                    input_tokens: Some(5),
+                    output_tokens: Some(3),
+                    total_tokens: Some(8),
+                }),
+                incomplete_details: Some(responses::IncompleteDetails {
+                    reason: Some(responses::IncompleteReason::MaxOutputTokens),
+                }),
+                ..Default::default()
+            },
+        }];
+        let mapped = map_events(events);
+        let usage_event = mapped
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::UsageUpdate(usage) => Some(usage),
+                _ => None,
+            })
+            .expect("a UsageUpdate event should be emitted");
+        assert_eq!(usage_event.input_tokens, 5);
+        assert_eq!(usage_event.output_tokens, 3);
+        assert_eq!(
+            usage_event.cost, None,
+            "Copilot Chat must not report USD cost (D20): cost must be None"
+        );
+    }
+
     #[test]
     fn responses_stream_maps_tool_calls() {
         let events = vec![responses::StreamEvent::OutputItemDone {

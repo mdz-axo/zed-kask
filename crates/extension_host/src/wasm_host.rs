@@ -1277,4 +1277,41 @@ mod tests {
             "the error message must match the log symptom from D31's original bug report"
         );
     }
+
+    /// Pins the D31 invariant at the source level: every `table.push` call
+    /// site in this file's production code must be paired with a
+    /// `.delete(Resource::<...>::new_own(rep))` call. The round-trip test
+    /// above exercises a local `ResourceTable` and cannot detect a removed
+    /// production `delete`; this test reads the file's own source and fails
+    /// if any single paired `delete` is removed.
+    ///
+    /// Source-reading tests are established practice here — see
+    /// `crates/markdown/src/mermaid.rs`
+    /// `test_system_prompt_advertises_every_supported_diagram_type`.
+    #[test]
+    fn test_every_resource_push_site_has_a_paired_delete() {
+        let source = include_str!("wasm_host.rs");
+        // Only scan production code — the test module below also pushes and
+        // deletes on a local table, and this test's own literals would
+        // otherwise be counted.
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production code must be followed by a test module");
+
+        let push_count = production_source.matches("table.push(").count();
+        let delete_count = production_source.matches(".delete(Resource::<").count();
+
+        assert_eq!(
+            push_count, delete_count,
+            "every `table.push` call site must be paired with a `.delete(Resource::<...>)` \
+             call (D31); found {push_count} pushes but {delete_count} deletes"
+        );
+        assert_eq!(
+            push_count, 12,
+            "the Extension impl currently has 12 push sites; if you added or removed \
+             one, update this count and verify each site deletes its resource on \
+             every success and error path"
+        );
+    }
 }
