@@ -289,9 +289,8 @@ impl CompaniesServer {
             + Self::artifacts_router()
     }
 
-    /// Map a tool name to its ontology concept URI. The concept is used both
-    /// as the `reg.tool.*` span ontology tag (via `execute_tool`)
-    /// and as the `"ontology"` field in the tool output JSON (via
+    /// Map a tool name to its ontology concept URI for the `"ontology"` field
+    /// in the tool output JSON (via
     /// `fibo::enrich_with_ontology`). Delegates to `fibo::tool_to_ontology` —
     /// the single source of truth for the tool → concept mapping.
     fn ontology_anchor(tool: &str) -> Option<&'static str> {

@@ -349,9 +349,8 @@ impl MediaServer {
             + Self::workflows_router()
     }
 
-    /// Map a tool name to its OMC concept URI. The concept tags the
-    /// `reg.tool.*` span (via `execute_tool`) for type-aware feedback
-    /// routing — complementary to the output-JSON tag baked by
+    /// Map a tool name to its OMC concept URI for the output-JSON
+    /// `"ontology"` tag baked by
     /// `media_block::enrich_with_omc_and_provenance` (which the media widget
     /// consumes for UI dispatch). Delegates to `omc::tool_to_omc` — the single
     /// source of truth for the tool → concept mapping.

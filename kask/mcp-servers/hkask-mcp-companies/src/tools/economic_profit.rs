@@ -3,7 +3,7 @@
 //! Tools:
 //! - `ep_valuation` — Full EP-based valuation with competitive fade and IVM ratio.
 use crate::{CompaniesServer, economic_profit, fibo, types, validate_symbol};
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = economic_profit_router, vis = "pub")]
@@ -15,7 +15,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::EpValuationRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool_semantic(self, "ep_valuation", Self::ontology_anchor("ep_valuation"), async {
+        execute_tool(self, "ep_valuation", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self

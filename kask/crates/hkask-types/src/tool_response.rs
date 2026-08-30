@@ -1,5 +1,5 @@
 //! MCP tool-response envelope unwrapping — the single seam for the
-//! `{"content": <value>}` envelope produced by `execute_tool_semantic`
+//! `{"content": <value>}` envelope produced by `execute_tool`
 //! (`hkask-mcp-server`) and serialized by `ToolSpanGuard::ok_json`.
 //!
 //! Extracted so every consumer — the zed panel's `invoke_tool` path, corpus

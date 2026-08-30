@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use hkask_bridge_ontology::{dc_bibo, pko};
+
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
     resolve_db_passphrase, validate_tool_url_with_dns,
@@ -137,56 +137,6 @@ macro_rules! require_rss_db {
 
 #[tool_router(server_handler)]
 impl ResearchServer {
-    /// Map a tool name to its ontology concept URI. The concept tags the
-    /// `reg.tool.*` span (via `execute_tool`) for type-aware feedback
-    /// routing.
-    ///
-    /// A tool *execution* is a process, so the anchor maps each tool to its
-    /// research-workflow stage and delegates the stage→concept values to the
-    /// canonical bridge mapper (`pko::research_stage_to_pko`) — single source
-    /// truth, same pattern as the corpus server's anchor. SEPIO predicates
-    /// (`SEPIO:0000189` etc.) annotate *passage content* in corpus
-    /// assertion extraction; they are relation predicates, not types, and are
-    /// never used as tool-span tags (the category error this delegation
-    /// removed: web tools were previously tagged with an evidence predicate).
-    ///
-    /// - Search/discovery (web + RSS) → PKO `ACTION` (search stage).
-    /// - Content extraction (web pages, feeds) → PKO `ACTION` (extract stage).
-    /// - Synthesis tools → PKO `PROCEDURE_EXECUTION` (synthesize stage).
-    /// - Feed management (subscribe/unsubscribe/import/export/tag) → PKO
-    ///   `PROCEDURE` (curate stage — organizing is a procedure).
-    /// - Evaluation (evidence, provider recommendation) → PKO
-    ///   `STEP_VERIFICATION` (evaluate stage).
-    /// - Pure queries and health checks → `dc_bibo::DATASET` (no process
-    ///   stage; the artifact is a dataset reference).
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        // Tool → research-workflow stage; the canonical mapper supplies the
-        // stage→concept value so this table cannot drift from the bridge.
-        let stage = match tool {
-            // Search/discovery actions (web + RSS).
-            "web_search" | "web_find_similar" | "rss_search" | "rss_discover_feeds" => "search",
-            // Content extraction (web pages, feed entries).
-            "web_extract" | "web_browse" | "rss_fetch" => "extract",
-            // Synthesis.
-            "rss_synthesize" | "rss_fetch_synthetic" => "synthesize",
-            // Feed management is curation (organizing).
-            "rss_subscribe"
-            | "rss_unsubscribe"
-            | "rss_mark_all_read"
-            | "rss_export_opml"
-            | "rss_import_opml"
-            | "rss_edit_tag"
-            | "rss_delete_synthetic" => "curate",
-            // Evaluation: evidence assessment and provider recommendation are
-            // capability/evidence evaluations.
-            "evaluate_evidence" | "web_recommend_provider" => "evaluate",
-            // Citation.
-            "cite_sources" => "cite",
-            // Pure queries and health checks (no process stage).
-            _ => return Some(dc_bibo::DATASET),
-        };
-        pko::research_stage_to_pko(stage)
-    }
 
     // ═══════════════════ Web tools ═══════════════════
 

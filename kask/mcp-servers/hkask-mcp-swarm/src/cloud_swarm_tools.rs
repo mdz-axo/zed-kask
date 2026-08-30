@@ -159,7 +159,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_list_agents",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 // The ABW `/agents` catalogue endpoint is open (no API key required).
                 // The module doc (L10) and the tool doc both say "Keyless". The prior
@@ -223,7 +222,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_get_swarm",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -279,7 +277,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_get_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -337,7 +334,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_list_apps",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -379,7 +375,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_ontology_templates",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -406,7 +401,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_execute_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -466,7 +460,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<HireCostRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_hire_cost", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_hire_cost", async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -545,7 +539,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_request_consent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 // Auth required: without this, a prompt-injected agent could mint
                 // consent tokens and self-authorize credit spends. Every spend tool
@@ -599,7 +592,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_authorize_session",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.total_credits == 0 {
@@ -637,7 +629,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_hire",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -704,7 +695,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_delegate",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -775,7 +765,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_delegate_and_wait",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -893,7 +882,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_run_status",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -950,7 +938,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_generate_prompt",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1000,7 +987,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_generate_ontology",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1045,7 +1031,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_create_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1097,7 +1082,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_create_swarm",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1248,7 +1232,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_xaman",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1332,7 +1315,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_create_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1401,7 +1383,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_fanout",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1510,7 +1491,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_fire",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1559,7 +1539,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_delete_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1650,7 +1629,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_delete_swarm",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1710,7 +1688,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_search_knowledge",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1835,7 +1812,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_publish_checks",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1874,7 +1850,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_publish_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1944,7 +1919,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_fork_agent",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -1997,7 +1971,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_get_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2035,7 +2008,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_create_app_direct",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2108,7 +2080,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_update_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2185,7 +2156,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_publish_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2228,7 +2198,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_archive_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2271,7 +2240,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_spawn_app_workspace",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2330,7 +2298,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_list_app_workspaces",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2369,7 +2336,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_get_app_schema",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2407,7 +2373,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_fork_workspace_to_app",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2456,7 +2421,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_list_actions",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2496,7 +2460,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_pending_actions",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2537,7 +2500,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_mutate_document",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2608,7 +2570,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_fork_state",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2672,7 +2633,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_accept_action",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2728,7 +2688,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_reject_action",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2782,7 +2741,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_annotate",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2847,7 +2805,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_list_annotations",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2892,7 +2849,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_list_files",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2931,7 +2887,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_read_file",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -2978,7 +2933,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_workspace_write_file",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()

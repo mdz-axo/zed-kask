@@ -113,9 +113,8 @@ hkask_mcp_server::mcp_server!(
 );
 
 impl ScenariosServer {
-    /// Map a tool name to its ontology concept URI. The concept URI is used
-    /// both as the `reg.tool.*` span ontology tag (via `execute_tool`)
-    /// and as the `"ontology"` field in the tool output JSON.
+    /// Map a tool name to its ontology concept URI for the `"ontology"` field
+    /// in the tool output JSON (read by the scenario widget).
     ///
     /// PKO = Procedural Knowledge Ontology (process/experience — agent's actions)
     /// Dublin Core = factual/computed outputs (probabilities, scores, trees)

@@ -49,35 +49,12 @@ where
         .map_err(map_portfolio_error)
 }
 
-/// Map a tool name to its ontology concept URI. The concept is used both
-/// as the `reg.tool.*` span ontology tag (via `execute_tool`) and as
-/// the `"ontology"` field in the tool output JSON. The portfolio widget reads
-/// this field to drive its "Explain" affordance (the "I" pattern).
-///
-/// Anchoring policy (operator decision 2026-08-29): tools whose concept
-/// FIBO actually publishes anchor on the verified FIBO URI; tools with no
-/// FIBO equivalent anchor on Dublin Core — FIBO publishes no
-/// time-weighted-return or transaction-ledger terms (verified against the
-/// FIBO master ontology 2026-08-29), so returns analysis anchors on
-/// `bibo:Report` and ledger data on `dcmitype:Dataset`.
-fn ontology_anchor(tool: &str) -> Option<&'static str> {
-    use hkask_bridge_ontology::dc_bibo;
-    use hkask_bridge_ontology::fibo;
-    match tool {
-        "portfolio_snapshot" => Some(fibo::PORTFOLIO),
-        "portfolio_returns" => Some(dc_bibo::REPORT),
-        "portfolio_create" | "portfolio_delete" | "portfolio_list" => Some(fibo::PORTFOLIO),
-        "ledger_apply" | "ledger_read" | "ledger_import" | "ledger_export" => {
-            Some(dc_bibo::DATASET)
-        }
-        "portfolio_seed_price"
-        | "portfolio_roll"
-        | "portfolio_rebuild_views"
-        | "portfolio_materialize_returns"
-        | "portfolio_daily_returns" => Some(fibo::PORTFOLIO),
-        _ => None,
-    }
-}
+/// Map a tool name to its ontology concept URI for the `"ontology"` field
+/// in the tool output JSON (read by the portfolio widget's "Explain"
+/// affordance). Currently only `portfolio_snapshot` emits the field
+/// (hardcoded `fibo:PORTFOLIO` at the call site); a per-tool anchor fn
+/// was removed with the `reg.tool` span ontology tag (2026-08-29) — it
+/// had no remaining consumer.
 
 // ── Request types ───────────────────────────────────────────────────
 
@@ -190,28 +167,20 @@ impl PortfolioServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_delete",
-            async {
-                let response_name = name.clone();
-                run_store(self.store.clone(), move |store| store.delete(&name)).await?;
-                Ok(serde_json::json!({"status": "deleted", "name": response_name}))
-            },
-        )
+        execute_tool(self, "portfolio_delete", async {
+            let response_name = name.clone();
+            run_store(self.store.clone(), move |store| store.delete(&name)).await?;
+            Ok(serde_json::json!({"status": "deleted", "name": response_name}))
+        })
         .await
     }
 
     #[tool(description = "List all portfolios in this owner's store.")]
     pub async fn portfolio_list(&self) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_list",
-            async {
-                let names = run_store(self.store.clone(), |store| store.list()).await?;
-                Ok(serde_json::json!({"portfolios": names}))
-            },
-        )
+        execute_tool(self, "portfolio_list", async {
+            let names = run_store(self.store.clone(), |store| store.list()).await?;
+            Ok(serde_json::json!({"portfolios": names}))
+        })
         .await
     }
 
@@ -279,31 +248,25 @@ impl PortfolioServer {
             PortfolioSnapshotRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_snapshot",
-            async {
-                // Validate the date up front — never silently epoch-substitute
-                // (the SF-4 bug: a malformed date produced garbage projections
-                // while callers reported success).
-                parse_ymd(&date, "date").map_err(map_portfolio_error)?;
-                let snapshot: HoldingsSnapshot = run_store(self.store.clone(), move |store| {
-                    store.snapshot(&portfolio, &date)
-                })
-                .await?;
-                let mut value = serde_json::to_value(&snapshot)
-                    .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
-                if let Some(obj) = value.as_object_mut() {
-                    obj.insert(
-                        "ontology".to_string(),
-                        serde_json::Value::String(
-                            hkask_bridge_ontology::fibo::PORTFOLIO.to_string(),
-                        ),
-                    );
-                }
-                Ok(value)
-            },
-        )
+        execute_tool(self, "portfolio_snapshot", async {
+            // Validate the date up front — never silently epoch-substitute
+            // (the SF-4 bug: a malformed date produced garbage projections
+            // while callers reported success).
+            parse_ymd(&date, "date").map_err(map_portfolio_error)?;
+            let snapshot: HoldingsSnapshot = run_store(self.store.clone(), move |store| {
+                store.snapshot(&portfolio, &date)
+            })
+            .await?;
+            let mut value = serde_json::to_value(&snapshot)
+                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "ontology".to_string(),
+                    serde_json::Value::String(hkask_bridge_ontology::fibo::PORTFOLIO.to_string()),
+                );
+            }
+            Ok(value)
+        })
         .await
     }
 
@@ -318,53 +281,49 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_returns",
-            async {
-                // Validate dates up front (SF-4).
-                parse_ymd(&from, "from").map_err(map_portfolio_error)?;
-                parse_ymd(&to, "to").map_err(map_portfolio_error)?;
+        execute_tool(self, "portfolio_returns", async {
+            // Validate dates up front (SF-4).
+            parse_ymd(&from, "from").map_err(map_portfolio_error)?;
+            parse_ymd(&to, "to").map_err(map_portfolio_error)?;
 
-                let provenance_portfolio = portfolio.clone();
-                let provenance_from = from.clone();
-                let provenance_to = to.clone();
-                let resolver = CachedPriceResolver::new(&self.store, &portfolio);
-                let report: ReturnsReport = run_store(self.store.clone(), move |s| {
-                    returns(&s, &portfolio, &from, &to, &resolver)
-                })
-                .await?;
+            let provenance_portfolio = portfolio.clone();
+            let provenance_from = from.clone();
+            let provenance_to = to.clone();
+            let resolver = CachedPriceResolver::new(&self.store, &portfolio);
+            let report: ReturnsReport = run_store(self.store.clone(), move |s| {
+                returns(&s, &portfolio, &from, &to, &resolver)
+            })
+            .await?;
 
-                // Server-authoritative provenance: the widget carries this so it
-                // can re-issue `portfolio_returns` with a scrubbed date range.
-                let provenance_args = serde_json::json!({
-                    "portfolio": provenance_portfolio,
-                    "from": provenance_from,
-                    "to": provenance_to,
-                });
-                Ok(serde_json::json!({
-                    "portfolio": report.portfolio,
-                    "from": report.from,
-                    "to": report.to,
-                    "total_return": report.total_return,
-                    "modified_dietz": report.modified_dietz,
-                    "irr": report.irr,
-                    "irr_converged": report.irr_converged,
-                    "start_value": report.start_value,
-                    "end_value": report.end_value,
-                    "net_cash_flows": report.net_cash_flows,
-                    "cash_flow_count": report.cash_flow_count,
-                    "positions_at_start": report.positions_at_start,
-                    "positions_at_end": report.positions_at_end,
-                    "provenance": {
-                        "tool": "portfolio_returns",
-                        "server": "hkask-mcp-portfolio",
-                        "args": provenance_args,
-                        "span_id": serde_json::Value::Null,
-                    },
-                }))
-            },
-        )
+            // Server-authoritative provenance: the widget carries this so it
+            // can re-issue `portfolio_returns` with a scrubbed date range.
+            let provenance_args = serde_json::json!({
+                "portfolio": provenance_portfolio,
+                "from": provenance_from,
+                "to": provenance_to,
+            });
+            Ok(serde_json::json!({
+                "portfolio": report.portfolio,
+                "from": report.from,
+                "to": report.to,
+                "total_return": report.total_return,
+                "modified_dietz": report.modified_dietz,
+                "irr": report.irr,
+                "irr_converged": report.irr_converged,
+                "start_value": report.start_value,
+                "end_value": report.end_value,
+                "net_cash_flows": report.net_cash_flows,
+                "cash_flow_count": report.cash_flow_count,
+                "positions_at_start": report.positions_at_start,
+                "positions_at_end": report.positions_at_end,
+                "provenance": {
+                    "tool": "portfolio_returns",
+                    "server": "hkask-mcp-portfolio",
+                    "args": provenance_args,
+                    "span_id": serde_json::Value::Null,
+                },
+            }))
+        })
         .await
     }
 
@@ -380,18 +339,14 @@ impl PortfolioServer {
             data,
         }): Parameters<LedgerImportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "ledger_import",
-            async {
-                let ids = run_store(self.store.clone(), move |store| match format {
-                    ImportFormat::Csv => import_csv(&store, &portfolio, asset_type, &data),
-                    ImportFormat::Json => import_json(&store, &portfolio, asset_type, &data),
-                })
-                .await?;
-                Ok(serde_json::json!({"status": "imported", "count": ids.len(), "ids": ids}))
-            },
-        )
+        execute_tool(self, "ledger_import", async {
+            let ids = run_store(self.store.clone(), move |store| match format {
+                ImportFormat::Csv => import_csv(&store, &portfolio, asset_type, &data),
+                ImportFormat::Json => import_json(&store, &portfolio, asset_type, &data),
+            })
+            .await?;
+            Ok(serde_json::json!({"status": "imported", "count": ids.len(), "ids": ids}))
+        })
         .await
     }
 
@@ -400,19 +355,15 @@ impl PortfolioServer {
         &self,
         Parameters(LedgerExportRequest { portfolio, format }): Parameters<LedgerExportRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "ledger_export",
-            async {
-                let output_format = format.clone();
-                let data = run_store(self.store.clone(), move |store| match format {
-                    ImportFormat::Csv => export_csv(&store, &portfolio),
-                    ImportFormat::Json => export_json(&store, &portfolio),
-                })
-                .await?;
-                Ok(serde_json::json!({"format": output_format, "data": data}))
-            },
-        )
+        execute_tool(self, "ledger_export", async {
+            let output_format = format.clone();
+            let data = run_store(self.store.clone(), move |store| match format {
+                ImportFormat::Csv => export_csv(&store, &portfolio),
+                ImportFormat::Json => export_json(&store, &portfolio),
+            })
+            .await?;
+            Ok(serde_json::json!({"format": output_format, "data": data}))
+        })
         .await
     }
 
@@ -429,23 +380,19 @@ impl PortfolioServer {
             source,
         }): Parameters<PriceSeedRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_seed_price",
-            async {
-                let resolver = CachedPriceResolver::new(&self.store, &portfolio);
-                resolver
-                    .seed_cache(&symbol, &date, close, &source)
-                    .map_err(map_portfolio_error)?;
-                Ok(serde_json::json!({
-                    "status": "seeded",
-                    "portfolio": portfolio,
-                    "symbol": symbol,
-                    "date": date,
-                    "close": close,
-                }))
-            },
-        )
+        execute_tool(self, "portfolio_seed_price", async {
+            let resolver = CachedPriceResolver::new(&self.store, &portfolio);
+            resolver
+                .seed_cache(&symbol, &date, close, &source)
+                .map_err(map_portfolio_error)?;
+            Ok(serde_json::json!({
+                "status": "seeded",
+                "portfolio": portfolio,
+                "symbol": symbol,
+                "date": date,
+                "close": close,
+            }))
+        })
         .await
     }
 
@@ -463,43 +410,39 @@ impl PortfolioServer {
             price,
         }): Parameters<PortfolioRollRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_roll",
-            async {
-                parse_ymd(&date, "date").map_err(map_portfolio_error)?;
-                let response_portfolio = portfolio.clone();
-                let response_from = from_symbol.clone();
-                let response_to = to_symbol.clone();
-                let tx = crate::Transaction {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    date: date.clone(),
-                    tx_type: crate::TxType::Roll,
-                    asset_type: crate::AssetType::PredictionContract,
-                    symbol: Some(to_symbol.clone()),
-                    quantity: Some(quantity),
-                    price,
-                    commission: Some(0.0),
-                    amount: None,
-                    weight: None,
-                    currency: "USD".to_string(),
-                    notes: format!("Roll from {from_symbol} to {to_symbol}"),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                };
-                run_store(self.store.clone(), move |store| {
-                    store.apply(&portfolio, &tx)
-                })
-                .await?;
-                Ok(serde_json::json!({
-                    "status": "rolled",
-                    "portfolio": response_portfolio,
-                    "from_symbol": response_from,
-                    "to_symbol": response_to,
-                    "date": date,
-                    "quantity": quantity,
-                }))
-            },
-        )
+        execute_tool(self, "portfolio_roll", async {
+            parse_ymd(&date, "date").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from_symbol.clone();
+            let response_to = to_symbol.clone();
+            let tx = crate::Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                date: date.clone(),
+                tx_type: crate::TxType::Roll,
+                asset_type: crate::AssetType::PredictionContract,
+                symbol: Some(to_symbol.clone()),
+                quantity: Some(quantity),
+                price,
+                commission: Some(0.0),
+                amount: None,
+                weight: None,
+                currency: "USD".to_string(),
+                notes: format!("Roll from {from_symbol} to {to_symbol}"),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+            run_store(self.store.clone(), move |store| {
+                store.apply(&portfolio, &tx)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "status": "rolled",
+                "portfolio": response_portfolio,
+                "from_symbol": response_from,
+                "to_symbol": response_to,
+                "date": date,
+                "quantity": quantity,
+            }))
+        })
         .await
     }
 
@@ -510,15 +453,11 @@ impl PortfolioServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_rebuild_views",
-            async {
-                let response_name = name.clone();
-                run_store(self.store.clone(), move |store| store.rebuild_views(&name)).await?;
-                Ok(serde_json::json!({"status": "rebuilt", "portfolio": response_name}))
-            },
-        )
+        execute_tool(self, "portfolio_rebuild_views", async {
+            let response_name = name.clone();
+            run_store(self.store.clone(), move |store| store.rebuild_views(&name)).await?;
+            Ok(serde_json::json!({"status": "rebuilt", "portfolio": response_name}))
+        })
         .await
     }
 
@@ -533,28 +472,24 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_materialize_returns",
-            async {
-                parse_ymd(&from, "from").map_err(map_portfolio_error)?;
-                parse_ymd(&to, "to").map_err(map_portfolio_error)?;
-                let response_portfolio = portfolio.clone();
-                let response_from = from.clone();
-                let response_to = to.clone();
-                let resolver = CachedPriceResolver::new(&self.store, &portfolio);
-                run_store(self.store.clone(), move |store| {
-                    store.materialize_returns(&portfolio, &from, &to, &resolver)
-                })
-                .await?;
-                Ok(serde_json::json!({
-                    "status": "materialized",
-                    "portfolio": response_portfolio,
-                    "from": response_from,
-                    "to": response_to,
-                }))
-            },
-        )
+        execute_tool(self, "portfolio_materialize_returns", async {
+            parse_ymd(&from, "from").map_err(map_portfolio_error)?;
+            parse_ymd(&to, "to").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let resolver = CachedPriceResolver::new(&self.store, &portfolio);
+            run_store(self.store.clone(), move |store| {
+                store.materialize_returns(&portfolio, &from, &to, &resolver)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "status": "materialized",
+                "portfolio": response_portfolio,
+                "from": response_from,
+                "to": response_to,
+            }))
+        })
         .await
     }
 
@@ -569,28 +504,24 @@ impl PortfolioServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "portfolio_daily_returns",
-            async {
-                parse_ymd(&from, "from").map_err(map_portfolio_error)?;
-                parse_ymd(&to, "to").map_err(map_portfolio_error)?;
-                let response_portfolio = portfolio.clone();
-                let response_from = from.clone();
-                let response_to = to.clone();
-                let rows = run_store(self.store.clone(), move |store| {
-                    store.daily_returns(&portfolio, &from, &to)
-                })
-                .await?;
-                Ok(serde_json::json!({
-                    "portfolio": response_portfolio,
-                    "from": response_from,
-                    "to": response_to,
-                    "rows": rows,
-                    "count": rows.len(),
-                }))
-            },
-        )
+        execute_tool(self, "portfolio_daily_returns", async {
+            parse_ymd(&from, "from").map_err(map_portfolio_error)?;
+            parse_ymd(&to, "to").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let rows = run_store(self.store.clone(), move |store| {
+                store.daily_returns(&portfolio, &from, &to)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "portfolio": response_portfolio,
+                "from": response_from,
+                "to": response_to,
+                "rows": rows,
+                "count": rows.len(),
+            }))
+        })
         .await
     }
 }

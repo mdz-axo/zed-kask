@@ -70,20 +70,26 @@ Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 
-Canonical URI constants for financial and business analysis. The union of
-the two former non-overlapping FIBO subsets (companies-server financial
-ratios + corpus-server competitive-advantage concepts).
+Canonical URIs from the official FIBO (EDM Council / OMG,
+<https://spec.edmcouncil.org/fibo/>), each mechanically verified against the
+FIBO master ontology and pinned by `fixtures/fibo-verified-terms.txt`:
+`CORPORATION` (`fibo-be-le-cb:Corporation`), `TICKER_SYMBOL`
+(`fibo-sec-sec-id:TickerSymbol`), `PORTFOLIO` (`fibo-sec-sec-ast:Portfolio`),
+`MARKET_CAPITALIZATION` (`fibo-ind-mkt-bas:MarketCapitalization`),
+`INTERNAL_RATE_OF_RETURN` (`fibo-fbc-fi-ip:InternalRateOfReturn`), plus the
+economic-indicator terms (`CONSUMER_PRICE_INDEX`, `PRODUCER_PRICE_INDEX`,
+`GROSS_DOMESTIC_PRODUCT`, `ECONOMIC_INDICATOR`, `REFERENCE_INDEX`,
+`REFERENCE_INTEREST_RATE`, `INTEREST_RATE_BENCHMARK`).
 
-| Constant | URI |
-|----------|-----|
-| `CORPORATION` | `fibo-be-le-corp:Corporation` |
-| `MARKET_CAPITALIZATION` | `fibo-fbc-fct-ra:MarketCapitalization` |
-| `RETURN_ON_INVESTED_CAPITAL` | `fibo-fbc-fct-ra:ReturnOnInvestedCapital` |
-| `DISCOUNT_RATE` | `fibo-fbc-fct-ra:DiscountRate` |
-| `FREE_CASH_FLOW` | `fibo-fbc-fct-ra:FreeCashFlow` |
-| `PORTFOLIO` | `fibo-sec-sec-ast:Portfolio` |
-| `COMPETITIVE_ADVANTAGE` | `fibo:hasCompetitiveAdvantage` |
-| `ECONOMIC_PROFIT` | `fibo:economicProfit` |
+> History: verification (2026-08-29, FIBO master) found 63 of the 70 terms
+> formerly carried here were fabricated — the `fibo-fbc-fct-ra` "Financial
+> Ratios" module never existed in FIBO, and FIBO publishes no terms for
+> financial ratios, DCF line items, valuation methods, or portfolio
+> transactions. Per the operator decision, concepts with no real FIBO
+> equivalent anchor on Dublin Core at the consumer (analysis outputs →
+`bibo:Report`, data outputs → `dcterms:Dataset`); the companies server's
+> metric cache and financial model use plain hKask-internal metric
+> identifiers, not ontology URIs.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/fibo.rs`
 

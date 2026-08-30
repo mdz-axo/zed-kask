@@ -34,7 +34,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_a2a_send",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.agent_name.trim().is_empty() || req.message.trim().is_empty() {
@@ -93,7 +92,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_a2a_card",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 let base_url = "local://swarm/agents".to_string();
@@ -145,7 +143,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_a2a_broadcast",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.swarm_id.trim().is_empty() || req.message.trim().is_empty() {

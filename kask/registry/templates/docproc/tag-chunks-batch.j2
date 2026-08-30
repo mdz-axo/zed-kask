@@ -32,11 +32,11 @@ Use the ontology namespace as the key and the specific concepts as values.
 Only include ontologies that have relevant concepts in a passage.
 
 Available ontologies (use the key shown):
-- **"fibo"**: Financial Industry Business Ontology — competitive advantage, return on capital, discounted cash flow, cost of capital, economic profit, barrier to entry, margin of safety, etc.
+- **"fibo"**: Financial/business concepts — corporation, portfolio, market capitalization, ticker symbol, economic indicators, interest rates, plus financial-analysis concepts from the passage (valuation, ratios, capital allocation). Values are passage concepts in the financial domain, not FIBO URIs.
 - **"golem"**: Narrative/literary concepts — metaphor, analogy, narrative structure, character development, storytelling, rhetoric, etc.
 - **"pko"**: Procedural Knowledge Ontology — procedure, step, action, function, analysis, evaluation, feedback loop, etc.
-- **"sumo"**: Suggested Upper Merged Ontology — entity, process, object, agent, relation, proposition, representation, quantity, etc.
-- **"sepio"**: SEPIO (Scientific Evidence and Provenance Information Ontology) — hypothesis, evidence, theory, model, falsification, uncertainty, inference, counterargument, scientific method
+- **"sumo"**: Suggested Upper Merged Ontology — entity, process, object, autonomous agent, relation, proposition, quantity, etc.
+- **"sepio"**: SEPIO (Scientific Evidence and Provenance Information Ontology) — hypothesis, evidence, assertion, claim, confidence, method, contradiction, support, dispute, scientific inquiry
 - **"other"**: General analytical/research concepts — systems thinking, cognitive bias, innovation, complexity, emergence, feedback, adaptation, etc.
 
 ### 4. Expertise Level
@@ -63,7 +63,7 @@ Schema (one object per passage):
   "dc_type": "bibo:Book",
   "dc_subject": ["competitive advantage", "return on capital", "barrier to entry"],
   "ontology_tags": {
-    "fibo": ["competitive advantage", "return on invested capital", "barrier to entry"],
+    "fibo": ["market capitalization", "corporation", "valuation"],
     "pko": ["analysis", "evaluation"],
     "other": ["systems thinking"]
   },

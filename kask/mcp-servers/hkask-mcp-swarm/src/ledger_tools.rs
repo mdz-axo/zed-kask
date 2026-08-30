@@ -33,7 +33,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_fund_local",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.credits <= 0 {
@@ -75,7 +74,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_balance_local",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let runtime = self
                     .local_runtime
@@ -113,7 +111,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_local_history",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 let limit = req.limit.unwrap_or(50).min(500) as usize;

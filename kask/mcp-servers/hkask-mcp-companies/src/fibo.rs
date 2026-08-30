@@ -17,10 +17,9 @@
 //! with no FIBO equivalent anchor on Dublin Core (analysis outputs are
 //! reports, data outputs are datasets) — never an invented FIBO URI.
 
-// Re-export the verified FIBO vocabulary from the shared bridge crate.
-pub(crate) use hkask_bridge_ontology::fibo::{
-    CORPORATION, INTERNAL_RATE_OF_RETURN, MARKET_CAPITALIZATION, PORTFOLIO, TICKER_SYMBOL,
-};
+// Re-export the verified FIBO vocabulary from the shared bridge crate
+// (the terms this server anchors on).
+pub(crate) use hkask_bridge_ontology::fibo::{CORPORATION, MARKET_CAPITALIZATION, TICKER_SYMBOL};
 
 // ── Internal metric identifiers ─────────────────────────────────────────
 //
@@ -131,9 +130,7 @@ pub(crate) fn fmp_field_to_metric(field: &str) -> Option<&'static str> {
 /// Map a companies-server tool name to its top-level ontology concept URI —
 /// the concept that represents *what the artifact is* (not the per-field
 /// metric identifiers). This is the unified `"ontology"` field the widget
-/// reads for the "I" pattern dispatch and the compose-back body, AND the
-/// concept tagged on the `reg.tool.*` span via `execute_tool` for
-/// type-aware feedback routing.
+/// reads for the "I" pattern dispatch and the compose-back body.
 ///
 /// Anchoring policy (operator decision 2026-08-29): tools whose concept
 /// FIBO actually publishes anchor on the verified FIBO URI; analysis-family
@@ -200,8 +197,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
 /// This is the companies-server equivalent of the media server's
 /// `enrich_with_omc_and_provenance` — it bakes the ontology concept into the
 /// tool output so the portfolio widget can read it for the "I" pattern dispatch
-/// and the compose-back body. The `reg.tool.*` span carries the same concept
-/// via `execute_tool` (wired separately).
+/// and the compose-back body.
 pub(crate) fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
     if let Some(concept) = tool_to_ontology(tool) {
         if let Some(obj) = result.as_object_mut() {

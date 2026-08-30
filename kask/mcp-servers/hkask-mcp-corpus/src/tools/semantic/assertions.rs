@@ -17,7 +17,6 @@ pub(crate) fn abstract_namespace_tag_key(pred_ns: &str) -> Option<&'static str> 
     }
     match pred_ns {
         "sepio" => Some("sepio"),
-        "fibo" => Some("fibo"),
         "pko" => Some("pko"),
         "epistemic" => Some("epistemic"),
         "other" => Some("other"),
@@ -98,7 +97,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 /// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
 /// - Abstract-namespace predicates (GOLEM family — `gc`/`crm`/`dlp`/`lrmoo`,
-///   plus `sepio`/`fibo`/`pko`/`epistemic`/`other`) bypass the
+///   plus `sepio`/`pko`/`epistemic`/`other`) bypass the
 ///   subject/object-in-text check ONLY if the predicate's tag family was
 ///   actually tagged for this chunk. Without that cross-check, the LLM could
 ///   emit any `gc:`/`SEPIO:` predicate to bypass the guard for chunks where

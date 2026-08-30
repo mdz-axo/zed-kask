@@ -97,58 +97,6 @@ impl PredictionMarketsServer {
             .unwrap_or_else(|e| e.into_inner())
             .insert(tool.to_string());
     }
-
-    /// Map a tool name to its ontology concept URI. The concept is used both
-    /// as the `reg.tool.*` span ontology tag (via `execute_tool`) and
-    /// as the `"ontology"` field in some tool output JSON.
-    ///
-    /// Economic-data tools (FRED, World Bank, DBnomics) anchor on SDMX — the
-    /// ISO 17369 standard all three providers use as their data model. Market
-    /// tools anchor on Dublin Core (`dcmitype:Dataset`) as the fallback per the
-    /// standardization decision: no prediction-market-specific ontology yet,
-    /// and Dublin Core is always a valid state-axis anchor.
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        use hkask_bridge_ontology::{dc_bibo, sdmx};
-        match tool {
-            // Economic-data tools — SDMX (ISO 17369)
-            "fred_search_series"
-            | "fred_get_series_info"
-            | "fred_list_categories"
-            | "fred_get_release"
-            | "dbnomics_search"
-            | "dbnomics_get_dataset" => Some(sdmx::DATASET),
-            "fred_get_observations" | "dbnomics_get_series" | "wb_get_observations" => {
-                Some(sdmx::TIME_SERIES)
-            }
-            "wb_search_indicators" | "wb_list_topics" | "wb_get_indicator_info" => {
-                Some(sdmx::DATASET)
-            }
-            "wb_list_countries" => Some(sdmx::CATEGORY),
-            "dbnomics_list_providers" => Some(sdmx::DATA_PROVIDER),
-
-            // Market tools + EQM — Dublin Core fallback (no PM ontology yet)
-            "prediction_markets_status"
-            | "market_lookup"
-            | "market_match"
-            | "market_ontology_map"
-            | "market_calibration"
-            | "market_record_resolution"
-            | "market_subscribe_resolutions"
-            | "market_ladder"
-            | "market_cmp"
-            | "market_residual"
-            | "market_check_resolutions"
-            | "market_history"
-            | "market_cmp_index"
-            | "market_volatility"
-            | "market_cmp_index_store"
-            | "market_cmp_portfolio_store"
-            | "market_cmp_context_suggest"
-            | "market_score_rationale" => Some(dc_bibo::DATASET),
-
-            _ => Some(dc_bibo::DATASET),
-        }
-    }
 }
 
 // ── MCP Tools ──────────────────────────────────────────────────────────────

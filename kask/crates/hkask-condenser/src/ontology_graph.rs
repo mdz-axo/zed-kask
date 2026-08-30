@@ -5,9 +5,11 @@
 //! no reasoners, no OWL parsing — follows the `fibo.rs` bridge pattern.
 //!
 //! The graph serves the condenser as a saliency multiplier: when compressing
-//! content anchored to a concept (e.g., `fibo:Corporation`), lines referencing
-//! related concepts (e.g., `fibo:MarketCapitalization`) receive a bonus —
-//! structural knowledge about what "matters" in each domain.
+//! content anchored to a concept (e.g., `fibo-be-le-cb:Corporation`), lines
+//! referencing related concepts (e.g., `fibo-ind-mkt-bas:MarketCapitalization`)
+//! receive a bonus — structural knowledge about what "matters" in each
+//! domain. The graph's internal keys are hKask salience keywords (plain
+//! lowercase concept names), not ontology URIs.
 //!
 //! # Relationship Types
 //!
@@ -15,9 +17,9 @@
 //! |------|---------|---------|
 //! | **PartOf** | A is a component of B | `pko:StepExecution` is part of `pko:ProcedureExecution` |
 //! | **Precedes** | A must happen before B | `sumo:encoding` precedes `sumo:memory_consolidation` |
-//! | **HasProperty** | A has attribute/measure B | `fibo:Corporation` has `fibo:MarketCapitalization` |
+//! | **HasProperty** | A has attribute/measure B | `fibo-be-le-cb:Corporation` has `fibo-ind-mkt-bas:MarketCapitalization` |
 //! | **RelatedTo** | A and B are semantically linked | `sumo:salience` relates to `sumo:cued_recall` |
-//! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo:Corporation` |
+//! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo-be-le-cb:Corporation` |
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

@@ -12,8 +12,6 @@ pub(crate) struct ToolSpanGuard {
     start: Instant,
     caller: hkask_types::WebID,
     emitted: bool,
-    /// Domain ontology concept for type-aware feedback routing (e.g. "pko:ChangeOfStatus").
-    ontology: Option<&'static str>,
 }
 
 impl ToolSpanGuard {
@@ -28,29 +26,7 @@ impl ToolSpanGuard {
             start: Instant::now(),
             caller: *caller,
             emitted: false,
-            ontology: None,
         }
-    }
-
-    /// Tag this span with a domain ontology concept (e.g. "pko:ChangeOfStatus").
-    /// The concept flows into the Regulation span for type-aware feedback routing.
-    ///
-    /// All hKask bridge crate constants (`hkask-bridge-ontology`,
-    /// which owns DC/BIBO/PKO + all domain bridges) are valid
-    /// `&'static str` concepts. This function documents the intent: `with_ontology`
-    /// accepts ontology concepts, not arbitrary debug strings.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use hkask_bridge_ontology::pko::STEP_EXECUTION;
-    /// ToolSpanGuard::new("my_tool", &caller)
-    ///     .with_ontology(STEP_EXECUTION);
-    /// ```
-    #[must_use]
-    pub fn with_ontology(mut self, concept: &'static str) -> Self {
-        self.ontology = Some(concept);
-        self
     }
 
     /// Mark span as successful and return output.
@@ -61,14 +37,7 @@ impl ToolSpanGuard {
     pub fn ok(mut self, output: String) -> String {
         self.emitted = true;
         let duration_ms = self.start.elapsed().as_millis() as u64;
-        emit_tool_span(
-            &self.tool_name,
-            "ok",
-            duration_ms,
-            None,
-            Some(&self.caller),
-            self.ontology,
-        );
+        emit_tool_span(&self.tool_name, "ok", duration_ms, None, Some(&self.caller));
         output
     }
 
@@ -86,7 +55,6 @@ impl ToolSpanGuard {
             duration_ms,
             Some(&e.kind),
             Some(&self.caller),
-            self.ontology,
         );
         e
     }
@@ -132,7 +100,6 @@ impl Drop for ToolSpanGuard {
                 duration_ms,
                 None,
                 Some(&self.caller),
-                None,
             );
         }
     }
@@ -147,9 +114,8 @@ fn emit_tool_span(
     duration_ms: u64,
     error_kind: Option<&McpErrorKind>,
     caller: Option<&hkask_types::WebID>,
-    ontology: Option<&str>,
 ) {
-    tracing::info!(target: "reg.tool", tool = tool_name, outcome = outcome, duration_ms = duration_ms, error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""), caller = caller.map(|w| w.to_string()).as_deref().unwrap_or(""), ontology = ontology.unwrap_or(""), "REG");
+    tracing::info!(target: "reg.tool", tool = tool_name, outcome = outcome, duration_ms = duration_ms, error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""), caller = caller.map(|w| w.to_string()).as_deref().unwrap_or(""), "REG");
 }
 
 // ── Framework-level tool execution ────────────────────────────────────────
@@ -199,36 +165,6 @@ pub async fn execute_tool<C: ToolContext>(
     fut: impl std::future::Future<Output = Result<Value, McpToolError>>,
 ) -> Result<String, McpToolError> {
     let span = ToolSpanGuard::new(tool_name, ctx.webid());
-    let result = fut.await;
-    span.finish(result)
-}
-
-/// Like `execute_tool` but tags the Regulation span with a domain ontology concept
-/// (e.g. "pko:ChangeOfStatus") for type-aware feedback routing.
-///
-/// When `ontology` is `None`, emits a `tracing::warn!` naming the tool — the
-/// algedonic signal that a registered tool lacks an ontology anchor. This
-/// opens the S1→S5 feedback channel: a missing anchor is visible at runtime
-/// rather than silently producing an untagged span.
-#[must_use]
-pub async fn execute_tool_semantic<C: ToolContext>(
-    ctx: &C,
-    tool_name: &str,
-    ontology: Option<&'static str>,
-    fut: impl std::future::Future<Output = Result<Value, McpToolError>>,
-) -> Result<String, McpToolError> {
-    let mut span = ToolSpanGuard::new(tool_name, ctx.webid());
-    if let Some(concept) = ontology {
-        span = span.with_ontology(concept);
-    } else {
-        tracing::warn!(
-            target: "hkask.mcp.ontology",
-            tool = %tool_name,
-            "execute_tool_semantic called with None ontology for tool '{}'; \
-             add an arm to the server's ontology_anchor fn",
-            tool_name
-        );
-    }
     let result = fut.await;
     span.finish(result)
 }

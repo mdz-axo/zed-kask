@@ -303,28 +303,6 @@ impl TrainingServer {
             + Self::rollout_bridge_router()
     }
 
-    /// Map a tool name to its ML-Schema ontology concept URI. The concept
-    /// tags the `reg.tool` span (via `execute_tool`) for type-aware
-    /// feedback routing. Training is an ML-experiment surface, so ML-Schema
-    /// — the W3C Community Group standard for ML experiments — is the
-    /// natural anchor: dataset tools anchor on `mls:Data`, run-lifecycle
-    /// tools on `mls:Run`, and evaluation/validation on `mls:Model`.
-    ///
-    /// ML-Schema reference: <https://www.w3.org/community/ml-schema/>
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        use hkask_bridge_ontology::ml_schema as mlschema;
-        match tool {
-            // Dataset ingestion / assembly — data axis
-            "training_ingest_qa" | "training_assemble_dataset" | "training_ingest_dataset" => {
-                Some(mlschema::DATA)
-            }
-            // Run lifecycle — submit, status, cancel
-            "training_submit" | "training_status" | "training_cancel" => Some(mlschema::RUN),
-            // Model axis — evaluation and config validation
-            "training_evaluate" | "training_validate_config" => Some(mlschema::MODEL),
-            _ => Some(mlschema::RUN),
-        }
-    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]

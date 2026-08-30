@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS fibo_concept_store (
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (symbol, fibo_concept, period)
 );
--- The `fibo_concept` column name predates the 2026-08-29 FIBO remediation;
--- it stores internal metric identifiers (e.g. "revenue_growth_rate"), not
+-- The fibo_concept column name predates the 2026-08-29 FIBO remediation;
+-- it stores internal metric identifiers (e.g. revenue_growth_rate), not
 -- FIBO URIs. The name is kept for existing-database compatibility.
 CREATE INDEX IF NOT EXISTS idx_fibo_concept_symbol ON fibo_concept_store(symbol);
 CREATE INDEX IF NOT EXISTS idx_fibo_concept_concept ON fibo_concept_store(fibo_concept);

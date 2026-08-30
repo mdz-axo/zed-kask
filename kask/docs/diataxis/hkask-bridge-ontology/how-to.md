@@ -137,8 +137,8 @@ domain-specific precision. Each supplement module is a flat list of
 use hkask_bridge_ontology::{fibo, sdmx, sepio, golem, ml_schema, sumo, omc};
 
 // Financial domain (FIBO)
-let roic = fibo::RETURN_ON_INVESTED_CAPITAL;  // "fibo-fbc-fct-ra:ReturnOnInvestedCapital" (fibo.rs:51)
-let dcf  = fibo::DCF_VALUATION;               // "fibo:dcfValuation"                       (fibo.rs:141)
+let roic = fibo::CORPORATION;             // "fibo-be-le-cb:Corporation"  (fibo.rs:50)
+let mcap = fibo::MARKET_CAPITALIZATION;   // "fibo-ind-mkt-bas:MarketCapitalization" (fibo.rs:62)
 
 // Statistical data (SDMX)
 let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"  (sdmx.rs:30)
@@ -281,16 +281,21 @@ re-exports `OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`, and
 one import path):
 
 ```rust
-// In your server's ontology module:
-pub use hkask_bridge_ontology::fibo::{
-    RETURN_ON_INVESTED_CAPITAL, PRICE_EARNINGS_RATIO, /* ... */
-};
+// In your server's ontology module — re-export only the verified FIBO
+// terms the server anchors on:
+pub use hkask_bridge_ontology::fibo::{CORPORATION, MARKET_CAPITALIZATION};
+
+// Internal metric identifiers are plain hKask canonical names — NOT
+// ontology URIs (FIBO publishes no terms for financial ratios; verified
+// 2026-08-29).
+pub const METRIC_RETURN_ON_INVESTED_CAPITAL: &str = "return_on_invested_capital";
+pub const METRIC_PRICE_EARNINGS_RATIO: &str = "price_earnings_ratio";
 
 // Keep the server-specific mapping here.
-pub fn fmp_field_to_fibo(field: &str) -> Option<&'static str> {
+pub fn fmp_field_to_metric(field: &str) -> Option<&'static str> {
     match field {
-        "roic"    => Some(RETURN_ON_INVESTED_CAPITAL),
-        "peRatio" => Some(PRICE_EARNINGS_RATIO),
+        "roic"    => Some(METRIC_RETURN_ON_INVESTED_CAPITAL),
+        "peRatio" => Some(METRIC_PRICE_EARNINGS_RATIO),
         _ => None,
     }
 }
@@ -350,7 +355,7 @@ their own mapping today.
 | `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:21`, `:54` |
 | `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:106`, `:127`, `:156` |
 | `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:156` |
-| `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/PORTFOLIO/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:32`, `:51`, `:93`, `:141` |
+| `fibo` constants (CORPORATION/TICKER_SYMBOL/PORTFOLIO/MARKET_CAPITALIZATION/... — verified FIBO terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:47-80`, fixture `fixtures/fibo-verified-terms.txt` |
 | `sepio` constants (HAS_EVIDENCE/CONTRADICTS/... — official SEPIO terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/sepio.rs`, fixture `fixtures/sepio-2023-06-13-terms.txt` |
 | `golem` constants (WORK/CHARACTER/HAS_CHARACTER/... — official v1.1 terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/golem.rs:41-135`, fixture `fixtures/golem-v1.1-terms.txt` |
 | `ml_schema` constants (MODEL/RUN/...) | `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21`, `:23` |

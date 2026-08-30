@@ -111,11 +111,11 @@ System Context: "hKask PRINCIPLES.md — P1 User Sovereignty"
 
 Statement: "AAPL has a market capitalization of 3.2 trillion USD."
 System Context: "hkask-mcp-companies — company_profile tool output"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"fibo:MarketCapitalization","constraint_force":"Evidence","provenance":"observation","confidence":0.85,"reasoning":"Descriptive measurement (IS) from tool output (declarative). FIBO domain supplement — MarketCapitalization is an OMG-standard financial concept. FIBO carries +0.10 confidence modifier for high adoption, but observation provenance from API limits to 0.85."}
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"fibo-ind-mkt-bas:MarketCapitalization","constraint_force":"Evidence","provenance":"observation","confidence":0.85,"reasoning":"Descriptive measurement (IS) from tool output (declarative). FIBO domain supplement — MarketCapitalization is a verified FIBO concept (IND/MarketIndices/BasketIndices). The +0.10 FIBO confidence modifier is an hKask tuning choice for domain-verified anchors, but observation provenance from API limits to 0.85."}
 
 Statement: "The agent encoded the experience and is now consolidating it to semantic memory."
 System Context: "hkask-mcp-memory — episodic_consolidate_status tool output"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"observation","confidence":0.80,"reasoning":"Descriptive observation (IS) from tool output (declarative). SUMO domain supplement — Process is an upper-ontology concept. SUMO carries +0.05 confidence boost because it is an actively maintained upper ontology with broad coverage. Combined with observation provenance, confidence is 0.80."}
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"observation","confidence":0.80,"reasoning":"Descriptive observation (IS) from tool output (declarative). SUMO domain supplement — Process is an upper-ontology concept. The +0.05 SUMO confidence modifier is an hKask tuning choice for upper-ontology anchors. Combined with observation provenance, confidence is 0.80."}
 
 ## Output Requirements
 
@@ -126,7 +126,7 @@ Respond with a JSON object:
   "ontological_mode": "IS|OUGHT",
   "epistemic_mode": "declarative|probabilistic|subjunctive",
   "ontology_tier": "core|dual_axis|domain_supplement",
-  "ontology_anchor": "5w1h:Who|5w1h:What|5w1h:When|5w1h:Where|5w1h:Why|5w1h:How|pko:ConceptName|bibo:ConceptName|dcterms:ConceptName|fibo:ConceptName|golem:ConceptName|sumo:ConceptName|mls:ConceptName|omc:ConceptName|unanchored",
+  "ontology_anchor": "5w1h:Who|5w1h:What|5w1h:When|5w1h:Where|5w1h:Why|5w1h:How|pko:ConceptName|bibo:ConceptName|dcterms:ConceptName|fibo-<module>:ConceptName|golem:ConceptName|sumo:ConceptName|mls:ConceptName|omc:ConceptName|unanchored",
   "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
   "provenance": "specification|implementation|observation|inference|external|unknown",
   "confidence": 0.0,

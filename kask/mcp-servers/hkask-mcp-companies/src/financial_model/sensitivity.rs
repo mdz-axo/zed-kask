@@ -118,7 +118,7 @@ pub(crate) fn sensitivity_analysis(
             intrinsic_low,
             intrinsic_high,
             delta_pct,
-            metric: fibo,
+            metric,
         });
     }
 

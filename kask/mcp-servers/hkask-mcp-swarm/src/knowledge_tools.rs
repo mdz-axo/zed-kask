@@ -27,7 +27,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_search_knowledge_local",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
@@ -77,7 +76,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_recall_local",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.query.trim().is_empty() {
@@ -132,7 +130,6 @@ impl SwarmServer {
         execute_tool(
             self,
             "swarm_generate_prompt_local",
-            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 let req = parameters.0;
                 if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
@@ -195,7 +192,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GenerateOntologyLocalRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_generate_ontology_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
+        execute_tool(self, "swarm_generate_ontology_local", async {
             let req = parameters.0;
             if req.domain_description.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
