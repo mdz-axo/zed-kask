@@ -415,7 +415,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Golem,
-                concept: "golem:Character".into()
+                concept: "gc:G1_Character".into()
             }
             .confidence_modifier()
                 - 0.0)

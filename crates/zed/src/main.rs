@@ -354,14 +354,19 @@ fn main() {
 
     zlog::init();
 
+    // zed-kask: always write the log file; a PTY stdout is mirrored in
+    // addition, never substituted. Upstream logs to stdout only when run
+    // from a terminal, which leaves no on-disk record — the 2026-08-29
+    // settings-reactivity investigation was blocked because every warn
+    // went to a PTY that had scrolled away and no Zed-Kask.log existed.
+    // File logging must never silently fail: if the file cannot be opened,
+    // fall back to stdout so the failure is at least visible.
+    if let Err(err) = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file())) {
+        eprintln!("Could not open log file: {err}... Defaulting to stdout");
+        zlog::init_output_stdout();
+    }
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
-    } else {
-        let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
-        if let Err(err) = result {
-            eprintln!("Could not open log file: {}... Defaulting to stdout", err);
-            zlog::init_output_stdout();
-        };
     }
     ztracing::init();
 
@@ -2170,14 +2175,17 @@ fn main() {
                                     "hKask inference IPC server started at {socket_path} — \
                                      MCP servers will route inference through zed"
                                 );
-                                // The server stays alive for the process lifetime: `start`
-                                // spawns a detached tokio task that owns the `UnixListener`,
-                                // and the returned `InferenceIpcServer` holds the
-                                // `JoinHandle`s. The socket file is intentionally leaked
-                                // (see the doc on `InferenceIpcServer`) — there is no
-                                // `Drop` impl, so `mem::forget` would be a no-op that
-                                // implied otherwise. Bind to `_` to acknowledge the value
-                                // is kept alive by the task, not by this binding.
+                                // The server's tasks are detached inside
+                                // `start` and run for the process lifetime:
+                                // the tokio listener (detach-on-drop) and the
+                                // GPUI-side channel tasks (explicit
+                                // `.detach()` — a GPUI `Task` is CANCELLED on
+                                // handle drop, so storing the handles here
+                                // would kill the credential/list_models/
+                                // worktree channels when this closure's scope
+                                // ends). Dropping this value is therefore
+                                // harmless; the binding exists only to
+                                // acknowledge the result.
                                 let _ipc_server = ipc_server;
                                 // zed-kask: D3/D8 — F19: MCP re-sync (inference socket, deferred).
                                 // Re-sync both MCP server paths so the inference socket path is

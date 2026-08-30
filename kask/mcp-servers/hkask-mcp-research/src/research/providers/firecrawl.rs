@@ -1,5 +1,6 @@
 use super::{
     ProviderSearchOutput, WebBrowseProvider, WebError, WebExtractProvider, WebSearchProvider,
+    reqwest_error_detail,
 };
 use crate::research::types::*;
 use async_trait::async_trait;
@@ -26,6 +27,33 @@ impl FirecrawlProvider {
             .ok_or(WebError::NoProvider)
     }
 }
+
+/// Parse a Firecrawl v2 search response. v2 nests the web results under
+/// `data.web` (`{"success":true,"data":{"web":[…],"news":[…]}}`); the
+/// former `data`-as-array read was the v1 shape and silently returned zero
+/// results on every successful v2 call.
+fn parse_v2_search_results(parsed: &serde_json::Value) -> Vec<SearchResult> {
+    parsed["data"]["web"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    Some(SearchResult {
+                        title: item["title"].as_str()?.to_string(),
+                        url: item["url"].as_str()?.to_string(),
+                        description: item["description"]
+                            .as_str()
+                            .or_else(|| item["snippet"].as_str())
+                            .map(|s| s.to_string()),
+                        source: None,
+                        published: None,
+                        provider: None,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
 #[async_trait]
 impl WebSearchProvider for FirecrawlProvider {
     fn kind(&self) -> &str {
@@ -46,7 +74,12 @@ impl WebSearchProvider for FirecrawlProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl request failed: {e}")))?;
+            .map_err(|e| {
+                WebError::ProviderUnavailable(format!(
+                    "Firecrawl request failed: {}",
+                    reqwest_error_detail(&e)
+                ))
+            })?;
 
         let status = resp.status();
         let body = resp.text().await.map_err(|e| {
@@ -66,26 +99,7 @@ impl WebSearchProvider for FirecrawlProvider {
             WebError::ProviderError(format!("Failed to parse Firecrawl response: {e}"))
         })?;
 
-        let results = parsed["data"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        Some(SearchResult {
-                            title: item["title"].as_str()?.to_string(),
-                            url: item["url"].as_str()?.to_string(),
-                            description: item["description"]
-                                .as_str()
-                                .or_else(|| item["snippet"].as_str())
-                                .map(|s| s.to_string()),
-                            source: None,
-                            published: None,
-                            provider: None,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let results = parse_v2_search_results(&parsed);
 
         Ok(ProviderSearchOutput {
             results,
@@ -243,5 +257,52 @@ impl WebBrowseProvider for FirecrawlProvider {
             return Err(WebError::NoProvider);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Firecrawl v2 nests web results under `data.web`. The former
+    /// `data`-as-array read (the v1 shape) silently returned zero results on
+    /// every successful v2 call — an empty success, the exact defect class
+    /// this server's contracts forbid. Pins the v2 shape.
+    #[test]
+    fn parse_v2_search_results_reads_data_web_array() {
+        let body = serde_json::json!({
+            "success": true,
+            "data": {
+                "web": [
+                    {"title": "Speedtest", "url": "https://www.speedtest.net/",
+                     "description": "Broadband speed test"},
+                    {"title": "No URL", "description": "skipped — url is required"}
+                ],
+                "news": []
+            }
+        });
+        let results = parse_v2_search_results(&body);
+        assert_eq!(results.len(), 1, "only the entry with a url is kept");
+        assert_eq!(results[0].title, "Speedtest");
+        assert_eq!(results[0].url, "https://www.speedtest.net/");
+        assert_eq!(
+            results[0].description.as_deref(),
+            Some("Broadband speed test")
+        );
+    }
+
+    /// A v1-shaped body (`data` as a bare array) must NOT parse as success â
+    /// v2 is the API version in `FIRECRAWL_API_BASE`; silently accepting both
+    /// shapes would re-open the empty-success hole if the v1 read returned.
+    #[test]
+    fn parse_v2_search_results_rejects_v1_data_array() {
+        let v1_body = serde_json::json!({
+            "success": true,
+            "data": [{"title": "t", "url": "https://example.com"}]
+        });
+        assert!(
+            parse_v2_search_results(&v1_body).is_empty(),
+            "v1-shaped data array must yield no results â v2 nests under data.web"
+        );
     }
 }

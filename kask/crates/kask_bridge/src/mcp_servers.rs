@@ -1777,4 +1777,69 @@ mod tests {
         );
         assert_eq!(content.project.context_servers.len(), 1);
     }
+
+    /// Detection must work on content parsed from real settings-file text,
+    /// not just on hand-constructed `SettingsContent`s — the live path is
+    /// `raw_user_settings()` → `UserSettingsContent::parse_json` output. If
+    /// the parse routes `context_servers` somewhere other than
+    /// `content.project.context_servers`, the removal silently no-ops.
+    #[test]
+    fn shadowed_detection_works_on_parsed_file_content() {
+        use settings_content::RootUserSettings;
+
+        let text = r#"{
+            "context_servers": {
+                "research": {"command": "/bin/true", "args": [], "env": {}},
+                "my-own-server": {"command": "/bin/true", "args": [], "env": {}}
+            }
+        }"#;
+        let (parsed, _status) = settings_content::UserSettingsContent::parse_json(text);
+        let user = parsed.expect("settings text must parse");
+        let shadowed = shadowed_context_server_entry_ids(&user.content);
+        assert_eq!(
+            shadowed.iter().map(|id| id.as_ref()).collect::<Vec<_>>(),
+            vec!["research"],
+            "detection must find the shadowing entry in parsed file content"
+        );
+    }
+
+    /// The removal write goes through `edits_for_update`, which diffs
+    /// `serde_json::to_value(old)` against `to_value(new)`. If the
+    /// serialization of `UserSettingsContent` drops `context_servers`, the
+    /// diff is empty, `new_text == old_text`, and D32's no-op-write skip
+    /// silently swallows the removal — the file keeps the shadowing entry
+    /// forever with no error anywhere. This pins that the round-trip
+    /// preserves the entry so the removal produces a real edit.
+    #[test]
+    fn user_settings_serialization_preserves_context_servers_for_edit_diff() {
+        use settings_content::RootUserSettings;
+
+        let text = r#"{
+            "context_servers": {
+                "research": {"command": "/bin/true", "args": [], "env": {}}
+            }
+        }"#;
+        let (parsed, _status) = settings_content::UserSettingsContent::parse_json(text);
+        let user = parsed.expect("settings text must parse");
+
+        let old_value = serde_json::to_value(&user).expect("serialize");
+        assert!(
+            old_value
+                .get("context_servers")
+                .and_then(|v| v.get("research"))
+                .is_some(),
+            "serialization must preserve context_servers — otherwise the edit diff \
+             is empty and the removal write is silently skipped"
+        );
+
+        let mut new_user = user;
+        let removed = remove_shadowing_context_server_entries(&mut new_user.content);
+        assert_eq!(removed.len(), 1);
+        let new_value = serde_json::to_value(&new_user).expect("serialize");
+        assert!(
+            new_value.get("context_servers").is_none()
+                || new_value["context_servers"].get("research").is_none(),
+            "after removal the serialized entry must be gone — the diff drives the file edit"
+        );
+    }
 }

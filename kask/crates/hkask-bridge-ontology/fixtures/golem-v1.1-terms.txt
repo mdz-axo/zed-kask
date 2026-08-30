@@ -1,0 +1,89 @@
+# Official GOLEM v1.1 term list — fabrication guard fixture.
+#
+# Source: https://ontology.golemlab.eu/ (GOLEM Ontology, v1.1)
+#   IRI: https://w3id.org/golem/ontology
+#   Preferred prefix: gc:  Namespace: https://w3id.org/golem/ontology#
+#   Creators: Pianzola, Pannach, Cheng, Yang, Scotti (GOLEM Lab, 2024-10-10)
+#   License: CC BY 4.0  Zenodo: doi.org/10.5281/zenodo.14911396
+# Fetched: 2026-08-29 (transcribed from the published Classes / Object
+#   Properties sections; terms below use the prefix bindings declared in the
+#   ontology's Namespaces section).
+#
+# Prefix bindings (from the ontology's Namespaces section):
+#   gc:     https://w3id.org/golem/ontology#
+#   crm:    http://www.cidoc-crm.org/cidoc-crm/
+#   dlp:    http://www.ontologydesignpatterns.org/ont/dlp/
+#   lrmoo:  http://iflastandards.info/ns/lrm/lrmoo/
+#
+# GOLEM classes (gc:):
+gc:G0_Character-Stoff
+gc:G1_Character
+gc:G2_Feature
+gc:G3_Psychological_State
+gc:G4_Social_Relationships
+gc:G5_Narrative_Event
+gc:G6_Relationship_Role
+gc:G7_Narrative_Sequence
+gc:G9_Narrative_Unit
+gc:G10_Narrative_Function
+gc:G11_Narrative_Role
+gc:G12_Setting
+gc:G13_Narrative_Location
+gc:G14_Narrative-Stoff
+gc:G15_Fandom
+gc:G16_Object
+gc:G17_Character_Feature
+gc:G18_Textual_Feature
+#
+# GOLEM object properties (gc:):
+gc:GP0_has_feature
+gc:GP0i_is_feature_of
+gc:GP1_is_character_in
+gc:GP1i_has_Character
+#
+# Reused LRMoo terms (GOLEM restrictions and domains/ranges reference these):
+lrmoo:F1_Work
+lrmoo:F2_Expression
+lrmoo:R3_is_realised_in
+lrmoo:R3i_realises
+lrmoo:R5_has_component
+lrmoo:R5i_is_component_of
+#
+# Reused CIDOC-CRM terms (GOLEM restrictions and domains/ranges reference these):
+crm:E13_Attribute_Assignment
+crm:E1_CRM_Entity
+crm:P2_has_type
+crm:P16_used_specific_object
+crm:P16i_was_used_for
+crm:P43_has_dimension
+crm:P67_refers_to
+crm:P67i_is_referred_to_by
+crm:P127_has_broader_term
+crm:P130_shows_features_of
+crm:P130i_features_are_also_found_on
+crm:P140_assigned_attribute_to
+crm:P141_assigned
+crm:P177_assigned_property_of_type
+#
+# Reused DOLCE-Lite-Plus terms (GOLEM restrictions and domains/ranges
+# reference these):
+dlp:participant
+dlp:participant-in
+dlp:generic-location
+dlp:setting
+dlp:setting-for
+dlp:has-state
+dlp:state-of
+dlp:plays
+dlp:played-by
+dlp:d-uses
+dlp:d-used-by
+dlp:sequences
+dlp:sequenced-by
+dlp:satisfies
+dlp:satisfied-by
+dlp:proper-part
+dlp:proper-part-of
+dlp:follows
+dlp:precedes
+dlp:member

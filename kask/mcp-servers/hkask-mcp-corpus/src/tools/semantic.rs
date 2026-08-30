@@ -29,7 +29,9 @@ use serde::Deserialize;
 
 // Re-export helpers used by other tool modules (corpus.rs imports these) and
 // make them available within this module via the module path.
-pub(crate) use assertions::{assertion_confidence, predicate_to_dimension};
+pub(crate) use assertions::{
+    abstract_namespace_tag_key, assertion_confidence, predicate_to_dimension,
+};
 pub(crate) use ontology_io::read_ontology_namespaces;
 pub(crate) use ontology_io::read_ontology_tags;
 pub(crate) use qa::configured_qa_model;

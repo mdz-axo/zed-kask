@@ -98,9 +98,17 @@ Full list: `kask/crates/hkask-bridge-ontology/src/eso.rs`
 
 ### `golem` — GOLEM narrative ontology (narrative domain)
 
-Canonical predicate URIs for narrative concepts: `CHARACTER`
-(`golem:G1_Character`), `EVENT` (`golem:G1_Event`), `HAS_THEME`
-(`golem:hasTheme`), `METAPHOR_FOR` (`golem:metaphorFor`).
+Canonical URIs from the official GOLEM v1.1 vocabulary (Pianzola et al.,
+GOLEM Lab 2024, <https://ontology.golemlab.eu/> — IRI
+<https://w3id.org/golem/ontology>, preferred prefix `gc:`). GOLEM extends
+CIDOC-CRM and LRMoo and reuses their terms, so the module also carries
+`crm:`, `dlp:` (DOLCE-Lite-Plus), and `lrmoo:` URIs: `WORK`
+(`lrmoo:F1_Work`), `CHARACTER` (`gc:G1_Character`), `HAS_CHARACTER`
+(`gc:GP1i_has_Character`), `HAS_SETTING` (`dlp:setting`), `REFERS_TO`
+(`crm:P67_refers_to`). Every term is pinned against the checked-in
+official term list `kask/crates/hkask-bridge-ontology/fixtures/golem-v1.1-terms.txt`
+by the `all_terms_are_official` test — a URI not in the published ontology
+fails the build.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 

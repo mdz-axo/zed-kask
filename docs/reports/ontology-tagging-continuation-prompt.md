@@ -1,5 +1,13 @@
 # Continuation prompt: MCP ontology-tagging standardization
 
+> Status: **Superseded (2026-08-29).** The migration this prompt drove is
+> complete, and the GOLEM vocabulary it references (`golem::CREATIVE_WORK`,
+> `golem:hasCharacter`, etc.) has since been remediated to the official
+> GOLEM v1.1 terms (`gc:`, `crm:`, `dlp:`, `lrmoo:` — see
+> `kask/crates/hkask-bridge-ontology/src/golem.rs` and
+> `fixtures/golem-v1.1-terms.txt`). Do not follow the GOLEM constant names
+> below; the server source is authoritative.
+
 ## Context
 
 We standardized ontology tagging across the hKask MCP server fleet. The work is partially complete. This prompt picks up where we left off.

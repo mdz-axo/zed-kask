@@ -16,6 +16,7 @@
 //! valid.
 
 use crate::dc_bibo;
+use crate::golem;
 use crate::pko;
 use crate::sdmx;
 use crate::sumo;
@@ -293,7 +294,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     {
         return OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Golem,
-            concept: dc_bibo::TEXT.to_string(),
+            concept: golem::WORK.to_string(),
         };
     }
     // ML training → ML-Schema.

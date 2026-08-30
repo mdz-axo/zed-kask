@@ -123,7 +123,7 @@ PKO also ships stage-mapping helpers for the servers that convert their
 domain stages to process concepts: `kanban_status_to_pko_execution`
 (`pko.rs:106`), `corpus_stage_to_pko_step` (`pko.rs:127`), and
 `research_stage_to_pko` (`pko.rs:156`). GOLEM ships `corpus_op_to_golem`
-(`golem.rs:132`) for creative-generation operations. The corpus server's
+(`golem.rs:156`) for creative-generation operations. The corpus server's
 `ontology_anchor` delegates to `corpus_stage_to_pko_step` and
 `corpus_op_to_golem` — the canonical mapping, so it cannot drift.
 
@@ -146,8 +146,9 @@ let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"  (sdmx.rs:30)
 // Scientific reasoning (ESO)
 let hyp = eso::HAS_HYPOTHESIS;    // "eso:hasHypothesis" (eso.rs:23)
 
-// Narrative (GOLEM)
-let character = golem::CHARACTER; // "golem:G1_Character" (golem.rs:23)
+// Narrative (GOLEM — official v1.1 vocabulary, prefix gc:, reusing crm:/dlp:/lrmoo:)
+let character = golem::CHARACTER; // "gc:G1_Character" (golem.rs:54)
+let work = golem::WORK;          // "lrmoo:F1_Work"   (golem.rs:46)
 
 // ML experiments (ML-Schema — note the module name is ml_schema, not mlschema)
 let run = ml_schema::RUN;        // "mls:Run"  (ml_schema.rs:23)
@@ -348,10 +349,10 @@ their own mapping today.
 | `dc_bibo::mime_to_dc_type` | `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:79` |
 | `pko` constants (PROCEDURE/STEP_EXECUTION/...) | `kask/crates/hkask-bridge-ontology/src/pko.rs:21`, `:54` |
 | `pko` stage-mapping helpers | `kask/crates/hkask-bridge-ontology/src/pko.rs:106`, `:127`, `:156` |
-| `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:132` |
+| `golem::corpus_op_to_golem` | `kask/crates/hkask-bridge-ontology/src/golem.rs:156` |
 | `fibo` constants (CORPORATION/RETURN_ON_INVESTED_CAPITAL/DCF_VALUATION/PORTFOLIO/...) | `kask/crates/hkask-bridge-ontology/src/fibo.rs:32`, `:51`, `:93`, `:141` |
 | `eso` constants (HAS_HYPOTHESIS/...) | `kask/crates/hkask-bridge-ontology/src/eso.rs:23` |
-| `golem` constants (CHARACTER/EVENT/SETTING/CREATIVE_WORK/...) | `kask/crates/hkask-bridge-ontology/src/golem.rs:23`, `:27`, `:30`, `:51` |
+| `golem` constants (WORK/CHARACTER/HAS_CHARACTER/... — official v1.1 terms, fixture-pinned) | `kask/crates/hkask-bridge-ontology/src/golem.rs:41-135`, fixture `fixtures/golem-v1.1-terms.txt` |
 | `ml_schema` constants (MODEL/RUN/...) | `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21`, `:23` |
 | `sdmx` constants (DATASET/TIME_SERIES/...) | `kask/crates/hkask-bridge-ontology/src/sdmx.rs:23`, `:30` |
 | `sumo` constants (ENTITY/OBJECT/PROCESS/AGENT/...) | `kask/crates/hkask-bridge-ontology/src/sumo.rs:32` |

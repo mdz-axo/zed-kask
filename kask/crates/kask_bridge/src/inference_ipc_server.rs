@@ -142,23 +142,30 @@ pub(crate) fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
 /// # Socket cleanup
 ///
 /// The socket file is intentionally leaked: `start` spawns a detached tokio
-/// task that owns the `UnixListener`, and `main.rs` keeps the returned
-/// `InferenceIpcServer` alive for the process lifetime (the listener task
-/// is never dropped on exit). There is no `Drop` impl because it could
-/// never run — Rust does not drop detached async tasks or process-global
-/// statics on process exit. The socket lives in a per-user private tmpdir
-/// (pid + nonce, 0600 file inside a 0700 dir, see `generate_socket_path` /
-/// `inference_socket_dir`), so the OS reaps it on reboot or tmpdir cleanup.
-/// Adding a `Drop` impl that calls `std::fs::remove_file` would be dead
-/// code and silently swallow the io result (the `let _ =` trap).
+/// task that owns the `UnixListener`, and the GPUI-side channel tasks
+/// (list_models, worktree_spawn, batch_credential) are **detached** in
+/// `start` so they run for the process lifetime. This is load-bearing: a
+/// GPUI `Task` is cancelled immediately when its handle is dropped (unlike a
+/// tokio `JoinHandle`, whose drop detaches) — storing the handles in this
+/// struct made the tasks' lifetime depend on the caller keeping the
+/// `InferenceIpcServer` value alive, and every caller binds it as a
+/// closure-local that drops at the end of startup, silently cancelling the
+/// credential/list_models/worktree channels while the detached listener kept
+/// serving (rerank then fails with "GPUI-side credential task dropped").
+/// There is no `Drop` impl because it could never run — Rust does not drop
+/// detached async tasks or process-global statics on process exit. The
+/// socket lives in a per-user private tmpdir (pid + nonce, 0600 file inside
+/// a 0700 dir, see `generate_socket_path` / `inference_socket_dir`), so the
+/// OS reaps it on reboot or tmpdir cleanup. Adding a `Drop` impl that calls
+/// `std::fs::remove_file` would be dead code and silently swallow the io
+/// result (the `let _ =` trap).
 pub struct InferenceIpcServer {
     /// The socket path — passed to MCP server child processes via env var.
     socket_path: PathBuf,
-    /// The background listener task.
+    /// The background listener task. Dropping a tokio `JoinHandle` detaches
+    /// the task, so this field is decorative — kept for symmetry with the
+    /// detached GPUI tasks above.
     _task: tokio::task::JoinHandle<()>,
-    _list_models_task: gpui::Task<()>,
-    _worktree_spawn_task: gpui::Task<()>,
-    _batch_credential_task: gpui::Task<()>,
 }
 
 /// Maximum size of a single newline-delimited IPC message.
@@ -399,7 +406,9 @@ impl InferenceIpcServer {
         let (list_models_tx, mut list_models_rx) = tokio::sync::mpsc::unbounded_channel::<(
             tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
         )>();
-        let list_models_task = cx.spawn(async move |cx| {
+        // Detached: the task must outlive the `InferenceIpcServer` value —
+        // a GPUI `Task` is cancelled on handle drop (see the struct doc).
+        cx.spawn(async move |cx| {
             while let Some(reply) = list_models_rx.recv().await {
                 let result = cx.update(|cx| {
                     let registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -420,7 +429,8 @@ impl InferenceIpcServer {
                 });
                 let _ = reply.0.send(result);
             }
-        });
+        })
+        .detach();
 
         let list_models_tx = Arc::new(list_models_tx);
 
@@ -432,7 +442,8 @@ impl InferenceIpcServer {
         // user opens a project).
         let (worktree_spawn_tx, mut worktree_spawn_rx) =
             tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
-        let worktree_spawn_task = cx.spawn(async move |cx| {
+        // Detached: see the list_models task above.
+        cx.spawn(async move |cx| {
             while let Some((prompt, title, worktree_name, base_ref, reply)) =
                 worktree_spawn_rx.recv().await
             {
@@ -446,7 +457,8 @@ impl InferenceIpcServer {
                 let result = task.await;
                 let _ = reply.send(result);
             }
-        });
+        })
+        .detach();
 
         let worktree_spawn_tx = Arc::new(worktree_spawn_tx);
 
@@ -457,7 +469,11 @@ impl InferenceIpcServer {
         // inference calls — the key never leaves the zed process.
         let (batch_credential_tx, mut batch_credential_rx) =
             tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
-        let batch_credential_task = cx.spawn(async move |cx| {
+        // Detached: see the list_models task above. This is the channel the
+        // rerank dispatch reads the OpenRouter key through — if this task
+        // dies, every deep-strategy rerank fails with "GPUI-side credential
+        // task dropped".
+        cx.spawn(async move |cx| {
             while let Some((credential_url, reply)) = batch_credential_rx.recv().await {
                 let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                 let result = credentials_provider
@@ -480,7 +496,8 @@ impl InferenceIpcServer {
                     }
                 }
             }
-        });
+        })
+        .detach();
         let batch_credential_tx = Arc::new(batch_credential_tx);
 
         let task = tokio_handle.spawn(async move {
@@ -521,9 +538,6 @@ impl InferenceIpcServer {
         Ok(Self {
             socket_path,
             _task: task,
-            _list_models_task: list_models_task,
-            _worktree_spawn_task: worktree_spawn_task,
-            _batch_credential_task: batch_credential_task,
         })
     }
 
@@ -743,7 +757,8 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side list_models task dropped — server shutting down"
+                    message: "GPUI-side list_models task dropped — channel closed \
+                         (task cancelled or app shutting down)"
                         .to_string(),
                 },
             };
@@ -881,7 +896,8 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side worktree_spawn task dropped — server shutting down"
+                    message: "GPUI-side worktree_spawn task dropped — channel closed \
+                         (task cancelled or app shutting down)"
                         .to_string(),
                 },
             };
@@ -951,7 +967,9 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side credential task dropped — server shutting down".to_string(),
+                    message: "GPUI-side credential task dropped — channel closed \
+                         (task cancelled or app shutting down)"
+                        .to_string(),
                 },
             };
         }
@@ -1075,8 +1093,8 @@ async fn dispatch(
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side credential task dropped — server shutting \
-                         down"
+                    message: "GPUI-side credential task dropped — channel closed \
+                         (task cancelled or app shutting down)"
                         .to_string(),
                 },
             };

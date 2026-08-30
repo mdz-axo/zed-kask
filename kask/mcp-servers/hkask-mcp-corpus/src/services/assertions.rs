@@ -16,7 +16,8 @@ use serde_json::json;
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
 use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
-    assertion_confidence, predicate_to_dimension, read_ontology_namespaces, read_ontology_tags,
+    abstract_namespace_tag_key, assertion_confidence, predicate_to_dimension,
+    read_ontology_namespaces, read_ontology_tags,
 };
 use crate::{extract_json_from_response, owner_webid, render_docproc_template};
 
@@ -169,21 +170,22 @@ impl AssertionsService {
                 vars.insert("ontology_context", ontology_context.clone());
                 let prompt = render_docproc_template("extract-hmems", &vars);
                 let prompt = if prompt.is_empty() {
-                    // Fallback: includes GOLEM predicates and ontology context if available
+                    // Fallback: includes GOLEM predicates and ontology context if available.
+                    // GOLEM predicates are the official v1.1 vocabulary (gc:, dlp:, crm:).
                     let ontology_hint = if ontology_context.is_empty() {
                         String::new()
                     } else {
                         format!(
 
 "Ontology tags for this passage: {ontology_context}
-Use GOLEM predicates (golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, etc.) for narrative passages and standard RDF predicates (schema:author, rdf:type, etc.) for expository passages.")
+Use GOLEM predicates (gc:GP1i_has_Character, dlp:participant-in, gc:GP0_has_feature, crm:P67_refers_to, etc.) for narrative passages and standard RDF predicates (schema:author, rdf:type, etc.) for expository passages.")
                     };
                     format!(
                         "Extract up to {max_assertions} factual RDF triples from the following text.
 
 First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract assertions using the appropriate predicates:
   - Expository: schema:author, schema:mentions, rdf:type, fibo:returnOnCapital, etc.
-  - Narrative: golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, golem:metaphorFor, etc.
+  - Narrative: gc:GP1i_has_Character, dlp:participant-in, dlp:setting, gc:GP0_has_feature, crm:P67_refers_to, etc.
 
 Each triple: (subject, predicate, object, confidence). Prefix subjects with '{ns}:'.{ontology_hint}
 
@@ -268,14 +270,15 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             &chunk_namespaces,
                         );
                         if confidence < raw_confidence {
-                            let reason = if !chunk_namespaces.contains(&pred_ns)
-                                && matches!(
-                                    pred_ns.as_str(),
-                                    "golem" | "eso" | "fibo" | "pko" | "epistemic" | "other"
-                                ) {
+                            let tag_key = abstract_namespace_tag_key(&pred_ns);
+                            let untagged_abstract_ns =
+                                matches!(tag_key, Some(key) if !chunk_namespaces.contains(key));
+                            let reason = if untagged_abstract_ns {
                                 format!(
-                                    "abstract namespace '{}' not in chunk ontology tags {:?} — confidence capped at 0.5",
-                                    pred_ns, chunk_namespaces
+                                    "abstract namespace '{}' (tag family '{}') not in chunk ontology tags {:?} — confidence capped at 0.5",
+                                    pred_ns,
+                                    tag_key.unwrap_or(pred_ns.as_str()),
+                                    chunk_namespaces
                                 )
                             } else {
                                 "Triple subject/object not found in chunk text — confidence capped at 0.5".to_string()
@@ -295,22 +298,24 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             "subject": subject,
                             "object": object,
                         });
-                        // The triple is an assertion about the chunk it was
-                        // extracted from, so `dc_source` is the chunk's
-                        // entity_ref and `dc_subject` is the triple subject.
-                        // The predicate's own namespace is recorded as an
+                        // The predicate's tag family is recorded as an
                         // open-world tag only when the chunk was actually
                         // tagged with it — the same cross-check that gates the
                         // confidence cap above, so a hallucinated namespace
                         // doesn't get an ontology anchor it never earned.
+                        // GOLEM-family prefixes (gc/crm/dlp/lrmoo) are stored
+                        // under the "golem" key to match the tagging-phase
+                        // vocabulary.
                         let mut ontology = HMemOntology::state(
                             "dcterms:Assertion",
                             vec![subject.to_string()],
                             entity_ref.clone(),
                         )
                         .with_dimension(dimension);
-                        if !pred_ns.is_empty() && chunk_namespaces.contains(&pred_ns) {
-                            ontology = ontology.with_ontology_tag(pred_ns.clone(), predicate);
+                        if let Some(tag_key) = abstract_namespace_tag_key(&pred_ns) {
+                            if chunk_namespaces.contains(tag_key) {
+                                ontology = ontology.with_ontology_tag(tag_key, predicate);
+                            }
                         }
 
                         let h_mem = hkask_storage::HMem::new(&entity_ref, predicate, value, webid)

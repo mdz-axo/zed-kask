@@ -6,6 +6,26 @@ use hkask_bridge_ontology::eso;
 use hkask_bridge_ontology::fibo;
 use hkask_bridge_ontology::golem;
 
+/// Map an abstract-namespace predicate prefix to the chunk-tag namespace
+/// key it must have been tagged with to bypass the subject/object-in-text
+/// check. GOLEM-family prefixes (`gc:`, `crm:`, `dlp:`, `lrmoo:` — GOLEM
+/// reuses CIDOC-CRM, LRMoo, and DOLCE-Lite-Plus terms) all map to the
+/// `"golem"` tag key emitted by `tag-chunks-batch.j2`. Returns `None` for
+/// non-abstract namespaces (schema, rdf, dcterms, ...), which never bypass.
+pub(crate) fn abstract_namespace_tag_key(pred_ns: &str) -> Option<&'static str> {
+    if let Some(family) = golem::tag_family(pred_ns) {
+        return Some(family);
+    }
+    match pred_ns {
+        "eso" => Some("eso"),
+        "fibo" => Some("fibo"),
+        "pko" => Some("pko"),
+        "epistemic" => Some("epistemic"),
+        "other" => Some("other"),
+        _ => None,
+    }
+}
+
 /// Map an RDF predicate to a 5W1H dimension.
 ///
 /// Migrated from the CLI binary's `predicate_to_dimension` function.
@@ -14,15 +34,26 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
     use hkask_types::Dimension::*;
     let p = predicate.to_lowercase();
 
+    // Ontology-bridge predicates carry mixed-case canonical local names
+    // (e.g. `gc:GP1i_has_Character`) — compare case-insensitively against
+    // the canonical constants so the mapping cannot drift from the
+    // vocabulary module.
+    for (canonical, dimension) in [
+        (golem::HAS_CHARACTER, Who),
+        (golem::HAS_SETTING, Where),
+        (golem::GENERIC_LOCATION, Where),
+        (golem::REFERS_TO, Why),
+        (golem::HAS_FEATURE, What),
+    ] {
+        if p == canonical.to_lowercase() {
+            return dimension;
+        }
+    }
+
     // Curated mapping — exact or prefix match on known predicates
     match p.as_str() {
         // Who — agents, authors, characters, creators
-        "schema:author"
-        | "schema:creator"
-        | "schema:contributor"
-        | "schema:actor"
-        | golem::HAS_CHARACTER
-        | golem::HAS_NARRATOR
+        "schema:author" | "schema:creator" | "schema:contributor" | "schema:actor"
         | "rdf:creator" => Who,
 
         // Who — ESO epistemic agents
@@ -39,14 +70,10 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         eso::HAS_CONFIDENCE => When,
 
         // Where — spatial
-        "schema:location" | golem::HAS_SETTING | "dcterms:spatial" => Where,
+        "schema:location" | "dcterms:spatial" => Where,
 
-        // Why — causation, motivation, theme
-        "schema:causes"
-        | "schema:resultof"
-        | golem::HAS_CONFLICT
-        | golem::ALLEGORY_OF
-        | fibo::HAS_RISK => Why,
+        // Why — causation, motivation, interpretive reference
+        "schema:causes" | "schema:resultof" | fibo::HAS_RISK => Why,
 
         // Why — ESO epistemic causation
         eso::IMPLIES
@@ -55,13 +82,8 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         | eso::CORROBORATED_BY
         | eso::GENERALIZES_TO => Why,
 
-        // How — methods, processes, resolution
-        "schema:uses"
-        | "schema:method"
-        | golem::HAS_RESOLUTION
-        | golem::METAPHOR_FOR
-        | golem::ILLUSTRATES
-        | golem::EVOKES => How,
+        // How — methods, processes
+        "schema:uses" | "schema:method" => How,
 
         // How — ESO methods and evidence
         eso::USES_METHOD | eso::HAS_EVIDENCE | eso::HAS_LIMITATION => How,
@@ -76,12 +98,13 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 /// Returns the confidence to store for an assertion: the LLM-reported confidence,
 /// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
-/// - Abstract-namespace predicates (golem/eso/fibo/pko/epistemic/other)
-///   bypass the subject/object-in-text check ONLY if the predicate's
-///   namespace was actually tagged for this chunk. Without that cross-check,
-///   the LLM could emit any `golem:`/`eso:` predicate to bypass the guard
-///   for chunks where that ontology was never detected — admitting
-///   hallucinated assertions at full LLM-reported confidence (the M4 fix).
+/// - Abstract-namespace predicates (GOLEM family — `gc`/`crm`/`dlp`/`lrmoo`,
+///   plus `eso`/`fibo`/`pko`/`epistemic`/`other`) bypass the
+///   subject/object-in-text check ONLY if the predicate's tag family was
+///   actually tagged for this chunk. Without that cross-check, the LLM could
+///   emit any `gc:`/`eso:` predicate to bypass the guard for chunks where
+///   that ontology was never detected — admitting hallucinated assertions
+///   at full LLM-reported confidence (the M4 fix).
 /// - All other assertions: subject and object strings must appear in the chunk
 ///   text, or confidence is capped at 0.5 (not 0.3 — too aggressive).
 pub(crate) fn assertion_confidence(
@@ -93,12 +116,12 @@ pub(crate) fn assertion_confidence(
     chunk_namespaces: &std::collections::HashSet<String>,
 ) -> f64 {
     let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
-    let is_abstract_ns = matches!(
-        pred_ns.as_str(),
-        "golem" | "eso" | "fibo" | "pko" | "epistemic" | "other"
-    );
-    let namespace_tagged = !chunk_namespaces.is_empty() && chunk_namespaces.contains(&pred_ns);
-    if is_abstract_ns && namespace_tagged {
+    let tag_key = abstract_namespace_tag_key(&pred_ns);
+    let namespace_tagged = match tag_key {
+        Some(key) => !chunk_namespaces.is_empty() && chunk_namespaces.contains(key),
+        None => false,
+    };
+    if tag_key.is_some() && namespace_tagged {
         return raw_confidence;
     }
 

@@ -547,14 +547,15 @@ mod ontology_anchor_tests {
             CorpusServer::ontology_anchor("corpus_discover"),
             Some(pko::ACTION)
         );
-        // Creative generation → GOLEM.
+        // Creative generation → GOLEM (LRMoo F1_Work, the GOLEM concept
+        // for a created work — GOLEM has no CreativeWork class).
         assert_eq!(
             CorpusServer::ontology_anchor("corpus_compose"),
-            Some(golem::CREATIVE_WORK)
+            Some(golem::WORK)
         );
         assert_eq!(
             CorpusServer::ontology_anchor("corpus_rewrite"),
-            Some(golem::CREATIVE_WORK)
+            Some(golem::WORK)
         );
         // Storage / registry → the state axis.
         assert_eq!(

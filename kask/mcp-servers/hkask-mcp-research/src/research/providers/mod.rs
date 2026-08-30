@@ -39,6 +39,22 @@ pub(super) fn provider_http_client() -> Result<reqwest::Client, WebError> {
         .map_err(|e| WebError::ProviderError(format!("failed to build HTTP client: {e}")))
 }
 
+/// Render a reqwest error with its full cause chain. reqwest's `Display` shows
+/// only the kind ("builder error", "error sending request") and drops the
+/// cause — which made provider failures undiagnosable (a header-parse failure,
+/// a bad proxy URL, and a TLS problem all read as the same bare "builder
+/// error"). This walks `source()` so the surfaced error names the actual cause.
+pub(crate) fn reqwest_error_detail(error: &reqwest::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}
+
 #[derive(Default)]
 pub struct ProviderSearchOutput {
     pub results: Vec<SearchResult>,

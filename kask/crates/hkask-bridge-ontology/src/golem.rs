@@ -1,124 +1,148 @@
 //! GOLEM narrative/literary ontology bridge.
 //!
-//! Canonical predicate URIs for narrative concepts — characters, events,
-//! themes, literary devices, and interpretive relationships. Used by
-//! docproc extract_assertions for narrative passages (prose, fiction, memoir,
-//! biography, narrative nonfiction) and by corpus tools for style
-//! ontology mapping.
+//! Maps hKask narrative concepts to the GOLEM ontology (Golem Ontology for
+//! Narrative and Fiction), v1.1. GOLEM is an extension of CIDOC-CRM and LRMoo
+//! aligned to DOLCE-Lite-Plus: it defines the `gc:` classes and properties
+//! below and otherwise reuses `crm:` (CIDOC-CRM), `lrmoo:` (LRMoo), and
+//! `dlp:` (DOLCE-Lite-Plus) terms. Every URI in this module is verified
+//! against the official publication — `fixtures/golem-v1.1-terms.txt` pins
+//! the term list, and `all_terms_are_official` fails the build if a term
+//! drifts from it. Do not add a term that is not in that fixture.
 //!
-//! Consolidated from the former duplicated `golem.rs` in the corpus server
-//! and hkask-mcp-docproc — single owner for the unified corpus server.
+//! Reference: Pianzola, Pannach, Cheng, Yang, Scotti (GOLEM Lab, 2024).
+//! <https://ontology.golemlab.eu/> — IRI <https://w3id.org/golem/ontology>,
+//! version 1.1, CC BY 4.0, doi:10.5281/zenodo.14911396.
+//! Preferred prefix `gc:`, namespace <https://w3id.org/golem/ontology#>.
+//!
+//! Used by corpus extract_assertions for narrative passages (prose, fiction,
+//! memoir, narrative nonfiction) and by the corpus server's ontology_anchor
+//! for creative-generation tools.
 //!
 //! Pattern: thin mapping layer — canonical URI constants, no dependencies,
 //! no reasoners, no overhead. Mirrors the dc_bibo and pko modules in this
 //! crate.
 
-/// A GOLEM concept URI.
+/// A GOLEM concept URI (prefixed canonical form, e.g. `gc:G1_Character`).
 pub type GolemConcept = &'static str;
 
-// ── Narrative element classes ─────────────────────
+/// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
+/// so the fixture test covers each constant by construction.
+macro_rules! golem_terms {
+    ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
+        $($(#[$doc])* pub const $name: GolemConcept = $uri;)*
 
-/// A character in a narrative work — an agent with traits, relationships,
-/// and a narrative role. Maps to authorial style exemplars in the corpus.
-pub const CHARACTER: GolemConcept = "golem:G1_Character";
+        /// Every term in this module. The fixture test asserts each appears
+        /// in the official GOLEM v1.1 term list — a fabricated URI cannot
+        /// pass. New terms must go through this macro.
+        pub const ALL_TERMS: &[GolemConcept] = &[$($name),*];
+    };
+}
 
-/// An event or happening within a narrative — a plot point, a scene,
-/// a significant occurrence. Maps to narrative arcs in an author corpus.
-pub const EVENT: GolemConcept = "golem:G1_Event";
+golem_terms! {
+    /// A created intellectual work — the outcome of an intellectual process
+    /// of one or more persons (LRMoo F1, reused by GOLEM). GOLEM has no
+    /// CreativeWork class; F1_Work is the concept for what corpus_compose
+    /// and corpus_rewrite produce.
+    WORK = "lrmoo:F1_Work",
 
-/// The setting of a narrative — temporal and spatial context.
-pub const SETTING: GolemConcept = "golem:G1_Setting";
+    /// A realisation of a work in a specific form — the text itself
+    /// (LRMoo F2, reused by GOLEM).
+    EXPRESSION = "lrmoo:F2_Expression",
 
-/// A narrative function — a structural role within the story
-/// (e.g., Proppian functions, motifs, archetypes).
-pub const NARRATIVE_FUNCTION: GolemConcept = "golem:G10_Narrative_Function";
+    /// A character in a narrative work — an agent with traits,
+    /// relationships, and a narrative role.
+    CHARACTER = "gc:G1_Character",
 
-// ── Relationships ─────────────────────────────────
+    /// A narrative event — a change of state, process, or state of things
+    /// that supports the story.
+    NARRATIVE_EVENT = "gc:G5_Narrative_Event",
 
-/// Relationship between characters within a narrative.
-pub const CHARACTER_RELATIONSHIP: GolemConcept = "golem:G1_Relationship";
+    /// The narrative universe in which a story unfolds — spatial, cultural,
+    /// and social context.
+    SETTING = "gc:G12_Setting",
 
-/// A character participates in an event.
-pub const PARTICIPATES_IN: GolemConcept = "golem:participatesIn";
+    /// A social relationship between characters within a narrative.
+    SOCIAL_RELATIONSHIP = "gc:G4_Social_Relationships",
 
-/// A character is located in a setting.
-pub const LOCATED_IN: GolemConcept = "golem:locatedIn";
+    /// A narrative sequence — fabula or syuzhet, the ordered events of a
+    /// narrative (the GOLEM concept covering plot).
+    NARRATIVE_SEQUENCE = "gc:G7_Narrative_Sequence",
 
-// ── Work and authorship ───────────────────────────
+    /// A narrative function — a structural role within the story
+    /// (e.g., Proppian functions).
+    NARRATIVE_FUNCTION = "gc:G10_Narrative_Function",
 
-/// A creative work — the narrative text itself.
-/// Maps to the corpus works that corpus_compose ingests.
-pub const CREATIVE_WORK: GolemConcept = "golem:G1_CreativeWork";
+    /// A narrative role — the functional roles characters play, e.g.
+    /// narrator, protagonist, antagonist.
+    NARRATIVE_ROLE = "gc:G11_Narrative_Role",
 
-/// The author/creator of a creative work.
-pub const AUTHOR: GolemConcept = "golem:G1_Author";
+    /// A feature of a narrative or character — style, theme, literary
+    /// devices (GOLEM G2; specialized by G17 Character Feature and
+    /// G18 Textual Feature).
+    FEATURE = "gc:G2_Feature",
 
-// ── Characters and agents (predicate URIs from docproc golem.rs) ───────────
+    /// A character trait — biographical, physical, or psychological
+    /// (GOLEM G17, subclass of G2 Feature).
+    CHARACTER_FEATURE = "gc:G17_Character_Feature",
 
-/// A character or person in the narrative.
-pub const HAS_CHARACTER: GolemConcept = "golem:hasCharacter";
-/// The narrator or narrative voice.
-pub const HAS_NARRATOR: GolemConcept = "golem:hasNarrator";
-/// The narrative perspective or point of view.
-pub const HAS_PERSPECTIVE: GolemConcept = "golem:hasPerspective";
+    /// A textual feature — narrative style, tone, point of view, diction
+    /// (GOLEM G18, subclass of G2 Feature).
+    TEXTUAL_FEATURE = "gc:G18_Textual_Feature",
 
-// ── Plot and structure ────────────────────────────────────────────────────
+    /// A work has a character (GOLEM GP1i, inverse of GP1_is_character_in).
+    HAS_CHARACTER = "gc:GP1i_has_Character",
 
-/// An event or action in the story.
-pub const HAS_EVENT: GolemConcept = "golem:hasEvent";
-/// A plot element or development.
-pub const HAS_PLOT: GolemConcept = "golem:hasPlot";
-/// A conflict or tension in the narrative.
-pub const HAS_CONFLICT: GolemConcept = "golem:hasConflict";
-/// How a conflict is resolved.
-pub const HAS_RESOLUTION: GolemConcept = "golem:hasResolution";
+    /// A character appears in a work (GOLEM GP1).
+    IS_CHARACTER_IN = "gc:GP1_is_character_in",
 
-// ── Setting and atmosphere ────────────────────────────────────────────────
+    /// A narrative or character has a feature — theme, tone, style, motif
+    /// (GOLEM GP0). The GOLEM cover for the former invented
+    /// hasTheme/hasTone/hasMotif/hasSymbol predicates.
+    HAS_FEATURE = "gc:GP0_has_feature",
 
-/// The setting or location of the narrative.
-pub const HAS_SETTING: GolemConcept = "golem:hasSetting";
-/// The tone or mood of the passage.
-pub const HAS_TONE: GolemConcept = "golem:hasTone";
+    /// A feature is a feature of a narrative or character (GOLEM GP0i).
+    IS_FEATURE_OF = "gc:GP0i_is_feature_of",
 
-// ── Theme and meaning ─────────────────────────────────────────────────────
+    /// An endurant (character, object) participates in a narrative event
+    /// (DOLCE-Lite-Plus, reused by GOLEM).
+    PARTICIPANT_IN = "dlp:participant-in",
 
-/// The central theme or idea.
-pub const HAS_THEME: GolemConcept = "golem:hasTheme";
-/// A recurring motif or pattern.
-pub const HAS_MOTIF: GolemConcept = "golem:hasMotif";
-/// A symbol or symbolic element.
-pub const HAS_SYMBOL: GolemConcept = "golem:hasSymbol";
+    /// A narrative event has an endurant participant (DOLCE-Lite-Plus).
+    PARTICIPANT = "dlp:participant",
 
-// ── Interpretive relationships ───────────────────────────────────────────
+    /// The location of an enduring entity within the narrative
+    /// (DOLCE-Lite-Plus, reused by GOLEM).
+    GENERIC_LOCATION = "dlp:generic-location",
 
-/// Allegorical meaning or representation.
-pub const ALLEGORY_OF: GolemConcept = "golem:allegoryOf";
-/// Metaphorical meaning.
-pub const METAPHOR_FOR: GolemConcept = "golem:metaphorFor";
-/// What concept or principle the narrative illustrates.
-pub const ILLUSTRATES: GolemConcept = "golem:illustrates";
-/// What emotion or idea the passage evokes.
-pub const EVOKES: GolemConcept = "golem:evokes";
+    /// The setting of an entity — links a character, object, or location to
+    /// the narrative setting it is in (DOLCE-Lite-Plus `setting`).
+    HAS_SETTING = "dlp:setting",
 
-/// All GOLEM predicates, for validation or iteration.
-pub const ALL_PREDICATES: &[GolemConcept] = &[
-    HAS_CHARACTER,
-    HAS_NARRATOR,
-    HAS_PERSPECTIVE,
-    HAS_EVENT,
-    HAS_PLOT,
-    HAS_CONFLICT,
-    HAS_RESOLUTION,
-    HAS_SETTING,
-    HAS_TONE,
-    HAS_THEME,
-    HAS_MOTIF,
-    HAS_SYMBOL,
-    ALLEGORY_OF,
-    METAPHOR_FOR,
-    ILLUSTRATES,
-    EVOKES,
-];
+    /// A psychological state of a character (DOLCE-Lite-Plus, reused by
+    /// GOLEM for G3 Psychological State).
+    HAS_STATE = "dlp:has-state",
+
+    /// A propositional object (text, narrative unit) makes a statement
+    /// about an entity (CIDOC-CRM P67, reused by GOLEM). The honest cover
+    /// for interpretive reference — allegory, metaphor, illustration.
+    REFERS_TO = "crm:P67_refers_to",
+
+    /// A work is realised in an expression (LRMoo R3, reused by GOLEM).
+    REALISED_IN = "lrmoo:R3_is_realised_in",
+}
+
+/// Map a predicate prefix from the GOLEM family of namespaces to the
+/// chunk-tag namespace key used by the tagging pipeline
+/// (`tag-chunks-batch.j2` emits `ontology_tags` keyed by `"golem"`).
+/// GOLEM's own `gc:` terms and the CIDOC-CRM / LRMoo / DOLCE-Lite-Plus
+/// terms it reuses all belong to that one tag family. Returns `None` for
+/// prefixes outside the family.
+pub fn tag_family(predicate_prefix: &str) -> Option<&'static str> {
+    match predicate_prefix.to_lowercase().as_str() {
+        "gc" | "crm" | "dlp" | "lrmoo" | "golem" => Some("golem"),
+        _ => None,
+    }
+}
 
 // ── Mapping helpers ────────────────────────────────────────
 
@@ -126,12 +150,12 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
 ///
 /// Takes the bare operation name — the corpus tool name minus its `corpus_`
 /// prefix (`corpus_compose` → `compose`). Only creative generation anchors on
-/// GOLEM: compose and rewrite produce narrative prose (creative works).
-/// Discovery is deliberately NOT here — it is a search action on the process
-/// axis (`corpus_stage_to_pko_step`), not a creative work.
+/// GOLEM: compose and rewrite produce narrative prose (works). Discovery is
+/// deliberately NOT here — it is a search action on the process axis
+/// (`corpus_stage_to_pko_step`), not a creative work.
 pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {
     match op {
-        "compose" | "rewrite" => Some(CREATIVE_WORK),
+        "compose" | "rewrite" => Some(WORK),
         _ => None,
     }
 }
@@ -144,9 +168,48 @@ mod tests {
     fn corpus_op_mapper_covers_creative_generation_only() {
         // Creative generation anchors on GOLEM; discovery is a process action
         // (corpus_stage_to_pko_step), not a creative work.
-        assert_eq!(corpus_op_to_golem("compose"), Some(CREATIVE_WORK));
-        assert_eq!(corpus_op_to_golem("rewrite"), Some(CREATIVE_WORK));
+        assert_eq!(corpus_op_to_golem("compose"), Some(WORK));
+        assert_eq!(corpus_op_to_golem("rewrite"), Some(WORK));
         assert_eq!(corpus_op_to_golem("discover"), None);
         assert_eq!(corpus_op_to_golem("convert"), None);
+    }
+
+    #[test]
+    fn tag_family_covers_golem_reused_namespaces() {
+        assert_eq!(tag_family("gc"), Some("golem"));
+        assert_eq!(tag_family("crm"), Some("golem"));
+        assert_eq!(tag_family("dlp"), Some("golem"));
+        assert_eq!(tag_family("lrmoo"), Some("golem"));
+        assert_eq!(tag_family("GOLEM"), Some("golem"));
+        assert_eq!(tag_family("schema"), None);
+        assert_eq!(tag_family("fibo"), None);
+    }
+
+    /// Fabrication guard: every term in this module must appear in the
+    /// official GOLEM v1.1 term list checked in as a fixture (source URL
+    /// and fetch date in the fixture header). A term that is not in the
+    /// published ontology fails here — pin tests on the constants alone
+    /// cannot catch a plausible-looking invented URI.
+    #[test]
+    fn all_terms_are_official() {
+        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/golem-v1.1-terms.txt");
+        let fixture = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
+        let official: std::collections::HashSet<&str> = fixture
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        assert!(
+            !official.is_empty(),
+            "fixture {fixture_path} contains no terms"
+        );
+        for term in ALL_TERMS {
+            assert!(
+                official.contains(term),
+                "{term} is not in the official GOLEM v1.1 term list ({fixture_path}) — \
+                 it must be verified against https://ontology.golemlab.eu/ before use"
+            );
+        }
     }
 }

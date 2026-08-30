@@ -1,5 +1,7 @@
 {# Goal: Extract RDF triples from text with confidence scores. #}
-{# v3: Narrative-aware with GOLEM, FIBO, ESO ontologies. #}
+{# v4: Narrative-aware with GOLEM, FIBO, ESO ontologies. #}
+{#     GOLEM predicates are the official v1.1 vocabulary (gc:, crm:, dlp:, #}
+{#     lrmoo: — https://ontology.golemlab.eu/). #}
 {#     Ontology tags from tag_chunks injected when available. #}
 
 [inference]
@@ -25,23 +27,16 @@ Determine whether this passage is:
 
 ## Step 2: Extract triples using the appropriate predicates
 
-### For narrative passages — use GOLEM ontology predicates:
-- golem:hasCharacter — a character or person in the narrative
-- golem:hasEvent — an event or action in the story
-- golem:hasSetting — the setting or location of the narrative
-- golem:hasTheme — the central theme or idea
-- golem:hasPlot — a plot element or development
-- golem:hasMotif — a recurring motif or pattern
-- golem:hasSymbol — a symbol or symbolic element
-- golem:hasNarrator — the narrator or narrative voice
-- golem:hasConflict — a conflict or tension
-- golem:hasResolution — how a conflict is resolved
-- golem:allegoryOf — allegorical meaning or representation
-- golem:metaphorFor — metaphorical meaning
-- golem:hasPerspective — narrative perspective or point of view
-- golem:hasTone — the tone or mood
-- golem:evokes — what emotion or idea the passage evokes
-- golem:illustrates — what concept or principle the narrative illustrates
+### For narrative passages — use GOLEM ontology predicates (official v1.1 vocabulary):
+- gc:GP1i_has_Character — a character or person in the work
+- dlp:participant-in — a character or object participates in an event
+- dlp:setting — the setting an entity is in (narrative universe)
+- dlp:generic-location — the location of a character or object
+- dlp:has-state — a psychological state of a character
+- gc:GP0_has_feature — a feature of the work or character (theme, tone, style, motif)
+- crm:P67_refers_to — the text or narrative unit refers to an entity (allegory, metaphor, illustration)
+- crm:P130_shows_features_of — a variant shows features of its Stoff (source material)
+- lrmoo:R3_is_realised_in — a work is realised in an expression (the text)
 
 ### For expository passages — use standard RDF / schema.org / domain predicates:
 - rdf:type, schema:name, schema:author, schema:mentions, schema:relatedTo
@@ -93,10 +88,10 @@ Text:
 {{ text }}
 
 Respond in JSON format:
-{"h_mems": [{"subject": "corpus:EntityName", "predicate": "golem:hasCharacter", "object": "CharacterName", "confidence": 0.95}]}
+{"h_mems": [{"subject": "corpus:EntityName", "predicate": "gc:GP1i_has_Character", "object": "CharacterName", "confidence": 0.95}]}
 
 Example (expository): {"subject": "corpus:Damodaran", "predicate": "schema:author", "object": "Investment Valuation", "confidence": 0.98}
-Example (narrative): {"subject": "corpus:Berkshire", "predicate": "golem:hasCharacter", "object": "Warren Buffett", "confidence": 0.95}
+Example (narrative): {"subject": "corpus:Berkshire", "predicate": "gc:GP1i_has_Character", "object": "Warren Buffett", "confidence": 0.95}
 Example (epistemic): {"subject": "corpus:Tetlock", "predicate": "eso:hasEvidence", "object": "Good Judgment Project data", "confidence": 0.90}
 Example (financial): {"subject": "corpus:Berkshire", "predicate": "fibo:hasCompetitiveAdvantage", "object": "float reinvestment", "confidence": 0.85}
 </task>

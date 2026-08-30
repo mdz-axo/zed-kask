@@ -22,7 +22,9 @@
 //! specific enough for a domain:
 //! - **FIBO** (`fibo`): financial / company analysis.
 //! - **ESO** (`eso`): scientific reasoning, hypotheses, evidence.
-//! - **GOLEM** (`golem`): literature, narrative, persona.
+//! - **GOLEM** (`golem`): literature, narrative, persona. Official v1.1
+//!   vocabulary in `golem` (prefix `gc:`, reusing `crm:`/`dlp:`/`lrmoo:`),
+//!   pinned by `fixtures/golem-v1.1-terms.txt`.
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
 //! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
 //! - **MovieLabs OMC** (`omc`): media production workflows (capture → post → distribution).
@@ -51,7 +53,7 @@
 //!   Ontology: A Practical Guide. Articulate Software Press.
 //! - FIBO: <https://spec.edmcouncil.org/fibo/>
 //! - ESO: <https://w3id.org/eso/>
-//! - GOLEM: <https://w3id.org/golem/>
+//! - GOLEM: Pianzola et al. (GOLEM Lab, 2024). <https://ontology.golemlab.eu/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
 //! - SDMX: <https://sdmx.org/> (ISO 17369)
 
