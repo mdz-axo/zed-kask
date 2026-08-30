@@ -1110,7 +1110,7 @@ async fn test_http_server_authenticates_on_notification_401(cx: &mut TestAppCont
 // the server's state: no spurious auth flow, and (as before the transport
 // watch existed) the server stays `Running`.
 #[gpui::test]
-async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppContext) {
+async fn test_http_server_self_heals_after_non_auth_transport_failure(cx: &mut TestAppContext) {
     const SERVER_ID: &str = "flaky-server";
     let server_id = ContextServerId(SERVER_ID.into());
 
@@ -1130,9 +1130,17 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
     set_http_context_server_configuration(&server_id, cx);
 
     {
+        // zed-kask D-seam (watch_transport_shutdown): a non-auth transport
+        // death moves the server to `Stopped` and `maintain_servers`
+        // restarts it — upstream leaves the state untouched. This test pins
+        // the fork behavior: Starting → Running → (transport death) →
+        // Stopped → Starting → Running.
         let _server_events = assert_server_events(
             &store,
             vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                (server_id.clone(), ContextServerStatus::Stopped),
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Running),
             ],
@@ -1161,7 +1169,8 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
         assert_eq!(
             store.read(cx).status_for_server(&server_id),
             Some(ContextServerStatus::Running),
-            "a non-auth transport failure should not change the server state"
+            "a non-auth transport failure stops the server and maintain_servers \
+             restarts it (self-healing)"
         );
     });
 }

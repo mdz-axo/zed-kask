@@ -748,14 +748,19 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_reasoning_effort_omits_missing_effort() {
+    fn chat_completion_reasoning_effort_sends_none_when_thinking_disallowed() {
+        // Deliberate fork behavior (2026-08-23): when thinking is disallowed,
+        // always send `ReasoningEffort::None` rather than omitting the field.
         let model = available_model(None);
         let request = LanguageModelRequest {
             thinking_allowed: false,
             ..Default::default()
         };
 
-        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
+        assert_eq!(
+            chat_completion_reasoning_effort(&request, &model),
+            Some(open_ai::ReasoningEffort::None)
+        );
     }
 
     #[test]
