@@ -253,8 +253,6 @@ pub(crate) fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f6
                 || line.contains("chunking")
             {
                 0.4
-            } else if line.contains("episodic") || line.contains("semantic") {
-                0.3
             } else {
                 0.0
             }
@@ -805,12 +803,10 @@ mod tests {
     fn sumo_anchor_preserves_memory_keywords() {
         let input = concat!(
             "Memory Operation Report\n",
-            "The episodic memory store received 15 new events.\n",
             "Encoding completed successfully for all events.\n",
             "Memory consolidation is now in progress.\n",
             "Salience ranking identified 3 high-priority memories.\n",
             "Cued recall returned 7 matching contexts.\n",
-            "Semantic processing updated the embedding index.\n",
             "General system health check passed.\n",
             "Routine maintenance scheduled for tomorrow.\n",
             "Disk usage is at 42% capacity.\n",
@@ -829,8 +825,7 @@ mod tests {
         );
         // SUMO anchor should prioritize lines with cognitive/memory keywords
         // Soft profile (60% retention): enough budget for multiple lines
-        let preserved_keywords = result.contains("episodic")
-            || result.contains("Encoding")
+        let preserved_keywords = result.contains("Encoding")
             || result.contains("Salience")
             || result.contains("Cued recall")
             || result.contains("memory");

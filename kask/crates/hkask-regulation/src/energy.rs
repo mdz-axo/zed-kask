@@ -264,9 +264,4 @@ impl CallCapManager {
             }
         }
     }
-
-    /// Read access to the cap map (for persistence snapshots).
-    pub async fn caps(&self) -> tokio::sync::RwLockReadGuard<'_, HashMap<WebID, CallCap>> {
-        self.caps.read().await
-    }
 }

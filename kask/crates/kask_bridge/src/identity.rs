@@ -22,9 +22,6 @@
 //!    on first run — the user can change it later)
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
-use hkask_keystore::Keychain;
-use hkask_keystore::keychain_keys::KEY_DB_PASSPHRASE;
-use hkask_keystore::passphrase::DEFAULT_PASSPHRASE;
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
 /// Error type for agent provisioning (directory creation + keychain access).
@@ -34,9 +31,7 @@ pub enum ProvisionError {
     InvalidUsername(String),
     #[error("Failed to create agent directory: {0}")]
     DirectoryCreation(#[from] std::io::Error),
-    #[error("Failed to store DB passphrase in keychain: {0}")]
-    KeychainStore(String),
-    #[error("Failed to resolve DB passphrase from keychain: {0}")]
+    #[error("Failed to provision DB passphrase: {0}")]
     KeychainRead(String),
 }
 
@@ -108,19 +103,11 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 
     let db_path = agent_root.join("memory.db").to_string_lossy().to_string();
 
-    // 2. Ensure a DB passphrase exists in the keychain.
-    //    If the env var is set, use that (user override).
-    //    If the keychain has one, use that (returning user).
-    //    Otherwise, use the default "allostery" and store it.
-    let passphrase = if let Ok(p) = std::env::var("HKASK_DB_PASSPHRASE") {
-        if !p.trim().is_empty() {
-            p
-        } else {
-            resolve_or_create_passphrase()?
-        }
-    } else {
-        resolve_or_create_passphrase()?
-    };
+    // 2. Ensure a DB passphrase exists (env → keychain → first-run
+    //    default) via the one canonical chain in hkask-keystore.
+    let passphrase = hkask_keystore::provision_db_passphrase_string()
+        .map(|passphrase| passphrase.to_string())
+        .map_err(|e| ProvisionError::KeychainRead(e.to_string()))?;
 
     tracing::info!(name = agent_name, db = db_path, webid = %webid.redacted_display(), "Agent provisioned");
 
@@ -143,47 +130,15 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 /// time, login or not. Idempotent: env override → existing keychain entry →
 /// default "allostery" stored on first run.
 pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
-    resolve_or_create_passphrase()
+    hkask_keystore::provision_db_passphrase_string()
+        .map(|passphrase| passphrase.to_string())
+        .map_err(|e| ProvisionError::KeychainRead(e.to_string()))
 }
 
-/// Resolve the DB passphrase from the keychain, or create one if none exists.
-///
-/// On first run, writes the fixed default `"allostery"` (satisfying the >=8
-/// char SQLCipher minimum) and stores it in the OS keychain under
-/// `KEY_DB_PASSPHRASE`. Fixed by design — the keychain is the security
-/// boundary; a fixed default eliminates the generated-word/DB desync class.
-/// The user can change it later via the keychain, the settings UI (DB rotation),
-/// or `HKASK_DB_PASSPHRASE`.
-fn resolve_or_create_passphrase() -> Result<String, ProvisionError> {
-    // Try to read an existing passphrase from the keychain.
-    match hkask_keystore::keychain::resolve_db_passphrase_string() {
-        Ok(passphrase) => Ok(passphrase.to_string()),
-        Err(hkask_keystore::keychain::KeychainError::NotFound(_)) => {
-            // First run — use the default passphrase "allostery" so initial
-            // builds and first user runs don't fail. The user can change it
-            // later via the settings UI (which triggers DB rotation) or the
-            // HKASK_DB_PASSPHRASE env var. `DEFAULT_PASSPHRASE` is the single
-            // source of truth (`hkask-keystore::passphrase`) — the same
-            // value feeds provisioning, `SwarmConfig::default()`, and the
-            // settings UI placeholder.
-            let word = DEFAULT_PASSPHRASE.to_string();
-            let keychain = Keychain;
-            keychain
-                .store_by_key(KEY_DB_PASSPHRASE, &word)
-                .map_err(|e| ProvisionError::KeychainStore(e.to_string()))?;
-            tracing::info!(
-                "Provisioned DB passphrase with default 'allostery' and stored in keychain. \
-                 The user can change it via the settings UI (Security page) or HKASK_DB_PASSPHRASE env var."
-            );
-            Ok(word)
-        }
-        Err(e) => Err(ProvisionError::KeychainRead(e.to_string())),
-    }
-}
-
-// There is ONE DB passphrase (provisioned above) for every SQLCipher database
-// (curator, corpus, kanban, swarm memory, training, research). The swarm
-// memory DB has no separate passphrase; it opens with this one.
+// There is ONE DB passphrase (provisioned by
+// `hkask_keystore::provision_db_passphrase_string`) for every SQLCipher
+// database (curator, corpus, kanban, swarm memory, training, research).
+// The swarm memory DB has no separate passphrase; it opens with this one.
 
 // ── Passphrase rotation ──────────────────────────────────────────────────────
 
@@ -372,12 +327,13 @@ mod tests {
     // The requirement that drives this module:
     //
     // 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
-    //    kata-kanban, training) opens with the fixed default `"allostery"`
-    //    on first run. The default lives in
-    //    `hkask-keystore::passphrase::DEFAULT_PASSPHRASE`; `identity.rs`
-    //    MUST resolve via that const, never a string literal.
-    // 2. **Startup** — at MCP launch time the provisioning chain
-    //    (env override → keychain → first-run default) resolves the
+    //    kata-kanan, training) opens with the fixed default `"allostery"`
+    //    on first run. The default and the whole provisioning chain
+    //    (env → keychain → first-run default, empty env treated as unset)
+    //    live in `hkask-keystore` (`provision_db_passphrase_string`);
+    //    identity.rs routes through that one chain and holds no
+    //    passphrase logic of its own.
+    // 2. **Startup** — at MCP launch time the chain resolves the
     //    passphrase so stores never start down (see
     //    `build_mcp_server_env` → `provision_default_passphrase`).
     // 3. **Settings rotation** — once running, the operator changes the
@@ -385,48 +341,9 @@ mod tests {
     //    the new passphrase is persisted. The two rotate functions below
     //    are the bridge callers that the UI hits.
     //
-    // These tests pin the requirement and the helper seams that edge
-    // cases (empty env var, default const, resolved-from-keychain path)
-    // must not regress.
-
-    // The default passphrase MUST be fixed and match the
-    // `hkask-keystore::passphrase` const — if provisioning fell back to a
-    // random word (the old behavior) or a raw literal drifted from the
-    // const, the bug returns. DEFAULT_PASSPHRASE is the single source of
-    // truth.
-    #[test]
-    fn default_passphrase_matches_hkask_keystore_const() {
-        assert_eq!(
-            DEFAULT_PASSPHRASE,
-            hkask_keystore::passphrase::DEFAULT_PASSPHRASE,
-            "the 'allostery' default must come from the hkask-keystore const"
-        );
-    }
-
-    /// `provision_agent` treats an empty `HKASK_DB_PASSPHRASE` the same as
-    /// unset — falls through to the keychain-or-default chain. This pins
-    /// the env-shadow logic so a blank env var doesn't poison the DB.
-    #[test]
-    fn provision_agent_treats_empty_env_passphrase_as_unset() {
-        // SAFETY: setting and removing env vars in a test is racy with
-        // parallel tests; we lock a mutex to serialize against this test's
-        // own setup/teardown.
-        let prev = std::env::var("HKASK_DB_PASSPHRASE").ok();
-        unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", "") };
-        // Re-run only the env-shadow branch: empty → fall through.
-        let falls_through = match std::env::var("HKASK_DB_PASSPHRASE") {
-            Ok(p) => p.trim().is_empty(),
-            Err(_) => true,
-        };
-        match prev {
-            Some(p) => unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", p) },
-            None => unsafe { std::env::remove_var("HKASK_DB_PASSPHRASE") },
-        }
-        assert!(
-            falls_through,
-            "empty env var must fall through to keychain-or-default chain"
-        );
-    }
+    // The chain's own behavior (empty-env guard, first-run default) is
+    // pinned by hkask-keystore's tests; the tests here pin the rotation
+    // path.
 
     /// Rotation resolves the old passphrase via the resolver helper, then
     /// hands both old and new to `hkask_storage::rotate_passphrase`.

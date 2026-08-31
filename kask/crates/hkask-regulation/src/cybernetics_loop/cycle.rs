@@ -478,44 +478,6 @@ impl super::CyberneticsLoop {
             }
         }
 
-        // E02: Persist call caps after each reset cycle.
-        // Persistence failures log and fall through — regulation actions
-        // (algedonic alerts, action dispatch) must NOT be skipped because a
-        // transient I/O error prevented writing caps.
-        'persist: {
-            if let Some(ref path) = self.budget_persistence_path {
-                let mut wrapper = serde_json::json!({
-                    "version": 2,
-                });
-                {
-                    let mgr = self.call_cap_manager.read().await;
-                    let caps = mgr.caps().await;
-                    match serde_json::to_value(&*caps) {
-                        Ok(v) => wrapper["budgets"] = v,
-                        Err(e) => {
-                            tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize call caps — skipping persistence");
-                            break 'persist;
-                        }
-                    }
-                }
-                let json = match serde_json::to_string_pretty(&wrapper) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize cap wrapper — skipping persistence");
-                        break 'persist;
-                    }
-                };
-                if let Some(parent) = path.parent()
-                    && let Err(e) = tokio::fs::create_dir_all(parent).await
-                {
-                    tracing::error!(target: "reg.cybernetics", path = %parent.display(), error = %e, "Failed to create cap persistence directory");
-                    break 'persist;
-                }
-                if let Err(e) = tokio::fs::write(path, &json).await {
-                    tracing::error!(target: "reg.cybernetics", path = %path.display(), error = %e, "Failed to persist call caps");
-                }
-            }
-        }
         if actions.len() > self.max_iterations as usize {
             tracing::warn!(target: "reg.cybernetics", action_count = actions.len(), max_iterations = self.max_iterations, "Cascade detected: action count exceeds max_iterations");
         }

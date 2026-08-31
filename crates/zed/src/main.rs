@@ -3134,8 +3134,9 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     // wins, and it carries only the env written in the file (a stale entry
     // with `env: {}` strips every credential and the inference socket from
     // the server the agent's tools connect to, silently). Remove such
-    // entries so the managed registration is authoritative, warning per
-    // entry so the operator sees the correction. The write is self-
+    // entries so the managed registration is authoritative, summarized in
+    // one warn (count + IDs) so the operator sees the correction without a
+    // wall of near-identical lines. The write is self-
     // terminating: the next observer pass finds nothing to remove, and
     // D32's no-op-write skip covers the boundary. Removal logic pinned by
     // `remove_shadowing_context_server_entries_*` tests in kask_bridge.
@@ -3145,15 +3146,28 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
         .map(|user| kask_bridge::shadowed_context_server_entry_ids(&user.content))
         .unwrap_or_default();
     if !shadowed.is_empty() {
-        for id in &shadowed {
-            log::warn!(
-                "Removing raw context_servers entry '{id}' — it shadows the kask-managed \
-                 registration and silently drops its credentials/inference env. Configure \
-                 kask servers via the kask.mcp settings (or HKASK_MCP_{id_upper}_BIN for \
-                 a custom binary).",
-                id_upper = id.to_uppercase().replace('-', "_"),
-            );
-        }
+        // zed-kask: one summary warn, not one per entry — a dozen kask
+        // servers made every startup emit a wall of near-identical lines,
+        // burying which IDs were corrected in repetition.
+        let ids = shadowed
+            .iter()
+            .map(|id| id.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
+        log::warn!(
+            "Removing {count} raw context_servers {noun} ({ids}) — each shadows the \
+             kask-managed registration and silently drops its credentials/inference env. \
+             Configure kask servers via the kask.mcp settings (or \
+             HKASK_MCP_<SERVER_ID>_BIN — uppercase, dashes as underscores — for a \
+             custom binary).",
+            count = shadowed.len(),
+            noun = if shadowed.len() == 1 {
+                "entry"
+            } else {
+                "entries"
+            },
+            ids = ids,
+        );
         settings::update_settings_file(<dyn Fs>::global(cx), cx, |content, _| {
             kask_bridge::remove_shadowing_context_server_entries(content);
         });

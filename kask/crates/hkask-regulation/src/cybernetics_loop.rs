@@ -186,8 +186,6 @@ pub struct CyberneticsLoop {
     submitted_rollout_checks: tokio::sync::Mutex<Vec<RegulatoryAction>>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
-    /// Path for persisting call caps across restarts.
-    budget_persistence_path: Option<std::path::PathBuf>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
     /// Fermi-inspired early-stopping pattern for cybernetic regulation.
     stagnation_detector: Arc<StagnationDetector>,
@@ -364,7 +362,6 @@ impl CyberneticsLoop {
             curator_directive_rx: None,
             submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
             loop_quality: RwLock::new(LoopMetrics::default()),
-            budget_persistence_path: None,
             stagnation_detector,
             sensor_registry,
 

@@ -301,8 +301,11 @@ are failure modes a future probe must not reintroduce:
   created post-restart). The outcome resolves from the durable record,
   per criterion: goal-create ✓, recall leg ✓, spec §7 ✓, judge/score ✗
   — the instrument died before it could record. Intake prediction
-  0.75, committed before the work, against achieved=false → **Brier
-  0.5625, computed from the record, not instrument-scored.** Two
+  0.75, committed before the work. Strict reading: achieved=false →
+  Brier 0.5625. **Operator ground truth (2026-08-30): goal achieved**
+  — C3's failure was the instrument's death, not the work's — so the
+  recorded score is **Brier 0.0625**, computed from the record, not
+  instrument-scored. Two
   calibration lessons: (1) the 0.75 did not price the mid-session
   restart hazard (concurrent commits landing, a rebuild expected) —
   intake predictions price environmental liveness; (2) a criterion's

@@ -18,7 +18,7 @@
 //! | **PartOf** | A is a component of B | `pko:StepExecution` is part of `pko:ProcedureExecution` |
 //! | **Precedes** | A must happen before B | `sumo:encoding` precedes `sumo:memory_consolidation` |
 //! | **HasProperty** | A has attribute/measure B | `fibo-be-le-cb:Corporation` has `fibo-ind-mkt-bas:MarketCapitalization` |
-//! | **RelatedTo** | A and B are semantically linked | `sumo:salience` relates to `sumo:cued_recall` |
+//! | **RelatedTo** | A and B are linked in meaning | `sumo:salience` relates to `sumo:cued_recall` |
 //! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo-be-le-cb:Corporation` |
 
 use std::collections::HashMap;
@@ -102,22 +102,6 @@ impl OntologyGraph {
                 ("memory_consolidation", OntologyRelation::Precedes),
                 ("consolidation", OntologyRelation::Precedes),
                 ("recall", OntologyRelation::Precedes),
-            ],
-        );
-        edges.insert(
-            "episodic_memory",
-            vec![
-                ("semantic_memory", OntologyRelation::RelatedTo),
-                ("memory_consolidation", OntologyRelation::RelatedTo),
-                ("encoding", OntologyRelation::RelatedTo),
-            ],
-        );
-        edges.insert(
-            "semantic_memory",
-            vec![
-                ("episodic_memory", OntologyRelation::RelatedTo),
-                ("semantic_processing", OntologyRelation::RelatedTo),
-                ("concept_formation", OntologyRelation::RelatedTo),
             ],
         );
         edges.insert(
@@ -301,13 +285,7 @@ pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'st
         crate::types::OntologyAnchor::DomainSupplement {
             namespace: crate::types::OntologyNamespace::Sumo,
             ..
-        } => vec![
-            "encoding",
-            "episodic_memory",
-            "semantic_memory",
-            "salience",
-            "recall",
-        ],
+        } => vec!["encoding", "salience", "recall"],
         crate::types::OntologyAnchor::DomainSupplement {
             namespace: crate::types::OntologyNamespace::Golem,
             ..

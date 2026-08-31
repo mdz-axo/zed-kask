@@ -57,7 +57,7 @@ are needed.
 | Tool prefix | Ontology tier | Domain bridge |
 |-------------|--------------|---------------|
 | `company_*`, `stock_*`, `dcf_*`, `portfolio_*` | Domain supplement | FIBO |
-| `memory_*`, `episodic_*`, `semantic_*` | Domain supplement | SUMO |
+| `memory_*` | Domain supplement | SUMO |
 | `replica_*`, `author_*` | Domain supplement | GOLEM |
 | `training_*`, `adapter_*`, `sweep_*` | Domain supplement | ML-Schema |
 | `kanban_*`, `task_*`, `spec_*`, `research_*`, `skill_*` | Dual-axis (PKO) | — |

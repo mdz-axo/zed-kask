@@ -12,6 +12,7 @@
 //! There is exactly one copy of each secret, in `kask://credentials/*`.
 
 use crate::keychain_keys::KEY_DB_PASSPHRASE;
+use crate::passphrase::DEFAULT_PASSPHRASE;
 use hkask_types::NotFound;
 use hkask_types::secret::SecretRef;
 use thiserror::Error;
@@ -310,14 +311,22 @@ impl Keychain {
 /// Resolve the database encryption passphrase.
 ///
 /// Chain: env var → OS keychain (`kask://credentials/hkask_db_passphrase`).
+/// An empty or whitespace-only env value is treated as unset — a
+/// misconfiguration is not a credential, so the keychain tier runs.
 /// No master-key derivation — the passphrase must be explicitly set via
 /// env var or keychain to avoid accidentally encrypting the database with
 /// a derived key the user didn't consent to.
 ///
 /// post: returns Zeroizing<`Vec<u8>`> from env var or keychain
 pub fn resolve_db_passphrase() -> Result<Zeroizing<Vec<u8>>, KeychainError> {
-    resolve(&SecretRef::env("HKASK_DB_PASSPHRASE"))
-        .or_else(|_| resolve(&SecretRef::keychain(KEY_DB_PASSPHRASE)))
+    // An empty or whitespace-only env value is a misconfiguration, not a
+    // credential — treat it as unset so the keychain tier runs. (This guard
+    // lived inline in the bridge's old provisioning chain; it moved here
+    // when the chain was unified.)
+    match resolve(&SecretRef::env("HKASK_DB_PASSPHRASE")) {
+        Ok(value) if !value.iter().all(|byte| byte.is_ascii_whitespace()) => Ok(value),
+        _ => resolve(&SecretRef::keychain(KEY_DB_PASSPHRASE)),
+    }
 }
 
 /// Resolve the canonical SQLCipher passphrase as text.
@@ -334,6 +343,32 @@ pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError
     let passphrase = std::str::from_utf8(&bytes)
         .map_err(|e| KeychainError::Platform(format!("DB passphrase is not valid UTF-8: {e}")))?;
     Ok(Zeroizing::new(passphrase.to_string()))
+}
+
+/// Provision the DB passphrase — the one canonical chain (env → keychain
+/// → first-run default), so no consumer re-implements resolution tiers.
+///
+/// `resolve_db_passphrase_string` covers env → keychain; this adds the
+/// first-run tier: when no entry exists, store the fixed default
+/// (`DEFAULT_PASSPHRASE`) and return it. The bridge's agent provisioning
+/// and the MCP launch path both route through here — one chain keeps the
+/// rotation-ordering invariant (rotate every DB before the keychain
+/// write) anchored to a single resolution path.
+pub fn provision_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError> {
+    match resolve_db_passphrase_string() {
+        Ok(passphrase) => Ok(passphrase),
+        Err(KeychainError::NotFound(_)) => {
+            let word = DEFAULT_PASSPHRASE.to_string();
+            Keychain.store_by_key(KEY_DB_PASSPHRASE, &word)?;
+            info!(
+                "Provisioned the DB passphrase with the first-run default and stored it \
+                 in the keychain. Change it via the settings UI (Security page) or the \
+                 HKASK_DB_PASSPHRASE env var."
+            );
+            Ok(Zeroizing::new(word))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Migrate legacy `service=hkask` keychain entries to the unified
@@ -523,6 +558,73 @@ mod integration_tests {
         // Cleanup: delete the test value. The next zed-kask startup will
         // re-provision via the migration or the default "allostery".
         let _ = kc.delete_by_key(KEY_DB_PASSPHRASE);
+    }
+
+    /// The provisioning chain: absent entry → default stored + returned;
+    /// existing entry → returned unchanged. Snapshots and restores the
+    /// operator's real entry — a rotated passphrase must survive the test —
+    /// and restores BEFORE asserting so a failed assert cannot leave the
+    /// keychain without the real entry (every DB would be unopenable at
+    /// next startup).
+    #[test]
+    #[ignore]
+    fn provision_stores_default_when_absent_and_is_stable_after() {
+        if std::env::var_os("HKASK_DB_PASSPHRASE").is_some() {
+            eprintln!(
+                "skipping: HKASK_DB_PASSPHRASE is set — the env tier would mask the keychain tiers"
+            );
+            return;
+        }
+        let original = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE).ok();
+        let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
+
+        let first = provision_db_passphrase_string();
+        let second = provision_db_passphrase_string();
+
+        match original.as_ref() {
+            Some(value) => {
+                Keychain
+                    .store_by_key(KEY_DB_PASSPHRASE, value.as_str())
+                    .expect("restore the operator's real passphrase entry");
+            }
+            None => {
+                let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
+            }
+        }
+
+        let first = first.expect("provision with no entry must store the default and return it");
+        assert_eq!(
+            first.as_str(),
+            DEFAULT_PASSPHRASE,
+            "first-run provisioning must use the fixed default"
+        );
+        let second = second.expect("second provision must resolve the stored entry");
+        assert_eq!(
+            second.as_str(),
+            DEFAULT_PASSPHRASE,
+            "provisioning must be idempotent — the stored entry wins on the second call"
+        );
+    }
+
+    /// The empty-env guard: `HKASK_DB_PASSPHRASE=""` must fall through
+    /// to the keychain tier, never resolve to an empty passphrase
+    /// (SQLCipher would key every DB on an empty string). Runs by default
+    /// — no keychain writes; a machine with no entry resolves Err, which
+    /// the assert tolerates (the pinned property is "never Ok-and-empty").
+    #[test]
+    fn empty_env_passphrase_falls_through_to_keychain() {
+        let prev = std::env::var("HKASK_DB_PASSPHRASE").ok();
+        unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", "") };
+        let resolved = resolve_db_passphrase();
+        match prev {
+            Some(value) => unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", value) },
+            None => unsafe { std::env::remove_var("HKASK_DB_PASSPHRASE") },
+        }
+        assert!(
+            !matches!(&resolved, Ok(value) if value.iter().all(|byte| byte.is_ascii_whitespace())),
+            "an empty env value must never resolve to an empty passphrase — it must \
+             fall through to the keychain tier (entry found, or Err when none exists)"
+        );
     }
 
     #[test]
