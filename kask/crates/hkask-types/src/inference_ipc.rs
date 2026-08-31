@@ -142,13 +142,6 @@ pub enum InferenceMethod {
     /// `model_override` from `InferenceParams`. The result is returned as
     /// `InferenceOutcome::BatchResults`.
     GenerateBatch,
-    /// Generate media (image, video, speech, transcription) via the
-    /// MediaRouter. Uses `media_op`, `media_prompt`, `media_image_url`,
-    /// `media_text`, `media_size`, `media_count`, `media_strength`,
-    /// `media_duration`, `media_mask`, `media_model` from
-    /// `InferenceParams`. The result is returned as
-    /// `InferenceOutcome::Media`.
-    MediaGenerate,
     /// Rerank documents against a query with a dedicated reranker via the
     /// provider's rerank endpoint (OpenRouter `/api/v1/rerank`). Uses
     /// `rerank_model`, `rerank_query`, `rerank_documents` from
@@ -179,35 +172,6 @@ pub struct InferenceParams {
     /// Max output tokens per prompt for `InferenceMethod::GenerateBatch`.
     #[serde(default)]
     pub batch_max_tokens: Option<u32>,
-    pub media_op: Option<String>,
-    /// Text prompt for image/video generation.
-    pub media_prompt: Option<String>,
-    /// Image URL for image-to-image, image-to-video, upscale, etc.
-    pub media_image_url: Option<String>,
-    /// Audio URL for transcription.
-    pub media_audio_url: Option<String>,
-    /// Text for speech synthesis.
-    pub media_text: Option<String>,
-    /// Voice name for speech synthesis.
-    pub media_voice: Option<String>,
-    /// Image size for image generation.
-    pub media_size: Option<String>,
-    /// Number of images to generate.
-    pub media_count: Option<u32>,
-    /// Strength for image-to-image.
-    pub media_strength: Option<f32>,
-    /// Scale factor for upscaling.
-    pub media_scale: Option<u32>,
-    /// Duration for video generation.
-    pub media_duration: Option<f32>,
-    /// Language hint for transcription.
-    pub media_language: Option<String>,
-    /// Mask image (base64 data URI or URL) for region-selective editing
-    /// (inpainting). White regions are edited; black regions are preserved.
-    pub media_mask: Option<String>,
-    /// Model override for the media op — bypasses the env/default model
-    /// resolution on the provider side.
-    pub media_model: Option<String>,
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
     pub tool_server: Option<String>,
     /// Tool name to invoke.
@@ -279,11 +243,6 @@ pub enum InferenceOutcome {
     ModelList {
         #[serde(rename = "models")]
         models: Vec<ModelListEntry>,
-    },
-
-    Media {
-        #[serde(rename = "media")]
-        media: serde_json::Value,
     },
     /// Tool dispatch result from `InferenceMethod::ToolInvoke`.
     /// The value is the tool's JSON output. The key is `tool_result` (not

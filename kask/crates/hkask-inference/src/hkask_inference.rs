@@ -104,6 +104,17 @@ struct LazyInferencePort {
     embedding_model: String,
 }
 
+/// Process-local media router backing `LazyInferencePort::media_generate`.
+///
+/// Media generation is child-local: the media APIs (image, video, TTS, STT)
+/// are not LanguageModel calls, so they gain nothing from the IPC bridge.
+/// The router reads its keys from this process's env (`DEEPINFRA_API_KEY` /
+/// `OPENROUTER_API_KEY`, injected by `build_mcp_server_env` from the
+/// keychain). Constructed once per process so the "no media providers
+/// configured" warning fires once, not on every call.
+static LOCAL_MEDIA_ROUTER: std::sync::OnceLock<crate::media_router::MediaRouter> =
+    std::sync::OnceLock::new();
+
 impl LazyInferencePort {
     fn new(embedding_model: &str) -> Self {
         Self {
@@ -369,27 +380,27 @@ impl hkask_types::InferencePort for LazyInferencePort {
         op: &str,
         params: &hkask_types::MediaGenerateParams,
     ) -> hkask_types::MediaFuture<'a> {
+        // Child-local dispatch — no IPC round-trip. The former zed-side
+        // MediaRouter was built from the zed process env, which never
+        // contains the keys (they are injected only into child processes),
+        // so every IPC-routed media call failed with "no provider
+        // configured" even with keys installed.
         let op = op.to_string();
         let params = params.clone();
         Box::pin(async move {
-            // Try the IPC bridge first — re-attempt on each call.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
-                return client.call_media_generate(&op, &params).await;
-            }
-            // Fall back to a standalone MediaRouter with env-var keys.
-            // This handles the case where the media MCP server runs
-            // standalone (no zed process) with DEEPINFRA_API_KEY or
-            // OPENROUTER_API_KEY set directly in the environment.
-            let router =
-                crate::media_router::MediaRouter::new(crate::config::InferenceConfig::from_env());
+            let router = LOCAL_MEDIA_ROUTER.get_or_init(|| {
+                crate::media_router::MediaRouter::new(crate::config::InferenceConfig::from_env())
+            });
             router.media_generate(&op, &params).await
         })
     }
 }
 /// `LazyInferencePort` overrides the trait defaults for `generate_vision`,
-/// `embed`, `list_models`, `generate_batch`, and `media_generate` so every
-/// method tries the IPC bridge first and names the missing socket in its
-/// fallback error. The trait defaults are not socket-named: `list_models`
+/// `embed`, `list_models`, and `generate_batch` so every method tries the
+/// IPC bridge first and names the missing socket in its fallback error.
+/// `media_generate` is the exception: it is child-local (see
+/// `LOCAL_MEDIA_ROUTER`) because media APIs are not LanguageModel calls.
+/// The trait defaults are not socket-named: `list_models`
 /// defaults to `Ok(Vec::new())` (a broken bridge read as an empty registry),
 /// `generate_vision` to a generic `VisionUnsupported`, and `embed` to a
 /// generic `Connection`. Overriding them keeps the "every method names the

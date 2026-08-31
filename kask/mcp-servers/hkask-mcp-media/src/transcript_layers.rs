@@ -19,6 +19,7 @@
 //! - `EdlLayer`: an edit-decision list — validation delegates to the
 //!   slice-1 selection algebra (Keep ops disjoint; Cut ops union).
 
+use crate::transcript::TimedWord;
 use crate::transcript_select::{Edl, SelectionError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -278,6 +279,48 @@ fn check_disjoint(ranges: &[(usize, usize)]) -> Result<(), LayerValidationError>
         }
     }
     Ok(())
+}
+
+/// The derived corrected-text view: apply a correction layer's edits to
+/// the rendered transcript text. `words` stays immutable — this is a pure
+/// projection, recomputable from the layer at any time (applying a
+/// correction never rewrites the ground truth it corrects).
+///
+/// Edits are expected disjoint (the store validates before persisting);
+/// an overlapping edit is skipped defensively rather than duplicating
+/// text — the validation gate is the enforcement, this is the safety net.
+pub fn corrected_text_view(words: &[TimedWord], edits: &[CorrectionEdit]) -> String {
+    let mut sorted: Vec<&CorrectionEdit> = edits.iter().collect();
+    sorted.sort_by_key(|edit| edit.start_word);
+    let mut view = String::new();
+    let mut index = 0;
+    let mut pending = sorted.iter();
+    let mut next_edit = pending.next();
+    while index < words.len() {
+        match next_edit {
+            Some(edit) if edit.start_word == index => {
+                if !view.is_empty() {
+                    view.push(' ');
+                }
+                view.push_str(&edit.replacement);
+                index = edit.end_word.saturating_add(1);
+                next_edit = pending.next();
+            }
+            Some(edit) if edit.start_word < index => {
+                // Overlapping edit — unreachable through the validated
+                // store path; skip rather than duplicate.
+                next_edit = pending.next();
+            }
+            _ => {
+                if !view.is_empty() {
+                    view.push(' ');
+                }
+                view.push_str(&words[index].word);
+                index += 1;
+            }
+        }
+    }
+    view
 }
 
 #[cfg(test)]
@@ -601,5 +644,56 @@ mod tests {
     fn edl_op_serializes_snake_case() {
         let json = serde_json::to_value(EdlOp::Keep).expect("serializes");
         assert_eq!(json, serde_json::json!("keep"));
+    }
+
+    // ── corrected_text_view ──────────────────────────────────────────────
+
+    fn timed_words(texts: &[&str]) -> Vec<TimedWord> {
+        texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| TimedWord {
+                word: text.to_string(),
+                start_ms: index as u64 * 1000,
+                end_ms: index as u64 * 1000 + 500,
+                confidence: None,
+            })
+            .collect()
+    }
+
+    fn edit(start: usize, end: usize, replacement: &str) -> CorrectionEdit {
+        CorrectionEdit {
+            start_word: start,
+            end_word: end,
+            replacement: replacement.to_string(),
+            reason: "misheard".to_string(),
+        }
+    }
+
+    #[test]
+    fn corrected_view_applies_edits_as_a_derived_projection() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        let edits = vec![edit(0, 0, "alpha"), edit(2, 2, "gamma")];
+        assert_eq!(corrected_text_view(&words, &edits), "alpha beta gamma");
+    }
+
+    #[test]
+    fn corrected_view_without_edits_returns_the_rendered_text() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        assert_eq!(corrected_text_view(&words, &[]), "alpa beta gama");
+    }
+
+    #[test]
+    fn corrected_view_handles_whole_transcript_replacement() {
+        let words = timed_words(&["um", "uh", "so"]);
+        let edits = vec![edit(0, 2, "[filler removed]")];
+        assert_eq!(corrected_text_view(&words, &edits), "[filler removed]");
+    }
+
+    #[test]
+    fn corrected_view_handles_multi_word_replacement_ranges() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        let edits = vec![edit(1, 2, "Cinderella")];
+        assert_eq!(corrected_text_view(&words, &edits), "the Cinderella curve");
     }
 }

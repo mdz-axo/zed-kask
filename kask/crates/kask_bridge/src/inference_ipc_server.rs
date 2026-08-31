@@ -1145,38 +1145,6 @@ async fn dispatch(
         }
     }
 
-    // Media generation requests are dispatched via the InferencePort's
-    // `media_generate` method. The zed-side `InferencePort` impl
-    // (`LanguageModelInferencePort`) routes this to the `MediaRouter`.
-    // Returns `InferenceOutcome::Media` (a JSON value), not `Result`.
-    if matches!(request.method, InferenceMethod::MediaGenerate) {
-        let op = params.media_op.as_deref().unwrap_or("");
-        let media_params = hkask_types::MediaGenerateParams {
-            prompt: params.media_prompt.clone(),
-            image_url: params.media_image_url.clone(),
-            audio_url: params.media_audio_url.clone(),
-            text: params.media_text.clone(),
-            voice: params.media_voice.clone(),
-            size: params.media_size.clone(),
-            count: params.media_count,
-            strength: params.media_strength,
-            scale: params.media_scale,
-            duration: params.media_duration,
-            language: params.media_language.clone(),
-            mask: params.media_mask.clone(),
-            model: params.media_model.clone(),
-        };
-        return match port.media_generate(op, &media_params).await {
-            Ok(media) => InferenceOutcome::Media { media },
-            Err(e) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: e.to_string(),
-                },
-            },
-        };
-    }
-
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -1225,7 +1193,6 @@ async fn dispatch(
         | InferenceMethod::ToolInvoke
         | InferenceMethod::CreateWorktreeThread
         | InferenceMethod::GenerateBatch
-        | InferenceMethod::MediaGenerate
         | InferenceMethod::Rerank => {
             tracing::error!(
                 target: "reg.inference",
@@ -1317,43 +1284,7 @@ mod tests {
         }
     }
 
-    // ── Mock media-capturing InferencePort ──────────────────────────
-    //
-    // Records every `media_generate` call (op + params) and returns a
-    // canned media result. Used to pin the IPC wire threading of the
-    // `mask` / `model` fields.
-
-    struct MediaCapturingPort {
-        captured: Arc<std::sync::Mutex<Vec<(String, hkask_types::MediaGenerateParams)>>>,
-    }
-
-    impl InferencePort for MediaCapturingPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            Box::pin(async { Ok(canned_result()) })
-        }
-
-        fn media_generate(
-            &self,
-            op: &str,
-            params: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'_> {
-            self.captured
-                .lock()
-                .expect("captured lock")
-                .push((op.to_string(), params.clone()));
-            Box::pin(async move {
-                Ok(serde_json::json!({"output_urls": ["https://example.com/out.png"]}))
-            })
-        }
-    }
-
-    // ── Mock ToolPort ──────────────────────────────────────────────────
+    // ── Mock ToolPort ──────────────────────────────────────────────────────
     //
     // A canned-response mock for testing the `tool_invoke` dispatch path.
     // Returns a fixed JSON result for every call.
@@ -1716,68 +1647,6 @@ mod tests {
             }
             other => panic!("expected result outcome, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn dispatch_media_generate_threads_mask_and_model() {
-        // Pins the IPC wire threading of `media_mask` / `media_model`: the
-        // media server (child process) sends these fields over the socket,
-        // and the zed-side dispatch must reconstruct them into
-        // `MediaGenerateParams`. A dropped field would silently degrade
-        // `image_edit_region` (whole-image edit instead of inpainting) and
-        // the per-call model override — the exact broken-feedback-loop
-        // class the field additions were made to close.
-        let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let port: Arc<dyn InferencePort> = Arc::new(MediaCapturingPort {
-            captured: captured.clone(),
-        });
-        let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
-
-        let request = InferenceRequest {
-            id: 7,
-            method: InferenceMethod::MediaGenerate,
-            params: InferenceParams {
-                media_op: Some("image_to_image".to_string()),
-                media_prompt: Some("edit the region".to_string()),
-                media_image_url: Some("https://example.com/src.png".to_string()),
-                media_mask: Some("data:image/png;base64,AAAA".to_string()),
-                media_model: Some("DeepInfra/some-model".to_string()),
-                ..Default::default()
-            },
-        };
-
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None,
-            &batch_credential_tx,
-            request,
-        )
-        .await;
-
-        match outcome {
-            InferenceOutcome::Media { media } => {
-                assert!(media.get("output_urls").is_some());
-            }
-            other => panic!("expected media outcome, got {other:?}"),
-        }
-        let captured = captured.lock().expect("captured lock");
-        let (op, params) = captured.first().expect("media_generate was called");
-        assert_eq!(op, "image_to_image");
-        assert_eq!(
-            params.mask.as_deref(),
-            Some("data:image/png;base64,AAAA"),
-            "mask must survive the IPC wire — dropping it degrades inpainting \
-             to whole-image editing"
-        );
-        assert_eq!(
-            params.model.as_deref(),
-            Some("DeepInfra/some-model"),
-            "model override must survive the IPC wire"
-        );
     }
 
     #[tokio::test]

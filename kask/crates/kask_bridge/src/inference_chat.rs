@@ -193,9 +193,6 @@ pub struct LanguageModelInferencePort {
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     max_concurrency: Arc<std::sync::atomic::AtomicUsize>,
     recent_timeouts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
-    /// Media generation router for image/video/audio ops. `None` when no media
-    /// providers are configured (all `media_generate` calls return an error).
-    media_router: Option<Arc<hkask_inference::media_router::MediaRouter>>,
 }
 
 impl LanguageModelInferencePort {
@@ -319,9 +316,6 @@ impl LanguageModelInferencePort {
                 in_flight,
                 max_concurrency: max_concurrency_arc,
                 recent_timeouts,
-                media_router: Some(Arc::new(hkask_inference::media_router::MediaRouter::new(
-                    hkask_inference::config::InferenceConfig::from_env(),
-                ))),
             },
             task,
         )
@@ -934,25 +928,6 @@ impl InferencePort for LanguageModelInferencePort {
                 }
             },
         ))
-    }
-
-    fn media_generate<'a>(
-        &'a self,
-        op: &str,
-        params: &hkask_types::MediaGenerateParams,
-    ) -> hkask_types::MediaFuture<'a> {
-        let Some(router) = &self.media_router else {
-            return Box::pin(async {
-                Err(hkask_types::InferenceError::NotConfigured(
-                    "no media router configured — set DEEPINFRA_API_KEY or OPENROUTER_API_KEY"
-                        .into(),
-                ))
-            });
-        };
-        let router = Arc::clone(router);
-        let op = op.to_string();
-        let params = params.clone();
-        Box::pin(async move { router.media_generate(&op, &params).await })
     }
 }
 

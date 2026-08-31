@@ -873,8 +873,8 @@ impl CyberneticsLoop {
         let cycle_had_signal =
             !deviations.is_empty() || !actions.is_empty() || !impact_reports.is_empty();
         let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
-        let is_heartbeat =
-            !cycle_had_signal && (tick_number == 1 || tick_number % HEARTBEAT_INTERVAL_TICKS == 0);
+        let is_heartbeat = !cycle_had_signal
+            && (tick_number == 1 || tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS));
         if cycle_had_signal || is_heartbeat {
             let mut observation = serde_json::json!({
                 "delay_ms": quality.delay_ms,

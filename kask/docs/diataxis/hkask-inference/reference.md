@@ -70,7 +70,6 @@ intentionally absent.
 | `ipc_roundtrip` (private transport skeleton) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:352` |
 | `call` (private, generate path) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:413` |
 | `call_generate_batch` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:448` |
-| `call_media_generate` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:534` |
 | `call_embed` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:569` |
 | `InferenceIpcClient::embed` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:612` |
 | `call_list_models` (private) | `kask/crates/hkask-inference/src/inference_ipc_client.rs:624` |
@@ -172,7 +171,6 @@ classDiagram
         +from_env() Option~Result~Self~~
         +embed(model, texts) Result
         +call_generate_batch(model, prompts, ...) Result
-        +call_media_generate(op, params) Result
         +invoke_tool(server, tool, args, allowed) Result
         +create_worktree_thread(prompt, title, ...) Result
     }
@@ -180,7 +178,7 @@ classDiagram
         -embedding_model: String
         +generate_with_model(...) bridge then DirectEmbeddingPort
         +embed(...) bridge then DirectEmbeddingPort
-        +media_generate(...) bridge then MediaRouter
+        +media_generate(...) child-local MediaRouter (env keys)
         +list_models() bridge only, Err otherwise
     }
     class DirectEmbeddingPort {
@@ -314,11 +312,14 @@ server started before the IPC socket existed and never re-resolved
 
 `MediaRouter` (`media_router.rs:43`) handles only media ops — chat, vision,
 and embed routed to it return the `BRIDGE_ERROR` message (`:237`). Its
-`InferencePort` impl (`:240`) is the standalone path; in zed-governed
-launches media routes over the IPC bridge
-(`call_media_generate`, `inference_ipc_client.rs:534`) and terminates in
-the zed-side `MediaRouter` held by `InferenceIpcServer`
-(`kask/crates/kask_bridge/src/inference_chat.rs:198`).
+`InferencePort` impl (`:240`) is the only production path: media
+generation is child-local (`LazyInferencePort::media_generate` → the
+`LOCAL_MEDIA_ROUTER` OnceLock, `hkask_inference.rs`), reading the MCP
+server process's env-injected keys (`DEEPINFRA_API_KEY` /
+`OPENROUTER_API_KEY`). The former IPC route (`call_media_generate` →
+zed-side `MediaRouter`) was deleted 2026-08-31: the zed process env never
+contains the keys, so every IPC-routed media call failed with "no
+provider configured" even with keys installed.
 
 `MediaRouter::new` (`media_router.rs:59`) registers `DeepInfraMediaProvider`
 (`media_providers.rs:43`) first (preferred) and

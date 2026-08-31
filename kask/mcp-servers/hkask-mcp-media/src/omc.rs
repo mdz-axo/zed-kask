@@ -91,7 +91,12 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_list_transcripts"
         | "educt_get_transcript"
         | "educt_delete_transcript" => Some(CAPTURE),
-        "educt_store_layer" | "educt_list_layers" => Some(VERSION_INFO),
+        "educt_store_layer"
+        | "educt_list_layers"
+        | "educt_paragraph_pass"
+        | "educt_speaker_pass"
+        | "educt_correction_pass"
+        | "educt_apply_corrections" => Some(VERSION_INFO),
         // Unknown tool — no OMC concept.
         _ => None,
     }

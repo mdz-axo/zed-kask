@@ -2394,12 +2394,23 @@ fn main() {
 
                 // Initial check — the model may already be available.
                 let initial = registry.read_with(cx, |r, _| r.default_model().is_some());
+                // zed-kask: D24 — one latch pair shared by the initial check and
+                // the registry-event subscription: `ep_wired` latches on success
+                // (see `try_wire_edit_prediction_port`), `ep_warned` latches on
+                // the first failure so the startup event burst logs one WARN,
+                // not one per retry.
+                let ep_wired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ep_warned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let http_client = app_state_for_model_task.client.http_client();
                 if initial {
-                    // zed-kask: D24 — wire the edit-prediction port.
-                    let ep_wired = std::sync::atomic::AtomicBool::new(false);
-                    let http_client = app_state_for_model_task.client.http_client();
-                    if let Err(e) =
-                        try_wire_edit_prediction_port(&ep_wired, &registry, http_client, cx).await
+                    if let Err(e) = try_wire_edit_prediction_port(
+                        &ep_wired,
+                        &ep_warned,
+                        &registry,
+                        http_client.clone(),
+                        cx,
+                    )
+                    .await
                     {
                         log::warn!("hKask edit-prediction port initial wiring failed: {e}");
                     }
@@ -2407,10 +2418,7 @@ fn main() {
 
                 // Subscribe to registry events for the async case.
                 let registry_for_sub = registry.clone();
-                // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
-                let ep_wired_for_sub =
-                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let http_client_for_sub = app_state_for_model_task.client.http_client();
+                let http_client_for_sub = http_client;
                 cx.subscribe(
                     &registry,
                     move |_, event: &language_model::Event, cx| {
@@ -2420,12 +2428,14 @@ fn main() {
                             | language_model::Event::AddedProvider(_)
                             | language_model::Event::ProvidersChanged => {
                                 let registry = registry_for_sub.clone();
-                                let ep_wired = ep_wired_for_sub.clone();
+                                let ep_wired = ep_wired.clone();
+                                let ep_warned = ep_warned.clone();
                                 let http_client = http_client_for_sub.clone();
                                 cx.spawn(async move |cx| {
                                     // zed-kask: D24
                                     if let Err(e) = try_wire_edit_prediction_port(
                                         &ep_wired,
+                                        &ep_warned,
                                         &registry,
                                         http_client,
                                         cx,
@@ -2882,6 +2892,7 @@ fn main() {
 /// registry event.
 async fn try_wire_edit_prediction_port(
     wired: &std::sync::atomic::AtomicBool,
+    warned: &std::sync::atomic::AtomicBool,
     registry: &gpui::Entity<language_model::LanguageModelRegistry>,
     http_client: std::sync::Arc<dyn http_client::HttpClient>,
     cx: &mut gpui::AsyncApp,
@@ -2916,12 +2927,26 @@ async fn try_wire_edit_prediction_port(
                 kask_bridge::DEFAULT_FALLBACK_MODEL
             );
         } else {
-            log::warn!(
-                "hKask edit-prediction port not wired — could not resolve {} \
-                 from LanguageModelRegistry (no api_url/api_key). Edit predictions \
-                 will fall back to the configured provider.",
-                kask_bridge::DEFAULT_FALLBACK_MODEL
-            );
+            // The registry fires a burst of events at startup while provider
+            // credentials load asynchronously; each event retries this
+            // wiring. Warn once, then log repeats at debug — a normal
+            // startup previously emitted 100+ identical WARN lines before
+            // the keychain read landed and the port wired.
+            if !warned.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                log::warn!(
+                    "hKask edit-prediction port not wired — could not resolve {} \
+                     from LanguageModelRegistry (no api_url/api_key). Edit \
+                     predictions will fall back to the configured provider. \
+                     Retries until the key resolves log at debug.",
+                    kask_bridge::DEFAULT_FALLBACK_MODEL
+                );
+            } else {
+                log::debug!(
+                    "hKask edit-prediction port retry: {} still unresolved \
+                     (no api_url/api_key)",
+                    kask_bridge::DEFAULT_FALLBACK_MODEL
+                );
+            }
         }
         Ok(())
     })

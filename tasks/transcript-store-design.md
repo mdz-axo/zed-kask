@@ -173,8 +173,8 @@ measured failure rate; the validation gate stays either way.
 |---|---|
 | 1 — selection algebra (pure) | **landed 2026-08-30** (`src/transcript_select.rs`, tests in-module) |
 | 2 — transcript persistence (SQLite tables + JOIN round-trips) | **landed 2026-08-30** (`src/transcript_layers.rs`, `src/transcript_store.rs`, six `educt_*` tools in `src/tools/educt.rs`; tool surface 68 → 74; 145 crate tests green) |
-| 3 — paragraph pass (first LLM layer; measures v1 failure rate) | planned |
-| 4 — speaker + correction passes | planned |
+| 3 — paragraph pass (first LLM layer; measures v1 failure rate) | **landed 2026-08-30** (`src/transcript_pass.rs` + `educt_paragraph_pass` tool; tool surface 74 → 75; the attempts/rejections counters ride every pass response — the v1 rate accumulates in live use, and the v2 spike decision reads it) |
+| 4 — speaker + correction passes | **landed 2026-08-30** (`educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`; tool surface 75 → 78; `corrected_text_view` is the derived projection. The speaker pass is the text-cue attribution (v1); the audio-capable-LLM path — decisions 3/7's primary — needs an audio-input generation method on `InferencePort`, new inference surface in the same class as the v2 spike, and slots in behind the same `SpeakerLayer` with provenance distinguishing the source) |
 | 5 — semantic selection → EDL → render | planned |
 | 6 — v2 spike (conditional) | deferred |
 | 7 — exports + corpus search wiring | planned |

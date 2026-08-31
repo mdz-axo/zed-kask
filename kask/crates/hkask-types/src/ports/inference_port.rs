@@ -382,11 +382,12 @@ pub trait InferencePort: Send + Sync {
 
     /// Generate media (image, video, speech, transcription) via the MediaRouter.
     ///
-    /// `op` selects the backend method (see `MediaGenerateParams::op`). The
-    /// default returns an error — `InferenceIpcClient` overrides this to route
-    /// through zed's IPC bridge, which dispatches to the hKask `MediaRouter`
-    /// held by the zed process. The media MCP server calls this through its
-    /// `Arc<dyn InferencePort>` so it no longer needs its own `MediaRouter`.
+    /// `op` selects the backend method (see `MediaGenerateParams::op`).
+    /// Media generation is child-local: `LazyInferencePort` overrides this
+    /// to dispatch to a `MediaRouter` constructed in the MCP server process
+    /// from its env-injected keys — media APIs are not LanguageModel calls,
+    /// so they never route through the IPC bridge. The default returns an
+    /// error for ports with no media support.
     fn media_generate<'a>(&'a self, _op: &str, _params: &MediaGenerateParams) -> MediaFuture<'a> {
         let op = _op.to_string();
         Box::pin(async move {

@@ -25,6 +25,9 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("video_caption", VIDEO_CAPTION),
         ("validate_face_ref", VALIDATE_FACE_REF),
         ("match_faces", MATCH_FACES),
+        ("educt_paragraph_pass", EDUCT_PARAGRAPH_PASS),
+        ("educt_speaker_pass", EDUCT_SPEAKER_PASS),
+        ("educt_correction_pass", EDUCT_CORRECTION_PASS),
     ];
     for (name, source) in templates {
         env.add_template(name, source).map_err(|e| {
@@ -46,6 +49,93 @@ pub fn render(
     tmpl.render(vars)
         .map_err(|e| crate::MediaError::Template(format!("Render error for '{}': {}", name, e)))
 }
+
+/// Educt paragraph pass — the model sees indexed words and the schema of
+/// the expected output; it returns word indices only (never timestamps).
+const EDUCT_PARAGRAPH_PASS: &str = r#"You are annotating a transcript for paragraph structure.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Identify the paragraph boundaries: the places where one coherent passage
+ends and a new one begins (a shift of topic, a new argument, an extended
+digression ending). Do not break on every sentence — only at discourse
+boundaries.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "breaks_after" lists word indices AFTER which a paragraph break occurs
+  (a break after word 12 means a new paragraph starts at word 13).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- Return [] if the whole transcript is one paragraph.
+- Output the JSON object only — no prose, no code fences, no explanation."#;
+
+/// Educt speaker pass (text-cue attribution, v1) — the model infers
+/// speaker turns from textual cues over indexed words; approximate by
+/// nature, carried honestly in the confidence field.
+const EDUCT_SPEAKER_PASS: &str = r#"You are attributing speakers in a transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Infer the speaker turns from textual cues: discourse markers, changes in
+register or vocabulary, direct address, question-answer patterns, role
+language (interviewer/interviewee, host/guest, teacher/student), and
+punctuation. You cannot hear the audio — attribute only what the text
+supports, and reflect your uncertainty in the confidence field.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns you can attribute, in transcript
+  order, without overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label: "speaker-1", "speaker-2", or an inferred
+  role ("interviewer", "host") — never empty.
+- "confidence" is between 0.0 and 1.0; use lower values for uncertain
+  attributions.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt correction pass — the model proposes text replacements over word
+/// ranges; edits are proposals, the timings are never touched.
+const EDUCT_CORRECTION_PASS: &str = r#"You are correcting a speech-to-text transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as transcribed.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Propose corrections for likely speech-to-text errors: misrecognized
+words, homophones, misheard names, garbled fragments. Corrections are
+PROPOSALS over word ranges — timings are never touched, and applying
+them produces a corrected text view while the original words stay
+immutable.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- Each edit replaces the text of words [start_word..end_word] (inclusive)
+  with "replacement".
+- Edits must not overlap each other.
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "reason" is short: "misheard name", "homophone", "garbled".
+- Only propose edits you are confident about — do not rewrite style.
+- Return [] if the transcript needs no corrections.
+- Output the JSON object only — no prose, no code fences."#;
 
 // ── Embedded templates ──────────────────────────────────────────────────────
 

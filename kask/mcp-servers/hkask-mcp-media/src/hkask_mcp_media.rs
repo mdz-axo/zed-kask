@@ -75,6 +75,10 @@ pub mod models {
     pub const STT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_STT_MODEL;
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
 
+    /// Default transcript-pass model (classifier tier) for Educt LLM layers
+    pub const PASS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL;
+    pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
+
     /// Default vision model: Qwen3-VL (Apache 2.0) via OpenRouter
     pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
@@ -111,13 +115,15 @@ struct GalleryAccess {
 
 hkask_mcp_server::mcp_server!(
     pub struct MediaServer {
-        /// Inference port for vision/chat AND media-generation calls routed
-        /// through zed's LanguageModelRegistry via the IPC bridge. The
-        /// `InferencePort::media_generate` trait method (overridden by
-        /// `InferenceIpcClient`) handles image/video/speech/transcription;
-        /// `generate_vision` handles face/object/color/composition/caption
-        /// analysis; `embed` and `list_vision_models` handle the gallery
-        /// embedding and model-resolution paths.
+        /// Inference port for vision/chat/embed calls routed through zed's
+        /// LanguageModelRegistry via the IPC bridge, and for media generation
+        /// handled child-locally: `media_generate`
+        /// (image/video/speech/transcription) dispatches to the local
+        /// `MediaRouter` with this process's env-injected keys — no IPC
+        /// round-trip. `generate_vision` handles
+        /// face/object/color/composition/caption analysis; `embed` and
+        /// `list_vision_models` handle the gallery embedding and
+        /// model-resolution paths.
         pub vision_port: Arc<dyn InferencePort>,
         pub gallery_state: Arc<Mutex<Option<GalleryState>>>,
         pub gallery_store: Arc<GalleryStore>,
@@ -133,6 +139,7 @@ hkask_mcp_server::mcp_server!(
 mod style;
 pub mod transcript;
 pub mod transcript_layers;
+pub mod transcript_pass;
 pub mod transcript_select;
 pub mod transcript_store;
 pub mod types;
@@ -366,9 +373,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_74_registered_tools() {
+    fn tool_surface_is_exactly_78_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 74, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 78, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -439,14 +446,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // environment via `set_var`, which contradicts the `load_dotenv()`
     // design. `run_server` calls `load_dotenv` internally.
 
-    // Resolve the inference port — routes through zed's LanguageModelRegistry
-    // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set. The same port
-    // handles chat (`generate_with_model`), vision (`generate_vision`),
-    // embeddings (`embed`), and media generation (`media_generate`).
+    // Resolve the inference port — chat/vision/embed/list_models route
+    // through zed's LanguageModelRegistry via the IPC bridge when
+    // `HKASK_INFERENCE_SOCKET` is set; media generation
+    // (`media_generate`) is child-local via the `MediaRouter` with
+    // env-injected keys, bridge or not.
     //
     // Fallback behavior when the IPC bridge is unavailable:
     // - `generate_with_model` / `embed` → `DirectEmbeddingPort` (Ollama)
-    // - `media_generate` → standalone `MediaRouter` (env-var keys)
     // - `generate_vision` / `list_models` / `generate_batch` → socket-named
     //   error (no direct fallback — these require the bridge)
     let vision_port = hkask_inference::resolve_inference_port().await;
@@ -1057,6 +1064,382 @@ mod tool_behavior_tests {
         }
     }
 
+    /// Parse a tool result's `{"content": …}` envelope into its JSON value.
+    fn content_of(result: &str) -> serde_json::Value {
+        serde_json::from_str::<serde_json::Value>(result)
+            .expect("tool result is JSON")
+            .get("content")
+            .cloned()
+            .expect("tool result has the content envelope")
+    }
+
+    /// A mock inference port returning a canned response — exercises the
+    /// pass pipeline (prompt → call → extract → validate → store)
+    /// end-to-end without a live model.
+    struct MockInferencePort {
+        response: String,
+    }
+
+    impl hkask_types::ports::InferencePort for MockInferencePort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &hkask_types::template::LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let result = hkask_types::InferenceResult {
+                text: self.response.clone(),
+                model: "mock-model".to_string(),
+                usage: hkask_types::InferenceUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+                finish_reason: "stop".to_string(),
+                tool_calls: Vec::new(),
+                reasoning: None,
+                cost_usd: None,
+            };
+            Box::pin(async move { Ok(result) })
+        }
+    }
+
+    /// A server wired with the mock inference port — the capability under
+    /// test (the pass pipeline needs a real generate path, not the noop).
+    fn make_pass_server(response: String) -> MediaServer {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let gallery_store =
+            Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(MockInferencePort { response }),
+            Arc::new(std::sync::Mutex::new(None)),
+            gallery_store,
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        )
+    }
+
+    /// Store a two-word transcript and return its ID.
+    async fn store_two_word_transcript(server: &MediaServer) -> String {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::EductStoreTranscriptRequest;
+        let bundle = TranscriptBundle {
+            words: vec![
+                TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 500,
+                    end_ms: 900,
+                    confidence: None,
+                },
+            ],
+            ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        content_of(&stored)["id"]
+            .as_str()
+            .expect("id present")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_stores_a_valid_layer() {
+        let server = make_pass_server("{\"breaks_after\": [0]}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect("pass succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("paragraph")
+        );
+        assert_eq!(
+            content["stored"]["layer"]["breaks_after"],
+            serde_json::json!([0])
+        );
+        assert!(
+            content["pass_stats"]["attempts"].as_u64().unwrap_or(0) >= 1,
+            "pass stats must count the attempt: {}",
+            content["pass_stats"]
+        );
+        // The layer is recallable through the store.
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_rejects_out_of_bounds_indices() {
+        let server = make_pass_server("{\"breaks_after\": [99]}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect_err("out-of-bounds index must be rejected");
+        assert!(
+            error.message.contains("out of bounds"),
+            "the named invariant must surface: {}",
+            error.message
+        );
+        // Nothing persisted.
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_surfaces_unparseable_output() {
+        let server = make_pass_server("I cannot produce that.".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect_err("unparseable output must surface");
+        assert!(
+            error.message.contains("failed to parse"),
+            "the parse failure must be named: {}",
+            error.message
+        );
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_requires_word_timings() {
+        // The mock WOULD return valid output — the precondition must reject
+        // before any model call.
+        let server = make_pass_server("{\"breaks_after\": [0]}".to_string());
+        use crate::transcript::TranscriptBundle;
+        use crate::types::EductStoreTranscriptRequest;
+        let degraded = TranscriptBundle::new("/tmp/silent.wav".to_string(), 0.0, String::new());
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&degraded).expect("serialize"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("degraded transcript is stored with a surfaced note");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        let error = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id,
+                model: None,
+            }))
+            .await
+            .expect_err("no word timings must reject");
+        assert!(
+            error.message.contains("no word-level timings"),
+            "the degradation must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_on_missing_transcript_is_not_found() {
+        let server = make_pass_server("{\"breaks_after\": [0]}".to_string());
+        let error = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id: "no-such-transcript".to_string(),
+                model: None,
+            }))
+            .await
+            .expect_err("missing transcript must be not-found");
+        assert!(
+            error.message.contains("not found"),
+            "not-found must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_stores_a_valid_layer() {
+        let server = make_pass_server(
+            r#"{"spans": [{"start_word": 0, "end_word": 0, "speaker": "speaker-1", "confidence": 0.9}, {"start_word": 1, "end_word": 1, "speaker": "speaker-2", "confidence": 0.8}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect("pass succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("speaker")
+        );
+        assert_eq!(
+            content["stored"]["layer"]["spans"].as_array().map(Vec::len),
+            Some(2)
+        );
+        // The layer is recallable through the store.
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_rejects_overlapping_spans() {
+        let server = make_pass_server(
+            r#"{"spans": [{"start_word": 0, "end_word": 1, "speaker": "speaker-1", "confidence": 0.9}, {"start_word": 1, "end_word": 1, "speaker": "speaker-2", "confidence": 0.8}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect_err("overlapping spans must be rejected");
+        assert!(
+            error.message.contains("overlapping"),
+            "the named invariant must surface: {}",
+            error.message
+        );
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn educt_correction_pass_stores_and_applies() {
+        let server = make_pass_server(
+            r#"{"edits": [{"start_word": 0, "end_word": 0, "replacement": "Alpha", "reason": "capitalization"}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let stored = server
+            .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect("pass succeeds");
+        let content = content_of(&stored);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("correction")
+        );
+
+        // Apply: the derived corrected view, words untouched.
+        let applied = server
+            .educt_apply_corrections(Parameters(crate::types::EductApplyCorrectionsRequest {
+                transcript_id,
+                layer_id: None,
+            }))
+            .await
+            .expect("apply succeeds");
+        let applied = content_of(&applied);
+        assert_eq!(applied["corrected_text"], serde_json::json!("Alpha beta"));
+        assert_eq!(applied["applied_layer"]["edits"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn educt_correction_pass_rejects_out_of_bounds_edits() {
+        let server = make_pass_server(
+            r#"{"edits": [{"start_word": 0, "end_word": 99, "replacement": "x", "reason": "r"}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: None,
+            }))
+            .await
+            .expect_err("out-of-bounds edit must be rejected");
+        assert!(
+            error.message.contains("out of bounds"),
+            "the named invariant must surface: {}",
+            error.message
+        );
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn educt_apply_corrections_without_a_layer_is_not_found() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_apply_corrections(Parameters(crate::types::EductApplyCorrectionsRequest {
+                transcript_id,
+                layer_id: None,
+            }))
+            .await
+            .expect_err("no correction layer must be not-found");
+        assert!(
+            error.message.contains("no correction layer"),
+            "the missing layer must be named: {}",
+            error.message
+        );
+    }
+
     #[tokio::test]
     async fn educt_transcript_store_lifecycle_round_trip() {
         use crate::transcript::{TimedWord, TranscriptBundle};
@@ -1067,14 +1450,6 @@ mod tool_behavior_tests {
             EductDeleteTranscriptRequest, EductGetTranscriptRequest, EductListTranscriptsRequest,
             EductStoreLayerRequest, EductStoreTranscriptRequest,
         };
-
-        fn content_of(result: &str) -> serde_json::Value {
-            serde_json::from_str::<serde_json::Value>(result)
-                .expect("tool result is JSON")
-                .get("content")
-                .cloned()
-                .expect("tool result has the content envelope")
-        }
 
         let server = make_server();
         let bundle = TranscriptBundle {

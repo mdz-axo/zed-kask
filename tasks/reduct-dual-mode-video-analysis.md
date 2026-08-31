@@ -220,10 +220,21 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
 3. **First LLM pass — paragraphing** (lowest risk: no speaker inference,
    no text mutation): the full v1 pipeline below; measure the validation
    failure rate — that number decides the v2 spike.
+   **Landed 2026-08-30** — `src/transcript_pass.rs` + the
+   `educt_paragraph_pass` tool (mock-port pipeline tests green; the
+   attempts/rejections counters are the live failure-rate measurement).
 4. **Speaker pass, then correction pass**: speaker labels from
    audio-capable local LLMs (decision 3) with the text-cue pass as
    fallback; corrections are proposals over word ranges — `words` stays
    immutable, corrected `full_text` is a derived view.
+   **Landed 2026-08-30** — `educt_speaker_pass`, `educt_correction_pass`,
+   and `educt_apply_corrections` (the derived corrected-text view;
+   `corrected_text_view` in `transcript_layers.rs`). The speaker pass is
+   the text-cue attribution (v1 — works with every catalog model); the
+   audio-capable-LLM path (decision 3/7's primary) needs an audio-input
+   generation method on `InferencePort` — new inference surface, the
+   same class as the v2 spike — and slots in behind the same
+   `SpeakerLayer` record with provenance distinguishing the source.
 5. **Semantic selection → EDL → render**: natural-language request →
    `HighlightLayer` entries → `EdlLayer` → deterministic clip plan →
    existing `video_clip`/`video_concat`. Closes the agent-as-selection-

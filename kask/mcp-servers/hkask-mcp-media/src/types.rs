@@ -234,6 +234,37 @@ pub struct EductListLayersRequest {
     pub transcript_id: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductParagraphPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductSpeakerPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductCorrectionPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductApplyCorrectionsRequest {
+    pub transcript_id: String,
+    /// Apply a specific correction layer by ID; defaults to the latest.
+    pub layer_id: Option<String>,
+}
+
 /// Lifecycle status of a face registry entry.
 /// Stored as TEXT in SQLite; the storage layer accepts `&str` and this enum
 /// implements `AsRef<str>` for a typed call site.

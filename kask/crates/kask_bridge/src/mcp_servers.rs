@@ -422,14 +422,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — AI media generation (image, video, audio, gallery)",
-        // OPENROUTER_API_KEY is optional — vision LLMs route through the IPC
-        // bridge to zed's LanguageModelRegistry, so the media process does
-        // not read API keys directly. The key is allowlisted here so the
-        // server can be configured to use a direct provider if needed.
+        // Both keys are load-bearing for the child-local MediaRouter: media
+        // generation (image, video, TTS, STT) runs in this process with
+        // env-injected keys and never crosses the IPC bridge. Vision/chat/
+        // embed DO cross the bridge to zed's LanguageModelRegistry.
         credentials: Some(&["OPENROUTER_API_KEY", "DEEPINFRA_API_KEY"]),
         config_env: Some(&[
-            // IPC bridge socket — required for vision/chat/media generation
-            // routing through zed's LanguageModelRegistry.
+            // IPC bridge socket — required for vision/chat/embed routing
+            // through zed's LanguageModelRegistry (media generation is
+            // child-local and does not use it).
             "HKASK_INFERENCE_SOCKET",
             // Data dir — needed for the gallery DB path resolution
             // (databases stay in the internal data dir).
