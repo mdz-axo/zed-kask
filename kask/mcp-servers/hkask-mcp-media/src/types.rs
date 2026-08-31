@@ -180,10 +180,58 @@ pub struct FaceScanFolderRequest {
     /// have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`,
     /// `last_name`, and optional `notes`. Defaults to `mcp/media/faces/`.
     pub folder_path: Option<String>,
-    /// Skip validation and register each face directly as valid (default: false).
-    /// Use when you know the images are good references but validation is overly strict.
+    /// Skip validation and register each image directly as valid (default: false).
+    /// Use when you know the image is a good reference but validation is overly strict.
     #[serde(default)]
     pub force: bool,
+}
+
+// ── Educt transcript-store requests ─────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductStoreTranscriptRequest {
+    /// The full TranscriptBundle JSON exactly as returned by transcribe_bundle.
+    pub transcript: hkask_types::AnyJsonValue,
+    /// Optional gallery asset ID linking this transcript to a gallery asset
+    /// (the asset JOIN for recall by asset).
+    pub gallery_asset_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductListTranscriptsRequest {
+    /// Filter by the transcribed media's path (the bundle's audio_path).
+    pub media_path: Option<String>,
+    /// Filter by gallery asset ID.
+    pub gallery_asset_id: Option<String>,
+    /// Maximum transcripts to return (default 50, capped at 500).
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductGetTranscriptRequest {
+    pub transcript_id: String,
+    /// Include stored layers in the response (default true).
+    pub include_layers: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductDeleteTranscriptRequest {
+    pub transcript_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductStoreLayerRequest {
+    pub transcript_id: String,
+    /// The layer as a tagged JSON object:
+    /// {"kind": "speaker"|"paragraph"|"correction"|"highlight"|"edl", ...}.
+    /// Validated against the transcript's word count before storage; a
+    /// layer that fails validation is rejected with the named invariant.
+    pub layer: hkask_types::AnyJsonValue,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductListLayersRequest {
+    pub transcript_id: String,
 }
 
 /// Lifecycle status of a face registry entry.

@@ -14,11 +14,12 @@
 //! reorderable EDL), and mixed applies strikethroughs inside the reel.
 
 use crate::transcript::TimedWord;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Inclusive word-index range `[start_word, end_word]` into the immutable
 /// `words` array. A valid range always spans at least one word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WordRange {
     pub start_word: usize,
     pub end_word: usize,
@@ -42,7 +43,8 @@ impl WordRange {
 }
 
 /// One EDL operation over a word range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum EdlOp {
     /// Include the range in the output; reel order = EDL order.
     Keep,
@@ -51,14 +53,14 @@ pub enum EdlOp {
 }
 
 /// One EDL entry: an operation over a word range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EdlEntry {
     pub range: WordRange,
     pub op: EdlOp,
 }
 
 /// An edit-decision list over a transcript's `words` array.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Edl {
     pub ops: Vec<EdlEntry>,
 }

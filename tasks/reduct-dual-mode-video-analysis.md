@@ -213,6 +213,10 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
    provenance; recall round-trips cover the JOIN (layer ↔ transcript ↔
    asset); empty-`words` transcripts report a named degradation, never
    empty-success.
+   **Landed 2026-08-30** — `src/transcript_layers.rs` (typed layer
+   contracts + validation) + `src/transcript_store.rs` (SQLite tables,
+   cascade delete, orphan surfacing) + six `educt_*` tools; tool surface
+   68 → 74; 145 crate tests green.
 3. **First LLM pass — paragraphing** (lowest risk: no speaker inference,
    no text mutation): the full v1 pipeline below; measure the validation
    failure rate — that number decides the v2 spike.

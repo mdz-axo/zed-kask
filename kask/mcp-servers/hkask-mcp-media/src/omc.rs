@@ -84,6 +84,14 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         // Generation job queue — async job tracking (OMC Task).
         "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
         | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),
+        // Educt transcript store — manages captured text records (the
+        // transcript is a capture-derived source; layers are versioned
+        // annotations over the immutable words).
+        "educt_store_transcript"
+        | "educt_list_transcripts"
+        | "educt_get_transcript"
+        | "educt_delete_transcript" => Some(CAPTURE),
+        "educt_store_layer" | "educt_list_layers" => Some(VERSION_INFO),
         // Unknown tool — no OMC concept.
         _ => None,
     }

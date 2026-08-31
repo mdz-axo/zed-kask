@@ -172,7 +172,7 @@ measured failure rate; the validation gate stays either way.
 | Slice | Status |
 |---|---|
 | 1 — selection algebra (pure) | **landed 2026-08-30** (`src/transcript_select.rs`, tests in-module) |
-| 2 — transcript persistence (SQLite tables + JOIN round-trips) | next |
+| 2 — transcript persistence (SQLite tables + JOIN round-trips) | **landed 2026-08-30** (`src/transcript_layers.rs`, `src/transcript_store.rs`, six `educt_*` tools in `src/tools/educt.rs`; tool surface 68 → 74; 145 crate tests green) |
 | 3 — paragraph pass (first LLM layer; measures v1 failure rate) | planned |
 | 4 — speaker + correction passes | planned |
 | 5 — semantic selection → EDL → render | planned |

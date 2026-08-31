@@ -132,7 +132,9 @@ hkask_mcp_server::mcp_server!(
 
 mod style;
 pub mod transcript;
+pub mod transcript_layers;
 pub mod transcript_select;
+pub mod transcript_store;
 pub mod types;
 use types::*;
 
@@ -348,6 +350,7 @@ impl MediaServer {
             + Self::models_router()
             + Self::jobs_router()
             + Self::workflows_router()
+            + Self::educt_router()
     }
 }
 
@@ -363,9 +366,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_68_registered_tools() {
+    fn tool_surface_is_exactly_74_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 68, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 74, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1052,6 +1055,122 @@ mod tool_behavior_tests {
                 ))
             })
         }
+    }
+
+    #[tokio::test]
+    async fn educt_transcript_store_lifecycle_round_trip() {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::transcript_layers::{
+            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
+        };
+        use crate::types::{
+            EductDeleteTranscriptRequest, EductGetTranscriptRequest, EductListTranscriptsRequest,
+            EductStoreLayerRequest, EductStoreTranscriptRequest,
+        };
+
+        fn content_of(result: &str) -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(result)
+                .expect("tool result is JSON")
+                .get("content")
+                .cloned()
+                .expect("tool result has the content envelope")
+        }
+
+        let server = make_server();
+        let bundle = TranscriptBundle {
+            words: vec![
+                TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 500,
+                    end_ms: 900,
+                    confidence: None,
+                },
+            ],
+            ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
+        };
+
+        // Store.
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: Some("asset-1".to_string()),
+            }))
+            .await
+            .expect("educt_store_transcript succeeds");
+        let stored = content_of(&stored);
+        let transcript_id = stored["id"].as_str().expect("id present").to_string();
+        assert_eq!(stored["words_count"].as_u64(), Some(2));
+        assert_eq!(stored["has_word_timings"], serde_json::json!(true));
+
+        // List by asset (the asset JOIN).
+        let listed = server
+            .educt_list_transcripts(Parameters(EductListTranscriptsRequest {
+                media_path: None,
+                gallery_asset_id: Some("asset-1".to_string()),
+                limit: Some(10),
+            }))
+            .await
+            .expect("educt_list_transcripts succeeds");
+        let listed = content_of(&listed);
+        assert_eq!(listed["count"].as_u64(), Some(1));
+
+        // Store a highlight layer (validated against words_count).
+        let layer = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: LayerProvenance {
+                model: "agent".to_string(),
+                prompt_template: "none".to_string(),
+                created_at: "2026-08-30T00:00:00Z".to_string(),
+            },
+            highlights: vec![HighlightEntry {
+                start_word: 0,
+                end_word: 1,
+                label: "key moment".to_string(),
+                note: String::new(),
+            }],
+        });
+        let layer_stored = server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&layer).expect("serialize layer"),
+                ),
+            }))
+            .await
+            .expect("educt_store_layer succeeds");
+        let layer_stored = content_of(&layer_stored);
+        assert_eq!(
+            layer_stored["stored"]["layer"]["kind"],
+            serde_json::json!("highlight")
+        );
+
+        // Get with layers.
+        let got = server
+            .educt_get_transcript(Parameters(EductGetTranscriptRequest {
+                transcript_id: transcript_id.clone(),
+                include_layers: Some(true),
+            }))
+            .await
+            .expect("educt_get_transcript succeeds");
+        let got = content_of(&got);
+        assert_eq!(got["layers"].as_array().map(Vec::len), Some(1));
+        assert_eq!(got["summary"]["id"], serde_json::json!(transcript_id));
+
+        // Delete cascades.
+        let deleted = server
+            .educt_delete_transcript(Parameters(EductDeleteTranscriptRequest { transcript_id }))
+            .await
+            .expect("educt_delete_transcript succeeds");
+        let deleted = content_of(&deleted);
+        assert_eq!(deleted["transcripts_removed"].as_u64(), Some(1));
+        assert_eq!(deleted["layers_removed"].as_u64(), Some(1));
     }
 
     #[tokio::test]
