@@ -10,12 +10,15 @@
 use crate::transcript::TranscriptBundle;
 use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};
 use crate::transcript_pass::{self, PassError, PassMode};
-use crate::transcript_select::{Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan, union_ranges};
+use crate::transcript_select::{
+    Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan, text_to_word_ranges, union_ranges,
+    word_range_to_time_range,
+};
 use crate::transcript_store::{self, TranscriptFilter, TranscriptStoreError};
 use crate::types::{
     EductApplyCorrectionsRequest, EductCorrectionPassRequest, EductDeleteTranscriptRequest,
     EductEdlFromHighlightsRequest, EductExportRequest, EductGetTranscriptRequest,
-    EductHighlightPassRequest, EductListLayersRequest, EductListTranscriptsRequest,
+    EductHighlightPassRequest, EductListLayersRequest, EductLocateRequest,
     EductParagraphPassRequest, EductRenderEdlRequest, EductSpeakerPassRequest,
     EductStoreLayerRequest, EductStoreTranscriptRequest,
 };
@@ -62,6 +65,24 @@ fn map_pass_error(error: PassError) -> McpToolError {
     }
 }
 
+/// Normalize a loosely-typed (AnyJsonValue) tool input that may arrive
+/// stringified: some MCP transports serialize object params into their
+/// JSON-string form. Accept both — the parsed object or the string form —
+/// so every client can store transcripts and layers.
+fn parse_json_value(
+    value: serde_json::Value,
+    what: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    match value {
+        serde_json::Value::String(text) => serde_json::from_str(&text).map_err(|e| {
+            McpToolError::invalid_argument(format!(
+                "{what} must be valid JSON (object or JSON-string form): {e}"
+            ))
+        }),
+        other => Ok(other),
+    }
+}
+
 /// Whether a media path is an audio file (extension check) — selects the
 /// audio trim/concat render path over the video path.
 fn is_audio_path(path: &str) -> bool {
@@ -84,7 +105,8 @@ impl MediaServer {
         }): Parameters<EductStoreTranscriptRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_store_transcript", async {
-            let bundle: TranscriptBundle = serde_json::from_value(transcript.0).map_err(|e| {
+            let value = parse_json_value(transcript.0, "transcript")?;
+            let bundle: TranscriptBundle = serde_json::from_value(value).map_err(|e| {
                 McpToolError::invalid_argument(format!(
                     "transcript must be valid TranscriptBundle JSON (as returned \
                          by transcribe_bundle): {e}"
@@ -205,7 +227,8 @@ impl MediaServer {
         }): Parameters<EductStoreLayerRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_store_layer", async {
-            let parsed: TranscriptLayer = serde_json::from_value(layer.0).map_err(|e| {
+            let value = parse_json_value(layer.0, "layer")?;
+            let parsed: TranscriptLayer = serde_json::from_value(value).map_err(|e| {
                 McpToolError::invalid_argument(format!(
                     "layer must be a tagged layer JSON object {{\"kind\": \
                      \"speaker\"|\"paragraph\"|\"correction\"|\"highlight\"|\"edl\", \
@@ -898,6 +921,66 @@ impl MediaServer {
                      \"{other}\""
                 ))),
             }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Locate a quoted passage in a stored transcript, deterministically: returns every word-aligned match as a word range with its time range (start_ms/end_ms). Quote the rendered form exactly (punctuation included). Ambiguity is surfaced as all candidate ranges — never a guess; a surfaced no_match means the quote does not appear word-aligned. This is the mechanical mapping step for verified citations (e.g. the listening skill's evidence quotes): a verbatim substring of the transcript resolves to a media range with no model in the loop."
+    )]
+    pub async fn educt_locate(
+        &self,
+        Parameters(EductLocateRequest {
+            transcript_id,
+            text,
+        }): Parameters<EductLocateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_locate", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
+                .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if !summary.has_word_timings {
+                return Err(McpToolError::invalid_argument(
+                    "transcript has no word-level timings; a quote cannot map to a media \
+                     range (NoWordTimings)",
+                ));
+            }
+            let ranges = text_to_word_ranges(&bundle.words, &text);
+            if ranges.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_match",
+                    "ranges": [],
+                    "count": 0,
+                    "note": "no word-aligned match — quote the rendered form exactly \
+                             (punctuation included)",
+                }));
+            }
+            let mut located = Vec::with_capacity(ranges.len());
+            for range in ranges {
+                let (start_ms, end_ms) =
+                    word_range_to_time_range(&bundle.words, range).map_err(|error| {
+                        McpToolError::internal(format!(
+                            "impossible: text_to_word_ranges produced an out-of-bounds \
+                             range: {error}"
+                        ))
+                    })?;
+                located.push(serde_json::json!({
+                    "start_word": range.start_word,
+                    "end_word": range.end_word,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                }));
+            }
+            Ok(serde_json::json!({
+                "status": "located",
+                "ranges": located,
+                "count": located.len(),
+            }))
         })
         .await
     }

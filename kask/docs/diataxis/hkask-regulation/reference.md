@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "2.0.0"
 status: "Active"
 domain: "Regulation"
@@ -27,28 +27,28 @@ not on any storage crate — durable sinks are injected as traits
 | Symbol | Location |
 |--------|----------|
 | Crate root (re-exports) | `kask/crates/hkask-regulation/src/hkask_regulation.rs:24-39` |
-| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:142-198` |
-| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:705` |
-| `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:216-263` |
-| `CyberneticsLoop::reset_all_caps` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:673` |
-| `CyberneticsLoop::process_inbox` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:681` |
-| `CyberneticsLoop::loop_quality` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:874` |
-| `CyberneticsLoop::submit_rollout_impact_check` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:593` |
-| `RolloutEventSource` trait | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:69-106` |
-| `RolloutEventError` enum | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:43-53` |
-| `sense` / `compare` / `compute` / `act` / `verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:254,248,290,348,662` |
-| `route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:488` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:146-213` |
+| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:721` |
+| `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:231,248-279` |
+| `CyberneticsLoop::reset_all_caps` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:689` |
+| `CyberneticsLoop::process_inbox` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:697` |
+| `CyberneticsLoop::loop_quality` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:903` |
+| `CyberneticsLoop::submit_rollout_impact_check` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:609` |
+| `RolloutEventSource` trait | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:73-110` |
+| `RolloutEventError` enum | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:47-57` |
+| `sense` / `compare` / `compute` / `act` / `verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684` |
+| `route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:510` |
 | `persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147` |
 | `try_substitute` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:31` |
-| `build_regulation_action` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1059` |
-| `handle_curation_directive` | `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs:20` |
+| `build_regulation_action` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1080` |
+| `handle_curation_directive` | `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs:14` |
 | `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:480-482` |
 | `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:406-422` |
 | `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:319-391` |
 | `VarietyTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:140-208` |
 | `OutcomeTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:222-302` |
 | `StoredSkillSpan` / `SkillSpanStore` | `kask/crates/hkask-regulation/src/runtime.rs:52-124` |
-| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:969` |
+| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:980` |
 | `CallCapManager` | `kask/crates/hkask-regulation/src/energy.rs:131-134` |
 | `CallCap` struct | `kask/crates/hkask-regulation/src/energy.rs:45-48` |
 | `AgentCallCapStatus` | `kask/crates/hkask-regulation/src/energy.rs:102-105` |
@@ -80,33 +80,33 @@ not on any storage crate — durable sinks are injected as traits
 | `StrategyEvaluator` | `kask/crates/hkask-regulation/src/strategy_evaluator.rs:66` |
 | `MovingAverageExtrapolator` | `kask/crates/hkask-regulation/src/system_simulator.rs:29` |
 | `MetricPrediction` | `kask/crates/hkask-regulation/src/system_simulator.rs:16` |
-| `SetPoints` struct | `kask/crates/hkask-regulation/src/set_points.rs:184-291` |
-| `SetPointsConfig` | `kask/crates/hkask-regulation/src/set_points.rs:296-328` |
+| `SetPoints` struct | `kask/crates/hkask-regulation/src/set_points.rs:186-293` |
+| `SetPointsConfig` | `kask/crates/hkask-regulation/src/set_points.rs:298-330` |
 | `InferenceThrottleMode` enum | `kask/crates/hkask-regulation/src/set_points.rs:60-67` |
 | `SetPoints::validate` | `kask/crates/hkask-regulation/src/set_points.rs:482-541` |
 | `load_set_points` | `kask/crates/hkask-regulation/src/set_points.rs:585-619` |
-| `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:123` |
-| `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:101` |
+| `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:107` |
+| `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:85` |
 | `RegulationReason` enum | `kask/crates/hkask-regulation/src/regulation_policy.rs:18` |
-| `RegulationRule` | `kask/crates/hkask-regulation/src/regulation_policy.rs:109` |
-| `RegulationPolicy::decide` | `kask/crates/hkask-regulation/src/regulation_policy.rs:460` |
-| `classify_decision` | `kask/crates/hkask-regulation/src/regulation_policy.rs:544` |
-| `default_substitution_ladder` | `kask/crates/hkask-regulation/src/regulation_policy.rs:567` |
+| `RegulationRule` | `kask/crates/hkask-regulation/src/regulation_policy.rs:93` |
+| `RegulationPolicy::decide` | `kask/crates/hkask-regulation/src/regulation_policy.rs:379` |
+| `classify_decision` | `kask/crates/hkask-regulation/src/regulation_policy.rs:566` |
+| `default_substitution_ladder` | `kask/crates/hkask-regulation/src/regulation_policy.rs:589` |
 | `LoopId` enum | `kask/crates/hkask-regulation/src/loops/core.rs:24-29` |
 | `LoopMetrics` / `LoopMetrics::from_cycle` | `kask/crates/hkask-regulation/src/loops/core.rs:189,241` |
 | `ImpactReport` | `kask/crates/hkask-regulation/src/loops/core.rs:80` |
 | `ActionDecision` enum | `kask/crates/hkask-regulation/src/loops/core.rs:173` |
 | `TriggerOrigin` enum | `kask/crates/hkask-regulation/src/loops/core.rs:48` |
 | `StageActions` | `kask/crates/hkask-regulation/src/loops/core.rs:555` |
-| `CurationInput` enum | `kask/crates/hkask-regulation/src/loops/core.rs:787` |
+| `CurationInput` enum | `kask/crates/hkask-regulation/src/loops/core.rs:789` |
 | `SignalMetric` enum | `kask/crates/hkask-regulation/src/loops/signals.rs:14` |
-| `Signal` struct | `kask/crates/hkask-regulation/src/loops/signals.rs:245` |
-| `Deviation` struct / `Deviation::from_signal` | `kask/crates/hkask-regulation/src/loops/signals.rs:267,274` |
-| `DeviationDirection` enum | `kask/crates/hkask-regulation/src/loops/signals.rs:293` |
-| `RegulatoryAction` | `kask/crates/hkask-regulation/src/loops/actions.rs:258` |
-| `RegulatoryActionParams` | `kask/crates/hkask-regulation/src/loops/actions.rs:190` |
+| `Signal` struct | `kask/crates/hkask-regulation/src/loops/signals.rs:227` |
+| `Deviation` struct / `Deviation::from_signal` | `kask/crates/hkask-regulation/src/loops/signals.rs:249,256` |
+| `DeviationDirection` enum | `kask/crates/hkask-regulation/src/loops/signals.rs:275` |
+| `RegulatoryAction` | `kask/crates/hkask-regulation/src/loops/actions.rs:236` |
+| `RegulatoryActionParams` | `kask/crates/hkask-regulation/src/loops/actions.rs:168` |
 | `RegulationData` enum | `kask/crates/hkask-regulation/src/loops/actions.rs:19` |
-| `ActionType` enum | `kask/crates/hkask-regulation/src/loops/actions.rs:300` |
+| `ActionType` enum | `kask/crates/hkask-regulation/src/loops/actions.rs:278` |
 | `BudgetOption` | `kask/crates/hkask-regulation/src/loops/actions.rs:7` |
 
 ## Class diagram
@@ -214,8 +214,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-003
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:142-198,69-106; kask/crates/hkask-regulation/src/runtime.rs:480; kask/crates/hkask-regulation/src/energy.rs:131; kask/crates/hkask-regulation/src/dampener.rs:100,231; kask/crates/hkask-regulation/src/algedonic.rs:230,41; kask/crates/hkask-regulation/src/metacognition.rs:172; kask/crates/hkask-regulation/src/sensor_provider.rs:39
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:146-213,73-110; kask/crates/hkask-regulation/src/runtime.rs:480; kask/crates/hkask-regulation/src/energy.rs:131; kask/crates/hkask-regulation/src/dampener.rs:100,231; kask/crates/hkask-regulation/src/algedonic.rs:230,41; kask/crates/hkask-regulation/src/metacognition.rs:172; kask/crates/hkask-regulation/src/sensor_provider.rs:39
 status: VERIFIED
 -->
 
@@ -225,7 +225,7 @@ The loop type system lives in `loops/` and is re-exported from
 `hkask_regulation.rs:30-33`. The `LoopId` enum (`loops/core.rs:24-29`)
 identifies the four loops; there is no Loop 3 (Control is absorbed into
 Cybernetics) and no Loop 4 (VSM S4 = Curation). StorageGuard and
-McpServerGuard loops were folded into Cybernetics (`loops/core.rs:14-22`).
+McpServerGuard loops were folded into Cybernetics (`loops/core.rs:17-19`).
 
 ```mermaid
 classDiagram
@@ -319,8 +319,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-004
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-regulation/src/loops/core.rs:24,80,173; kask/crates/hkask-regulation/src/loops/signals.rs:14,245,267,293; kask/crates/hkask-regulation/src/loops/actions.rs:19,190,258,300
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-regulation/src/loops/core.rs:24,80,173; kask/crates/hkask-regulation/src/loops/signals.rs:14,227,249,275; kask/crates/hkask-regulation/src/loops/actions.rs:19,168,236,278
 status: VERIFIED
 -->
 
@@ -328,7 +328,7 @@ status: VERIFIED
 
 The Cybernetics Loop is a sensor+advisor, not an actuator. Every computed
 `RegulatoryAction` is converted to an `Escalate` alert by
-`route_action_as_alert` (`cybernetics_loop/cycle.rs:488`) and routed
+`route_action_as_alert` (`cybernetics_loop/cycle.rs:510`) and routed
 through a three-tier path. This preserves user sovereignty: the human (via
 the Curator) decides whether to apply the recommended action; the loop does
 not act autonomously.
@@ -336,19 +336,19 @@ not act autonomously.
 The `efferent_action` field in the alert's `error_context` JSON carries
 the original `ActionType` (e.g., `Throttle`, `CircuitBreak`) so the Curator
 sees what the loop would have done. Native `Escalate` actions (variety
-deficit) carry `efferent_action: None` (`cycle.rs:498-505`).
+deficit) carry `efferent_action: None` (`cycle.rs:523-529`).
 
-`Notify` actions are skipped (`cycle.rs:490-498`) — they are observational
+`Notify` actions are skipped (`cycle.rs:513-521`) — they are observational
 ("no action required, positive signal"). Converting them to Critical
 alerts would be a variety inversion.
 
 ## Set-points
 
-`SetPoints` (`set_points.rs:184-291`) holds the homeostatic reference
+`SetPoints` (`set_points.rs:186-293`) holds the homeostatic reference
 values. Defaults are declared once as `DEFAULT_*` constants
-(`set_points.rs:13-176`) and reused in the `Default` impl
-(`set_points.rs:346-382`), `SetPointsConfig` (`set_points.rs:296-328`), and
-`from_config` (`set_points.rs:387-476`). `validate()` (`set_points.rs:482-541`)
+(`set_points.rs:13-178`) and reused in the `Default` impl
+(`set_points.rs:348-384`), `SetPointsConfig` (`set_points.rs:298-330`), and
+`from_config` (`set_points.rs:389-478`). `validate()` (`set_points.rs:482-541`)
 checks range and ordering invariants (e.g., warning threshold > critical
 threshold, stage ratio < block ratio, tool reliability floor in
 (0.0, 1.0] so the sensor can never be silently disabled).
@@ -378,9 +378,9 @@ Curation→Cybernetics→Curation cycle. Two layers:
 
 `StagnationDetector` (`dampener.rs:231`) tracks (metric, action) pairs.
 When the same pair is rejected for `substitution_after` cycles (default 2,
-`set_points.rs:118`), `try_substitute` (`cycle.rs:31`) walks the
+`set_points.rs:120`), `try_substitute` (`cycle.rs:31`) walks the
 substitution ladder. When it hits the per-metric stagnation threshold
-(default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:99`), a
+(default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:101`), a
 regulatory-plateau alert fires.
 
 ## Alert sinks

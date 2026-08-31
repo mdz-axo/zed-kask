@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "2.0.0"
 status: "Active"
 domain: "Regulation"
@@ -23,30 +23,30 @@ holds the `VarietyMonitor`, and exposes health snapshots that the
 
 | Symbol | Location |
 |--------|----------|
-| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:142` |
-| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:705` |
-| `CyberneticsLoop::route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:488` |
-| `CyberneticsLoop::verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:662` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:146` |
+| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:721` |
+| `CyberneticsLoop::route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:510` |
+| `CyberneticsLoop::verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:684` |
 | `CyberneticsLoop::persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147` |
 | `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:480` |
 | `RegulationCycleEntry` | `kask/crates/hkask-regulation/src/runtime.rs:406` |
 | `VarietyMonitor` | `kask/crates/hkask-regulation/src/runtime.rs:319` |
 | `MetacognitionLoop::run` | `kask/crates/hkask-regulation/src/metacognition.rs:258` |
-| `MetacognitionLoop::tick` | `kask/crates/hkask-regulation/src/metacognition.rs:332` |
+| `MetacognitionLoop::tick` | `kask/crates/hkask-regulation/src/metacognition.rs:327` |
 | `EscalationAlert` | `kask/crates/hkask-regulation/src/metacognition.rs:107` |
 | `EscalationTrigger` enum | `kask/crates/hkask-regulation/src/metacognition.rs:117` |
-| `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:101` |
-| `RegulationPolicy::decide` | `kask/crates/hkask-regulation/src/regulation_policy.rs:460` |
+| `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:85` |
+| `RegulationPolicy::decide` | `kask/crates/hkask-regulation/src/regulation_policy.rs:379` |
 | `RuntimeAlert` | `kask/crates/hkask-regulation/src/algedonic.rs:41` |
 | `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:30` |
 | `Dampener::should_dampen_directive` | `kask/crates/hkask-regulation/src/dampener.rs:181` |
 | `StagnationDetector` | `kask/crates/hkask-regulation/src/dampener.rs:231` |
 | `CallCapManager::charge_metered` | `kask/crates/hkask-regulation/src/energy.rs:176` |
-| `CurationInput` enum | `kask/crates/hkask-regulation/src/loops/core.rs:787` |
+| `CurationInput` enum | `kask/crates/hkask-regulation/src/loops/core.rs:789` |
 
 ## The homeostatic loop
 
-The `CyberneticsLoop` (`cybernetics_loop.rs:142`) drives the five-phase
+The `CyberneticsLoop` (`cybernetics_loop.rs:146`) drives the five-phase
 cycle. Each phase produces data that the `RegulationCycleEntry`
 (`runtime.rs:406`) captures: afferent signals from sense, deviations from
 compare, actions from compute, and verified impacts from verify.
@@ -66,29 +66,29 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-005
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:142,705; kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:254,248,290,348,662,488,147; kask/crates/hkask-regulation/src/runtime.rs:406,480; kask/crates/hkask-regulation/src/regulation_policy.rs:101,460
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:146,721; kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684,510,147; kask/crates/hkask-regulation/src/runtime.rs:406,480; kask/crates/hkask-regulation/src/regulation_policy.rs:85,379
 status: VERIFIED
 -->
 
 ## Why five phases
 
 The five phases (sense, compare, compute, act, verify) map to the classical
-cybernetic feedback loop. The sense phase (`cycle.rs:254`) first drains the
-curator-directive inbox via `process_inbox()` (`cybernetics_loop.rs:681`),
+cybernetic feedback loop. The sense phase (`cycle.rs:253`) first drains the
+curator-directive inbox via `process_inbox()` (`cybernetics_loop.rs:697`),
 then collects observable signals from the `SensorBus`
 (`sensor_provider.rs:39`). The compare phase (`cycle.rs:248`) checks each
 signal against its set-point via `Deviation::from_signal`
-(`loops/signals.rs:274`). The compute phase (`cycle.rs:290`) matches
+(`loops/signals.rs:256`). The compute phase (`cycle.rs:350`) matches
 `Deviation`s against `RegulationRule`s in `RegulationPolicy::default()`
-(`regulation_policy.rs:135`), producing `ProposedAction`s
-(`regulation_policy.rs:101`) that `build_regulation_action`
-(`cycle.rs:1059`) converts into `RegulatoryAction`s.
+(`regulation_policy.rs:119`), producing `ProposedAction`s
+(`regulation_policy.rs:85`) that `build_regulation_action`
+(`cycle.rs:1080`) converts into `RegulatoryAction`s.
 
-The act phase (`cycle.rs:348`) converts all actions to `Escalate` alerts
+The act phase (`cycle.rs:408`) converts all actions to `Escalate` alerts
 routed to the Curator/human — the loop is a sensor+advisor, not an actuator
 (see [Reference](./reference.md) § "Efferent action dispatch"). The verify
-phase (`cycle.rs:662`) records the impact and feeds it back to the next
+phase (`cycle.rs:684`) records the impact and feeds it back to the next
 sense phase.
 
 The separation of compare and compute is deliberate. Merging them would
@@ -99,7 +99,7 @@ requirement.
 
 ## The escalation sequence
 
-When `route_action_as_alert` (`cycle.rs:488`) converts a
+When `route_action_as_alert` (`cycle.rs:510`) converts a
 `RegulatoryAction` to a `RuntimeAlert`, it routes through three tiers.
 The sequence below shows the path for a Critical alert when the live
 channel is connected.
@@ -123,8 +123,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-006
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147,488; kask/crates/hkask-regulation/src/algedonic.rs:84,58; kask/crates/hkask-regulation/src/loops/core.rs:787
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147,510; kask/crates/hkask-regulation/src/algedonic.rs:84,58; kask/crates/hkask-regulation/src/loops/core.rs:789
 status: VERIFIED
 -->
 
@@ -138,7 +138,7 @@ durability when the live channel is down. Email fires as notification
 
 ## Why the loop is a sensor+advisor, not an actuator
 
-A design decision recorded in `route_action_as_alert` (`cycle.rs:488`)
+A design decision recorded in `route_action_as_alert` (`cycle.rs:510`)
 makes the cybernetics loop an advisor, not an actuator. All computed
 actions are converted to `Escalate` alerts routed to the Curator/human.
 Actions that would have been direct efferent signals (`Throttle`,

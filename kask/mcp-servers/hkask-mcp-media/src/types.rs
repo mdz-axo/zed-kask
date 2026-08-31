@@ -322,6 +322,15 @@ pub struct EductExportRequest {
     pub format: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductLocateRequest {
+    pub transcript_id: String,
+    /// The passage to locate — quote the rendered form exactly (punctuation
+    /// included). All word-aligned matches are returned with their time
+    /// ranges; ambiguity is surfaced as all candidates, never a guess.
+    pub text: String,
+}
+
 /// Lifecycle status of a face registry entry.
 /// Stored as TEXT in SQLite; the storage layer accepts `&str` and this enum
 /// implements `AsRef<str>` for a typed call site.

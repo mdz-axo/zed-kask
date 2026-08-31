@@ -32,6 +32,22 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Classify a non-success HTTP response from a media provider. A 401/403
+/// means the credential is present but rejected (invalid, expired, or
+/// unauthorized for the resource) — an authorization failure (`Auth`),
+/// which downstream MCP servers surface as `permission_denied` so the
+/// operator sees "fix your key" instead of "retry later". Every other
+/// status stays a connection error. `prefix` names the provider +
+/// endpoint in the message (e.g. "DeepInfra STT").
+fn provider_http_error(prefix: &str, status: reqwest::StatusCode, body: &str) -> InferenceError {
+    let message = format!("{prefix} {status}: {}", sanitize_error_body(body));
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        InferenceError::Auth(message)
+    } else {
+        InferenceError::Connection(message)
+    }
+}
+
 // ── DeepInfra ─────────────────────────────────────────────────────────────
 
 /// DeepInfra media generation backend.

@@ -331,6 +331,7 @@ impl From<InferenceError> for InferenceErrorPayload {
             InferenceError::CircuitOpen(m) => ("CircuitOpen", m),
             InferenceError::VisionUnsupported(m) => ("VisionUnsupported", m),
             InferenceError::NotConfigured(m) => ("NotConfigured", m),
+            InferenceError::Auth(m) => ("Auth", m),
         };
         Self {
             code: code.to_string(),
@@ -349,6 +350,7 @@ impl From<InferenceErrorPayload> for InferenceError {
             "CircuitOpen" => InferenceError::CircuitOpen(e.message),
             "VisionUnsupported" => InferenceError::VisionUnsupported(e.message),
             "NotConfigured" => InferenceError::NotConfigured(e.message),
+            "Auth" => InferenceError::Auth(e.message),
             _ => InferenceError::Generation(e.message),
         }
     }

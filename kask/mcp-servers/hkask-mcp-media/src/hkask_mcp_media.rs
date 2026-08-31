@@ -394,9 +394,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_82_registered_tools() {
+    fn tool_surface_is_exactly_83_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 82, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 83, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1217,6 +1217,65 @@ mod tool_behavior_tests {
             error.to_string().contains("unrecognized"),
             "the error must name the unrecognized shape"
         );
+
+        match prior {
+            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+        }
+    }
+
+    /// Pins the composition contract of `persist_slim_and_enrich` — the
+    /// single composition path every `media_generate` tool funnels through:
+    /// the returned value is the slim result (persisted path, no payload)
+    /// with the OMC-tagged, provenance-carrying `display_hint` attached,
+    /// referencing the persisted path. A tool hand-rolling this sequence
+    /// can drop the display hint (breaking the inline media widget) or
+    /// return the raw payload (re-creating the context bomb) — folding it
+    /// here makes both failure modes structural non-options.
+    #[tokio::test]
+    async fn persist_slim_and_enrich_composes_path_and_display_hint() {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK
+            .lock()
+            .expect("artifacts env lock poisoned");
+        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+
+        let server = make_server();
+        use base64::Engine;
+        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+        let result = serde_json::json!({
+            "data": [{
+                "b64_json": base64::engine::general_purpose::STANDARD.encode(&jpeg)
+            }],
+        });
+        let enriched = persist_slim_and_enrich(
+            &server.gallery_state,
+            &server.gallery_store,
+            &result,
+            "generate_image",
+            "image",
+            serde_json::json!({"prompt": "a cat"}),
+        )
+        .await
+        .expect("persist + slim + enrich must succeed");
+
+        let serialized = enriched.to_string();
+        assert!(
+            !serialized.contains("b64_json") && !serialized.contains("data:"),
+            "the enriched result must carry no payload — got: {serialized}"
+        );
+        let output = enriched["output"]
+            .as_str()
+            .expect("output carries the path");
+        let hint = enriched["display_hint"]
+            .as_str()
+            .expect("display hint is attached");
+        assert!(
+            hint.contains(output),
+            "the media block must reference the persisted path — hint: {hint}"
+        );
+        assert!(hint.starts_with("```media"), "fenced media block: {hint}");
 
         match prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
@@ -2239,6 +2298,137 @@ mod tool_behavior_tests {
             "the missing layers must be named: {}",
             error.message
         );
+    }
+
+    #[tokio::test]
+    async fn educt_store_transcript_accepts_the_stringified_transport_form() {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::EductStoreTranscriptRequest;
+
+        // Some MCP transports serialize loosely-typed object params into
+        // their JSON-string form (verified live 2026-08-31 — the agent's
+        // object-valued transcript arrived as a string and was rejected).
+        // The tool must accept both forms.
+        let server = make_server();
+        let bundle = TranscriptBundle {
+            words: vec![
+                TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 500,
+                    end_ms: 900,
+                    confidence: None,
+                },
+            ],
+            ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
+        };
+        let json_string =
+            serde_json::to_string(&bundle).expect("serialize bundle to a JSON string");
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(serde_json::Value::String(json_string)),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("the stringified transport form must store");
+        let content = content_of(&stored);
+        assert_eq!(content["words_count"].as_u64(), Some(2));
+        assert_eq!(content["has_word_timings"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn educt_locate_maps_a_quote_to_word_and_time_ranges() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_locate(Parameters(crate::types::EductLocateRequest {
+                transcript_id,
+                text: "alpha beta".to_string(),
+            }))
+            .await
+            .expect("locate succeeds");
+        let content = content_of(&result);
+        assert_eq!(content["status"], serde_json::json!("located"));
+        assert_eq!(content["count"].as_u64(), Some(1));
+        assert_eq!(
+            content["ranges"][0],
+            serde_json::json!({
+                "start_word": 0,
+                "end_word": 1,
+                "start_ms": 0,
+                "end_ms": 900,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_locate_surfaces_all_candidates_on_ambiguity() {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::{EductLocateRequest, EductStoreTranscriptRequest};
+
+        let server = make_pass_server("{}".to_string());
+        // "the plan" appears twice — both candidates must surface.
+        let bundle = TranscriptBundle {
+            words: ["the", "plan", "the", "plan", "again"]
+                .iter()
+                .enumerate()
+                .map(|(index, text)| TimedWord {
+                    word: text.to_string(),
+                    start_ms: index as u64 * 1000,
+                    end_ms: index as u64 * 1000 + 500,
+                    confidence: None,
+                })
+                .collect(),
+            ..TranscriptBundle::new(
+                "/tmp/repeat.wav".to_string(),
+                5.0,
+                "the plan the plan again".to_string(),
+            )
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        let result = server
+            .educt_locate(Parameters(EductLocateRequest {
+                transcript_id,
+                text: "the plan".to_string(),
+            }))
+            .await
+            .expect("locate succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["count"].as_u64(),
+            Some(2),
+            "both candidates: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_locate_no_match_is_surfaced_not_silent() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_locate(Parameters(crate::types::EductLocateRequest {
+                transcript_id,
+                text: "a passage that never appears".to_string(),
+            }))
+            .await
+            .expect("no_match is a surfaced status, not an error");
+        let content = content_of(&result);
+        assert_eq!(content["status"], serde_json::json!("no_match"));
+        assert_eq!(content["count"].as_u64(), Some(0));
     }
 
     #[tokio::test]

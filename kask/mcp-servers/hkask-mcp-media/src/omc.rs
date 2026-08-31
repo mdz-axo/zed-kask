@@ -99,7 +99,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_apply_corrections"
         | "educt_highlight_pass"
         | "educt_edl_from_highlights"
-        | "educt_export" => Some(VERSION_INFO),
+        | "educt_export"
+        | "educt_locate" => Some(VERSION_INFO),
         "educt_render_edl" => Some(SEQUENCE),
         // Unknown tool — no OMC concept.
         _ => None,

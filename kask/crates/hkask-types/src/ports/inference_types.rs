@@ -57,6 +57,15 @@ pub enum InferenceError {
     /// / "no provider configured" in downstream MCP servers.
     #[error("Not configured: {0}")]
     NotConfigured(String),
+    /// The provider rejected the credential (HTTP 401/403): the key is
+    /// present but invalid, expired, or unauthorized for the resource.
+    /// Like [`InferenceError::NotConfigured`], this is an authorization
+    /// failure, not a transient outage — callers map it to
+    /// `permission_denied` so the operator sees "fix your key", not
+    /// "retry later". Constructed by the media providers' HTTP error
+    /// paths from the response status.
+    #[error("Authorization failed: {0}")]
+    Auth(String),
 }
 
 /// Token usage statistics
