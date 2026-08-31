@@ -612,11 +612,13 @@ impl MediaViewer {
         };
         let asset = self.assets[ix].clone();
 
-        // Own the media widget for the selected asset directly (not via the
-        // viz cache) so the edit toolbar can reach its playback clock and
-        // trim marks. Recreate when the selection changes.
+        // The media widget for the selected asset — SHARED with the
+        // conversation-inline render via the viz-core registry (one player
+        // per body; two players would play two audio streams). The viewer
+        // keeps the entity so the edit toolbar can reach its playback clock
+        // and trim marks. Recreated when the selection changes.
         if self.media_widget_body.as_deref() != Some(asset.body.as_str()) {
-            match hkask_media_widget::create_media_widget(&asset.body, window, cx) {
+            match hkask_viz_core::shared_media_widget(&asset.body, window, cx) {
                 Some(widget) => {
                     self.media_widget = Some(widget);
                     self.media_widget_body = Some(asset.body.clone());
@@ -1298,5 +1300,95 @@ mod edit_tests {
         assert!(viewer.assets.is_empty());
         viewer.merge_tool_result("not json at all", "video_clip");
         assert!(viewer.assets.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod viewer_layout_tests {
+    use super::*;
+    use gpui::{TestAppContext, px, size};
+
+    const FIXTURE: &str =
+        "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+
+    /// Layout ground truth at the VIEWER level — the full production chain
+    /// (tab bar → tab content → toolbar → player), not the widget in
+    /// isolation. The widget-level test passed while the app was broken,
+    /// so the break is in this chain. The property: the video area's
+    /// laid-out height tracks window height exactly.
+    #[gpui::test]
+    fn viewer_video_area_scales_with_window_size(cx: &mut TestAppContext) {
+        if !std::path::Path::new(FIXTURE).exists() {
+            return;
+        }
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+
+        let viewer = cx.new(|_| MediaViewer::new());
+        let output = serde_json::json!({
+            "content": {
+                "status": "fetched",
+                "display_hint": format!(
+                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
+                )
+            }
+        })
+        .to_string();
+        viewer.update(cx, |viewer, _| {
+            viewer.merge_tool_result(&output, "video_fetch")
+        });
+        let asset_count = viewer.update(cx, |viewer, cx| {
+            let count = viewer.assets.len();
+            let _ = cx;
+            count
+        });
+        assert_eq!(asset_count, 1, "fixture asset must merge");
+
+        struct Host {
+            viewer: Entity<MediaViewer>,
+        }
+        impl gpui::Render for Host {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                // The production embedding: a pane-sized flex child, as the
+                // media panel renders the viewer.
+                div().size_full().child(self.viewer.clone())
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| Host {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+        let short_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out in the viewer chain");
+
+        cx.simulate_resize(size(px(800.), px(900.)));
+        cx.run_until_parked();
+        let tall_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out after resize");
+
+        // 300px window delta minus sub-pixel rounding — the property is
+        // "tracks the window", not exact pixel equality.
+        let height_delta = tall_bounds.size.height - short_bounds.size.height;
+        assert!(
+            height_delta > px(295.) && height_delta < px(305.),
+            "video area height must track window height through the full viewer chain: \
+             {:?} at 600px vs {:?} at 900px (delta {height_delta:?})",
+            short_bounds.size.height,
+            tall_bounds.size.height
+        );
     }
 }

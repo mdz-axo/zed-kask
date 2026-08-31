@@ -246,6 +246,36 @@ thread_local! {
     /// LRU cache of widget entities, keyed by a hash of the block body.
     /// Thread-local because GPUI entities are not `Send` (single-threaded).
     static VIZ_CACHE: RefCell<VizCache> = RefCell::new(VizCache::new());
+    /// Media widgets by body hash, weak: the viz cache (or an embedding
+    /// surface like the media viewer) holds the strong reference. This is
+    /// the single-instance guarantee — one media widget per body, shared
+    /// between the conversation-inline render and the viewer pane. Without
+    /// it, both surfaces construct their own player for the same video and
+    /// play TWO audio streams a few hundred ms apart.
+    static MEDIA_WIDGETS: RefCell<HashMap<u64, gpui::WeakEntity<hkask_media_widget::MediaWidget>>> =
+        RefCell::new(HashMap::default());
+}
+
+/// The single media widget for a block body — shared across every surface
+/// that renders it (conversation inline + viewer pane). Creates and
+/// registers it on first use; revives from the weak cache while any strong
+/// reference (viz cache LRU or viewer ownership) keeps it alive.
+pub fn shared_media_widget(
+    body: &str,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) -> Option<gpui::Entity<hkask_media_widget::MediaWidget>> {
+    let key = cache_key(body);
+    if let Some(existing) = MEDIA_WIDGETS.with(|cache| cache.borrow().get(&key).cloned())
+        && let Some(entity) = existing.upgrade()
+    {
+        return Some(entity);
+    }
+    let entity = hkask_media_widget::create_media_widget(body, window, cx)?;
+    MEDIA_WIDGETS.with(|cache| {
+        cache.borrow_mut().insert(key, entity.downgrade());
+    });
+    Some(entity)
 }
 
 /// Drop every cached widget entity so the next render of each block body
@@ -324,9 +354,11 @@ pub fn block_renderer() -> BlockRenderer {
             return Some(element);
         }
 
-        // Cache miss — try media first (discriminates on `kind`, needs `Window`),
-        // then the registered viz widgets (discriminate on `viz`).
-        if let Some(entity) = hkask_media_widget::create_media_widget(body, window, cx) {
+        // Cache miss — try media first (discriminates on `kind`, needs
+        // `Window`), through the shared-widget registry so the conversation
+        // inline render and the viewer pane share ONE player per body
+        // (two players = two audio streams desynced by a few hundred ms).
+        if let Some(entity) = shared_media_widget(body, window, cx) {
             let cached = CachedWidget::new(entity);
             let element = cached.render();
             VIZ_CACHE.with(|cache| cache.borrow_mut().insert(key, cached));

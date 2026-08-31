@@ -875,7 +875,10 @@ impl gpui::Render for MediaWidget {
             .id("media-widget")
             .track_focus(&self.focus_handle)
             .size_full()
-            .min_h(px(80.0))
+            // In definite-height containers (the viewer pane) size_full
+            // fills; in content-flow containers (conversation inline) it
+            // collapses and this floor keeps the player usable.
+            .min_h(px(240.0))
             // Flex column so the main content's flex_1 resolves against a
             // definite height — the root's size_full is definite only when
             // the embedding pane provides one (the viewer's Media tab does;

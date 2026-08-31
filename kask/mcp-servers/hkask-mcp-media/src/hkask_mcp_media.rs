@@ -132,6 +132,7 @@ hkask_mcp_server::mcp_server!(
 
 mod style;
 pub mod transcript;
+pub mod transcript_select;
 pub mod types;
 use types::*;
 

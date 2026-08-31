@@ -2,7 +2,8 @@
 //!
 //! All types implement `Deserialize + JsonSchema` for MCP tool input validation.
 //! Transcript types (`TimedWord`/`TranscriptSegment`/`TranscriptBundle`) are
-//! imported from `hkask_types` — not re-defined here.
+//! defined in this server's `transcript` module (`src/transcript.rs`) —
+//! `hkask_types` carries no transcript types (verified by grep 2026-08-30).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

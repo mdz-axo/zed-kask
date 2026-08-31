@@ -39,13 +39,20 @@ const AUDIO_LEAD: Duration = Duration::from_millis(300);
 
 pub struct VideoPlayer {
     state: PlaybackState,
-    /// The master playback clock. While Playing, position is derived from
-    /// `playing_since` + `position_at_play` (wall time) — NOT accumulated
-    /// tick deltas, which jitter with the event loop and drift against the
-    /// audio device's real-time consumption. Audio is queued against this
-    /// same clock, so the streams cannot drift apart.
-    playing_since: Option<std::time::Instant>,
+    /// The playback clock base: the position at the last play/pause/seek
+    /// transition. While Playing WITH audio, position = base + consumed
+    /// audio (the audio-master clock — starvation-proof: if the audio queue
+    /// drains, the clock freezes with it, so video waits for audio instead
+    /// of the two drifting apart permanently). Without audio, position =
+    /// base + wall time since `playing_since` (a wall clock drifts against
+    /// a busy editor's late tick callbacks, but with no audio there is
+    /// nothing to desync against).
     position_at_play: Duration,
+    /// Consumed-audio time captured at the last play/seek transition — the
+    /// zero point for the audio-master clock.
+    #[cfg(feature = "video")]
+    audio_consumed_at_play: Option<Duration>,
+    playing_since: Option<std::time::Instant>,
     duration: Duration,
     volume: f32,
     #[cfg(feature = "video")]
@@ -59,6 +66,8 @@ impl VideoPlayer {
             state: PlaybackState::Stopped,
             playing_since: None,
             position_at_play: Duration::ZERO,
+            #[cfg(feature = "video")]
+            audio_consumed_at_play: None,
             duration: Duration::ZERO,
             volume: 1.0,
             #[cfg(feature = "video")]
@@ -165,9 +174,16 @@ impl VideoPlayer {
 
     /// Start playback. Transitions from any state (including Stopped after
     /// `open`) to Playing — video clock and audio output together. The
-    /// master clock rebases to now so position advances at real time.
+    /// clock rebases: audio-master when audio is live, wall time otherwise.
     pub fn play(&mut self) {
         self.playing_since = Some(std::time::Instant::now());
+        #[cfg(feature = "video")]
+        {
+            self.audio_consumed_at_play = self
+                .decoder
+                .as_ref()
+                .and_then(VideoDecoderInner::audio_consumed);
+        }
         self.state = PlaybackState::Playing;
         #[cfg(feature = "video")]
         {
@@ -206,9 +222,11 @@ impl VideoPlayer {
         }
     }
 
-    /// Seek to a position. Rebases the master clock and resets both
-    /// streams; audio resumes when the player was already Playing because
-    /// rodio's `clear()` leaves its player paused.
+    /// Seek to a position. Rebases the clock and resets both streams; the
+    /// audio queue is cleared so consumed audio restarts from zero — the
+    /// audio-master clock rebases to the seek target. Audio resumes when
+    /// the player was already Playing because rodio's `clear()` leaves its
+    /// player paused.
     pub fn seek(&mut self, position: Duration) {
         self.position_at_play = position;
         if self.playing_since.is_some() {
@@ -220,6 +238,8 @@ impl VideoPlayer {
             if let Some(decoder) = &mut self.decoder {
                 decoder.reset_after_seek(position, resume_audio);
             }
+            // The queue was cleared — consumed audio restarts from zero.
+            self.audio_consumed_at_play = Some(Duration::ZERO);
         }
     }
 
@@ -240,11 +260,20 @@ impl VideoPlayer {
         self.volume
     }
 
-    /// Get the current playback position — the master clock. While Playing
-    /// this is wall-time-derived, so it advances at real time regardless of
-    /// event-loop jitter.
+    /// Get the current playback position — the master clock. With live
+    /// audio this is consumed-audio-derived (starvation-proof); without
+    /// audio it is wall-time-derived.
     #[must_use]
     pub fn position(&self) -> Duration {
+        #[cfg(feature = "video")]
+        if let Some(consumed_at_play) = self.audio_consumed_at_play
+            && let Some(consumed) = self
+                .decoder
+                .as_ref()
+                .and_then(VideoDecoderInner::audio_consumed)
+        {
+            return self.position_at_play + consumed.saturating_sub(consumed_at_play);
+        }
         match self.playing_since {
             Some(since) => self.position_at_play + since.elapsed(),
             None => self.position_at_play,
@@ -332,9 +361,13 @@ mod ffmpeg_impl {
     /// construction trivial.
     const AUDIO_RATE: u32 = 48_000;
 
-    /// Samples buffered before one rodio append: 0.5s of stereo f32. See
-    /// `AudioPipeline::pending_samples` for why appends are chunked.
-    const APPEND_CHUNK_SAMPLES: usize = (AUDIO_RATE as usize) / 2 * 2;
+    /// Samples buffered before one rodio append: 100ms of stereo f32. See
+    /// `AudioPipeline::pending_samples` for why appends are chunked. The
+    /// chunk size must exceed the tick gap (~33ms): the pending buffer only
+    /// flushes during pump calls, so a queue chunk smaller than the gap
+    /// starves the output between ticks (audible stutter; measurable
+    /// starvation in the streaming e2e test).
+    const APPEND_CHUNK_SAMPLES: usize = (AUDIO_RATE as usize) / 10 * 2;
 
     /// FFmpeg-backed video + audio decoder.
     ///
@@ -379,6 +412,13 @@ mod ffmpeg_impl {
         /// — a seek would stall the foreground thread. Buffering to
         /// `APPEND_CHUNK_SAMPLES` keeps the queue at a couple of sources.
         pending_samples: Vec<f32>,
+        /// Media-time duration of each appended chunk, in append order. With
+        /// rodio's `len()` (sources still queued) and `get_pos()` (position in
+        /// the current source), this yields the consumed-audio time — the
+        /// MASTER CLOCK. Wall time cannot serve: tick callbacks run late in a
+        /// busy editor, every starvation drains the queue, and consumed audio
+        /// falls permanently behind wall time (accumulating desync).
+        appended_durations: std::collections::VecDeque<Duration>,
     }
 
     impl VideoDecoderInner {
@@ -473,6 +513,12 @@ mod ffmpeg_impl {
         #[must_use]
         pub fn has_audio(&self) -> bool {
             self.audio.is_some()
+        }
+
+        /// Consumed audio time — the master clock while audio is live.
+        #[must_use]
+        pub fn audio_consumed(&self) -> Option<Duration> {
+            self.audio.as_ref().map(AudioPipeline::consumed)
         }
 
         #[cfg(test)]
@@ -637,6 +683,7 @@ mod ffmpeg_impl {
                 player,
                 queued_until_ms: 0,
                 pending_samples: Vec::new(),
+                appended_durations: std::collections::VecDeque::new(),
             })
         }
 
@@ -655,6 +702,19 @@ mod ffmpeg_impl {
             )
         }
 
+        /// Consumed audio time: completed chunks (appended minus still
+        /// queued) plus the position within the currently-playing chunk.
+        /// This is the master playback clock while audio is live.
+        fn consumed(&self) -> Duration {
+            let queued_sources = self.player.len();
+            let completed = self.appended_durations.len().saturating_sub(queued_sources);
+            let mut consumed: Duration = self.appended_durations.iter().take(completed).sum();
+            if queued_sources > 0 {
+                consumed += self.player.get_pos();
+            }
+            consumed
+        }
+
         fn reset_after_seek(&mut self, target: Duration) {
             let timestamp_us = target.as_micros() as i64;
             if let Err(error) = self.input.seek(timestamp_us, ..) {
@@ -664,6 +724,7 @@ mod ffmpeg_impl {
             self.player.clear();
             self.queued_until_ms = target.as_millis() as u64;
             self.pending_samples.clear();
+            self.appended_durations.clear();
             // Rebuild the resampler from the decoder's (unchanged)
             // parameters — swr has no reset, and stale buffered samples
             // from before the seek would play as a glitch.
@@ -704,7 +765,12 @@ mod ffmpeg_impl {
                         .resampler
                         .run(&decoded, &mut resampled)
                         .map_err(|error| anyhow::anyhow!("audio resample error: {error}"))?;
-                    append_frame(&mut self.pending_samples, &self.player, &resampled);
+                    append_frame(
+                        &mut self.pending_samples,
+                        &mut self.appended_durations,
+                        &self.player,
+                        &resampled,
+                    );
 
                     // Drain the resampler's internal frames.
                     let mut guard = 0;
@@ -713,7 +779,12 @@ mod ffmpeg_impl {
                         delay = self.resampler.flush(&mut drained).map_err(|error| {
                             anyhow::anyhow!("audio resample flush error: {error}")
                         })?;
-                        append_frame(&mut self.pending_samples, &self.player, &drained);
+                        append_frame(
+                            &mut self.pending_samples,
+                            &mut self.appended_durations,
+                            &self.player,
+                            &drained,
+                        );
                         guard += 1;
                     }
                 }
@@ -733,6 +804,7 @@ mod ffmpeg_impl {
     /// self` method would conflict with the iterator's borrow.
     fn append_frame(
         pending_samples: &mut Vec<f32>,
+        appended_durations: &mut std::collections::VecDeque<Duration>,
         player: &rodio::Player,
         frame: &ffmpeg::frame::Audio,
     ) {
@@ -752,6 +824,8 @@ mod ffmpeg_impl {
                 return;
             }
             let samples = std::mem::take(pending_samples);
+            let duration = Duration::from_secs_f64(samples.len() as f64 / 2.0 / AUDIO_RATE as f64);
+            appended_durations.push_back(duration);
             player.append(rodio::buffer::SamplesBuffer::new(
                 std::num::NonZero::new(2).expect("nonzero channel count"),
                 std::num::NonZero::new(AUDIO_RATE).expect("nonzero sample rate"),
@@ -870,6 +944,56 @@ mod tests {
         );
     }
 
+    /// THE STARVATION TEST — the discriminating property between the
+    /// wall-clock design (shipped, desynced in-app) and the audio-master
+    /// clock: when the audio queue drains (tick callbacks starved by a busy
+    /// editor), the playback clock must FREEZE with the audio, not keep
+    /// advancing on wall time. With the wall clock, every starvation event
+    /// added permanent desync; with audio-master, video waits for audio.
+    #[test]
+    fn playback_clock_freezes_when_audio_queue_starves() {
+        let path = std::path::Path::new(FIXTURE);
+        if !path.exists() {
+            return;
+        }
+        let mut player = VideoPlayer::new();
+        player.open(path).expect("open");
+        player.play();
+        // Pump normally for a moment — audio flowing, clock advancing.
+        for _ in 0..10 {
+            player
+                .advance_and_decode(Duration::from_millis(33))
+                .expect("advance");
+        }
+        let position_before_starvation = player.position();
+        assert!(position_before_starvation > Duration::ZERO);
+
+        // Starve: no pumping for 400ms of wall time (a busy editor's late
+        // callbacks). Window 1: rodio consumes the queued LEAD (~300ms) —
+        // the clock advances by the lead and no further (the wall-clock
+        // design advances the full 400ms+ of wall time).
+        std::thread::sleep(Duration::from_millis(400));
+        let position_after_lead = player.position();
+        let window_one_advance = position_after_lead.saturating_sub(position_before_starvation);
+        assert!(
+            window_one_advance < Duration::from_millis(350),
+            "clock must be audio-bound, not wall-bound: advanced {window_one_advance:?} \
+             in 400ms with only the ~300ms lead queued"
+        );
+
+        // Window 2: the queue is now drained — consumed audio is frozen, so
+        // the clock must freeze with it. (The wall-clock design fails this
+        // window by advancing another 400ms.)
+        std::thread::sleep(Duration::from_millis(400));
+        let position_after_starvation = player.position();
+        let window_two_advance = position_after_starvation.saturating_sub(position_after_lead);
+        assert!(
+            window_two_advance < Duration::from_millis(50),
+            "clock must freeze once the audio queue is drained: advanced \
+             {window_two_advance:?} with no audio flowing"
+        );
+    }
+
     /// Audio must actually flow: after a short playing window, samples are
     /// queued on the output player — not just a pipeline that exists.
     #[test]
@@ -908,12 +1032,17 @@ mod tests {
             player.audio_queue_len() > 0,
             "audio samples must be queued on the output player after seeking into the stream"
         );
-        // Pause freezes the clock. Capture AFTER pause() — two position()
-        // calls before the freeze differ by microseconds of elapsed time.
+        // Pause freezes the clock. Capture AFTER pause() — rodio's position
+        // control updates on a 5ms periodic tick, so one final update can
+        // land just after the pause; bounded jitter, not clock drift.
         player.pause();
         let paused_at = player.position();
         std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(player.position(), paused_at);
+        let drift_after_pause = player.position().saturating_sub(paused_at);
+        assert!(
+            drift_after_pause < Duration::from_millis(10),
+            "clock must freeze on pause (drifted {drift_after_pause:?} — rodio updates every 5ms)"
+        );
         assert_ne!(player.state(), PlaybackState::Playing);
     }
 
@@ -945,14 +1074,22 @@ mod tests {
             .expect("advance")
             .expect("first frame decodes from the stream");
         assert!(frame.width > 0 && frame.height > 0);
-        for _ in 0..30 {
+        // The audio-master clock advances with REAL consumed audio —
+        // instant ticks no longer fake time (the wall-delta clock did).
+        // Give rodio real time to consume, then pump and assert.
+        std::thread::sleep(Duration::from_millis(300));
+        for _ in 0..3 {
             player
                 .advance_and_decode(Duration::from_millis(33))
                 .expect("advance");
         }
+        // position is consumed-audio-derived under the audio-master clock —
+        // advancing position IS the proof that streamed audio flowed to the
+        // output. (Queue length is the wrong oracle: a healthy player
+        // consumes the queue, so it is routinely empty during playback.)
         assert!(
-            player.audio_queue_len() > 0,
-            "streamed audio must be queued on the output player"
+            player.position() > Duration::from_millis(50),
+            "the audio-master clock must advance with consumed streamed audio"
         );
     }
 }
