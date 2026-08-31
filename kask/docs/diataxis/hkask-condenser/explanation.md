@@ -103,8 +103,8 @@ word frequency, which loses domain-specific signal. A line about
 but not in a GOLEM narrative context. The anchor tells the scorer which
 domain the conversation belongs to, and the ontology graph supplies the
 adjacency bonus — lines referencing concepts related to the anchor
-concept (e.g., `fibo:MarketCapitalization` when anchored to
-`fibo:Corporation`) receive a bonus via
+concept (e.g., `fibo-ind-mkt-bas:MarketCapitalization` when anchored to
+`fibo-be-le-cb:Corporation`) receive a bonus via
 `OntologyGraph::graph_adjacency_bonus` (`ontology_graph.rs:260`).
 
 The anchor is derived from the tool name alone because every MCP server

@@ -1415,6 +1415,7 @@ mod tests {
             "grep",
             "list_agents_and_models",
             "list_directory",
+            "list_mcp_tools",
             "open",
             "read_file",
             "rename_symbol",

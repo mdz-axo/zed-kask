@@ -84,7 +84,6 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
 * `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. If the base path is not wired, the tool returns an error — it does not silently render from the wrong path.
 * PDCA loops are **model-coordinated**. The SKILL.md body describes convergence criteria; the model self-iterates. The model calls `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding.
-* `LazyToolRouter` filters MCP tools only — built-in Zed tools (`lisp_eval`, `render_template`, `read_file`, etc.) must bypass the router.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 
 ## Agent typing system (hkask-mcp-swarm)

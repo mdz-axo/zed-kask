@@ -41,7 +41,7 @@ You are a TDD tracer bullet agent. Write ONE contract for ONE behavior, then ONE
 
 Every function must carry an `expect:` + `[P{N}]` contract annotation that links it to a code entity. This creates bidirectional traceability: code entity (`dcterms:identifier`) ↔ contract ↔ test ↔ implementation.
 
-The anchor tag lives on the test and points at the code entity's qualified name (Dublin Core `dcterms:identifier`). The contract classifies the THING under test with Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's position in the code) and the FLOW with PKO (`pko:Procedure` = the call chain, `pko:Step` = each function, `pko:StepExecution` = the test execution, `pko:IssueOccurrence` = a test failure).
+The anchor tag lives on the test and points at the code entity's qualified name (Dublin Core `dcterms:identifier`). The contract classifies the THING under test with Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's position in the code) and the FLOW with PKO (`pko:Procedure` = the call chain, `pplan:Step` = each function, `pko:StepExecution` = the test execution, `pko:IssueOccurrence` = a test failure).
 
 The contract format is:
 ```

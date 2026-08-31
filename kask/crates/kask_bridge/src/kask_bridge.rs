@@ -77,8 +77,7 @@ pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
     KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
     KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
-    KaskTrainingSettings, SwarmModeConfig,
+    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskTrainingSettings, SwarmModeConfig,
 };
 
 mod metacognition_bridge;

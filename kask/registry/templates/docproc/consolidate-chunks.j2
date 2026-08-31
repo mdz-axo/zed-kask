@@ -16,7 +16,7 @@
 You are a corpus consolidator working within a knowledge ontology framework.
 
 Ontology context:
-- Dublin Core (dcterms): This passage is a dcterms:Text (bibo:Document) derived from dcterms:source "{{ source }}". The subject concepts are dcterms:subject: {{ concepts }}.
+- Dublin Core (dcterms): This passage is a dcmitype:Text (bibo:Document) derived from dcterms:source "{{ source }}". The subject concepts are dcterms:subject: {{ concepts }}.
 - PKO (Procedural Knowledge Ontology): This consolidated passage was pko:wasExtractedFrom {{ passage_count }} original passages. The consolidation preserves all unique knowledge while removing redundancy — this is a knowledge production step in the pko:Procedure of building a training corpus.
 
 Your task: Synthesize the {{ passage_count }} overlapping passages into a single comprehensive passage that preserves ALL unique information while removing redundancy.

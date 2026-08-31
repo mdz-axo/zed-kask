@@ -54,7 +54,6 @@ the model-coordinated PDCA loops the SKILL.md bodies describe.
 | `KaskMediaSettings` | `kask/crates/kask_bridge/src/settings.rs:510` |
 | `KaskModelsSettings` | `kask/crates/kask_bridge/src/settings.rs:537` |
 | `KaskModelsSettings::effective_default_model` | `kask/crates/kask_bridge/src/settings.rs:572` |
-| `KaskToolRouterSettings` | `kask/crates/kask_bridge/src/settings.rs:603` |
 | `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:674-712` + `kask/crates/kask_bridge/src/mcp_env.rs` (19 `emit_*` translators) |
 | `BuiltinMcpServer` | `kask/crates/kask_bridge/src/mcp_servers.rs:28-50` |
 | `BUILT_IN_MCP_SERVERS` (11 servers) | `kask/crates/kask_bridge/src/mcp_servers.rs:55-431` |
@@ -140,7 +139,6 @@ classDiagram
         +training: KaskTrainingSettings
         +media: KaskMediaSettings
         +models: KaskModelsSettings
-        +tool_router: KaskToolRouterSettings
         +mcp_env() HashMap
     }
     class KaskGeneralSettings {
@@ -203,11 +201,6 @@ classDiagram
         +classifier_model: String
         +effective_default_model() &str
     }
-    class KaskToolRouterSettings {
-        +threshold: f64
-        +complex_word_threshold: usize
-        +enabled: bool
-    }
     KaskSettings --> KaskGeneralSettings
     KaskSettings --> KaskMcpSettings
     KaskSettings --> KaskCuratorSettings
@@ -217,7 +210,6 @@ classDiagram
     KaskSettings --> KaskSwarmSettings
     KaskSettings --> KaskMediaSettings
     KaskSettings --> KaskModelsSettings
-    KaskSettings --> KaskToolRouterSettings
     KaskCuratorSettings --> KaskCuratorEmailSettings
 ```
 
@@ -239,7 +231,6 @@ status: VERIFIED
 | `KaskCondenserSettings` | `profile = "normal"`, `auto_compress_tool_results = false`, `saliency_window = 5` | `settings.rs:275-283` |
 | `KaskCorpusSettings` | `embedding_dim = 1024`, `ocr_simple_max = 0.05`, `ocr_moderate_max = 0.15`, `ocr_sample_rate = 0.10`, `ocr_tuneable = true`, `template_root = "kask/registry"` | `settings.rs:332-343` |
 | `KaskSwarmSettings` | `max_credits_per_dispatch = 50`, `curator_consent_default = false`, `memory_passphrase = "allostery"`, `embedding_dim = 1024` | `settings.rs:465-487` |
-| `KaskToolRouterSettings` | `threshold = 0.30`, `complex_word_threshold = 6`, `enabled = true` | `settings.rs:613-620` |
 
 ## MCP server registry
 

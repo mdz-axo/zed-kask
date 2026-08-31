@@ -63,8 +63,8 @@ citation relationships. The universal "what is this" axis.
 | `CREATOR` | `dcterms:creator` |
 | `DATE` | `dcterms:date` |
 | `IDENTIFIER` | `dcterms:identifier` |
-| `TEXT` | `dcterms:Text` |
-| `DATASET` | `dcterms:Dataset` |
+| `TEXT` | `dcmitype:Text` |
+| `DATASET` | `dcmitype:Dataset` |
 | `ARTICLE` | `bibo:Article` |
 | `CITES` | `cito:cites` |
 | `SUPPORTS` | `cito:supports` |
@@ -130,7 +130,7 @@ economic-indicator terms (`CONSUMER_PRICE_INDEX`, `PRODUCER_PRICE_INDEX`,
 > financial ratios, DCF line items, valuation methods, or portfolio
 > transactions. Per the operator decision, concepts with no real FIBO
 > equivalent anchor on Dublin Core at the consumer (analysis outputs →
-`bibo:Report`, data outputs → `dcterms:Dataset`); the companies server's
+`bibo:Report`, data outputs → `dcmitype:Dataset`); the companies server's
 > metric cache and financial model use plain hKask-internal metric
 > identifiers, not ontology URIs.
 
@@ -186,11 +186,11 @@ Canonical concept URIs for machine-learning experiments. The module is
 | `DATA` | `mls:Data` |
 | `HYPER_PARAMETER` | `mls:HyperParameter` |
 | `HYPER_PARAMETER_SETTING` | `mls:HyperParameterSetting` |
-| `EVALUATION` | `mls:Evaluation` |
+| `MODEL_EVALUATION` | `mls:ModelEvaluation` |
 | `EVALUATION_MEASURE` | `mls:EvaluationMeasure` |
-| `WAS_DERIVED_FROM` | `mls:wasDerivedFrom` |
-| `IMPLEMENTED_BY` | `mls:implementedBy` |
-| `HAS_DATA` | `mls:hasData` |
+| `HAS_INPUT` | `mls:hasInput` |
+| `HAS_OUTPUT` | `mls:hasOutput` |
+| `IMPLEMENTS` | `mls:implements` |
 
 Full list: `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21-48`
 
@@ -203,9 +203,9 @@ DBnomics, World Bank, IMF, OECD, ECB, INSEE
 | Constant | URI |
 |----------|-----|
 | `DATASET` | `sdmx:DataSet` |
-| `DATA_FLOW` | `sdmx:DataFlow` |
+| `DATA_FLOW` | `sdmx:Dataflow` |
 | `DATA_STRUCTURE` | `sdmx:DataStructureDefinition` |
-| `TIME_SERIES` | `sdmx:TimeSeries` |
+| `TIME_SERIES` | `sdmx:SeriesKey` |
 | `OBSERVATION` | `sdmx:Observation` |
 | `CATEGORY` | `sdmx:Category` |
 | `DATA_PROVIDER` | `sdmx:DataProvider` |
@@ -244,7 +244,7 @@ SUMO rather than the bare 5W1H core, so they get formal categorization
 | `ENTITY` | `sumo:Entity` |
 | `OBJECT` | `sumo:Object` |
 | `PROCESS` | `sumo:Process` |
-| `AGENT` | `sumo:Agent` |
+| `AUTONOMOUS_AGENT` | `sumo:AutonomousAgent` |
 | `RELATION` | `sumo:Relation` |
 
 Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs:32-48`
@@ -303,12 +303,12 @@ Verified against `select_ontology_anchor` (`axis.rs:210-347`):
 ## Unified ontology tag shape
 
 MCP servers emit a single top-level `"ontology"` key in tool output JSON,
-carrying a concept URI string (e.g. `"pko:Step"`, `"fibo:Portfolio"`,
+carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-sec-sec-ast:Portfolio"`,
 `"omc:CreativeWork"`). Verified emitters:
 
 | Server | JSON key | Value example | Evidence |
 |---|---|---|---|
-| companies | `"ontology"` | `"fibo:Portfolio"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:149-161` |
+| companies | `"ontology"` | `"fibo-be-le-cb:Corporation"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:149-161` |
 | curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:599` |
 | media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
 | portfolio | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:54` |

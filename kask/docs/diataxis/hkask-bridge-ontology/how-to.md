@@ -100,7 +100,7 @@ use hkask_bridge_ontology::{dc_bibo, pko};
 
 // State axis — "what is this?"
 let title   = dc_bibo::TITLE;     // "dcterms:title"        (dc_bibo.rs:15)
-let dataset = dc_bibo::DATASET;   // "dcterms:Dataset"      (dc_bibo.rs:37)
+let dataset = dc_bibo::DATASET;   // "dcmitype:Dataset"     (dc_bibo.rs)
 let article = dc_bibo::ARTICLE;   // "bibo:Article"         (dc_bibo.rs:44)
 let cites   = dc_bibo::CITES;     // "cito:cites"           (dc_bibo.rs:59)
 
@@ -116,7 +116,7 @@ without forcing every caller to maintain its own match table:
 use hkask_bridge_ontology::dc_bibo;
 
 // MIME type → Dublin Core type vocabulary      (dc_bibo.rs:79)
-let dc_type = dc_bibo::mime_to_dc_type("application/pdf");  // Some("dcterms:Text")
+let dc_type = dc_bibo::mime_to_dc_type("application/pdf");  // Some("dcmitype:Text")
 ```
 
 PKO also ships stage-mapping helpers for the servers that convert their
@@ -141,7 +141,7 @@ let roic = fibo::CORPORATION;             // "fibo-be-le-cb:Corporation"  (fibo.
 let mcap = fibo::MARKET_CAPITALIZATION;   // "fibo-ind-mkt-bas:MarketCapitalization" (fibo.rs:62)
 
 // Statistical data (SDMX)
-let series = sdmx::TIME_SERIES;   // "sdmx:TimeSeries"  (sdmx.rs:30)
+let series = sdmx::TIME_SERIES;   // "sdmx:SeriesKey"   (sdmx.rs:41)
 
 // Scientific evidence and provenance (SEPIO — official Monarch Initiative terms)
 let ev = sepio::HAS_EVIDENCE;      // "SEPIO:0000189" (sepio.rs, fixture-pinned)
@@ -174,7 +174,7 @@ use hkask_bridge_ontology::axis::{select_ontology_anchor, OntologyAnchor};
 
 // Tool-style name → FIBO supplement (state axis stays Dublin Core)
 let anchor = select_ontology_anchor("company_profile");
-// → OntologyAnchor::DomainSupplement { namespace: Fibo, concept: "dcterms:Dataset" }
+// → OntologyAnchor::DomainSupplement { namespace: Fibo, concept: "dcmitype:Dataset" }
 //   (FIBO arm, axis.rs:243-265)
 
 // Process workflow → PKO dual-axis
@@ -256,7 +256,7 @@ use hkask_bridge_ontology::axis::{OntologyAnchor, OntologyNamespace};
 
 let anchor = OntologyAnchor::DomainSupplement {
     namespace: OntologyNamespace::Fibo,
-    concept: "dcterms:Dataset".to_string(),
+    concept: "dcmitype:Dataset".to_string(),
 };
 
 // Confidence modifier: FIBO +0.10, SUMO +0.05, others ±0.00

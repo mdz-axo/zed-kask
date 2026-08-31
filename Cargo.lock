@@ -8621,6 +8621,7 @@ dependencies = [
 name = "hkask-bridge-ontology"
 version = "0.39.0"
 dependencies = [
+ "regex",
  "schemars 1.0.4",
  "serde",
 ]

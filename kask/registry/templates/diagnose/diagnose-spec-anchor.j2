@@ -90,7 +90,7 @@ Use `grep` to trace the call chain:
 
 The call chain IS a PKO Procedure:
 - `pko:Procedure` — the overall execution path from entry point to the buggy function (the incoming traversal result).
-- `pko:Step` — each function in the chain is a Step. The buggy function is the Step where the `pko:IssueOccurrence` occurs.
+- `pplan:Step` — each function in the chain is a Step. The buggy function is the Step where the `pko:IssueOccurrence` occurs.
 - `pko:hasStep` / `pko:nextStep` — the ordering of Steps in the Procedure (the call chain order).
 - `pko:StepExecution` — the specific execution of the buggy Step where the issue manifests.
 - `pko:IssueOccurrence` — the bug itself: what went wrong at this StepExecution.
@@ -142,7 +142,7 @@ Respond with a JSON object:
 - Every diagnosis must be anchored to a real code entity. Do not fabricate symbols — use `grep` results.
 - The `dcterms:subject` (MDS category) is DERIVED from the entity's position in the code, not looked up from a spec document.
 - If the code structure is unavailable, fall back to classifying from the `bug_description` and `target_file` alone, and note that the anchor is unverified (no traversal).
-- The `pko:procedure` array must reflect the actual call chain from `grep`, ordered from entry point to the buggy step.
+- The `pko_procedure` array must reflect the actual call chain from `grep`, ordered from entry point to the buggy step.
 - Do not fabricate call chains — only include steps returned by the grep results.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.

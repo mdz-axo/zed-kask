@@ -3,7 +3,7 @@ use crate::{
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
-    MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool,
+    ListMcpToolsTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool,
     SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
     ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
@@ -65,7 +65,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
@@ -2446,6 +2446,12 @@ impl Thread {
         // `Thread::enabled_tools`.
         self.add_tool(CreateThreadTool::new(environment.clone()));
         self.add_tool(ListAgentsAndModelsTool::new(environment));
+        // zed-kask: D44 — the discovery meta-tool. The model's visible tool
+        // list can be smaller than the registered surface (profile allowlists,
+        // server scope, curator gating); this tool lets it enumerate the full
+        // surface on demand — the pull mechanism that replaced the removed
+        // LazyToolRouter's per-turn push.
+        self.add_tool(ListMcpToolsTool::new(self.context_server_registry.clone()));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -5208,14 +5214,15 @@ impl Thread {
             };
 
         // zed-kask: D44 — count MCP tools registered but hidden from this
-        // turn's selection. The router prunes per turn; without this count in
-        // the prompt, the model reads the pruned list as the complete toolset
-        // and reports registered tools as "unavailable" (observed live:
-        // an agent denied `web_ping` existed because that turn's routing
-        // hadn't selected it). Registry names not present in
-        // `available_tools` are hidden; disambiguated duplicates (server-prefixed
-        // names) count as hidden, which is honest — the model cannot invoke
-        // them under the plain name either.
+        // session's selection by the filter layers (agent-profile allowlists,
+        // per-tab server scope, curator edit-tool gating). Without this
+        // count in the prompt, the model reads the filtered list as the
+        // complete toolset and reports registered tools as "unavailable"
+        // (observed live: an agent denied `web_ping` existed because a filter
+        // layer hadn't selected it). Registry names not present in
+        // `available_tools` are hidden; disambiguated duplicates
+        // (server-prefixed names) count as hidden, which is honest — the
+        // model cannot invoke them under the plain name either.
         let mcp_tools_hidden = {
             let registry = self.context_server_registry.read(cx);
             let available: std::collections::HashSet<&str> =
@@ -5741,12 +5748,12 @@ fn system_prompt_digest(
     hasher.finalize().into()
 }
 
-/// zed-kask: D44 — count registered MCP tools absent from this turn's
-/// `available_tools`. The `LazyToolRouter` prunes the MCP surface per turn
-/// (≤ `DEFAULT_SELECTION_BUDGET` of the registered fleet), and the system
-/// prompt renders this count as a visibility marker so the model knows the
-/// visible list is a selection, not the whole surface. Pinned by
-/// `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
+/// zed-kask: D44 — count registered MCP tools absent from this session's
+/// `available_tools`. The filter layers that hide tools (agent-profile
+/// allowlists, per-tab server scope, curator edit-tool gating) run in
+/// `enabled_tools`, and the system prompt renders this count as a visibility
+/// marker so the model knows the visible list is a selection, not the whole
+/// surface. Pinned by `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
 fn count_hidden_mcp_tools<'a>(
     registered_names: impl Iterator<Item = &'a SharedString>,
     available_tools: &std::collections::HashSet<&str>,

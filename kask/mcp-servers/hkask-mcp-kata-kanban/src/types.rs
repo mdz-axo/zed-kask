@@ -116,7 +116,15 @@ pub(crate) struct GoalCreateResponse {
     pub goal_text: String,
     pub criteria_count: usize,
     pub prediction: Option<f64>,
-    /// Ontology concept: <https://w3id.org/pko#Goal>
+    /// Ontology concept emitted on the response. Currently `pplan:Step`
+    /// (via `kanban_type_to_pko("Goal")`) — a real term, but a semantic
+    /// stretch: a goal is not a step. The goal's h_mem state-axis anchor is
+    /// the exact concept, `IAO:0000005` (objective specification,
+    /// `sepio::OBJECTIVE_SPECIFICATION`). PKO publishes no Goal class — the
+    /// former `pko:Goal` was fabricated (verified against the PKO v2.0.0
+    /// OWL, 2026-08-29). Whether the response anchor should move to the
+    /// objective-specification concept is an open ontology-selection
+    /// question for the operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -152,7 +160,8 @@ pub(crate) struct GoalJudgeResponse {
     pub goal_id: String,
     pub verdict: String,
     pub verdict_count: usize,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pko:StepVerification` (judging a goal's criteria
+    /// against the realized outcome is a verification occurrence).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -175,7 +184,8 @@ pub(crate) struct GoalScoreResponse {
     /// "not computable" from "perfectly calibrated".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pko:StepVerification` (scoring a goal's realized
+    /// outcome is a verification occurrence).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -246,7 +256,8 @@ pub(crate) struct TaskCreateResponse {
     pub status: String,
     /// Number of goal-criterion citations recorded on the task.
     pub advances_count: usize,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
+    /// publishes no Step class of its own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -586,7 +597,8 @@ pub(crate) struct TaskDeleteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskDeleteResponse {
     pub task_id: String,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
+    /// publishes no Step class of its own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -601,7 +613,8 @@ pub(crate) struct TaskUnassignRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskUnassignResponse {
     pub task_id: String,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
+    /// publishes no Step class of its own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -633,7 +646,8 @@ pub(crate) struct TaskUpdateResponse {
     pub title: String,
     /// Number of goal-criterion citations on the task after the update.
     pub advances_count: usize,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
+    /// publishes no Step class of its own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }

@@ -403,8 +403,8 @@ architecture-beta
     service lisp_eval(lisp)[lisp_eval tool<br/>crates/agent/src/tools/lisp_eval_tool.rs]
     service lisp_runtime(lisp)[hkask_lisp::eval_sandboxed_with_budget<br/>hkask-lisp/]
 
-    service lazy_router(agent)[LazyToolRouter<br/>crates/agent/src/tool_router.rs]
     service thread(agent)[Thread::enabled_tools<br/>crates/agent/src/thread.rs]
+    service list_mcp_tools(agent)[list_mcp_tools tool<br/>crates/agent/src/tools/list_mcp_tools_tool.rs]
 
     service tool_port(mcp)[ToolPort trait<br/>hkask-tool-port/src/tool_port.rs]
     service mcp_runtime(mcp)[McpRuntime<br/>hkask-mcp/src/runtime.rs]
@@ -420,8 +420,8 @@ architecture-beta
     agent --> lisp_eval: deterministic checks (model-coordinated)
     lisp_eval --> lisp_runtime: eval_sandboxed_with_budget
 
-    thread --> lazy_router: apply_router_bypassing_built_ins
-    lazy_router --> tool_port: MCP candidates only (built-ins bypassed)
+    thread --> tool_port: full registered surface every turn (D44 — no per-turn filtering)
+    list_mcp_tools --> thread: enumerates registered surface on demand
     tool_port --> mcp_runtime: invoke(server, tool, args, agent)
     mcp_runtime --> call_cap: charge_call_metered(agent)
     mcp_runtime --> servers: dispatch over stdio

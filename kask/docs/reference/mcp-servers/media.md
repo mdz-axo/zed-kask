@@ -229,7 +229,7 @@ Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`sr
 | Concept | Tools |
 |---------|-------|
 | `omc:CreativeWork` | `generate_image`, `generate_video`, `video_meme`, `expand_prompt`, `generate_variants`, `image_create_collage` |
-| `omc:Version` | `transform_image`, `upscale_image`, `image_remove_background`, `image_apply_style`, `image_edit_region` |
+| `omc:VersionInfo` | `transform_image`, `upscale_image`, `image_remove_background`, `image_apply_style`, `image_edit_region` |
 | `omc:Scene` | `describe_image`, `gallery_analyze`, `video_caption` |
 | `omc:Asset` | gallery management + retrieval (`gallery_search` … `video_fetch`), all face tools — faces are gallery assets (people identified within images), not OMC `Participant`, which is a production-side concept about who made the media (`src/omc.rs:22-24`) |
 | `omc:Capture` | `generate_speech`, `audio_capture`, `record_and_transcribe`, `voice_design`, `transcribe`, `transcribe_bundle`, `audio_trim`, `audio_concat` |

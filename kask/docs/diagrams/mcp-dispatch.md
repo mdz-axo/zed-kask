@@ -57,36 +57,33 @@ verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::To
 status: VERIFIED
 -->
 
-## MCP Tool Call — LazyToolRouter to McpRuntime::invoke to unwrap_tool_envelope
+## MCP Tool Call — enabled_tools to McpRuntime::invoke to unwrap_tool_envelope
 
-The `LazyToolRouter` filters MCP candidates by keyword score but **bypasses
-built-in tools** (they are never candidates). The retained tool set reaches
-`McpRuntime::invoke`, which meters one call against the agent's per-tick
-runaway ceiling and dispatches — it does **not** authorize. The result is
-unwrapped from its `{"content": value}` envelope by `unwrap_tool_envelope`.
-Verified current.
+The full registered MCP surface is presented every turn (D44, 2026-08-30 —
+the LazyToolRouter that once pruned it per turn was removed); tools hidden
+by the remaining filter layers (profile allowlists, server scope, curator
+gating) are named by the system-prompt visibility marker, and the
+`list_mcp_tools` meta-tool enumerates the registered surface on demand.
+The enabled set reaches `McpRuntime::invoke`, which meters one call against
+the agent's per-tick runaway ceiling and dispatches — it does **not**
+authorize. The result is unwrapped from its `{"content": value}` envelope
+by `unwrap_tool_envelope`. Verified current.
 
 ```mermaid
 sequenceDiagram
     participant Agent as Agent (Thread)
-    participant Router as LazyToolRouter<br/>crates/agent/src/tool_router.rs
     participant Enabled as Thread::enabled_tools<br/>crates/agent/src/thread.rs
+    participant ListTools as list_mcp_tools tool<br/>crates/agent/src/tools/list_mcp_tools_tool.rs
     participant ToolPort as ToolPort trait<br/>hkask-tool-port/src/tool_port.rs
     participant Runtime as McpRuntime<br/>hkask-mcp/src/runtime.rs
     participant Cap as CallCapManager<br/>hkask-regulation/src/energy.rs
     participant Server as MCP server child<br/>kask/mcp-servers/hkask-mcp-*
     participant Unwrap as unwrap_tool_envelope<br/>hkask-types/src/tool_response.rs
 
-    Agent->>Enabled: build tool descriptions (name, description)
-    Enabled->>Router: apply_router_bypassing_built_ins(router, tools, message, open_files, built_in_names)
-    Note over Router: Built-in tools (grep, read_file, skill, spawn_agent, ...) are never candidates.<br/>The router scores MCP tools only by keyword overlap against descriptions.
-    alt router should_activate (complex message or explicit tool name)
-        Router->>Router: select_tools(context) → Some(Vec<tool_name>)
-        Router-->>Enabled: retained set = built_ins ∪ selected MCP tools
-    else router does not activate (simple message)
-        Router-->>Enabled: None → fail-open (retain all tools)
-    end
-    Enabled-->>Agent: enabled_tools set
+    Agent->>Enabled: enabled_tools (full registered MCP surface, D44 — no per-turn filtering)
+    Enabled-->>Agent: enabled_tools set (profile/scope/curator-gated tools named by the visibility marker)
+    Agent->>ListTools: optional — enumerate registered surface on demand (discovery by pull)
+    ListTools-->>Agent: servers → tools (name + description), optional substring filter
 
     Agent->>ToolPort: invoke(server, tool, args, agent: WebID)
     ToolPort->>Runtime: McpRuntime::invoke (impl ToolPort for McpRuntime)
@@ -114,21 +111,13 @@ sequenceDiagram
     Unwrap-->>Agent: unwrapped result
 ```
 
-`apply_router_bypassing_built_ins` (in `crates/agent/src/tool_router.rs`) is
-the single seam that protects built-in tools: the router's candidate set is
-built from MCP tools only; built-ins are passed through unconditionally via
-the `built_in_names` set. `LazyToolRouter::select_tools` activates only when
-the message is complex (≥ `complex_word_threshold` = 6 words) or explicitly
-mentions a tool name; otherwise it returns `None` (fail-open — retain all
-tools). The thresholds (`threshold: 0.30`, `complex_word_threshold: 6`) are
-pinned by `default_thresholds_are_the_documented_values` and must match
-`KaskToolRouterSettings::default()` in `kask_bridge`. The master switch
-`kask.tool_router.enabled` (D44, default `true`) unwires the router entirely
-— every turn gets the full MCP surface — and is re-wired live by the
-SettingsStore observer via `wire_tool_router_from_settings` (`zed/src/main.rs`).
-When the router prunes, the system prompt renders a visibility bullet naming
-how many MCP tools are hidden (D44) so the model never mistakes the pruned
-list for the complete toolset.
+`apply_router_bypassing_built_ins` (in the removed
+`crates/agent/src/tool_router.rs`) was the seam that once pruned the MCP
+surface per turn; the LazyToolRouter was removed entirely (D44, 2026-08-30)
+— the full registered surface is presented every turn, tools hidden by the
+remaining filter layers (profile allowlists, server scope, curator gating)
+are named by the system-prompt visibility marker, and the `list_mcp_tools`
+meta-tool lets the model enumerate the registered surface on demand.
 
 Every MCP tool response is a `{"content": <value>}` envelope.
 `unwrap_tool_envelope` (`hkask-types/src/tool_response.rs:61`) is the single
@@ -138,8 +127,8 @@ pinned by proptest in `hkask-types/src/tool_response.rs`.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-08-28
-verified_against: crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins, select_tools, should_activate, default_thresholds_are_the_documented_values); crates/agent/src/thread.rs (enabled_tools); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
+verified_date: 2026-08-30
+verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, count_hidden_mcp_tools, D44 removal comment); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool, enumerate_tool_listing); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
 status: VERIFIED
 -->
 

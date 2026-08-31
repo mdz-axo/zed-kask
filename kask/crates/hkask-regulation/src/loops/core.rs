@@ -666,9 +666,11 @@ pub struct LoopFailureDistinctions {
 
     /// 9. **Phantom tool.** A tool is declared on a card/skill but has no
     /// dispatch arm — the model calls it and gets "Unknown tool: X."
-    /// Enforcement: `LazyToolRouter` filters MCP tools; built-in tools
-    /// bypass the router; `verify_tool_advertisement` checks prompt
-    /// against server `TOOL_NAMES`.
+    /// Enforcement: `verify_tool_advertisement` checks prompt against
+    /// server `TOOL_NAMES`; the D44 visibility marker + `list_mcp_tools`
+    /// meta-tool keep the registered surface legible so a filtered tool is
+    /// never mistaken for a nonexistent one (the LazyToolRouter that once
+    /// filtered MCP tools per turn was removed, D44 2026-08-30).
     pub phantom_tool: DistinctionState,
 }
 
@@ -728,10 +730,10 @@ impl LoopFailureDistinctions {
             //    comments that become traps. The distinction is enforced
             //    at the process level, not at the code level.
             deferred_work_comment: DistinctionState::Enforced,
-            // 9. LazyToolRouter filters MCP tools; verify_tool_advertisement
-            //    checks prompt against server TOOL_NAMES. The distinction
-            //    is enforced for MCP tools but not for built-in tools
-            //    (which bypass the router by design).
+            // 9. verify_tool_advertisement checks prompt against server
+            //    TOOL_NAMES; the D44 marker + list_mcp_tools meta-tool keep
+            //    the registered surface legible (the LazyToolRouter was
+            //    removed, D44 2026-08-30 — no per-turn MCP filtering).
             phantom_tool: DistinctionState::Enforced,
         }
     }

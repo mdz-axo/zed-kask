@@ -399,17 +399,21 @@ Note: `set_curator_session_factory`, `set_regulation_status`, and
 `NativeAgent` (the `ConversationView` handles streaming + tool dispatch).
 Do not re-add them — they have no consumer.
 
-## LazyToolRouter filters MCP tools only
+## No per-turn MCP tool filtering (LazyToolRouter removed)
 
-The `LazyToolRouter` in `crates/agent/src/tool_router.rs` was introduced to
-tame MCP tool floods, not to filter built-in zed tools.
-`Thread::enabled_tools` must skip built-in tools (those in
-`crate::tools::ALL_TOOL_NAMES`) when applying the router — filtering them
-caused the agent to lose access to `fetch`, `diagnostics`, `list_directory`,
-etc. on ordinary coding requests, with the model discovering the loss only via
-"tool not found" errors mid-turn. The filtering logic is extracted into
-`tool_router::apply_router_bypassing_built_ins` for testability without the
-process-global `TOOL_ROUTER` `OnceLock`.
+The `LazyToolRouter` (`crates/agent/src/tool_router.rs`) was removed
+entirely (D44, 2026-08-30): `Thread::enabled_tools` presents the full
+registered MCP surface every turn. Its per-turn keyword pruning hid tools
+from the model's view — the model read the pruned list as the complete
+toolset and reported registered tools as "unavailable" (a live incident:
+an agent denied `web_ping` existed). Tools hidden by the remaining filter
+layers (agent-profile allowlists, per-tab server scope, curator edit-tool
+gating) are named by the system-prompt visibility marker
+(`mcp_tools_hidden`), and the `list_mcp_tools` meta-tool enumerates the
+registered surface on demand. Do not re-introduce per-turn or
+within-domain tool sampling — if the fleet grows to where schema tokens
+are a material context fraction, the revisit design is whole-server
+(domain) selection per user message.
 
 ## Skill invocation is `skill` tool call, not `read_file(SKILL.md)`
 

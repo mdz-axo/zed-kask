@@ -7,7 +7,10 @@
 //! which OMC concept. That is the server's business, not the ontology's.
 
 use hkask_bridge_ontology::omc::OmcConcept;
-use hkask_bridge_ontology::omc::{
+// Re-exported publicly: the tool-surface tests assert against the same
+// fixture-guarded constants the mapping returns (the fixture pins the
+// URI's reality; the test pins the tool→concept mapping).
+pub use hkask_bridge_ontology::omc::{
     ASSET, CAPTURE, CREATIVE_WORK, PARTICIPANT, SCENE, SEQUENCE, SHOT, TASK, VERSION_INFO,
 };
 

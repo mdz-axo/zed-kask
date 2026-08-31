@@ -21,9 +21,9 @@ Generate a {{ qa_type }} QA pair from this passage.
 ## Ontological Context
 5W1H: passage answers interrogatories [{{ dimensions }}]. QA at {{ qa_type }} level for {{ expertise }} expertise.
 Dublin Core: dcterms:source={{ source }}, dcterms:type={{ dc_type }}, dcterms:subject={{ dc_subject }}
-PKO: pko:producedBy=corpus QA generation pipeline
+PKO: prov:wasGeneratedBy=corpus QA generation pipeline
 {% if consolidated_from %}
-PKO: pko:wasExtractedFrom={{ consolidated_from }} original passages (consolidation preserved all unique information), pko:producedBy=corpus QA generation pipeline
+PKO: pko:wasExtractedFrom={{ consolidated_from }} original passages (consolidation preserved all unique information), prov:wasGeneratedBy=corpus QA generation pipeline
 {% endif %}
 Ontology tags: {{ ontology_tags }}
 

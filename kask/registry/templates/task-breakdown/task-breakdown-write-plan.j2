@@ -172,9 +172,9 @@ Respond with a JSON object:
   "output_paths": ["tasks/plan.md", "tasks/todo.md"],
   "pko_anchors": {
     "procedure": "pko:Procedure",
-    "procedure_target": "pko:ProcedureTarget",
-    "tasks": [{"task_id": "t1", "concept": "pko:Step", "verification": "pko:StepVerification"}],
-    "phases": [{"concept": "pko:MultiStep"}],
+    "procedure_target": "IAO:0000005",
+    "tasks": [{"task_id": "t1", "concept": "pplan:Step", "verification": "pko:StepVerification"}],
+    "phases": [{"concept": "pplan:MultiStep"}],
     "risks": [{"concept": "pko:IssueOccurrence"}],
     "open_questions": [{"concept": "pko:UserQuestionOccurrence"}]
   }

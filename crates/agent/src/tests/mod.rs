@@ -5500,6 +5500,102 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
     fake_model.end_last_completion_stream();
 }
 
+/// zed-kask: D44 discovery pin — the `list_mcp_tools` meta-tool. This is
+/// the pull mechanism that replaced the removed LazyToolRouter's push: the
+/// model enumerates the registered MCP surface on demand (grouped by
+/// server, filterable by substring over server id / tool name / description)
+/// instead of a per-turn heuristic guessing what is relevant. Drives the
+/// real path — kask source → registry poll → listing — so a break anywhere
+/// in the surfacing chain fails here, not in a live session. The
+/// system-prompt visibility marker points the model at this tool when it
+/// finds a tool missing; if the listing dropped tools or mis-grouped them,
+/// the model would trade a false-absence belief for a false-index belief.
+#[gpui::test]
+async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+
+    // Wire the source empty first (shared-slot hazard, see the note on the
+    // startup-race pin above), then register tools on two servers and let
+    // the registry's poll merge them.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    set_kask_tool_source(source.clone());
+    source.set(vec![
+        KaskToolDescriptor {
+            server_id: "research".to_string(),
+            name: "web_ping".to_string(),
+            description: "Liveness check".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "research".to_string(),
+            name: "web_search".to_string(),
+            description: "Search the web".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "media".to_string(),
+            name: "gallery_search".to_string(),
+            description: "Search the gallery".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+    ]);
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+    source.set(Vec::new());
+
+    let run_listing = |cx: &mut TestAppContext, filter: Option<String>| {
+        thread.update(cx, |thread, cx| {
+            let tool = std::sync::Arc::new(crate::ListMcpToolsTool::new(
+                thread.context_server_registry.clone(),
+            ));
+            let (event_stream, _rx) = ToolCallEventStream::test();
+            tool.run(
+                ToolInput::resolved(crate::ListMcpToolsToolInput { filter }),
+                event_stream,
+                cx,
+            )
+        })
+    };
+
+    // Unfiltered: both servers, all three tools, grouped correctly.
+    let listing = run_listing(cx, None).await.expect("listing runs");
+    assert_eq!(listing.total_tools, 3);
+    assert_eq!(listing.servers.len(), 2);
+    let research = listing
+        .servers
+        .iter()
+        .find(|s| s.server_id == "research")
+        .expect("research server in listing");
+    assert_eq!(research.tools.len(), 2);
+    assert!(research.tools.iter().any(|t| t.name == "web_ping"));
+
+    // Filter matches tool name, description text, and server id.
+    let by_name = run_listing(cx, Some("web_pi".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_name.total_tools, 1);
+    assert_eq!(by_name.servers[0].tools[0].name, "web_ping");
+
+    let by_description = run_listing(cx, Some("liveness".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_description.total_tools, 1);
+
+    let by_server = run_listing(cx, Some("media".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_server.total_tools, 1);
+    assert_eq!(by_server.servers[0].tools[0].name, "gallery_search");
+
+    let no_match = run_listing(cx, Some("nonexistent".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(
+        no_match.total_tools, 0,
+        "a filter with no matches must return an empty listing, not the unfiltered one"
+    );
+}
+
 /// Like [`setup_context_server`], but starts the server with an explicit
 /// request timeout so a never-responding tool call fails with the client's
 /// "Context server request timeout" error on a test-controllable clock.
