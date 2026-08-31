@@ -30,6 +30,10 @@ pub enum MediaOp {
     ImageToVideo,
     GenerateSpeech,
     Transcribe,
+    /// LLM reasoning over audio input — chat completions with `input_audio`
+    /// content parts (the OpenAI audio-chat format). Audio in + prompt,
+    /// text out; the Educt speaker pass's primary source.
+    ChatAudio,
 }
 
 /// Parse the string op name used by `InferencePort::media_generate`.
@@ -49,6 +53,7 @@ impl std::str::FromStr for MediaOp {
             "image_to_video" => Ok(Self::ImageToVideo),
             "generate_speech" => Ok(Self::GenerateSpeech),
             "transcribe" => Ok(Self::Transcribe),
+            "chat_audio" => Ok(Self::ChatAudio),
             other => Err(InferenceError::Connection(format!(
                 "unknown media op: {other}"
             ))),
@@ -69,7 +74,20 @@ impl MediaOp {
             Self::ImageToVideo => "image_to_video",
             Self::GenerateSpeech => "generate_speech",
             Self::Transcribe => "transcribe",
+            Self::ChatAudio => "chat_audio",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_audio_op_round_trips() {
+        let op: MediaOp = "chat_audio".parse().expect("chat_audio parses");
+        assert_eq!(op, MediaOp::ChatAudio);
+        assert_eq!(op.as_str(), "chat_audio");
     }
 }
 
@@ -139,7 +157,8 @@ impl ProviderRegistry {
 
     /// Execute `op`, trying providers in priority order that support it. On
     /// error, falls back to the next supporting provider (with a `reg.inference`
-    /// warn). Returns the first success, or the last error if all fail.
+    /// warn). Returns the first success, or an error listing every provider
+    /// failure in attempt order.
     ///
     /// When multiple providers can serve `op`, the primary is chosen via the
     /// 7-dimension scored engine (`scoring::select_scored`), which emits the
@@ -150,7 +169,9 @@ impl ProviderRegistry {
     /// expect: "The system routes media ops through the configured provider membrane"
     /// pre:  at least one provider supports op (otherwise returns Connection error)
     /// post: returns Ok(value) from the first succeeding provider
-    /// post: if all supporting providers fail → Err(last error)
+    /// post: if all supporting providers fail → Err listing every provider
+    ///       failure in attempt order (the primary's error is not masked by
+    ///       the fallback's)
     /// post: fallback attempts emit a `reg.inference` warn naming the failed provider
     /// post: multi-provider ops emit a `reg.media.select` span with candidate scores
     pub async fn execute(
@@ -199,7 +220,7 @@ impl ProviderRegistry {
             candidates
         };
 
-        let mut last_err: Option<InferenceError> = None;
+        let mut failures: Vec<String> = Vec::new();
         for (idx, provider) in ordered.iter().enumerate() {
             match provider.execute(op, params).await {
                 Ok(value) => return Ok(value),
@@ -213,15 +234,18 @@ impl ProviderRegistry {
                             "provider failed, falling back to next provider"
                         );
                     }
-                    last_err = Some(err);
+                    failures.push(format!("{}: {err}", provider.id()));
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            InferenceError::Connection(format!(
-                "all providers failed for media op: {}",
-                op.as_str()
-            ))
-        }))
+        // Every provider failure is listed in attempt order — returning only
+        // the last error masked the primary's (a 401 "invalid key" was hidden
+        // behind the fallback's "invalid model" 400, sending the operator
+        // debugging the wrong layer).
+        Err(InferenceError::Connection(format!(
+            "all providers failed for media op: {} — {}",
+            op.as_str(),
+            failures.join("; ")
+        )))
     }
 }

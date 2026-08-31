@@ -248,6 +248,10 @@ pub struct EductSpeakerPassRequest {
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
     /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
     pub model: Option<String>,
+    /// Speaker attribution source: "audio" (default — an audio-capable
+    /// model hears the recording; the scaffold's primary source) or
+    /// "text" (the text-cue pass — works with every model, approximate).
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -262,6 +266,35 @@ pub struct EductCorrectionPassRequest {
 pub struct EductApplyCorrectionsRequest {
     pub transcript_id: String,
     /// Apply a specific correction layer by ID; defaults to the latest.
+    pub layer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductHighlightPassRequest {
+    pub transcript_id: String,
+    /// The natural-language selection request (e.g. "where he explains
+    /// the Cinderella curve") — resolved to word ranges with labels.
+    pub request: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductEdlFromHighlightsRequest {
+    pub transcript_id: String,
+    /// Compose only highlights with this exact label; all highlights when
+    /// omitted.
+    pub label: Option<String>,
+    /// Compose from a specific highlight layer by ID; defaults to the
+    /// latest.
+    pub layer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductRenderEdlRequest {
+    pub transcript_id: String,
+    /// Render a specific EDL layer by ID; defaults to the latest.
     pub layer_id: Option<String>,
 }
 

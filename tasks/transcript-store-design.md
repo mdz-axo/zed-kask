@@ -174,13 +174,37 @@ measured failure rate; the validation gate stays either way.
 | 1 — selection algebra (pure) | **landed 2026-08-30** (`src/transcript_select.rs`, tests in-module) |
 | 2 — transcript persistence (SQLite tables + JOIN round-trips) | **landed 2026-08-30** (`src/transcript_layers.rs`, `src/transcript_store.rs`, six `educt_*` tools in `src/tools/educt.rs`; tool surface 68 → 74; 145 crate tests green) |
 | 3 — paragraph pass (first LLM layer; measures v1 failure rate) | **landed 2026-08-30** (`src/transcript_pass.rs` + `educt_paragraph_pass` tool; tool surface 74 → 75; the attempts/rejections counters ride every pass response — the v1 rate accumulates in live use, and the v2 spike decision reads it) |
-| 4 — speaker + correction passes | **landed 2026-08-30** (`educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`; tool surface 75 → 78; `corrected_text_view` is the derived projection. The speaker pass is the text-cue attribution (v1); the audio-capable-LLM path — decisions 3/7's primary — needs an audio-input generation method on `InferencePort`, new inference surface in the same class as the v2 spike, and slots in behind the same `SpeakerLayer` with provenance distinguishing the source) |
+| 4 — speaker + correction passes | **landed 2026-08-30, extended same day** (`educt_speaker_pass` with `source: "audio"` (default) \| `"text"`, `educt_correction_pass`, `educt_apply_corrections`; tool surface 75 → 78. The audio source routes through `MediaOp::ChatAudio` — child-local provider keys, OpenAI `input_audio` content parts on `/v1/chat/completions` — NOT an `InferencePort` trait method; provenance's `prompt_template` distinguishes the source, per decision 7) |
 | 5 — semantic selection → EDL → render | planned |
 | 6 — v2 spike (conditional) | deferred |
 | 7 — exports + corpus search wiring | planned |
 | 8 — redaction (hardest local gap) | planned, last |
 
-## 6. Sources
+## 6. Inference input-modality matrix (verified 2026-08-30)
+
+The media server's inference surface, audited end-to-end per input modality:
+
+| Input | Path | Status |
+|---|---|---|
+| **Text** | `InferencePort::generate`/`generate_with_model` → IPC bridge → zed `LanguageModelRegistry` | ✓ — the transcript passes (paragraph, speaker text-cue, correction) |
+| **Images** | `InferencePort::generate_vision` → IPC bridge → `MessageContent::Image` parts (`kask_bridge/src/inference_chat.rs:734-763`) | ✓ — gallery vision (`gallery/vision.rs`), `video_caption` |
+| **Audio → text (STT)** | `MediaOp::Transcribe` → child-local MediaRouter → `/v1/audio/transcriptions` (OpenRouter `input_audio` JSON / DeepInfra multipart) | ✓ — `transcribe_bundle` (word timings) |
+| **Audio → LLM reasoning** | `MediaOp::ChatAudio` → child-local MediaRouter → `/v1/chat/completions` with `input_audio` content parts (OpenRouter; `media_providers.rs` `chat_audio`) | ✓ — landed 2026-08-30; the speaker pass's primary source. Local audio paths (recordings) read from disk via the shared `download_audio_bytes` helper |
+| **Video** | `video_caption` → ffmpeg keyframe extraction → images → `generate_vision` (`tools/processing.rs:715-759`) | ✓ — keyframe-derived by design. Native video content parts are provider-specific (Gemini's API), not OpenAI-standard; named as a deferred gap, not built speculatively |
+
+Why audio-chat lives in the media-provider layer (not the `InferencePort` trait):
+the IPC bridge routes through zed's `LanguageModelRequest`, whose content
+model has Image parts but no Audio parts — an audio trait method would
+require upstream zed surface changes (DIVERGENCE). The child-local
+provider path uses the same env-injected keys and the same OpenAI wire
+format the STT endpoint already speaks (`input_audio`), following the
+`generate_image` chat-completions precedent in the same module. Deep-module
+note: `chat_audio` deepens `media_providers.rs` (more behavior behind the
+unchanged `execute(op, params)` interface); the deletion test passes —
+without it, the speaker pass would reconstruct HTTP auth, b64 encoding,
+format detection, and response parsing at its call site.
+
+## 7. Sources
 
 - `tasks/transcript-store-continuation-prompt.md` (the handoff this design
   answers), `tasks/reduct-dual-mode-video-analysis.md` (decisions 5-10)

@@ -8,15 +8,20 @@
 //! is the media server's own SQLite (design doc §1.4).
 
 use crate::transcript::TranscriptBundle;
-use crate::transcript_layers::TranscriptLayer;
+use crate::transcript_layers::{
+    EdlLayer, HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
+};
 use crate::transcript_pass::{self, PassError};
+use crate::transcript_select::{Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan, union_ranges};
 use crate::transcript_store::{self, TranscriptFilter, TranscriptStoreError};
 use crate::types::{
     EductApplyCorrectionsRequest, EductCorrectionPassRequest, EductDeleteTranscriptRequest,
-    EductGetTranscriptRequest, EductListLayersRequest, EductListTranscriptsRequest,
-    EductParagraphPassRequest, EductSpeakerPassRequest, EductStoreLayerRequest,
+    EductEdlFromHighlightsRequest, EductGetTranscriptRequest, EductHighlightPassRequest,
+    EductListLayersRequest, EductListTranscriptsRequest, EductParagraphPassRequest,
+    EductRenderEdlRequest, EductSpeakerPassRequest, EductStoreLayerRequest,
     EductStoreTranscriptRequest,
 };
+use crate::*;
 use crate::*;
 
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
@@ -56,8 +61,17 @@ fn map_pass_error(error: PassError) -> McpToolError {
         PassError::Prompt(message) => {
             McpToolError::internal(format!("prompt construction: {message}"))
         }
-        PassError::Inference(error) => classify_inference_error("paragraph pass failed", error),
+        PassError::Inference(error) => classify_inference_error("transcript pass failed", error),
     }
+}
+
+/// Whether a media path is an audio file (extension check) — selects the
+/// audio trim/concat render path over the video path.
+fn is_audio_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    [".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".wma"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
 }
 
 #[tool_router(router = educt_router, vis = "pub")]
@@ -277,13 +291,14 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Run the speaker pass over a stored transcript: an LLM infers speaker turns from textual cues (discourse markers, register shifts, role language) as word-index spans with confidence. Text-cue attribution is approximate — the confidence field carries that honestly. The output is validated (disjoint spans, in-bounds indices, non-empty labels) and stored as a provenance-carrying SpeakerLayer. The response carries pass stats."
+        description = "Run the speaker pass over a stored transcript. Source \"audio\" (default): an audio-capable model hears the recording and attributes speaker turns as word-index spans — the primary source. Source \"text\": the text-cue pass (works with every model, approximate). Both produce the same validated SpeakerLayer; provenance records which source produced it. The response carries pass stats."
     )]
     pub async fn educt_speaker_pass(
         &self,
         Parameters(EductSpeakerPassRequest {
             transcript_id,
             model,
+            source,
         }): Parameters<EductSpeakerPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_speaker_pass", async {
@@ -302,14 +317,33 @@ impl MediaServer {
                      first",
                 ));
             }
-            let layer = transcript_pass::run_speaker_pass(
-                &self.vision_port,
-                &self.template_env,
-                &bundle,
-                model.as_deref(),
-            )
-            .await
-            .map_err(map_pass_error)?;
+            // Source dispatch: "audio" (default — the scaffold's primary,
+            // decision 7) or "text" (the text-cue pass). An audio failure
+            // surfaces as its own error — retry with source "text" is the
+            // operator's choice, never a silent fallback.
+            let layer = match source.as_deref() {
+                None | Some("audio") => transcript_pass::run_speaker_pass_audio(
+                    &self.vision_port,
+                    &self.template_env,
+                    &bundle,
+                    model.as_deref(),
+                )
+                .await
+                .map_err(map_pass_error)?,
+                Some("text") => transcript_pass::run_speaker_pass(
+                    &self.vision_port,
+                    &self.template_env,
+                    &bundle,
+                    model.as_deref(),
+                )
+                .await
+                .map_err(map_pass_error)?,
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "source must be \"audio\" or \"text\", got \"{other}\""
+                    )));
+                }
+            };
             let record = transcript_store::store_layer(
                 driver,
                 &transcript_id,
@@ -429,6 +463,283 @@ impl MediaServer {
                     "edits": correction.edits.len(),
                 },
             }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Run the highlight pass — the semantic selection: a natural-language request (e.g. \"where he explains the Cinderella curve\") resolved to word ranges with theme labels. The output is validated (in-bounds) and stored as a HighlightLayer; overlapping selections are allowed. The response carries pass stats."
+    )]
+    pub async fn educt_highlight_pass(
+        &self,
+        Parameters(EductHighlightPassRequest {
+            transcript_id,
+            request,
+            model,
+        }): Parameters<EductHighlightPassRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_highlight_pass", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
+                .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if !summary.has_word_timings {
+                return Err(McpToolError::invalid_argument(
+                    "transcript has no word-level timings; the highlight pass cannot \
+                     anchor (NoWordTimings) — store a transcript from transcribe_bundle \
+                     first",
+                ));
+            }
+            let layer = transcript_pass::run_highlight_pass(
+                &self.vision_port,
+                &self.template_env,
+                &bundle,
+                &request,
+                model.as_deref(),
+            )
+            .await
+            .map_err(map_pass_error)?;
+            let record = transcript_store::store_layer(
+                driver,
+                &transcript_id,
+                &TranscriptLayer::Highlight(layer),
+            )
+            .map_err(map_store_error)?;
+            Ok(serde_json::json!({
+                "stored": record,
+                "pass_stats": transcript_pass::highlight_pass_stats(),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Compose an EDL (the Reel) from a stored highlight layer, deterministically: each selected highlight becomes a Keep op over its word range, and overlapping selections are union-merged so the Keep ops are disjoint. Optionally filter highlights by exact label; defaults to the latest highlight layer. The composed EDL is validated and stored as an EdlLayer — render it with educt_render_edl."
+    )]
+    pub async fn educt_edl_from_highlights(
+        &self,
+        Parameters(EductEdlFromHighlightsRequest {
+            transcript_id,
+            label,
+            layer_id,
+        }): Parameters<EductEdlFromHighlightsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_edl_from_highlights", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, _bundle)) =
+                transcript_store::load_transcript(driver, &transcript_id)
+                    .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if !summary.has_word_timings {
+                return Err(McpToolError::invalid_argument(
+                    "transcript has no word-level timings; an EDL cannot anchor \
+                     (NoWordTimings)",
+                ));
+            }
+            let layers =
+                transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
+            let mut highlight_layers: Vec<_> = layers
+                .into_iter()
+                .filter(|record| record.layer.kind() == "highlight")
+                .collect();
+            // Newest first (RFC 3339 timestamps sort lexicographically).
+            highlight_layers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            let record = match layer_id {
+                Some(id) => highlight_layers.into_iter().find(|record| record.id == id),
+                None => highlight_layers.into_iter().next(),
+            };
+            let Some(record) = record else {
+                return Err(McpToolError::not_found(format!(
+                    "no highlight layer found for transcript {transcript_id}"
+                )));
+            };
+            let TranscriptLayer::Highlight(highlight) = &record.layer else {
+                return Err(McpToolError::internal(
+                    "layer kind mismatch after highlight filter",
+                ));
+            };
+            let selected: Vec<&HighlightEntry> = match label.as_deref() {
+                Some(label) => highlight
+                    .highlights
+                    .iter()
+                    .filter(|entry| entry.label == label)
+                    .collect(),
+                None => highlight.highlights.iter().collect(),
+            };
+            if selected.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "no highlights{} in layer {}",
+                    label
+                        .as_deref()
+                        .map(|label| format!(" labeled {label:?}"))
+                        .unwrap_or_default(),
+                    record.id
+                )));
+            }
+            // Union-merge the selected ranges: overlapping highlights are
+            // fine as annotations, but EDL Keep ops must be disjoint — the
+            // union covers exactly the highlighted words.
+            let ranges: Vec<WordRange> = selected
+                .iter()
+                .map(|entry| WordRange::new(entry.start_word, entry.end_word))
+                .collect();
+            let merged = union_ranges(&ranges);
+            let ranges_merged = merged.len();
+            let edl = EdlLayer {
+                provenance: LayerProvenance {
+                    model: "deterministic".to_string(),
+                    prompt_template: "educt_edl_from_highlights".to_string(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                ops: merged
+                    .into_iter()
+                    .map(|range| EdlEntry {
+                        range,
+                        op: EdlOp::Keep,
+                    })
+                    .collect(),
+            };
+            let stored =
+                transcript_store::store_layer(driver, &transcript_id, &TranscriptLayer::Edl(edl))
+                    .map_err(map_store_error)?;
+            Ok(serde_json::json!({
+                "stored": stored,
+                "composed_from": {
+                    "layer_id": record.id,
+                    "highlights_selected": selected.len(),
+                    "ranges_merged": ranges_merged,
+                    "label_filter": label,
+                },
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Render a stored EDL layer to a media file: the selection algebra maps the EDL's word ranges to time ranges, then the existing ffmpeg stream-copy path clips each range and concatenates them — lossless, no re-encode. Audio media (wav/mp3/…) uses the audio trim/concat path; everything else uses the video path. Defaults to the latest EDL layer."
+    )]
+    pub async fn educt_render_edl(
+        &self,
+        Parameters(EductRenderEdlRequest {
+            transcript_id,
+            layer_id,
+        }): Parameters<EductRenderEdlRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_render_edl", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
+                .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if !summary.has_word_timings {
+                return Err(McpToolError::invalid_argument(
+                    "transcript has no word-level timings; an EDL cannot render \
+                     (NoWordTimings)",
+                ));
+            }
+            let layers =
+                transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
+            let mut edl_layers: Vec<_> = layers
+                .into_iter()
+                .filter(|record| record.layer.kind() == "edl")
+                .collect();
+            edl_layers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            let record = match layer_id {
+                Some(id) => edl_layers.into_iter().find(|record| record.id == id),
+                None => edl_layers.into_iter().next(),
+            };
+            let Some(record) = record else {
+                return Err(McpToolError::not_found(format!(
+                    "no EDL layer found for transcript {transcript_id}"
+                )));
+            };
+            let TranscriptLayer::Edl(edl) = &record.layer else {
+                return Err(McpToolError::internal(
+                    "layer kind mismatch after EDL filter",
+                ));
+            };
+            // The slice-1 algebra: EDL → keep ranges → clip plan (the only
+            // index→time mapping; the render consumes its output).
+            let selection_edl = Edl {
+                ops: edl.ops.clone(),
+            };
+            let plan_ms = edl_to_clip_plan(&bundle.words, &selection_edl).map_err(|error| {
+                McpToolError::invalid_argument(format!("EDL rejected: {error}"))
+            })?;
+            if plan_ms.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "EDL cuts the entire transcript — nothing to render",
+                ));
+            }
+            let plan_secs: Vec<(f64, f64)> = plan_ms
+                .iter()
+                .map(|(start_ms, end_ms)| (*start_ms as f64 / 1000.0, *end_ms as f64 / 1000.0))
+                .collect();
+
+            self.require_ffmpeg()?;
+            let media_path = bundle.audio_path.clone();
+            let audio = is_audio_path(&media_path);
+            let mut clip_paths: Vec<String> = Vec::with_capacity(plan_secs.len());
+            for (start_sec, end_sec) in &plan_secs {
+                let clipped = if audio {
+                    self.ffmpeg
+                        .audio_trim(&media_path, *start_sec as f32, *end_sec as f32)
+                        .await
+                } else {
+                    self.ffmpeg
+                        .clip(&media_path, *start_sec as f32, *end_sec as f32)
+                        .await
+                }
+                .map_err(map_media_error)?;
+                clip_paths.push(clipped.display().to_string());
+            }
+            let output = if clip_paths.len() == 1 {
+                std::path::PathBuf::from(clip_paths[0].clone())
+            } else if audio {
+                self.ffmpeg
+                    .audio_concat(&clip_paths)
+                    .await
+                    .map_err(map_media_error)?
+            } else {
+                self.ffmpeg
+                    .concat(&clip_paths)
+                    .await
+                    .map_err(map_media_error)?
+            };
+
+            let result = serde_json::json!({
+                "status": "rendered",
+                "source": media_path,
+                "clip_plan": plan_secs,
+                "clips": clip_paths.len(),
+                "output": output.display().to_string(),
+                "edl_layer": {
+                    "id": record.id,
+                    "provenance": record.layer.provenance(),
+                },
+            });
+            let args = serde_json::json!({
+                "transcript_id": transcript_id,
+                "layer_id": record.id,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                result,
+                "educt_render_edl",
+                if audio { "audio" } else { "video" },
+                args,
+                None,
+            ))
         })
         .await
     }

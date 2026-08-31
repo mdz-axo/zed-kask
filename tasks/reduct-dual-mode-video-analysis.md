@@ -411,9 +411,12 @@ allowlist.
    invariants, reject-with-named-invariant, never partial application.
 7. **Speaker sources ranked** (reconciles decision 3 with the
    continuation prompt's text-cue `SpeakerLayer`): audio-capable local
-   LLM (primary) → text-cue LLM pass (works with any model, approximate,
-   honest about it) → dedicated diarization model (fallback). All three
-   produce the same `SpeakerLayer` record; provenance distinguishes.
+   model (primary) → text-cue LLM pass (works with any model, approximate,
+   honest about it) → dedicated diarization model (fallback). All produce
+   the same `SpeakerLayer` record; provenance distinguishes. **The audio
+   source landed 2026-08-30** — `MediaOp::ChatAudio` (child-local provider,
+   `input_audio` content parts) + `educt_speaker_pass` `source: "audio"`
+   default; see the design doc §7 modality matrix.
 8. **Store location** (resolves the companion scaffold's open question 7
    and the continuation prompt's investigation item 3): hybrid —
    media-server-local for the bundle + layers (ground truth and typed

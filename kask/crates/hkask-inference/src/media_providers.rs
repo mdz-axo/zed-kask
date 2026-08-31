@@ -446,6 +446,15 @@ impl MediaProvider for DeepInfraMediaProvider {
                     )
                     .await
                 }
+                // Not claimed by `supports` — the registry never routes
+                // chat_audio here. The named error is defense-in-depth for
+                // direct calls: audio-input chat is served by OpenRouter's
+                // `input_audio` content-part format.
+                MediaOp::ChatAudio => Err(InferenceError::Connection(
+                    "deepinfra does not support chat_audio — route via an \
+                     OpenRouter audio-chat model (e.g. OpenRouter/openai/gpt-4o-audio-preview)"
+                        .into(),
+                )),
             }
         })
     }
@@ -462,8 +471,8 @@ const OPENROUTER_VIDEO_MAX_POLLS: u32 = 600;
 /// OpenRouter media generation backend.
 ///
 /// OpenRouter provides dedicated endpoints for media generation:
-/// - **Image generation**: `/v1/chat/completions` with image-generation models
-///   (models return image URLs in the chat response content)
+/// - **Image generation**: `/v1/images` (dedicated Image API; returns
+///   `data[].b64_json` — the same shape the DeepInfra path returns)
 /// - **TTS**: `/v1/audio/speech` (OpenAI-compatible, returns raw audio bytes)
 /// - **STT**: `/v1/audio/transcriptions` (base64 JSON input, returns JSON)
 /// - **Video generation**: `/v1/videos` (async submit+poll, returns video URL)
@@ -493,11 +502,15 @@ impl OpenRouterMediaProvider {
         })
     }
 
-    /// Generate an image via OpenRouter chat completions.
+    /// Generate an image via OpenRouter's dedicated Image API.
     ///
-    /// Image-generation models on OpenRouter return image URLs in their
-    /// chat completion response content. We send a chat completion request
-    /// and extract the image URL from the response.
+    /// `POST /v1/images` returns base64-encoded image bytes in
+    /// `data[].b64_json` — the same response shape the DeepInfra path
+    /// produces, so the tool layer's persistence (`data[0].b64_json`)
+    /// handles both providers identically. The former chat-completions
+    /// approach (prompting a chat model to emit a URL, then scraping it
+    /// from the markdown content) depended on the model's goodwill and
+    /// is retired with this method.
     async fn generate_image(
         &self,
         prompt: &str,
@@ -505,17 +518,14 @@ impl OpenRouterMediaProvider {
         count: Option<u32>,
         model: &str,
     ) -> Result<Value, InferenceError> {
-        let url = format!("{}/v1/chat/completions", self.base_url);
+        let url = format!("{}/v1/images", self.base_url);
         let mut body = serde_json::json!({
             "model": model,
-            "messages": [
-                {"role": "system", "content": "Generate an image based on the user's description. Return ONLY the image URL, nothing else."},
-                {"role": "user", "content": prompt},
-            ],
+            "prompt": prompt,
             "n": count.unwrap_or(1),
         });
         if let Some(sz) = size {
-            body["extra_body"] = serde_json::json!({"size": sz});
+            body["size"] = Value::String(sz.to_string());
         }
 
         let resp = self
@@ -542,28 +552,13 @@ impl OpenRouterMediaProvider {
         let json: Value = serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("OpenRouter image gen parse: {e}")))?;
 
-        let choices = json["choices"].as_array().ok_or_else(|| {
-            InferenceError::Connection("OpenRouter: no choices in response".into())
-        })?;
-
-        let images: Vec<Value> = choices
-            .iter()
-            .filter_map(|choice| {
-                let content = choice["message"]["content"].as_str()?;
-                extract_image_url(content)
-            })
-            .collect();
-
-        if images.is_empty() {
+        let has_image_data = json["data"].as_array().is_some_and(|d| !d.is_empty());
+        if !has_image_data {
             return Err(InferenceError::Connection(
-                "OpenRouter: no image URL found in response".into(),
+                "OpenRouter: no image data in response".into(),
             ));
         }
-
-        Ok(serde_json::json!({
-            "data": images,
-            "model": model,
-        }))
+        Ok(json)
     }
 
     /// Generate speech via OpenRouter's dedicated TTS endpoint.
@@ -630,15 +625,7 @@ impl OpenRouterMediaProvider {
     ) -> Result<Value, InferenceError> {
         // OpenRouter STT requires base64-encoded audio data (no URL support).
         // Download the audio file and encode it.
-        let audio_bytes = self
-            .client
-            .get(audio_url)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("audio download failed: {e}")))?
-            .bytes()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("audio read failed: {e}")))?;
+        let audio_bytes = download_audio_bytes(&self.client, audio_url).await?;
 
         let format = detect_audio_format(audio_url);
         use base64::Engine;
@@ -681,6 +668,58 @@ impl OpenRouterMediaProvider {
 
         serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("OpenRouter STT parse: {e}")))
+    }
+
+    /// Chat with an LLM over audio input — the OpenAI audio-chat format
+    /// (`input_audio` content parts on `/v1/chat/completions`). The model
+    /// hears the audio and answers the prompt; the Educt speaker pass's
+    /// primary source (scaffold decisions 3/7). Returns `{"text", "model"}`
+    /// so callers parse the model's answer through the same JSON-extraction
+    /// path as text inference.
+    async fn chat_audio(
+        &self,
+        prompt: &str,
+        audio_url: &str,
+        model: &str,
+    ) -> Result<Value, InferenceError> {
+        let audio_bytes = download_audio_bytes(&self.client, audio_url).await?;
+        let format = detect_audio_format(audio_url);
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
+        let body = chat_audio_request_body(model, prompt, &b64, &format);
+
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                InferenceError::Connection(format!("OpenRouter audio chat failed: {e}"))
+            })?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
+        if !status.is_success() {
+            return Err(InferenceError::Connection(format!(
+                "OpenRouter audio chat {status}: {}",
+                sanitize_error_body(&text)
+            )));
+        }
+
+        let json: Value = serde_json::from_str(&text)
+            .map_err(|e| InferenceError::Json(format!("OpenRouter audio chat parse: {e}")))?;
+        let content = extract_chat_content(&json).ok_or_else(|| {
+            InferenceError::Connection(
+                "OpenRouter: no message content in audio chat response".into(),
+            )
+        })?;
+        Ok(serde_json::json!({ "text": content, "model": model }))
     }
 
     /// Generate a video via OpenRouter's async video generation API.
@@ -859,6 +898,7 @@ impl MediaProvider for OpenRouterMediaProvider {
                 | MediaOp::Transcribe
                 | MediaOp::GenerateVideo
                 | MediaOp::ImageToVideo
+                | MediaOp::ChatAudio
         )
     }
 
@@ -871,10 +911,17 @@ impl MediaProvider for OpenRouterMediaProvider {
             match op {
                 MediaOp::GenerateImage => {
                     let prompt = params.prompt.clone().unwrap_or_default();
+                    // The same open-weight FLUX.2 klein 4B as the DeepInfra
+                    // primary (HF: black-forest-labs/FLUX.2-klein-4B) — the
+                    // only open-weight model on OpenRouter's Image API
+                    // (verified live 2026-08-31), so a DeepInfra outage
+                    // fails over to the same model on a different host.
+                    // Model IDs rot — override via
+                    // HKASK_MEDIA_IMAGE_GEN_MODEL when this one ages out.
                     let model = params.model.clone().unwrap_or_else(|| {
                         crate::model_constants::resolve(
                             "HKASK_MEDIA_IMAGE_GEN_MODEL",
-                            "openai/dall-e-3",
+                            "black-forest-labs/flux.2-klein-4b",
                         )
                     });
                     let model = strip_prefix(&model, "OpenRouter/");
@@ -904,6 +951,18 @@ impl MediaProvider for OpenRouterMediaProvider {
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.transcribe(&audio_url, params.language.as_deref(), &model)
                         .await
+                }
+                MediaOp::ChatAudio => {
+                    let prompt = params.prompt.clone().unwrap_or_default();
+                    let audio_url = params.audio_url.clone().unwrap_or_default();
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_AUDIO_CHAT_MODEL",
+                            crate::model_constants::DEFAULT_AUDIO_CHAT_MODEL,
+                        )
+                    });
+                    let model = strip_prefix(&model, "OpenRouter/");
+                    self.chat_audio(&prompt, &audio_url, &model).await
                 }
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
@@ -944,6 +1003,58 @@ impl MediaProvider for OpenRouterMediaProvider {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+/// Download audio bytes from an HTTP(S) URL, or read a local file path
+/// directly — recordings from `audio_capture`/`record_and_transcribe` are
+/// local paths, not URLs, and the audio-input paths must serve them too.
+async fn download_audio_bytes(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Vec<u8>, InferenceError> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let bytes = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("audio download failed: {e}")))?
+            .bytes()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("audio read failed: {e}")))?;
+        Ok(bytes.to_vec())
+    } else {
+        let path = url.strip_prefix("file://").unwrap_or(url);
+        std::fs::read(path).map_err(|e| {
+            InferenceError::Connection(format!("audio file read failed ({path}): {e}"))
+        })
+    }
+}
+
+/// Build the OpenAI audio-chat request body: one user message with a text
+/// part (the prompt) and an `input_audio` part (the audio, base64) — the
+/// same content-part format the STT endpoint uses, on `/v1/chat/completions`.
+fn chat_audio_request_body(model: &str, prompt: &str, audio_b64: &str, format: &str) -> Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "input_audio", "input_audio": {"data": audio_b64, "format": format}},
+            ]},
+        ],
+    })
+}
+
+/// Extract the assistant's text from a chat-completions response.
+fn extract_chat_content(response: &Value) -> Option<String> {
+    response
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("content")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// Strip a provider prefix (e.g. `DeepInfra/`, `OpenRouter/`) from a model
 /// name so the bare model id is passed to the provider's API.
 fn strip_prefix(model: &str, prefix: &str) -> String {
@@ -979,75 +1090,6 @@ fn detect_audio_format(url: &str) -> String {
     }
 }
 
-/// Extract an image URL from a chat completion content string.
-///
-/// Models return image URLs in various formats:
-/// - Raw URL: `https://example.com/image.png`
-/// - Markdown: `![image](https://example.com/image.png)`
-/// - JSON: `{"url": "https://example.com/image.png"}`
-fn extract_image_url(content: &str) -> Option<Value> {
-    let trimmed = content.trim();
-
-    // Try markdown image: ![alt](url)
-    if let Some(start) = trimmed.find("](") {
-        if let Some(end) = trimmed[start + 2..].find(')') {
-            let url = &trimmed[start + 2..start + 2 + end];
-            if url.starts_with("http") {
-                return Some(serde_json::json!({"url": url}));
-            }
-        }
-    }
-
-    // Try raw URL
-    if trimmed.starts_with("http")
-        && (trimmed.ends_with(".png")
-            || trimmed.ends_with(".jpg")
-            || trimmed.ends_with(".jpeg")
-            || trimmed.ends_with(".webp"))
-    {
-        return Some(serde_json::json!({"url": trimmed}));
-    }
-
-    // Try JSON with url field
-    if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
-        if let Some(url) = json.get("url").and_then(|u| u.as_str()) {
-            return Some(serde_json::json!({"url": url}));
-        }
-    }
-
-    // Try finding any http URL in the content
-    let mut in_url = false;
-    let mut url_start = 0;
-    let chars: Vec<char> = trimmed.chars().collect();
-    for (i, ch) in chars.iter().enumerate() {
-        if !in_url && *ch == 'h' && trimmed[i..].starts_with("http") {
-            in_url = true;
-            url_start = i;
-        }
-        if in_url && (*ch == ' ' || *ch == '\n' || *ch == '"') {
-            let url = &trimmed[url_start..i];
-            if url.contains("://")
-                && (url.contains(".png")
-                    || url.contains(".jpg")
-                    || url.contains(".jpeg")
-                    || url.contains(".webp")
-                    || url.contains("/image"))
-            {
-                return Some(serde_json::json!({"url": url}));
-            }
-            in_url = false;
-        }
-    }
-    if in_url {
-        let url = &trimmed[url_start..];
-        if url.contains("://") {
-            return Some(serde_json::json!({"url": url}));
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,39 +1104,6 @@ mod tests {
             strip_prefix("hexgrad/Kokoro-82M", "DeepInfra/"),
             "hexgrad/Kokoro-82M"
         );
-    }
-
-    #[test]
-    fn extract_image_url_from_markdown() {
-        let result = extract_image_url("![generated](https://example.com/image.png)");
-        assert_eq!(
-            result,
-            Some(serde_json::json!({"url": "https://example.com/image.png"}))
-        );
-    }
-
-    #[test]
-    fn extract_image_url_from_raw_url() {
-        let result = extract_image_url("https://example.com/image.png");
-        assert_eq!(
-            result,
-            Some(serde_json::json!({"url": "https://example.com/image.png"}))
-        );
-    }
-
-    #[test]
-    fn extract_image_url_from_json() {
-        let result = extract_image_url(r#"{"url": "https://example.com/image.png"}"#);
-        assert_eq!(
-            result,
-            Some(serde_json::json!({"url": "https://example.com/image.png"}))
-        );
-    }
-
-    #[test]
-    fn extract_image_url_returns_none_for_plain_text() {
-        let result = extract_image_url("I cannot generate images.");
-        assert!(result.is_none());
     }
 
     #[test]
@@ -1117,6 +1126,48 @@ mod tests {
     #[test]
     fn detect_audio_format_defaults_to_mp3() {
         assert_eq!(detect_audio_format("https://example.com/audio"), "mp3");
-        assert_eq!(detect_audio_format("https://example.com/audio.xyz"), "mp3");
+    }
+
+    #[test]
+    fn chat_audio_request_body_uses_input_audio_parts() {
+        let body = chat_audio_request_body("test-model", "who spoke?", "QUJD", "wav");
+        assert_eq!(body["model"], serde_json::json!("test-model"));
+        let content = body["messages"][0]["content"]
+            .as_array()
+            .expect("content is an array of parts");
+        assert_eq!(content[0]["type"], serde_json::json!("text"));
+        assert_eq!(content[0]["text"], serde_json::json!("who spoke?"));
+        assert_eq!(content[1]["type"], serde_json::json!("input_audio"));
+        assert_eq!(content[1]["input_audio"]["data"], serde_json::json!("QUJD"));
+        assert_eq!(
+            content[1]["input_audio"]["format"],
+            serde_json::json!("wav")
+        );
+    }
+
+    #[test]
+    fn extract_chat_content_reads_the_assistant_message() {
+        let response = serde_json::json!({
+            "choices": [{"message": {"role": "assistant", "content": "hello"}}]
+        });
+        assert_eq!(extract_chat_content(&response), Some("hello".to_string()));
+        assert_eq!(extract_chat_content(&serde_json::json!({})), None);
+        assert_eq!(
+            extract_chat_content(&serde_json::json!({"choices": []})),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn download_audio_bytes_reads_local_paths() {
+        let path = std::env::temp_dir().join("hkask_audio_download_test.wav");
+        std::fs::write(&path, b"RIFF").expect("write temp audio");
+        let bytes = download_audio_bytes(
+            &reqwest::Client::new(),
+            path.to_str().expect("path is utf-8"),
+        )
+        .await
+        .expect("local path read");
+        assert_eq!(bytes, b"RIFF".to_vec());
     }
 }

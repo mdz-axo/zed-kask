@@ -27,7 +27,9 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("match_faces", MATCH_FACES),
         ("educt_paragraph_pass", EDUCT_PARAGRAPH_PASS),
         ("educt_speaker_pass", EDUCT_SPEAKER_PASS),
+        ("educt_speaker_audio_pass", EDUCT_SPEAKER_AUDIO_PASS),
         ("educt_correction_pass", EDUCT_CORRECTION_PASS),
+        ("educt_highlight_pass", EDUCT_HIGHLIGHT_PASS),
     ];
     for (name, source) in templates {
         env.add_template(name, source).map_err(|e| {
@@ -107,6 +109,35 @@ Rules:
   attributions.
 - Output the JSON object only — no prose, no code fences."#;
 
+/// Educt speaker pass, audio source — the model HEARS the recording and
+/// reads the indexed transcript; the audio is the ground truth for WHO
+/// speaks, the indices for WHERE.
+const EDUCT_SPEAKER_AUDIO_PASS: &str = r#"You are attributing speakers in a recording. You will HEAR the audio (attached to this message) and READ its indexed transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as transcribed.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Listen to the audio and identify the speaker turns you hear. Align them
+with the indexed transcript: attribute each turn to the word range it
+covers. The audio is the ground truth for WHO speaks; the indices are
+the ground truth for WHERE — cite them exactly.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns, in transcript order, without
+  overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label: "speaker-1", "speaker-2", or an inferred
+  role ("interviewer", "host") — never empty.
+- "confidence" is between 0.0 and 1.0.
+- Output the JSON object only — no prose, no code fences."#;
+
 /// Educt correction pass — the model proposes text replacements over word
 /// ranges; edits are proposals, the timings are never touched.
 const EDUCT_CORRECTION_PASS: &str = r#"You are correcting a speech-to-text transcript.
@@ -135,6 +166,35 @@ Rules:
 - "reason" is short: "misheard name", "homophone", "garbled".
 - Only propose edits you are confident about — do not rewrite style.
 - Return [] if the transcript needs no corrections.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt highlight pass — the semantic selection: a natural-language
+/// request resolved to word ranges (the agent-as-selection-engine target).
+const EDUCT_HIGHLIGHT_PASS: &str = r#"You are selecting passages from a transcript that match a request.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+The request: {{ request }}
+
+Select the passages that answer the request — the word ranges where the
+request's subject is actually discussed. Label each selection with a
+short theme label.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "highlights" lists the matching passages as word ranges.
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "label" is a short theme tag (e.g. "cinderella-curve"); "note" is one
+  sentence on why the passage matches.
+- Overlapping selections are allowed (independent annotations).
+- Return [] if nothing in the transcript matches the request.
 - Output the JSON object only — no prose, no code fences."#;
 
 // ── Embedded templates ──────────────────────────────────────────────────────

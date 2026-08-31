@@ -22,8 +22,8 @@
 
 use crate::transcript::{TimedWord, TranscriptBundle};
 use crate::transcript_layers::{
-    CorrectionEdit, CorrectionLayer, LayerProvenance, LayerValidationError, ParagraphLayer,
-    SpeakerLayer, SpeakerSpan, TranscriptLayer,
+    CorrectionEdit, CorrectionLayer, HighlightEntry, HighlightLayer, LayerProvenance,
+    LayerValidationError, ParagraphLayer, SpeakerLayer, SpeakerSpan, TranscriptLayer,
 };
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
@@ -37,7 +37,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Template names (registered in `templates.rs`).
 pub const PARAGRAPH_PASS_TEMPLATE: &str = "educt_paragraph_pass";
 pub const SPEAKER_PASS_TEMPLATE: &str = "educt_speaker_pass";
+pub const SPEAKER_AUDIO_PASS_TEMPLATE: &str = "educt_speaker_audio_pass";
 pub const CORRECTION_PASS_TEMPLATE: &str = "educt_correction_pass";
+pub const HIGHLIGHT_PASS_TEMPLATE: &str = "educt_highlight_pass";
 
 static PARAGRAPH_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static PARAGRAPH_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -45,6 +47,8 @@ static SPEAKER_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static SPEAKER_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static CORRECTION_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static CORRECTION_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+static HIGHLIGHT_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static HIGHLIGHT_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// What the model returns for the paragraph pass — the layer shape minus
 /// provenance (provenance is attached by the pipeline, never claimed by
@@ -67,6 +71,15 @@ pub struct SpeakerPassOutput {
 pub struct CorrectionPassOutput {
     /// Proposed corrections over word ranges.
     pub edits: Vec<CorrectionEdit>,
+}
+
+/// What the model returns for the highlight pass — the semantic selection
+/// (the agent-as-selection-engine improvement target: a natural-language
+/// request resolved to word ranges).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HighlightPassOutput {
+    /// The passages matching the selection request.
+    pub highlights: Vec<HighlightEntry>,
 }
 
 /// Named pass failures — per-variant, never blanket.
@@ -114,6 +127,11 @@ pub fn correction_pass_stats() -> serde_json::Value {
     pass_stats_json(&CORRECTION_PASS_ATTEMPTS, &CORRECTION_PASS_REJECTIONS)
 }
 
+/// The accumulated highlight-pass measurement.
+pub fn highlight_pass_stats() -> serde_json::Value {
+    pass_stats_json(&HIGHLIGHT_PASS_ATTEMPTS, &HIGHLIGHT_PASS_REJECTIONS)
+}
+
 /// The shared v1 pass pipeline core: render (schema + indexed words) →
 /// model → extract → typed parse. The caller wraps the typed output in
 /// its layer, validates, and stores. Counters are per-pass.
@@ -122,6 +140,7 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
     template_env: &Environment<'static>,
     template_name: &str,
     schema: &str,
+    request: Option<&str>,
     words: &[TimedWord],
     model_override: Option<&str>,
     attempts: &AtomicU64,
@@ -135,7 +154,7 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
         )
     });
 
-    let prompt = render_pass_prompt(template_env, template_name, schema, words)?;
+    let prompt = render_pass_prompt(template_env, template_name, schema, request, words)?;
     let result = inference
         .generate_with_model(
             &prompt,
@@ -158,12 +177,13 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
     Ok((output, resolved_model))
 }
 
-/// Render a pass prompt: the indexed words plus the pass's schema. All
-/// pass templates share the four variables.
+/// Render a pass prompt: the indexed words plus the pass's schema, plus
+/// the selection request when the pass takes one (the highlight pass).
 fn render_pass_prompt(
     template_env: &Environment<'static>,
     template_name: &str,
     schema: &str,
+    request: Option<&str>,
     words: &[TimedWord],
 ) -> Result<String, PassError> {
     let indexed_words = indexed_words_line(words);
@@ -171,6 +191,9 @@ fn render_pass_prompt(
     let last_word_index = words.len().saturating_sub(1).to_string();
     let mut vars: HashMap<&str, &str> = HashMap::new();
     vars.insert("schema", schema);
+    if let Some(request) = request {
+        vars.insert("request", request);
+    }
     vars.insert("words", indexed_words.as_str());
     vars.insert("words_count", words_count.as_str());
     vars.insert("last_word_index", last_word_index.as_str());
@@ -211,6 +234,7 @@ pub async fn run_paragraph_pass(
         template_env,
         PARAGRAPH_PASS_TEMPLATE,
         &schema,
+        None,
         &bundle.words,
         model_override,
         &PARAGRAPH_PASS_ATTEMPTS,
@@ -254,6 +278,7 @@ pub async fn run_speaker_pass(
         template_env,
         SPEAKER_PASS_TEMPLATE,
         &schema,
+        None,
         &bundle.words,
         model_override,
         &SPEAKER_PASS_ATTEMPTS,
@@ -265,6 +290,86 @@ pub async fn run_speaker_pass(
         provenance: LayerProvenance {
             model,
             prompt_template: SPEAKER_PASS_TEMPLATE.to_string(),
+            created_at: hkask_types::time::now_rfc3339(),
+        },
+        spans: output.spans,
+    };
+    validate_or_reject(
+        &TranscriptLayer::Speaker(layer.clone()),
+        bundle.words.len(),
+        &SPEAKER_PASS_REJECTIONS,
+    )?;
+    Ok(layer)
+}
+
+/// Run the speaker pass over the audio itself (the scaffold's primary
+/// source, decisions 3/7): an audio-capable model hears the recording AND
+/// reads the indexed transcript, then attributes speaker turns as word
+/// spans. The model cannot know the word indices from audio alone — the
+/// indexed transcript in the prompt is what makes the output anchorable.
+/// Routes through `media_generate("chat_audio", …)` (child-local provider
+/// keys, the OpenAI `input_audio` content-part format) — not the IPC
+/// bridge, whose request surface has no audio parts.
+pub async fn run_speaker_pass_audio(
+    inference: &Arc<dyn InferencePort>,
+    template_env: &Environment<'static>,
+    bundle: &TranscriptBundle,
+    model_override: Option<&str>,
+) -> Result<SpeakerLayer, PassError> {
+    if bundle.words.is_empty() {
+        return Err(PassError::NoWordTimings);
+    }
+    let resolved_model = model_override.map(str::to_string).unwrap_or_else(|| {
+        hkask_inference::model_constants::resolve(
+            crate::models::AUDIO_CHAT_ENV,
+            crate::models::AUDIO_CHAT_DEFAULT,
+        )
+    });
+    let schema = serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput))
+        .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;
+    let prompt = render_pass_prompt(
+        template_env,
+        SPEAKER_AUDIO_PASS_TEMPLATE,
+        &schema,
+        None,
+        &bundle.words,
+    )?;
+
+    let params = hkask_types::MediaGenerateParams {
+        prompt: Some(prompt),
+        audio_url: Some(bundle.audio_path.clone()),
+        model: Some(resolved_model.clone()),
+        ..Default::default()
+    };
+    let raw = inference
+        .media_generate("chat_audio", &params)
+        .await
+        .map_err(PassError::Inference)?;
+    SPEAKER_PASS_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+
+    let model_text = raw
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            SPEAKER_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+            PassError::UnparseableOutput {
+                expected: "chat_audio response {\"text\": …}",
+                raw: truncate(&raw.to_string(), 200),
+            }
+        })?;
+    let extracted = hkask_types::json_extract::extract_json_from_response(model_text);
+    let output: SpeakerPassOutput = serde_json::from_str(&extracted).map_err(|_| {
+        SPEAKER_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        PassError::UnparseableOutput {
+            expected: "SpeakerPassOutput {\"spans\": [...]}",
+            raw: truncate(&extracted, 200),
+        }
+    })?;
+
+    let layer = SpeakerLayer {
+        provenance: LayerProvenance {
+            model: resolved_model,
+            prompt_template: SPEAKER_AUDIO_PASS_TEMPLATE.to_string(),
             created_at: hkask_types::time::now_rfc3339(),
         },
         spans: output.spans,
@@ -297,6 +402,7 @@ pub async fn run_correction_pass(
         template_env,
         CORRECTION_PASS_TEMPLATE,
         &schema,
+        None,
         &bundle.words,
         model_override,
         &CORRECTION_PASS_ATTEMPTS,
@@ -316,6 +422,56 @@ pub async fn run_correction_pass(
         &TranscriptLayer::Correction(layer.clone()),
         bundle.words.len(),
         &CORRECTION_PASS_REJECTIONS,
+    )?;
+    Ok(layer)
+}
+
+/// Run the highlight pass — the semantic selection: a natural-language
+/// request ("find where he explains the Cinderella curve") resolved to
+/// word ranges with labels. This is the agent-as-selection-engine
+/// improvement target: Reduct's paradigm with the reading automated.
+pub async fn run_highlight_pass(
+    inference: &Arc<dyn InferencePort>,
+    template_env: &Environment<'static>,
+    bundle: &TranscriptBundle,
+    request: &str,
+    model_override: Option<&str>,
+) -> Result<HighlightLayer, PassError> {
+    if bundle.words.is_empty() {
+        return Err(PassError::NoWordTimings);
+    }
+    if request.trim().is_empty() {
+        return Err(PassError::Prompt(
+            "selection request must not be empty".to_string(),
+        ));
+    }
+    let schema = serde_json::to_string(&schemars::schema_for!(HighlightPassOutput))
+        .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;
+    let (output, model) = run_pass_core::<HighlightPassOutput>(
+        inference,
+        template_env,
+        HIGHLIGHT_PASS_TEMPLATE,
+        &schema,
+        Some(request),
+        &bundle.words,
+        model_override,
+        &HIGHLIGHT_PASS_ATTEMPTS,
+        &HIGHLIGHT_PASS_REJECTIONS,
+        "HighlightPassOutput {\"highlights\": [{start_word, end_word, label, note}]}",
+    )
+    .await?;
+    let layer = HighlightLayer {
+        provenance: LayerProvenance {
+            model,
+            prompt_template: HIGHLIGHT_PASS_TEMPLATE.to_string(),
+            created_at: hkask_types::time::now_rfc3339(),
+        },
+        highlights: output.highlights,
+    };
+    validate_or_reject(
+        &TranscriptLayer::Highlight(layer.clone()),
+        bundle.words.len(),
+        &HIGHLIGHT_PASS_REJECTIONS,
     )?;
     Ok(layer)
 }
@@ -387,9 +543,11 @@ mod tests {
         for (template, schema_marker) in [
             (PARAGRAPH_PASS_TEMPLATE, "breaks_after"),
             (SPEAKER_PASS_TEMPLATE, "spans"),
+            (SPEAKER_AUDIO_PASS_TEMPLATE, "spans"),
             (CORRECTION_PASS_TEMPLATE, "edits"),
+            (HIGHLIGHT_PASS_TEMPLATE, "highlights"),
         ] {
-            let prompt = render_pass_prompt(&env, template, "{\"type\": \"object\"}", &words)
+            let prompt = render_pass_prompt(&env, template, "{\"type\": \"object\"}", None, &words)
                 .expect("prompt renders");
             assert!(
                 prompt.contains("0:alpha 1:beta"),
@@ -403,11 +561,44 @@ mod tests {
     }
 
     #[test]
+    fn highlight_prompt_embeds_the_selection_request() {
+        let env = crate::templates::create_env().expect("media templates must compile");
+        let words = vec![
+            TimedWord {
+                word: "alpha".to_string(),
+                start_ms: 0,
+                end_ms: 500,
+                confidence: None,
+            },
+            TimedWord {
+                word: "beta".to_string(),
+                start_ms: 500,
+                end_ms: 900,
+                confidence: None,
+            },
+        ];
+        let prompt = render_pass_prompt(
+            &env,
+            HIGHLIGHT_PASS_TEMPLATE,
+            "{\"type\": \"object\"}",
+            Some("where he explains the curve"),
+            &words,
+        )
+        .expect("prompt renders");
+        assert!(
+            prompt.contains("where he explains the curve"),
+            "the selection request must reach the model"
+        );
+        assert!(prompt.contains("0:alpha 1:beta"));
+    }
+
+    #[test]
     fn pass_stats_shape() {
         for stats in [
             paragraph_pass_stats(),
             speaker_pass_stats(),
             correction_pass_stats(),
+            highlight_pass_stats(),
         ] {
             assert!(stats.get("attempts").is_some());
             assert!(stats.get("rejections").is_some());

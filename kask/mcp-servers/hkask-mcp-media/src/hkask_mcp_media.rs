@@ -79,6 +79,10 @@ pub mod models {
     pub const PASS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL;
     pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
 
+    /// Default audio-input chat model (the speaker pass's primary source)
+    pub const AUDIO_CHAT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_AUDIO_CHAT_MODEL;
+    pub const AUDIO_CHAT_ENV: &str = "HKASK_MEDIA_AUDIO_CHAT_MODEL";
+
     /// Default vision model: Qwen3-VL (Apache 2.0) via OpenRouter
     pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
@@ -373,9 +377,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_78_registered_tools() {
+    fn tool_surface_is_exactly_81_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 78, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 81, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1073,11 +1077,13 @@ mod tool_behavior_tests {
             .expect("tool result has the content envelope")
     }
 
-    /// A mock inference port returning a canned response — exercises the
-    /// pass pipeline (prompt → call → extract → validate → store)
-    /// end-to-end without a live model.
+    /// A mock inference port returning canned responses on both paths —
+    /// `generate` (the text passes) and `media_generate` (the audio-chat
+    /// path) — so the full pass pipelines run end-to-end without a live
+    /// model.
     struct MockInferencePort {
         response: String,
+        media_response: String,
     }
 
     impl hkask_types::ports::InferencePort for MockInferencePort {
@@ -1109,17 +1115,36 @@ mod tool_behavior_tests {
             };
             Box::pin(async move { Ok(result) })
         }
+
+        fn media_generate<'a>(
+            &'a self,
+            _op: &str,
+            _params: &hkask_types::MediaGenerateParams,
+        ) -> hkask_types::MediaFuture<'a> {
+            let text = self.media_response.clone();
+            Box::pin(async move { Ok(serde_json::json!({ "text": text, "model": "mock-model" })) })
+        }
     }
 
     /// A server wired with the mock inference port — the capability under
     /// test (the pass pipeline needs a real generate path, not the noop).
     fn make_pass_server(response: String) -> MediaServer {
+        make_inference_server(response.clone(), response)
+    }
+
+    /// A server with distinct canned responses for the text path
+    /// (`generate`) and the media path (`media_generate` — the audio-chat
+    /// source).
+    fn make_inference_server(response: String, media_response: String) -> MediaServer {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store =
             Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
         MediaServer::new(
             hkask_types::WebID::new(),
-            Arc::new(MockInferencePort { response }),
+            Arc::new(MockInferencePort {
+                response,
+                media_response,
+            }),
             Arc::new(std::sync::Mutex::new(None)),
             gallery_store,
             templates::create_env().expect("media templates must compile"),
@@ -1311,6 +1336,7 @@ mod tool_behavior_tests {
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                source: Some("text".to_string()),
             }))
             .await
             .expect("pass succeeds");
@@ -1322,6 +1348,11 @@ mod tool_behavior_tests {
         assert_eq!(
             content["stored"]["layer"]["spans"].as_array().map(Vec::len),
             Some(2)
+        );
+        // The text source names the text-cue template in provenance.
+        assert_eq!(
+            content["stored"]["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("educt_speaker_pass")
         );
         // The layer is recallable through the store.
         let layers = server
@@ -1344,6 +1375,7 @@ mod tool_behavior_tests {
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                source: Some("text".to_string()),
             }))
             .await
             .expect_err("overlapping spans must be rejected");
@@ -1359,6 +1391,76 @@ mod tool_behavior_tests {
             .await
             .expect("list layers succeeds");
         assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_defaults_to_the_audio_source() {
+        let server = make_inference_server(
+            "unused".to_string(),
+            r#"{"spans": [{"start_word": 0, "end_word": 0, "speaker": "speaker-1", "confidence": 0.95}, {"start_word": 1, "end_word": 1, "speaker": "speaker-2", "confidence": 0.9}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: None,
+                source: None,
+            }))
+            .await
+            .expect("audio pass succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("speaker")
+        );
+        // Provenance names the audio template — the source is
+        // distinguishable, exactly as decision 7 specified.
+        assert_eq!(
+            content["stored"]["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("educt_speaker_audio_pass")
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_rejects_unknown_source() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: None,
+                source: Some("bogus".to_string()),
+            }))
+            .await
+            .expect_err("unknown source must be rejected");
+        assert!(
+            error.message.contains("source must be"),
+            "the named error must surface: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_audio_unparseable_output_surfaces() {
+        let server = make_inference_server(
+            "unused".to_string(),
+            "I cannot listen to this audio.".to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: None,
+                source: Some("audio".to_string()),
+            }))
+            .await
+            .expect_err("unparseable audio output must surface");
+        assert!(
+            error.message.contains("failed to parse"),
+            "the parse failure must be named: {}",
+            error.message
+        );
     }
 
     #[tokio::test]
@@ -1435,6 +1537,276 @@ mod tool_behavior_tests {
             .expect_err("no correction layer must be not-found");
         assert!(
             error.message.contains("no correction layer"),
+            "the missing layer must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_highlight_pass_stores_a_selection() {
+        let server = make_pass_server(
+            r#"{"highlights": [{"start_word": 0, "end_word": 1, "label": "key-argument", "note": "explains the curve"}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_highlight_pass(Parameters(crate::types::EductHighlightPassRequest {
+                transcript_id: transcript_id.clone(),
+                request: "where he explains the curve".to_string(),
+                model: None,
+            }))
+            .await
+            .expect("pass succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("highlight")
+        );
+        assert_eq!(
+            content["stored"]["layer"]["highlights"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        // The layer is recallable through the store.
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id,
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn educt_edl_from_highlights_merges_overlapping_selections() {
+        use crate::transcript_layers::{
+            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
+        };
+        use crate::types::EductStoreLayerRequest;
+
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        // Two overlapping highlights over a 2-word transcript: [0,1] and
+        // [1,1] → union [0,1] → one Keep op.
+        let highlight = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-08-30T00:00:00Z".to_string(),
+            },
+            highlights: vec![
+                HighlightEntry {
+                    start_word: 0,
+                    end_word: 1,
+                    label: "a".to_string(),
+                    note: String::new(),
+                },
+                HighlightEntry {
+                    start_word: 1,
+                    end_word: 1,
+                    label: "b".to_string(),
+                    note: String::new(),
+                },
+            ],
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&highlight).expect("serialize highlight"),
+                ),
+            }))
+            .await
+            .expect("highlight stored");
+
+        let composed = server
+            .educt_edl_from_highlights(Parameters(crate::types::EductEdlFromHighlightsRequest {
+                transcript_id,
+                label: None,
+                layer_id: None,
+            }))
+            .await
+            .expect("compose succeeds");
+        let content = content_of(&composed);
+        assert_eq!(
+            content["composed_from"]["highlights_selected"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(content["composed_from"]["ranges_merged"].as_u64(), Some(1));
+        assert_eq!(
+            content["stored"]["layer"]["ops"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            content["stored"]["layer"]["ops"][0]["op"],
+            serde_json::json!("keep")
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_edl_from_highlights_label_miss_is_not_found() {
+        use crate::transcript_layers::{
+            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
+        };
+        use crate::types::EductStoreLayerRequest;
+
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let highlight = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-08-30T00:00:00Z".to_string(),
+            },
+            highlights: vec![HighlightEntry {
+                start_word: 0,
+                end_word: 1,
+                label: "a".to_string(),
+                note: String::new(),
+            }],
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&highlight).expect("serialize highlight"),
+                ),
+            }))
+            .await
+            .expect("highlight stored");
+        let error = server
+            .educt_edl_from_highlights(Parameters(crate::types::EductEdlFromHighlightsRequest {
+                transcript_id,
+                label: Some("missing-label".to_string()),
+                layer_id: None,
+            }))
+            .await
+            .expect_err("label miss must be not-found");
+        assert!(
+            error.message.contains("no highlights"),
+            "the filter miss must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_render_edl_produces_a_clip_from_a_real_media_file() {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::transcript_layers::{EdlLayer, LayerProvenance, TranscriptLayer};
+        use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
+        use crate::types::{
+            EductRenderEdlRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
+        };
+
+        let server = make_pass_server("{}".to_string());
+        // Generate a real 2-second WAV via ffmpeg — the same binary the
+        // render path uses; the test proves the full loop (EDL → clip plan
+        // → stream-copy render) against real media.
+        let wav = std::env::temp_dir().join("hkask_educt_render_test.wav");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+            ])
+            .arg(&wav)
+            .output()
+            .expect("ffmpeg runs");
+        assert!(status.status.success(), "ffmpeg must generate the test WAV");
+        let wav_path = wav.display().to_string();
+
+        // A transcript over it: two words, 0-1s and 1-2s.
+        let bundle = TranscriptBundle {
+            words: vec![
+                TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 1000,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 1000,
+                    end_ms: 2000,
+                    confidence: None,
+                },
+            ],
+            ..TranscriptBundle::new(wav_path.clone(), 2.0, "alpha beta".to_string())
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("transcript stored");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+
+        // EDL: keep word 0 only (the first second).
+        let edl = TranscriptLayer::Edl(EdlLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-08-30T00:00:00Z".to_string(),
+            },
+            ops: vec![EdlEntry {
+                range: WordRange::new(0, 0),
+                op: EdlOp::Keep,
+            }],
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&edl).expect("serialize edl"),
+                ),
+            }))
+            .await
+            .expect("edl stored");
+
+        let rendered = server
+            .educt_render_edl(Parameters(EductRenderEdlRequest {
+                transcript_id,
+                layer_id: None,
+            }))
+            .await
+            .expect("render succeeds");
+        let content = content_of(&rendered);
+        assert_eq!(content["clips"].as_u64(), Some(1));
+        assert_eq!(
+            content["clip_plan"],
+            serde_json::json!([[0.0, 1.0]]),
+            "the clip plan is the word range mapped to seconds"
+        );
+        let output = content["output"].as_str().expect("output path").to_string();
+        assert!(
+            std::path::Path::new(&output).exists(),
+            "rendered clip exists at {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_render_edl_without_an_edl_is_not_found() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_render_edl(Parameters(crate::types::EductRenderEdlRequest {
+                transcript_id,
+                layer_id: None,
+            }))
+            .await
+            .expect_err("no EDL layer must be not-found");
+        assert!(
+            error.message.contains("no EDL layer"),
             "the missing layer must be named: {}",
             error.message
         );

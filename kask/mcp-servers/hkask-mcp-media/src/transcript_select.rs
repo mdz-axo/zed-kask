@@ -216,7 +216,7 @@ pub fn edl_to_keep_ranges(words_len: usize, edl: &Edl) -> Result<Vec<WordRange>,
         }
     }
 
-    let cuts = merged_cuts(
+    let cuts = union_ranges(
         &edl.ops
             .iter()
             .filter(|entry| entry.op == EdlOp::Cut)
@@ -241,6 +241,26 @@ pub fn edl_to_keep_ranges(words_len: usize, edl: &Edl) -> Result<Vec<WordRange>,
         keep_ranges.extend(subtract_cuts_from_range(range, &cuts));
     }
     Ok(keep_ranges)
+}
+
+/// Union word ranges: sort, then merge overlapping AND adjacent ranges
+/// (adjacent ranges share no words between them, so merging adds none).
+/// The union covers exactly the words any input range covered — the
+/// deterministic composition step when overlapping annotations (e.g.
+/// highlights) must become a disjoint set (e.g. EDL Keep ops).
+pub fn union_ranges(ranges: &[WordRange]) -> Vec<WordRange> {
+    let mut sorted: Vec<WordRange> = ranges.to_vec();
+    sorted.sort_by_key(|range| range.start_word);
+    let mut merged: Vec<WordRange> = Vec::with_capacity(sorted.len());
+    for range in sorted {
+        match merged.last_mut() {
+            Some(last) if range.start_word <= last.end_word.saturating_add(1) => {
+                last.end_word = last.end_word.max(range.end_word);
+            }
+            _ => merged.push(range),
+        }
+    }
+    merged
 }
 
 /// Map keep-ranges to a render plan: `(start_ms, end_ms)` pairs for
@@ -273,23 +293,7 @@ pub fn edl_to_clip_plan(words: &[TimedWord], edl: &Edl) -> Result<Vec<(u64, u64)
     keep_ranges_to_clip_plan(words, &keep_ranges)
 }
 
-/// Merge cut ranges into a sorted, disjoint union. Cuts may overlap (union
-/// semantics); adjacent cuts merge because the gap between them is empty.
-fn merged_cuts(cuts: &[WordRange]) -> Vec<WordRange> {
-    let mut sorted: Vec<WordRange> = cuts.to_vec();
-    sorted.sort_by_key(|range| range.start_word);
-    let mut merged: Vec<WordRange> = Vec::with_capacity(sorted.len());
-    for range in sorted {
-        match merged.last_mut() {
-            Some(last) if range.start_word <= last.end_word.saturating_add(1) => {
-                last.end_word = last.end_word.max(range.end_word);
-            }
-            _ => merged.push(range),
-        }
-    }
-    merged
-}
-
+/// Map keep-ranges to a render plan: `(start_ms, end_ms)` pairs for
 /// Subtract sorted, disjoint cuts from one base range, preserving order.
 /// A cut may split the base range into multiple pieces.
 fn subtract_cuts_from_range(base: WordRange, cuts: &[WordRange]) -> Vec<WordRange> {
@@ -658,5 +662,45 @@ mod tests {
             edl_to_clip_plan(&words, &edl).unwrap(),
             vec![(0, 1500), (3000, 4500)]
         );
+    }
+
+    // ── union_ranges ─────────────────────────────────────────────────────
+
+    #[test]
+    fn union_ranges_merges_overlaps_and_adjacency_only() {
+        // Overlapping [0,3]+[2,5] → [0,5]; adjacent [6,7] merges with it
+        // ([0,5] and [6,7] are adjacent: 6 == 5+1); disjoint [9,9] stays.
+        let union = union_ranges(&[
+            WordRange::new(2, 5),
+            WordRange::new(0, 3),
+            WordRange::new(9, 9),
+            WordRange::new(6, 7),
+        ]);
+        assert_eq!(union, vec![WordRange::new(0, 7), WordRange::new(9, 9)]);
+    }
+
+    #[test]
+    fn union_ranges_covers_exactly_the_input_words() {
+        // Property: the union's word count equals the distinct words covered
+        // by the inputs — merging never adds or drops a word.
+        let inputs = [
+            WordRange::new(0, 2),
+            WordRange::new(1, 4),
+            WordRange::new(8, 9),
+        ];
+        let distinct: std::collections::HashSet<usize> = inputs
+            .iter()
+            .flat_map(|range| range.start_word..=range.end_word)
+            .collect();
+        let union_words: std::collections::HashSet<usize> = union_ranges(&inputs)
+            .iter()
+            .flat_map(|range| range.start_word..=range.end_word)
+            .collect();
+        assert_eq!(union_words, distinct);
+    }
+
+    #[test]
+    fn union_ranges_empty_input_yields_empty_union() {
+        assert!(union_ranges(&[]).is_empty());
     }
 }

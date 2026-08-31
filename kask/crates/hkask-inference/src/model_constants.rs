@@ -59,6 +59,11 @@ pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
 /// Default STT model — Whisper Large v3 via DeepInfra.
 pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
 
+/// Default audio-input chat model — LLM reasoning over audio via
+/// `input_audio` content parts (the OpenAI audio-chat format) on
+/// `/v1/chat/completions`. Override via `HKASK_MEDIA_AUDIO_CHAT_MODEL`.
+pub const DEFAULT_AUDIO_CHAT_MODEL: &str = "OpenRouter/openai/gpt-4o-audio-preview";
+
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
