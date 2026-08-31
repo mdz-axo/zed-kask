@@ -452,7 +452,8 @@ impl MediaProvider for DeepInfraMediaProvider {
                 // `input_audio` content-part format.
                 MediaOp::ChatAudio => Err(InferenceError::Connection(
                     "deepinfra does not support chat_audio — route via an \
-                     OpenRouter audio-chat model (e.g. OpenRouter/openai/gpt-4o-audio-preview)"
+                     OpenRouter audio-chat model (e.g. \
+                     OpenRouter/mistralai/voxtral-small-24b-2507)"
                         .into(),
                 )),
             }

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct ModelLadderRung {
     /// Cognition tier for this rung: `"free"`, `"standard"`, or `"premium"`.
     pub tier: String,
-    /// Model id for this tier (e.g. `"claude-haiku-4-5-20251001"`).
+    /// Model id for this tier (e.g. `"qwen/qwen3-235b-a22b-thinking-2507"`).
     pub model: String,
     /// Provider: `"anthropic"`, `"openai"`, `"openrouter"`, `"ollama"`.
     pub provider: String,
