@@ -387,6 +387,14 @@ impl MemoryStore {
         self.h_mem_store.touch_recall(id).map_err(Into::into)
     }
 
+    /// Fetch a single h_mem by ID, without decay and without touching
+    /// `recalled_at`. Expired h_mems are absent (valid_to set filters them) —
+    /// this is the "does this citation exist" check `memory_insert` runs on
+    /// its evidence, not a recall path.
+    pub fn get_by_id(&self, id: &hkask_storage::HMemId) -> Result<Option<HMem>, MemoryStoreError> {
+        self.h_mem_store.get_by_id(id).map_err(Into::into)
+    }
+
     /// Query all h_mems by entity prefix, without decay or dedup.
     /// Used by the purge tool to find all h_mems (assertions, QA pairs,
     /// and any other attributes) matching a corpus prefix for deletion.

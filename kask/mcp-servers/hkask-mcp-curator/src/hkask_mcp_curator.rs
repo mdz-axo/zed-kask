@@ -38,6 +38,11 @@ const SERVER_NAME: &str = "hkask-mcp-curator";
 /// not trigger a full DB open + store construction on every tool call.
 const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Cap on fragments one entity may contribute to semantic recall. A thread
+/// entity holds one h_mem per turn; without a cap a single chatty thread
+/// floods the whole result set and every other entity vanishes from recall.
+const MAX_FRAGMENTS_PER_ENTITY: usize = 2;
+
 /// The four stores the curator's tools read, all backed by the curator's
 /// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
@@ -437,6 +442,9 @@ impl CuratorServer {
 
     /// Embed a recall query and resolve the nearest stored h_mems by cosine
     /// similarity. Returns `(h_mem, distance)` pairs, most similar first.
+    /// Each distinct entity contributes at most `MAX_FRAGMENTS_PER_ENTITY`
+    /// fragments (its freshest), and no h_mem appears twice even when the
+    /// KNN hits it through several embeddings.
     /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
     /// embedding provider) or the store has no embedding index — callers fall
     /// back to exact-entity lookup and surface the reason.
@@ -459,15 +467,46 @@ impl CuratorServer {
             .into_iter()
             .next()
             .ok_or_else(|| "embedding model returned no vector for the recall query".to_string())?;
+        // Fetch more KNN neighbors than the fragment limit: each distinct
+        // entity contributes at most MAX_FRAGMENTS_PER_ENTITY fragments, and
+        // the same entity holds one embedding per turn, so a 1:1 KNN limit
+        // under-fills the result set once capping bites.
+        let knn_limit = limit.saturating_mul(MAX_FRAGMENTS_PER_ENTITY).max(limit);
         let results = memory
-            .search_similar(&query_vector, limit)
+            .search_similar(&query_vector, knn_limit)
             .map_err(|e| format!("semantic search over curator memory failed: {e}"))?;
         let mut fragments = Vec::with_capacity(results.len());
+        let mut seen_h_mem_ids: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut per_entity_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for result in results {
             let entity_ref = result.embedding.entity_ref.clone();
+            if per_entity_counts.get(&entity_ref).copied().unwrap_or(0) >= MAX_FRAGMENTS_PER_ENTITY
+            {
+                continue;
+            }
             match memory.query_deduped_untouched(&entity_ref) {
-                Ok(h_mems) => {
+                Ok(mut h_mems) => {
+                    // Freshest first: the newest turn under the entity is the
+                    // closest thing it has to current state.
+                    h_mems.sort_by_key(|h_mem| std::cmp::Reverse(h_mem.observed_at.clone()));
                     for h_mem in h_mems {
+                        if per_entity_counts.get(&entity_ref).copied().unwrap_or(0)
+                            >= MAX_FRAGMENTS_PER_ENTITY
+                        {
+                            break;
+                        }
+                        // Several KNN hits can resolve to the same h_mems
+                        // (multiple embeddings under one entity) — no
+                        // duplicate fragments.
+                        if !seen_h_mem_ids.insert(h_mem.id.to_string()) {
+                            continue;
+                        }
+                        per_entity_counts
+                            .entry(entity_ref.clone())
+                            .and_modify(|count| *count += 1)
+                            .or_insert(1);
                         fragments.push((h_mem, result.distance));
                     }
                 }
@@ -1062,13 +1101,16 @@ impl CuratorServer {
                     ))
                 })?;
 
-            // Verify the evidence h_mem exists.
+            // Verify the evidence h_mem exists — by ID, not by entity ref:
+            // `query_deduped_untouched` is entity-keyed and no entity is a
+            // bare UUID, so the previous entity-keyed lookup rejected every
+            // citation and the tool could never insert.
             let evidence = memory
-                .query_deduped_untouched(&evidence_id.to_string())
+                .get_by_id(&evidence_id)
                 .map_err(|e| {
                     map_memory_store_error(e, "Failed to verify evidence h_mem")
                 })?;
-            if evidence.is_empty() {
+            if evidence.is_none() {
                 return Err(McpToolError::invalid_argument(format!(
                     "Evidence h_mem '{id}' not found — memory_insert requires an existing citation",
                     id = req.evidence_h_mem_id

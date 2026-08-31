@@ -116,8 +116,8 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
 pub struct DataServiceDescriptor {
     /// The env var name that MCP servers read for this credential.
     pub env_var: &'static str,
-    /// The credential key in the keychain (`kask://credentials/<key>`).
-    /// Used as the UI's row key.
+    /// The credential key — `credential_url_for_key` resolves it to the
+    /// keychain URL. Used as the UI's row key.
     pub credential_key: &'static str,
     /// Human-readable label shown in the settings UI.
     pub label: &'static str,

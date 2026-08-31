@@ -716,6 +716,202 @@ async fn consult_returns_semantic_fragments_for_question() {
     );
 }
 
+// ── Memory distillation — evidence-grounded insert ─────────────────────
+
+/// `memory_insert` must accept an evidence citation that names an existing
+/// h_mem ID. The original lookup passed the UUID to the entity-keyed
+/// `query_deduped_untouched` — and no entity is a bare UUID, so every
+/// citation was "not found" and the distillation tool could never insert:
+/// the store only ever accumulated raw turn dumps. This pins the by-ID
+/// lookup and the 0.5 confidence floor.
+#[tokio::test]
+async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed = hkask_storage::HMem::new(
+        "chat:thread:evidence-source",
+        "chatted",
+        serde_json::Value::String("the source turn".to_string()),
+        WebID::new(),
+    );
+    let seed_id = seed.id.to_string();
+    memory.store(seed).expect("seed evidence h_mem");
+
+    let response = parse(
+        &server
+            .memory_insert(Parameters(MemoryInsertRequest {
+                entity: "zed-kask".to_string(),
+                attribute: "default_agent_model".to_string(),
+                value: serde_json::json!("qwen3"),
+                evidence_h_mem_id: seed_id,
+                note: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "a citation naming a real h_mem ID must insert — got: {response}",
+    );
+    assert_eq!(
+        response["confidence"].as_f64(),
+        Some(0.5),
+        "inserts start at the 0.5 floor, not the model's self-assessment — got: {response}",
+    );
+
+    // The insert is durable and entity-recallable.
+    let stored = memory
+        .query_deduped_untouched("zed-kask")
+        .expect("query should succeed");
+    assert_eq!(stored.len(), 1, "the distilled memory must be stored");
+    assert_eq!(stored[0].value, serde_json::json!("qwen3"));
+    assert!((stored[0].confidence.value() - 0.5).abs() < 1e-9);
+}
+
+/// Evidence citations that name no existing h_mem must be rejected as
+/// `invalid_argument` with the reason surfaced — both a well-formed UUID
+/// that matches no row and a malformed ID that cannot parse.
+#[tokio::test]
+async fn memory_insert_rejects_missing_or_malformed_evidence() {
+    let server = make_server();
+
+    let error = server
+        .memory_insert(Parameters(MemoryInsertRequest {
+            entity: "zed-kask".to_string(),
+            attribute: "default_agent_model".to_string(),
+            value: serde_json::json!("qwen3"),
+            evidence_h_mem_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            note: None,
+        }))
+        .await
+        .expect_err("a citation matching no h_mem must fail");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "a missing citation is an argument error, not internal — got: {error:?}",
+    );
+    assert!(
+        error.message.contains("not found"),
+        "the error must name the missing citation — got: {error:?}",
+    );
+
+    let error = server
+        .memory_insert(Parameters(MemoryInsertRequest {
+            entity: "zed-kask".to_string(),
+            attribute: "default_agent_model".to_string(),
+            value: serde_json::json!("qwen3"),
+            evidence_h_mem_id: "not-a-uuid".to_string(),
+            note: None,
+        }))
+        .await
+        .expect_err("a malformed citation must fail");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "a malformed citation is an argument error — got: {error:?}",
+    );
+    assert!(
+        error.message.contains("not-a-uuid"),
+        "the error must name the malformed ID — got: {error:?}",
+    );
+}
+
+// ── Semantic search — per-entity flood cap ──────────────────────────────
+
+/// One entity must not flood semantic recall: a thread entity holds one
+/// h_mem per turn, so without a per-entity cap a single chatty thread fills
+/// the entire result set and every other entity vanishes from recall.
+/// Multiple embeddings under one entity must also not yield duplicate
+/// fragments.
+#[tokio::test]
+async fn semantic_search_caps_fragments_per_entity() {
+    let (server, memory) = make_server_with_embeddings();
+    let flood_entity = "curator:thread:flood-test";
+    let quiet_entity = "curator:thread:quiet-test";
+
+    for turn_index in 0..5 {
+        let turn = serde_json::json!({
+            "user_input": format!("flood turn {turn_index}"),
+            "agent_response": "ok",
+        })
+        .to_string();
+        let h_mem = hkask_storage::HMem::new(
+            flood_entity,
+            "turn",
+            serde_json::Value::String(turn),
+            WebID::new(),
+        );
+        memory.store(h_mem).expect("seed flood h_mem");
+        let mut vector = vec![0.0f32; test_dim()];
+        vector[0] = 1.0;
+        memory
+            .store_embedding(flood_entity, &vector, "test-model", None)
+            .expect("seed flood embedding");
+    }
+    let turn = serde_json::json!({
+        "user_input": "quiet turn",
+        "agent_response": "ok",
+    })
+    .to_string();
+    let h_mem = hkask_storage::HMem::new(
+        quiet_entity,
+        "turn",
+        serde_json::Value::String(turn),
+        WebID::new(),
+    );
+    memory.store(h_mem).expect("seed quiet h_mem");
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(quiet_entity, &vector, "test-model", None)
+        .expect("seed quiet embedding");
+
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "anything at all".to_string(),
+                limit: Some(10),
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    assert_eq!(
+        response["mode"].as_str(),
+        Some("semantic"),
+        "the semantic leg must serve the query — got: {response}",
+    );
+    let results = response["results"]
+        .as_array()
+        .expect("results must be an array");
+    let flood_fragments: Vec<&serde_json::Value> = results
+        .iter()
+        .filter(|r| r["entity"].as_str() == Some(flood_entity))
+        .collect();
+    assert_eq!(
+        flood_fragments.len(),
+        2,
+        "the flood entity contributes at most MAX_FRAGMENTS_PER_ENTITY fragments, \
+         not one per turn — got: {response}",
+    );
+    assert!(
+        results
+            .iter()
+            .any(|r| r["entity"].as_str() == Some(quiet_entity)),
+        "the quiet entity must survive the flood — got: {response}",
+    );
+    let mut flood_values: Vec<String> = flood_fragments
+        .iter()
+        .filter_map(|r| r["value"].as_str().map(str::to_string))
+        .collect();
+    flood_values.sort();
+    flood_values.dedup();
+    assert_eq!(
+        flood_values.len(),
+        2,
+        "the two flood fragments must be distinct h_mems — got: {response}",
+    );
+}
+
 // ── Algedonic log — happy ───────────────────────────────────────────────────
 
 /// `curator_algedonic_log` returns an empty event list for a fresh archive.

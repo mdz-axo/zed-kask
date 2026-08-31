@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
-use hkask_types::{HMemOntology, MemoryError, TurnRecord, Visibility, WebID};
+use hkask_types::{Confidence, HMemOntology, MemoryError, TurnRecord, Visibility, WebID};
 use std::sync::RwLock;
 
 use crate::inference_embedding::LanguageModelEmbeddingPort;
@@ -55,6 +55,13 @@ pub(crate) struct WriteContext<'a> {
 ///
 /// `Ok(())` on success. Curator-side and embedding failures are non-fatal —
 /// they warn and continue.
+///
+/// Every h_mem written here — turn dumps and goal events alike — enters at
+/// the 0.5 confidence floor, the same floor `memory_insert` starts distilled
+/// memories at. `HMem::new`'s default of 1.0 starves the two consumers of
+/// confidence: recall ranking cannot tell a stale turn from a fresh one,
+/// and the cleanup-only consolidator's confidence floor never deletes
+/// anything because nothing ever decays below it.
 pub(crate) async fn write_turn(
     ctx: &WriteContext<'_>,
     record: TurnRecord,
@@ -109,7 +116,8 @@ pub(crate) async fn write_turn(
         )
         .with_perspective(ctx.curator_webid)
         .with_visibility(Visibility::Private)
-        .with_ontology(ontology);
+        .with_ontology(ontology)
+        .with_confidence(Confidence::new(0.5));
 
         if let Some(ref curator_store) = curator_store {
             if let Err(e) = curator_store.store(curator_h_mem) {
@@ -143,7 +151,8 @@ pub(crate) async fn write_turn(
         ctx.curator_webid,
     )
     .with_visibility(Visibility::Shared)
-    .with_ontology(curator_ontology);
+    .with_ontology(curator_ontology)
+    .with_confidence(Confidence::new(0.5));
 
     if let Some(ref curator_store) = curator_store {
         if let Err(e) = curator_store.store(curator_copy) {
@@ -167,9 +176,16 @@ pub(crate) async fn write_turn(
     // turn gets a shared copy (curator recall sees every goal event even
     // after the ephemeral store has evaporated).
     for event in &record.goal_events {
+        // `extract_goal_events` hands us the raw MCP tool result, which the
+        // response envelope wraps as `{"content": {...}}` — the goal_id
+        // lives one level down. The top-level probe stays for results that
+        // bypass the envelope (parsed text contents), and id-less outputs
+        // (e.g. `kanban_goal_list`) deliberately land under the `list`
+        // entity so list-shaped events still file somewhere stable.
         let goal_id = event
             .output
             .get("goal_id")
+            .or_else(|| event.output.pointer("/content/goal_id"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("list");
         let goal_ontology = HMemOntology {
@@ -195,7 +211,8 @@ pub(crate) async fn write_turn(
             )
             .with_perspective(ctx.curator_webid)
             .with_visibility(Visibility::Private)
-            .with_ontology(goal_ontology.clone());
+            .with_ontology(goal_ontology.clone())
+            .with_confidence(Confidence::new(0.5));
             if let Some(ref curator_store) = curator_store {
                 if let Err(e) = curator_store.store(curator_goal) {
                     tracing::warn!(
@@ -215,7 +232,8 @@ pub(crate) async fn write_turn(
             ctx.curator_webid,
         )
         .with_visibility(Visibility::Shared)
-        .with_ontology(goal_ontology);
+        .with_ontology(goal_ontology)
+        .with_confidence(Confidence::new(0.5));
         if let Some(ref curator_store) = curator_store {
             if let Err(e) = curator_store.store(shared_goal) {
                 tracing::warn!(

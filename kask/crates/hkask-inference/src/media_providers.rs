@@ -97,10 +97,7 @@ impl DeepInfraMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "DeepInfra {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("DeepInfra", status, &text));
         }
         serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("DeepInfra JSON parse: {e}")))
@@ -126,10 +123,7 @@ impl DeepInfraMediaProvider {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(InferenceError::Connection(format!(
-                "DeepInfra inference {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("DeepInfra inference", status, &text));
         }
         resp.bytes().await.map_err(|e| {
             InferenceError::Connection(format!("DeepInfra inference read failed: {e}"))
@@ -294,10 +288,7 @@ impl DeepInfraMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "DeepInfra STT {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("DeepInfra STT", status, &text));
         }
         serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("DeepInfra STT parse: {e}")))
@@ -570,10 +561,7 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter image gen {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("OpenRouter image gen", status, &text));
         }
 
         let json: Value = serde_json::from_str(&text)
@@ -636,10 +624,7 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter STT {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("OpenRouter STT", status, &text));
         }
 
         serde_json::from_str(&text)
@@ -682,10 +667,7 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter audio chat {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error("OpenRouter audio chat", status, &text));
         }
 
         let json: Value = serde_json::from_str(&text)
@@ -729,10 +711,11 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter structured chat {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error(
+                "OpenRouter structured chat",
+                status,
+                &text,
+            ));
         }
 
         let json: Value = serde_json::from_str(&text)
@@ -781,10 +764,11 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter video submit {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error(
+                "OpenRouter video submit",
+                status,
+                &text,
+            ));
         }
 
         let json: Value = serde_json::from_str(&text)
@@ -834,10 +818,11 @@ impl OpenRouterMediaProvider {
             .await
             .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
         if !status.is_success() {
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter video submit {status}: {}",
-                sanitize_error_body(&text)
-            )));
+            return Err(provider_http_error(
+                "OpenRouter video submit",
+                status,
+                &text,
+            ));
         }
 
         let json: Value = serde_json::from_str(&text)
@@ -867,10 +852,7 @@ impl OpenRouterMediaProvider {
             let status = resp.status();
             if !status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                return Err(InferenceError::Connection(format!(
-                    "OpenRouter video poll {status}: {}",
-                    sanitize_error_body(&text)
-                )));
+                return Err(provider_http_error("OpenRouter video poll", status, &text));
             }
 
             let json: Value = resp
@@ -1150,6 +1132,44 @@ fn detect_audio_format(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the 401/403 → Auth classification: a rejected credential is an
+    /// authorization failure (the key is present but the provider refused
+    /// it — the 2026-08-31 DeepInfra split-brain 401), which downstream MCP
+    /// servers surface as `permission_denied`. Other statuses stay
+    /// connection errors.
+    #[test]
+    fn provider_http_error_classifies_auth_statuses() {
+        assert!(matches!(
+            provider_http_error(
+                "DeepInfra",
+                reqwest::StatusCode::UNAUTHORIZED,
+                "{\"detail\":\"User is not authorized\"}"
+            ),
+            InferenceError::Auth(_)
+        ));
+        assert!(matches!(
+            provider_http_error(
+                "OpenRouter image gen",
+                reqwest::StatusCode::FORBIDDEN,
+                "forbidden"
+            ),
+            InferenceError::Auth(_)
+        ));
+        // Transient/server errors stay connection errors.
+        assert!(matches!(
+            provider_http_error("DeepInfra", reqwest::StatusCode::BAD_REQUEST, "bad model"),
+            InferenceError::Connection(_)
+        ));
+        assert!(matches!(
+            provider_http_error(
+                "OpenRouter video poll",
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                "rate limited"
+            ),
+            InferenceError::Connection(_)
+        ));
+    }
 
     #[test]
     fn strip_prefix_removes_provider() {

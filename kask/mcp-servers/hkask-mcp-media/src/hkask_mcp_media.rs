@@ -68,7 +68,8 @@ use video::YtDlpRunner;
 /// process-global and parallel test threads race on it (each test's
 /// tempdir must stay alive until its own assertions finish).
 #[cfg(test)]
-pub(crate) static ARTIFACTS_ENV_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static ARTIFACTS_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 // ── Model configuration ───────────────────────────────────────────────
 
@@ -1068,9 +1069,9 @@ mod tool_behavior_tests {
         // Serialize with every other test that mutates HKASK_ARTIFACTS_DIR —
         // the env var is process-global and parallel test threads race on
         // it.
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK
-            .lock()
-            .expect("artifacts env lock poisoned");
+        // tokio Mutex — the guard is held across await points (the persist
+        // calls are async); a std guard across an await is a clippy error.
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
         // Isolate the artifacts dir so the test never writes into the real
         // ~/Documents/zk-data tree. Save/restore per the kask env-test
@@ -1124,9 +1125,7 @@ mod tool_behavior_tests {
     /// 262144-token context limit on the following turn.
     #[tokio::test]
     async fn persist_and_slim_result_strips_payload_and_returns_paths() {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK
-            .lock()
-            .expect("artifacts env lock poisoned");
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
@@ -1234,9 +1233,7 @@ mod tool_behavior_tests {
     /// here makes both failure modes structural non-options.
     #[tokio::test]
     async fn persist_slim_and_enrich_composes_path_and_display_hint() {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK
-            .lock()
-            .expect("artifacts env lock poisoned");
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };

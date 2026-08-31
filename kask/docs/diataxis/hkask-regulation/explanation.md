@@ -144,20 +144,20 @@ actions are converted to `Escalate` alerts routed to the Curator/human.
 Actions that would have been direct efferent signals (`Throttle`,
 `CircuitBreak`, `AdjustEnergyBudget`, etc.) carry an `efferent_action`
 field in the alert data so the Curator sees what the loop would have done
-— but the actuator is not wired (`cycle.rs:507-510` logs "efferent not
+— but the actuator is not wired (`cycle.rs:531-538`) logs "efferent not
 wired").
 
 This preserves user sovereignty: the human decides whether to apply the
 recommended action. The loop senses, compares, computes, and recommends;
 it does not act unilaterally. The only autonomous action is
-`reset_all_caps()` (`cybernetics_loop.rs:673`) at the start of each tick's
-act phase (`cycle.rs:349`), which resets every agent's call cap to its
+`reset_all_caps()` (`cybernetics_loop.rs:689`) at the start of each tick's
+act phase (`cycle.rs:409`), which resets every agent's call cap to its
 ceiling — this is a bookkeeping operation, not a regulatory intervention.
 
-`Notify` actions are skipped entirely (`cycle.rs:490-498`) — they are
+`Notify` actions are skipped entirely (`cycle.rs:513-521`) — they are
 observational ("no action required, positive signal"). Converting them to
-Critical alerts would be a variety inversion: a positive signal (seam
-coverage improved) would generate a critical alert, polluting the
+Critical alerts would be a variety inversion: a positive signal (e.g., a
+storage-usage observation) would generate a critical alert, polluting the
 escalation queue with non-actionable noise.
 
 ## The two-level meta-loop
@@ -192,7 +192,7 @@ checks (`dampener.rs:181`).
 the regulator converging to a wrong attractor. When the same (metric,
 action) pair is rejected for `substitution_after` cycles (default 2),
 `try_substitute` (`cycle.rs:31`) walks the substitution ladder
-(`regulation_policy.rs:567`) to find an untried alternative. When it hits
+(`regulation_policy.rs:589`) to find an untried alternative. When it hits
 the per-metric stagnation threshold (default 5), a regulatory-plateau
 alert fires — the regulator's model has converged to a wrong attractor,
 which is a Conant-Ashby violation.
@@ -202,7 +202,7 @@ which is a Conant-Ashby violation.
 The per-agent call cap (`energy.rs`) is the honest replacement for a
 gas hold-settle ritual. One unit = one governed tool invocation. Each
 agent has a hard ceiling per regulation tick; the cap resets to the
-ceiling each tick via `reset_all_caps()` (`cybernetics_loop.rs:673`).
+ceiling each tick via `reset_all_caps()` (`cybernetics_loop.rs:689`).
 
 `CallCapManager::charge_metered` (`energy.rs:176`) is the tool-dispatch
 path's entry point. An unregistered agent is auto-registered at

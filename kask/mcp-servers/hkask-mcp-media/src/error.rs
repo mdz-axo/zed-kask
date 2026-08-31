@@ -177,13 +177,19 @@ fn is_credential_missing_error(message: &str) -> bool {
 /// `InferenceError::NotConfigured` variant, emitted by `hkask-inference` when
 /// an API key env var is unset or no provider is registered for the op) maps
 /// to `permission_denied` (matching the canonical `hkask-mcp-swarm` pattern
-/// for `"no API key configured"`); every other failure (transient outage,
-/// model error, JSON parse, circuit open) stays `unavailable`. The full
-/// error message is preserved so the operator can diagnose.
+/// for `"no API key configured"`); so does a rejected credential (the typed
+/// `InferenceError::Auth` variant — HTTP 401/403 from a provider: the key is
+/// present but invalid, expired, or unauthorized for the resource, which is
+/// an authorization failure to fix, not a transient outage to retry).
+/// Every other failure (transient outage, model error, JSON parse, circuit
+/// open) stays `unavailable`. The full error message is preserved so the
+/// operator can diagnose.
 pub fn classify_inference_error(prefix: &str, error: InferenceError) -> McpToolError {
     let message = format!("{}: {}", prefix, error);
     match error {
-        InferenceError::NotConfigured(_) => McpToolError::permission_denied(message),
+        InferenceError::NotConfigured(_) | InferenceError::Auth(_) => {
+            McpToolError::permission_denied(message)
+        }
         _ => McpToolError::unavailable(message),
     }
 }
@@ -199,5 +205,42 @@ pub fn classify_embedding_error(prefix: &str, error: EmbeddingGenerationError) -
         McpToolError::permission_denied(message)
     } else {
         McpToolError::unavailable(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_types::McpErrorKind;
+
+    /// Pins the authorization-failure classification: a rejected credential
+    /// (typed `InferenceError::Auth` — HTTP 401/403 from a provider) surfaces
+    /// as `permission_denied`, not `unavailable`. The operator seeing
+    /// "unavailable" diagnoses a transient outage and retries; the correct
+    /// reading is "fix your API key" — the 2026-08-31 DeepInfra 401
+    /// (split-brain stale key) presented as `unavailable` and hid the fix.
+    #[test]
+    fn classify_inference_error_maps_auth_to_permission_denied() {
+        let auth = classify_inference_error(
+            "Image generation failed",
+            InferenceError::Auth(
+                "DeepInfra 401 Unauthorized: User is not authorized to access this resource"
+                    .to_string(),
+            ),
+        );
+        assert_eq!(auth.kind, McpErrorKind::PermissionDenied);
+
+        let not_configured = classify_inference_error(
+            "Image generation failed",
+            InferenceError::NotConfigured("OpenRouter API key not configured".to_string()),
+        );
+        assert_eq!(not_configured.kind, McpErrorKind::PermissionDenied);
+
+        // Transient failures stay `unavailable`.
+        let connection = classify_inference_error(
+            "Image generation failed",
+            InferenceError::Connection("all providers failed".to_string()),
+        );
+        assert_eq!(connection.kind, McpErrorKind::Unavailable);
     }
 }

@@ -205,14 +205,21 @@ inverting the D8 seam; doc comment at `hkask_inference.rs:337-340`).
 ### Step 7: Add an `INFERENCE_PROVIDERS` descriptor
 
 Add an `InferenceProviderDescriptor`
-(`kask/crates/kask_bridge/src/inference_providers.rs:30`) to the
-`INFERENCE_PROVIDERS` static (`:55`) with the provider `id`, `api_url`,
-`env_var`, `credential_key`, `dashboard_url`, and `inject_for_mcp`. This
-drives credential-URL injection for MCP launches
-(`credential_urls_for_mcp`, `:344`) and the settings UI's data-services
-page (`crates/settings_ui/src/pages/kask_page/data_services.rs`). Note:
-there is no per-provider `*_enabled` settings toggle — the key's presence
-in the keychain is the toggle.
+(`kask/crates/kask_bridge/src/inference_providers.rs:33`) to the
+`INFERENCE_PROVIDERS` static (`:58`) with the provider `id`, `name`,
+`api_url`, `env_var`, `credential_key`, and `dashboard_url`. The
+descriptor's `api_url` is the ONE keychain slot the provider's API key
+lives at — the same slot zed's `ApiKeyState` reads and Settings → AI →
+LLM Providers writes. It drives MCP credential-URL injection
+(`credential_urls_for_mcp`, `:330`, which emits the `api_url` slot) and
+every `credential_url_for_key` consumer (the embedding port's
+`resolve_embedding_credentials`, the IPC batch/rerank credential reads).
+The Data Services settings UI renders `DATA_SERVICES` rows, not
+inference providers — add a `DATA_SERVICES` row only if the provider
+needs a settings-UI entry (RunPod is the sole case; its row resolves to
+the descriptor's `api_url` slot). Note: there is no per-provider
+`*_enabled` settings toggle — the key's presence in the keychain is the
+toggle.
 
 ### Step 8: Add tests
 

@@ -169,8 +169,8 @@ impl Default for InferenceConfig {
 impl InferenceConfig {
     /// Resolve from environment variables only (no keychain fallback).
     ///
-    /// API keys are injected as env vars by `build_mcp_server_env` (which reads
-    /// from zed's `CredentialsProvider` keychain under `kask://credentials/<key>`).
+    /// API keys are injected as env vars by `build_mcp_server_env`, which reads
+    /// each provider's key from its `api_url` keychain slot (the slot `ApiKeyState` reads).
     ///
     /// expect: "The system resolves inference configuration from the environment"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — inference configuration resolved from environment
@@ -197,24 +197,23 @@ impl InferenceConfig {
 
 // ── Private resolution helpers ──────────────────────────────────────────────
 
-/// Parse an `f64` from an environment variable, falling back to `default` on
-/// absence or parse failure. Used for tunable thresholds (price caps, etc.).
 /// Resolve a provider API key from the process environment.
 ///
 /// In zed-kask, inference API keys are injected into MCP server child
 /// processes as environment variables by the parent zed process (via
-/// `kask_bridge::build_mcp_server_env`, which reads from zed's
-/// `CredentialsProvider` keychain under `kask://credentials/<key>`).
-/// Standalone MCP servers set the same env vars in their shell.
+/// `kask_bridge::build_mcp_server_env`, which reads each provider's key
+/// from its `api_url` keychain slot — the same slot zed's `ApiKeyState`
+/// reads and Settings → AI → LLM Providers writes). Standalone MCP servers
+/// set the same env vars in their shell.
 ///
 /// This function reads **only** the environment variable. It does **not**
 /// fall back to the `hkask` keychain namespace — that namespace is reserved
 /// for sovereignty keys (db_passphrase) per the
 /// `hkask_keystore` module contract. Reading inference keys from the `hkask`
-/// namespace was a spec violation: the settings UI writes to zed's
-/// `CredentialsProvider` (`kask://credentials/<key>`), not the `hkask`
-/// keyring, so the fallback read a namespace that was always empty in
-/// zed-kask, producing silent "API key not configured" errors.
+/// namespace was a spec violation: the key lives at the provider's
+/// `api_url` keychain slot, never in the `hkask` keyring, so the fallback
+/// read a namespace that was always empty in zed-kask, producing silent
+/// "API key not configured" errors.
 ///
 /// Returns an empty string if the env var is unset or empty — the backend
 /// will be unavailable.

@@ -1254,10 +1254,15 @@ pub(crate) mod tests {
             agent_id: Some("zed".to_string()),
             goal_events: vec![hkask_types::GoalEvent {
                 tool_name: "kanban_goal_create".to_string(),
+                // The real shape: `extract_goal_events` captures the raw MCP
+                // tool result, wrapped by the response envelope as
+                // `{"content": {...}}` — the goal_id lives one level down.
                 output: serde_json::json!({
-                    "goal_id": "g-123",
-                    "goal_text": "The user can filter by date",
-                    "prediction": 0.8
+                    "content": {
+                        "goal_id": "g-123",
+                        "goal_text": "The user can filter by date",
+                        "prediction": 0.8
+                    }
                 }),
             }],
         };
@@ -1276,7 +1281,10 @@ pub(crate) mod tests {
         assert_eq!(shared.len(), 1, "one shared goal h_mem");
         assert_eq!(shared[0].attribute, "kanban_goal_create");
         assert_eq!(
-            shared[0].value.get("goal_text").and_then(|v| v.as_str()),
+            shared[0]
+                .value
+                .pointer("/content/goal_text")
+                .and_then(|v| v.as_str()),
             Some("The user can filter by date")
         );
 
@@ -1308,14 +1316,16 @@ pub(crate) mod tests {
                 hkask_types::GoalEvent {
                     tool_name: "kanban_goal_score".to_string(),
                     output: serde_json::json!({
-                        "goal_id": "g-456",
-                        "achieved": true,
-                        "brier": 0.04
+                        "content": {
+                            "goal_id": "g-456",
+                            "achieved": true,
+                            "brier": 0.04
+                        }
                     }),
                 },
                 hkask_types::GoalEvent {
                     tool_name: "kanban_goal_list".to_string(),
-                    output: serde_json::json!({"goals": []}),
+                    output: serde_json::json!({"content": {"goals": []}}),
                 },
             ],
         };
@@ -1332,7 +1342,10 @@ pub(crate) mod tests {
         assert_eq!(perspective.len(), 1, "curator-perspective goal h_mem");
         assert_eq!(perspective[0].attribute, "kanban_goal_score");
         assert_eq!(
-            perspective[0].value.get("brier").and_then(|v| v.as_f64()),
+            perspective[0]
+                .value
+                .pointer("/content/brier")
+                .and_then(|v| v.as_f64()),
             Some(0.04)
         );
 
@@ -1346,6 +1359,104 @@ pub(crate) mod tests {
             .query_deduped_untouched("curator:goal:list")
             .expect("query should succeed");
         assert_eq!(shared_list.len(), 1, "goal_list event uses the list entity");
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_goal_event_top_level_goal_id_still_resolves() {
+        // The envelope-wrapped shape (`{"content": {...}}`) is what real MCP
+        // tool results carry; the top-level probe exists for results that
+        // bypass the envelope (parsed text contents). This pins the
+        // `or_else` order so neither branch is "fixed" away later.
+        let port = in_memory_port();
+        let curator_webid = port.curator_webid;
+        let record = TurnRecord {
+            thread_id: "top-level-thread".to_string(),
+            user_input: "score the goal".to_string(),
+            agent_response: "scored".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "goal_id": "g-789",
+                    "achieved": true
+                }),
+            }],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+
+        let perspective = curator_store
+            .query_for_deduped_untouched("goal:g-789", curator_webid)
+            .expect("query should succeed");
+        assert_eq!(perspective.len(), 1, "top-level goal_id must resolve too");
+        let shared = curator_store
+            .query_deduped_untouched("curator:goal:g-789")
+            .expect("query should succeed");
+        assert_eq!(shared.len(), 1, "shared copy under the same goal entity");
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_writes_h_mems_at_confidence_floor() {
+        // Turn dumps and goal events enter at the 0.5 floor — the same floor
+        // `memory_insert` starts distilled memories at — so recall ranking
+        // can discriminate and the consolidation floor is reachable. The
+        // `HMem::new` default of 1.0 starved both consumers of confidence.
+        let port = in_memory_port();
+        let curator_webid = port.curator_webid;
+        let record = TurnRecord {
+            thread_id: "confidence-floor-thread".to_string(),
+            user_input: "check the write confidence".to_string(),
+            agent_response: "written at 0.5".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-floor",
+                        "goal_text": "floor",
+                        "prediction": 0.5
+                    }
+                }),
+            }],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+
+        let assert_floor = |h_mems: &[hkask_storage::HMem], label: &str| {
+            assert!(!h_mems.is_empty(), "{label} must have been written");
+            for h_mem in h_mems {
+                assert!(
+                    (h_mem.confidence.value() - 0.5).abs() < 1e-9,
+                    "{label} must carry the 0.5 floor"
+                );
+            }
+        };
+        let perspective_turn = curator_store
+            .query_for_deduped_untouched("chat:thread:confidence-floor-thread", curator_webid)
+            .expect("query should succeed");
+        assert_floor(&perspective_turn, "curator-perspective turn h_mem");
+        let shared_turn = curator_store
+            .query_deduped_untouched("curator:thread:confidence-floor-thread")
+            .expect("query should succeed");
+        assert_floor(&shared_turn, "shared turn copy");
+        let perspective_goal = curator_store
+            .query_for_deduped_untouched("goal:g-floor", curator_webid)
+            .expect("query should succeed");
+        assert_floor(&perspective_goal, "curator-perspective goal h_mem");
+        let shared_goal = curator_store
+            .query_deduped_untouched("curator:goal:g-floor")
+            .expect("query should succeed");
+        assert_floor(&shared_goal, "shared goal copy");
     }
 
     #[tokio::test]
