@@ -41,6 +41,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 1. Step 1 calls two curator MCP tools directly (no template): `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
 2. `curator_status` is an agent tool, not an MCP tool — the skill cannot batch-call it from `mcp_batch`. However, the skill body instructs the agent to call `curator_status` separately (outside the batch) to retrieve the `loop_reading` field, which reports the trust/absence assembly verdict (wiring-closed / turning / broken / unobserved). This reading is critical context for triage: a `wiring-closed` reading means the regulation loop has never ticked — alerts may be stale or missing, and the operator should investigate the loop wiring before acting on individual alerts.
 3. Results are keyed by `escalations` and `algedonic` in the result of step 1. The `curator_status` result (called separately) provides `loop_reading`.
+4. The algedonic log's `reg.outcome.loop_quality` events carry `heartbeat: true` on the hourly idle emission (tick 1, then every 360 ticks). Absence of a heartbeat for more than two hourly intervals is a structural concern — a dead ticker and a converged loop are otherwise indistinguishable (both produce silence). Flag it in the briefing alongside the `loop_reading`.
 
 ### TRIAGE — Synthesize triage briefing (step 2)
 

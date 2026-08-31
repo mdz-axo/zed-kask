@@ -1781,4 +1781,147 @@ mod tests {
             );
         });
     }
+
+    /// Capturing RegulationSink — records every persisted span's path and
+    /// observation so the tick-emission policy can be asserted without a
+    /// durable archive.
+    struct CapturingSink(Mutex<Vec<(String, serde_json::Value)>>);
+
+    impl hkask_types::RegulationSink for CapturingSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((event.span.path.clone(), event.observation.clone()));
+            Ok(())
+        }
+    }
+
+    /// Idle cycles emit exactly one heartbeat span per hour (tick 1, then
+    /// every 360 ticks) carrying the all-zero payload plus `heartbeat: true`
+    /// and `tick_count`. Without it, a converged loop and a dead ticker are
+    /// indistinguishable — both produce archive silence.
+    #[test]
+    fn idle_loop_emits_hourly_heartbeat_span() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
+                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>)
+                .with_inference_health_source(Arc::new(StubHealthSource));
+
+            // 361 ticks: heartbeat at tick 1, silence through tick 359,
+            // heartbeat at tick 360, tick 361 silent again.
+            for _ in 0..361 {
+                regulation_loop.tick().await;
+            }
+
+            let spans = sink.0.lock().unwrap_or_else(|e| e.into_inner());
+            assert_eq!(
+                spans.len(),
+                2,
+                "361 idle ticks must emit exactly 2 spans (tick 1 + tick 360)"
+            );
+            for (index, (path, observation)) in spans.iter().enumerate() {
+                assert_eq!(path, "reg.outcome.loop_quality");
+                assert_eq!(
+                    observation.get("heartbeat"),
+                    Some(&serde_json::json!(true)),
+                    "idle span {index} must be a heartbeat"
+                );
+                assert_eq!(
+                    observation.get("deviations").and_then(|v| v.as_u64()),
+                    Some(0),
+                    "the zeros are the health reading"
+                );
+                assert_eq!(observation.get("actions").and_then(|v| v.as_u64()), Some(0));
+                assert_eq!(
+                    observation.get("impact_reports").and_then(|v| v.as_u64()),
+                    Some(0)
+                );
+            }
+            assert_eq!(
+                spans[0].1.get("tick_count").and_then(|v| v.as_u64()),
+                Some(1),
+                "first heartbeat is the boot announcement"
+            );
+            assert_eq!(
+                spans[1].1.get("tick_count").and_then(|v| v.as_u64()),
+                Some(360),
+                "second heartbeat lands on the hourly boundary"
+            );
+        });
+    }
+
+    /// Signal-bearing cycles emit the normal telemetry span WITHOUT the
+    /// heartbeat discriminator — the flag must never leak into real signal
+    /// events, or triage would read a live deviation as an idle heartbeat.
+    /// Ticks 1-3 sit inside the model-wiring grace window (idle; tick 1 is
+    /// the boot heartbeat); ticks 4-5 sense the unwired-model deviation.
+    #[test]
+    fn signal_ticks_emit_telemetry_without_heartbeat_flag() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+            // No inference health source: after the 3-tick grace the loop
+            // senses the model-unavailable deviation on every tick.
+            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
+                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+
+            for _ in 0..5 {
+                regulation_loop.tick().await;
+            }
+
+            let spans = sink.0.lock().unwrap_or_else(|e| e.into_inner());
+            let heartbeats: Vec<&serde_json::Value> = spans
+                .iter()
+                .filter(|(path, observation)| {
+                    path == "reg.outcome.loop_quality" && observation.get("heartbeat").is_some()
+                })
+                .map(|(_, observation)| observation)
+                .collect();
+            let signal_telemetry: Vec<&serde_json::Value> = spans
+                .iter()
+                .filter(|(path, observation)| {
+                    path == "reg.outcome.loop_quality" && observation.get("heartbeat").is_none()
+                })
+                .map(|(_, observation)| observation)
+                .collect();
+            assert_eq!(
+                heartbeats.len(),
+                1,
+                "tick 1 is the boot heartbeat; ticks 2-3 are silent (grace, idle)"
+            );
+            assert_eq!(
+                heartbeats[0].get("tick_count").and_then(|v| v.as_u64()),
+                Some(1)
+            );
+            assert!(
+                !signal_telemetry.is_empty(),
+                "post-grace ticks must emit signal telemetry"
+            );
+            assert_eq!(
+                signal_telemetry[0]
+                    .get("deviations")
+                    .and_then(|v| v.as_u64()),
+                Some(1),
+                "tick 4 (first post-grace tick) senses exactly the model deviation"
+            );
+            assert!(
+                signal_telemetry.iter().all(|observation| {
+                    observation
+                        .get("deviations")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                        >= 1
+                }),
+                "signal telemetry carries deviations, never the heartbeat flag"
+            );
+        });
+    }
 }

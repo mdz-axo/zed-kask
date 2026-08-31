@@ -112,7 +112,7 @@ not the `reg.regulation.*` strings their doc comments claim:
 | `ActionSubstituted` | `reg.outcome.action_substituted` | Action substituted after repeated ineffectiveness |
 | `ActionBlocked` | `reg.outcome.action_blocked` | Action blocked (severe counterproductivity) |
 | `RegulatoryPlateauDetected` | `reg.outcome.plateau_detected` | Regulatory plateau — escalation triggered |
-| `LoopMetricsTelemetry` | `reg.outcome.loop_quality` | Loop-quality telemetry recorded |
+| `LoopMetricsTelemetry` | `reg.outcome.loop_quality` | Loop-quality telemetry recorded; idle cycles emit one `heartbeat: true` span per hour (tick 1, then every 360 ticks) so a converged loop is distinguishable from a dead ticker |
 
 ### 3.2 RegulationSpan — core cross-cutting spans
 

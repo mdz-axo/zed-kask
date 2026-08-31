@@ -858,29 +858,40 @@ impl CyberneticsLoop {
             "Loop-quality telemetry recorded"
         );
 
-        // Skip emitting LoopMetricsTelemetry regulation span when the cycle
-        // was empty (no deviations, no actions, no impact reports). An empty
-        // cycle is a heartbeat, not a signal — emitting it every 10s floods
-        // the regulation archive and the algedonic log with identical
-        // no-op observations that displace useful signal. The tracing::debug!
-        // above already provides heartbeat observability at debug level.
+        // Emit LoopMetricsTelemetry on signal-bearing cycles. An empty cycle
+        // (no deviations, no actions, no impact reports) is a heartbeat, not
+        // a signal — emitting it every 10s floods the regulation archive and
+        // the algedonic log with identical no-op observations that displace
+        // useful signal. But total silence makes a converged loop
+        // indistinguishable from a dead ticker, so idle cycles emit ONE
+        // heartbeat span per hour (plus the first tick, so a freshly
+        // restarted loop immediately announces liveness). The heartbeat
+        // carries the same all-zero payload plus `heartbeat: true` and
+        // `tick_count` — the zeros are the health reading, and tick_count
+        // lets a reader confirm the ticker's achieved rate.
+        const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
         let cycle_had_signal =
             !deviations.is_empty() || !actions.is_empty() || !impact_reports.is_empty();
-        if cycle_had_signal {
-            self.emit_regulation_span(
-                SpanKind::LoopMetricsTelemetry,
-                serde_json::json!({
-                    "delay_ms": quality.delay_ms,
-                    "gain": quality.gain,
-                    "fidelity_score": quality.fidelity_score,
-                    "effectiveness_score": quality.effectiveness_score,
-                    "trigger": format!("{:?}", quality.trigger),
-                    "deviations": deviations.len(),
-                    "actions": actions.len(),
-                    "impact_reports": impact_reports.len(),
-                }),
-            )
-            .await;
+        let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
+        let is_heartbeat =
+            !cycle_had_signal && (tick_number == 1 || tick_number % HEARTBEAT_INTERVAL_TICKS == 0);
+        if cycle_had_signal || is_heartbeat {
+            let mut observation = serde_json::json!({
+                "delay_ms": quality.delay_ms,
+                "gain": quality.gain,
+                "fidelity_score": quality.fidelity_score,
+                "effectiveness_score": quality.effectiveness_score,
+                "trigger": format!("{:?}", quality.trigger),
+                "deviations": deviations.len(),
+                "actions": actions.len(),
+                "impact_reports": impact_reports.len(),
+            });
+            if is_heartbeat {
+                observation["heartbeat"] = serde_json::Value::Bool(true);
+                observation["tick_count"] = serde_json::Value::from(tick_number);
+            }
+            self.emit_regulation_span(SpanKind::LoopMetricsTelemetry, observation)
+                .await;
         }
     }
 }
