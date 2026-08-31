@@ -1704,7 +1704,7 @@ mod tool_behavior_tests {
         // render path uses; the test proves the full loop (EDL → clip plan
         // → stream-copy render) against real media.
         let wav = std::env::temp_dir().join("hkask_educt_render_test.wav");
-        let status = std::process::Command::new("ffmpeg")
+        let status = tokio::process::Command::new("ffmpeg")
             .args([
                 "-y",
                 "-f",
@@ -1718,6 +1718,7 @@ mod tool_behavior_tests {
             ])
             .arg(&wav)
             .output()
+            .await
             .expect("ffmpeg runs");
         assert!(status.status.success(), "ffmpeg must generate the test WAV");
         let wav_path = wav.display().to_string();

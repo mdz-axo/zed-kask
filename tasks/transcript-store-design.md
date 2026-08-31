@@ -175,7 +175,7 @@ measured failure rate; the validation gate stays either way.
 | 2 — transcript persistence (SQLite tables + JOIN round-trips) | **landed 2026-08-30** (`src/transcript_layers.rs`, `src/transcript_store.rs`, six `educt_*` tools in `src/tools/educt.rs`; tool surface 68 → 74; 145 crate tests green) |
 | 3 — paragraph pass (first LLM layer; measures v1 failure rate) | **landed 2026-08-30** (`src/transcript_pass.rs` + `educt_paragraph_pass` tool; tool surface 74 → 75; the attempts/rejections counters ride every pass response — the v1 rate accumulates in live use, and the v2 spike decision reads it) |
 | 4 — speaker + correction passes | **landed 2026-08-30, extended same day** (`educt_speaker_pass` with `source: "audio"` (default) \| `"text"`, `educt_correction_pass`, `educt_apply_corrections`; tool surface 75 → 78. The audio source routes through `MediaOp::ChatAudio` — child-local provider keys, OpenAI `input_audio` content parts on `/v1/chat/completions` — NOT an `InferencePort` trait method; provenance's `prompt_template` distinguishes the source, per decision 7) |
-| 5 — semantic selection → EDL → render | planned |
+| 5 — semantic selection → EDL → render | **landed 2026-08-30** (`educt_highlight_pass` — the semantic selection; `educt_edl_from_highlights` — deterministic union-merged composition; `educt_render_edl` — the slice-1 algebra driving ffmpeg stream-copy renders, audio and video paths; tool surface 78 → 81. The closing loop: "find where he explains X and cut it to a clip" works end to end, proven against real media by a live-render test) |
 | 6 — v2 spike (conditional) | deferred |
 | 7 — exports + corpus search wiring | planned |
 | 8 — redaction (hardest local gap) | planned, last |

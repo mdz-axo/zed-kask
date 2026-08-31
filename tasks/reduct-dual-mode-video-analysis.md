@@ -239,6 +239,11 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
    `HighlightLayer` entries → `EdlLayer` → deterministic clip plan →
    existing `video_clip`/`video_concat`. Closes the agent-as-selection-
    engine loop (reference doc improvement target 2).
+   **Landed 2026-08-30** — `educt_highlight_pass` (the semantic selection),
+   `educt_edl_from_highlights` (deterministic composition; overlapping
+   selections union-merge via `union_ranges`), and `educt_render_edl`
+   (the slice-1 algebra → ffmpeg stream-copy render, audio and video
+   paths; proven against real media). Tool surface 78 → 81.
 6. *(Optional)* v2 structured-outputs spike, only if slice 3's measured
    failure rate warrants it.
 7. **Exports** (SRT from `TimedWord`, CSV highlights) and **repository

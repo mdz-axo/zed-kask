@@ -8,9 +8,7 @@
 //! is the media server's own SQLite (design doc §1.4).
 
 use crate::transcript::TranscriptBundle;
-use crate::transcript_layers::{
-    EdlLayer, HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
-};
+use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};
 use crate::transcript_pass::{self, PassError};
 use crate::transcript_select::{Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan, union_ranges};
 use crate::transcript_store::{self, TranscriptFilter, TranscriptStoreError};
@@ -21,7 +19,6 @@ use crate::types::{
     EductRenderEdlRequest, EductSpeakerPassRequest, EductStoreLayerRequest,
     EductStoreTranscriptRequest,
 };
-use crate::*;
 use crate::*;
 
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket

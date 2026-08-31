@@ -49,10 +49,30 @@ impl FfmpegRunner {
                 .unwrap_or(false)
         };
 
-        let temp_dir = std::env::temp_dir().join("hkask-media");
+        // Per-runner subdirectory — concurrent runners (parallel tests,
+        // multiple live servers) must not share output paths: a shared dir
+        // made this cleanup and the Drop removal racy against live renders
+        // in other runners (a sibling's detect()/Drop could delete the
+        // output directory mid-render, failing ffmpeg with a missing
+        // parent directory).
+        let root = std::env::temp_dir().join("hkask-media");
+        let temp_dir = root.join(uuid::Uuid::new_v4().to_string());
 
-        // Clean up leftover temp files from previous crashed sessions
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        // Clean up leftovers from crashed sessions only — sibling
+        // directories not modified in the last day. Never wipe the root:
+        // live runners keep their subdirectories there.
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            let stale_before = std::time::SystemTime::now()
+                .checked_sub(std::time::Duration::from_secs(86_400))
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            for entry in entries.flatten() {
+                if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+                    if modified < stale_before {
+                        let _ = std::fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
 
         if available {
             tracing::info!(target: "hkask.mcp.media.ffmpeg", "ffmpeg detected");
