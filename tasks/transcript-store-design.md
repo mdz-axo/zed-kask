@@ -215,7 +215,7 @@ over real volume. The gate is the design's non-negotiable either way.
 | 5 — semantic selection → EDL → render | **landed 2026-08-30** (`educt_highlight_pass` — the semantic selection; `educt_edl_from_highlights` — deterministic union-merged composition; `educt_render_edl` — the slice-1 algebra driving ffmpeg stream-copy renders, audio and video paths; tool surface 78 → 81. The closing loop: "find where he explains X and cut it to a clip" works end to end, proven against real media by a live-render test) |
 | 6 — v2 spike (conditional) | **landed 2026-08-31 as the opt-in instrument** (`MediaOp::ChatJson` + `strict_schema` normalization + `structured` param on the four text-pass tools, default off; the `structured` stats sub-object is the A/B measurement. Adoption — flipping the default — remains gated on the accumulated A/B over real volume) |
 | 7 — exports + corpus search wiring | **landed 2026-08-31** (`educt_export` with formats `srt` / `highlights_csv` / `corpus_text`; `src/transcript_export.rs` — SRT cues from `TimedWord` split at sentence punctuation, CSV rows with algebra-mapped time ranges, and the rendered-transcript export that corpus hits map back through via `text_to_word_ranges`; tool surface 81 → 82. The corpus composition is agent-driven per decision 8: media owns the artifacts, corpus owns the index) |
-| 8 — redaction (hardest local gap) | planned, last |
+| 8 — redaction (hardest local gap) | **dropped 2026-08-31 by product decision** — redaction is cloud-only (escalated to Reduct per the mode-selection seam); no local time-varying face blur will be built. The local slice plan is complete at seven slices |
 
 ## 6. Inference input-modality matrix (verified 2026-08-30)
 

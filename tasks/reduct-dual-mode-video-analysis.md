@@ -187,13 +187,13 @@ from the known `GET /api/v3/project`.
    insufficient.
 7. **Exports** — SRT/Word/CSV are trivial projections of `TranscriptBundle`
    and a highlights store; absent today.
-8. **Video redaction** (from the companion scaffold) — face *detection*
-   exists (`gallery_analyze`, `src/faces.rs`) and image *inpainting* exists
-   (`image_edit_region`), but there is no time-varying face blur/pixelate
-   in video. ffmpeg filter chains (boxblur/delogo with tracked regions)
-   over detected face boxes would be the local approximation of Reduct's
-   redaction — the hardest local gap; until closed, redaction is a
-   cloud-escalation operation.
+8. **Video redaction** — **dropped from the local mode by product
+   decision (2026-08-31, decision 11)**: redaction is a cloud-only
+   capability, escalated to Reduct per the mode-selection seam. The local
+   detection primitives remain (face detection via `gallery_analyze` /
+   `src/faces.rs`, image inpainting via `image_edit_region`) for their own
+   purposes, but no local time-varying face blur will be built — it is not
+   a local goal.
 
 *Honesty note* (from the companion scaffold): "local" means **no Reduct
 dependency**, not *no network* — STT/vision ride cloud-defaulted inference
@@ -265,8 +265,12 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
    ranges via `text_to_word_ranges`, closing the cross-recording loop:
    search finds the passage, the algebra turns it into a media range).
    Tool surface 81 → 82.
-8. **Redaction** (gap 8, hardest): time-varying face blur from existing
-   face detection + ffmpeg filter chains; until then, cloud escalation.
+8. **Redaction** — **dropped from the local mode by product decision
+   (2026-08-31, decision 11)**: redaction is cloud-only, escalated to
+   Reduct (which is where its differentiators live — human transcription,
+   multicam, redaction). The local slice plan is **complete at seven
+   slices** — the Educt loop (store → passes → selection → EDL → render →
+   export/search) is feature-complete per this scaffold.
 
 ### The gap-1 design: word-index anchoring (incorporated from the continuation prompt)
 
@@ -371,8 +375,8 @@ scaffold's mode-seam section, consent mechanics simplified per decision 2):
 1. **Default local, escalate explicitly.** Educt serves every operation it
    can (privacy default, zero marginal cost). Cloud is chosen per
    operation, not per session — the differentiators (human transcription,
-   redaction, multicam, 90+ languages at scale, a team's shared library)
-   are occasional and priced.
+   redaction (cloud-only by decision 11), multicam, 90+ languages at
+   scale, a team's shared library) are occasional and priced.
 2. **One resolution function at the media-server boundary**, not a
    heuristic scattered across tools:
    - Operation in the local capability set → local.
@@ -454,12 +458,21 @@ allowlist.
     as a timeboxed spike if measured failure rates warrant (verified
     absent in `kask/` today).
 
+11. **Redaction is cloud-only** (2026-08-31, the product manager's call):
+   the local-mode redaction requirement is dropped — no local time-varying
+   face blur will be built. Redaction escalates to Reduct per the
+   mode-selection seam, joining human transcription and multicam as the
+   cloud differentiators. The local slice plan is complete at seven
+   slices; the remaining dual-mode work is the cloud track (the Reduct
+   seam: client, tools, probe suite — account access confirmed).
+
 **Open items** — the companion scaffold's
 questions that resolve by probe or benchmark: API billing beyond the
 subscription (its Q2), direct upload vs import-by-URL (Q3), offline STT
-speed benchmark (Q4), local redaction feasibility (Q6), enterprise-tier
-distinctness (Q8). Its Q1 (endpoint catalog) resolves via the probe suite;
-Q5 (speaker) and Q7 (store) are decided above.
+speed benchmark (Q4), enterprise-tier distinctness (Q8). Its Q1
+(endpoint catalog) resolves via the probe suite; Q5 (speaker) and Q7
+(store) are decided above; Q6 (local redaction feasibility) is closed by
+this decision — not applicable, dropped from local.
 
 ## Sources
 
