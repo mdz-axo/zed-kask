@@ -2052,8 +2052,7 @@ fn main() {
                 // server launch below don't need the registry paths.
 
                 // Sync model-dependent wiring (inside cx.update).
-                cx.update(|cx| {
-                    let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+                let inference_wired = cx.update(|cx| {
                     // ── Panel + curator wiring: unconditional ─────────────────
                     //
                     // The curator is always_on by default (KaskCuratorSettings::
@@ -2101,181 +2100,35 @@ fn main() {
                         log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
                     }
 
-                    if let Some(configured) = model_registry.default_model() {
-                        let async_cx = cx.to_async();
-                        // Registry paths were resolved and seeded in the async
-                        // block above (dev repo source or seeded data_dir).
-                        // Disk is the single runtime source — no compiled-in
-                        // fallback.
-                        let inference_model: Arc<dyn language_model::LanguageModel> = {
-                            let kask_default = kask_settings.models.effective_default_model();
-                            match kask_bridge::resolve_model_names(
-                                model_registry,
-                                &[kask_default.to_string()],
-                                cx,
-                            ).0.into_values().next() {
-                                Some(model) => {
-                                    log::info!(
-                                        "hKask inference using kask.models.default_model: {}",
-                                        kask_default
-                                    );
-                                    model
-                                }
-                                None => {
-                                    log::warn!(
-                                        "kask.models.default_model '{}' could not be resolved \
-                                         from LanguageModelRegistry — falling back to zed default",
-                                        kask_default
-                                    );
-                                    configured.model.clone()
-                                }
-                            }
-                        };
+                    // ── Inference stack wiring: model-gated, retried on
+                    // registry events ──
+                    //
+                    // `wire_kask_inference_stack` returns false when the
+                    // registry has no default model yet (provider
+                    // credentials still loading at deferred-task time). The
+                    // no-op fallback below holds the socket, and the
+                    // model-resolved re-wire subscription (armed after this
+                    // update block) wires the real stack mid-session —
+                    // previously this wiring was one-shot, so a model that
+                    // resolved after startup left the no-op server in place
+                    // for the whole session.
+                    let inference_wired = wire_kask_inference_stack(
+                        &kask_settings,
+                        &cybernetics_loop_for_panel_deferred,
+                        embedding_port_for_ipc.clone(),
+                        mcp_runtime_for_deferred.clone(),
+                        kask_mcp_restart_env_for_deferred.clone(),
+                        cx,
+                    );
+                    if !inference_wired {
 
-                        let inference_timeout = std::time::Duration::from_secs(
-                            kask_settings.general.inference_timeout_secs,
-                        );
-                        // Publish the server's establishment deadline so IPC clients
-                        // (child MCP server processes) can align their read timeout
-                        // with it. Without this, the client's independent 120s read
-                        // deadline fires before the server's 300s establishment
-                        // deadline, closing the socket mid-flight; the server's
-                        // later response write then hits `BrokenPipe`, producing a
-                        // warn storm that blames the IPC layer for what was a
-                        // self-inflicted cancellation. See `INFERENCE_TIMEOUT_ENV`.
-                        kask_bridge::set_inference_timeout_secs(
-                            kask_settings.general.inference_timeout_secs,
-                        );
-                        let (inference_port, inference_task) =
-                            kask_bridge::LanguageModelInferencePort::new(
-                                inference_model.clone(),
-                                inference_timeout,
-                                kask_settings.general.max_concurrency as usize,
-                                async_cx,
-                            );
-                        inference_task.detach();
 
-                        // Wire the inference health source into the cybernetics
-                        // loop so it can sense inference saturation and timeout
-                        // storms. Without this, the loop reports `signal_count=0`
-                        // during a timeout storm — its existing sensors read
-                        // ledger/DB state, not inference dispatch state. The
-                        // `set_inference_health_source` method is used (not the
-                        // `with_*` builder) because the loop is already wrapped
-                        // in `Arc<RwLock<...>>` by the time the port exists.
-                        //
-                        // The health source is a clone of the port — the
-                        // port's health counters are `Arc`-shared, so the
-                        // sensor reads the same atomics the receiver task
-                        // updates. This mirrors the `set_event_sink` /
-                        // `set_alert_escalation_sink` pattern used elsewhere
-                        // in the deferred task.
-                        let inference_health_source: std::sync::Arc<
-                            dyn hkask_regulation::InferenceHealthSource,
-                        > = std::sync::Arc::new(inference_port.clone());
-                        {
-                            let loop_for_health = cybernetics_loop_for_panel_deferred.clone();
-                            gpui_tokio::Tokio::spawn(cx, async move {
-                                let mut loop_guard = loop_for_health.write().await;
-                                loop_guard.set_inference_health_source(inference_health_source);
-                            })
-                            .detach();
-                        }
 
-                        let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
-                            std::sync::Arc::new(inference_port);
-
-                        // Start the inference IPC server so MCP server child processes
-                        // can route inference through zed's LanguageModelRegistry (with
-                        // zed's configured API keys) instead of
-                        // constructing their own MediaRouter with separate keys.
-                        //
-                        // The governed McpRuntime backs `tool_invoke` requests
-                        // (delegated swarm agents calling MCP tools). The IPC
-                        // server mints the panel token — the child process
-                        // never holds token material.
-                        let tool_port_for_ipc: Option<
-                            std::sync::Arc<dyn hkask_tool_port::ToolPort>,
-                        > = Some(mcp_runtime_for_deferred.clone());
-                        match kask_bridge::InferenceIpcServer::start(
-                            inference_port,
-                            embedding_port_for_ipc.clone(),
-                            tool_port_for_ipc,
-                            cx,
-                        ) {
-                            Ok(ipc_server) => {
-                                let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
-                                kask_bridge::set_inference_socket_path(&socket_path);
-                                log::info!(
-                                    "hKask inference IPC server started at {socket_path} — \
-                                     MCP servers will route inference through zed"
-                                );
-                                // The server's tasks are detached inside
-                                // `start` and run for the process lifetime:
-                                // the tokio listener (detach-on-drop) and the
-                                // GPUI-side channel tasks (explicit
-                                // `.detach()` — a GPUI `Task` is CANCELLED on
-                                // handle drop, so storing the handles here
-                                // would kill the credential/list_models/
-                                // worktree channels when this closure's scope
-                                // ends). Dropping this value is therefore
-                                // harmless; the binding exists only to
-                                // acknowledge the result.
-                                let _ipc_server = ipc_server;
-                                // zed-kask: D3/D8 — F19: MCP re-sync (inference socket, deferred).
-                                // Re-sync both MCP server paths so the inference socket path is
-                                // included in the env passed to context server processes:
-                                //   1. `sync_kask_mcp_servers` — restarts the per-project
-                                //      ContextServerStore instances (agent tool picker)
-                                //   2. `sync_kask_mcp_runtime_servers` — restarts the governed
-                                //      McpRuntime instances (skill execution + kask panel)
-                                // Without (2), the governed servers keep their stale env (no
-                                // socket) and all inference calls fail with "IPC bridge not
-                                // configured" even though the socket is live.
-                                sync_kask_mcp_servers(cx);
-                                sync_kask_mcp_runtime_servers(
-                                    mcp_runtime_for_deferred.clone(),
-                                    kask_mcp_restart_env_for_deferred.clone(),
-                                    cx,
-                                );
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to start inference IPC server: {e} — \
-                                     MCP servers will fall back to MediaRouter (media-only)"
-                                );
-                            }
-                        }
-
-                        // The skill execution is wired by the separate
-                        // model-dependent task (below the deferred task
-                        // block), which fires as soon as the model registry
-                        // reports a default model — independent of the
-                        // deferred task. Previously it was wired here, inside
-                        // the deferred task, which meant users with a
-                        // configured default model but no cloud login had
-                        // skills silently disabled. The model registry is
-                        // populated from settings.json, not from cloud auth.
-                        //
-                        // The inference port is still constructed here
-                        // because the IPC server (below) needs it. The
-                        // model-dependent task constructs its own inference
-                        // port for the skill execution. This is a small
-                        // duplication (two ports), but they wrap the same
-                        // underlying model — the duplication is harmless.
-                        if kask_settings.memory.auto_inject {
-                            log::info!("hKask context injection enabled — injector will be wired after agent resolves");
-                        } else {
-                            log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
-                        }
-                    } else {
                         // No default model in the registry at this point in
-                        // the deferred task. The skill execution is wired
-                        // by the separate model-dependent task (not here),
-                        // so it's not listed among the unwired hooks. The
-                        // hooks listed here are the ones the deferred task
-                        // wires inside the `if` branch and does not wire in
-                        // the `else` branch.
+                        // the deferred task. Only the inference stack is
+                        // gated on the model — the panel invoker, condenser,
+                        // and curator wiring above are unconditional, so
+                        // they are not listed here.
                         //
                         // The inference IPC server is still started (with a
                         // `NoModelInferencePort`) so MCP server child processes
@@ -2290,19 +2143,14 @@ fn main() {
                         // The `NoModelInferencePort` returns a clear diagnostic so
                         // the failure mode is visible and actionable.
                         log::warn!(
-                            "No default LanguageModel configured at deferred-task time — hKask hooks not wired by this task: \
-                             thread condenser (tool results not compressed), \
-                             panel tool invoker (panel cannot dispatch tools), \
-                             curator session factory (panel cannot run per-tab curator conversations), \
-                             regulation status (panel cannot emit regulation spans). \
-                             Skill execution is wired separately by the model-dependent task \
-                             and will fire if/when the model resolves. \
-                             The inference IPC server is started with a no-op port so MCP \
-                             servers route through the bridge and get a diagnostic error \
-                             instead of falling back to an empty keychain. \
-                             Remediation: configure a default LanguageModel in Settings → \
-                             or sign in to your model provider. The deferred task will re-run \
-                             on next login and wire these hooks."
+                            "No default LanguageModel configured at deferred-task time — the kask \
+                             inference stack (real inference port, inference IPC server, regulation \
+                             health source) is not wired by this task. A no-op IPC server holds the \
+                             socket so MCP servers route through the bridge and get a diagnostic \
+                             error instead of falling back to an empty keychain. The model-resolved \
+                             re-wire task armed below will wire the real stack as soon as the \
+                             registry reports a default model. Remediation: configure a default \
+                             LanguageModel in Settings → or sign in to your model provider."
                         );
 
                         // Start the IPC server with a no-op inference port so
@@ -2353,7 +2201,80 @@ fn main() {
                             }
                         }
                     }
+
+                    inference_wired
                 });
+
+                // ── Model-resolved inference-stack re-wire ──────────────────
+                //
+                // The attempt above is one-shot: when the registry had no
+                // default model at deferred-task time, the real inference
+                // stack stayed unwired for the whole session and the
+                // regulation loop's `InferenceModelAvailable` sensor
+                // reported a model outage (correctly) until the next
+                // restart — live-observed 2026-08-30. This subscription
+                // closes the gap: it retries the wiring on model-registry
+                // events and latches on SUCCESS, not on attempt — an event
+                // can fire while provider credentials are still loading,
+                // and latching on a failed attempt would reproduce the
+                // one-shot gap one level up. On success the new IPC server
+                // takes over the socket path (D8:
+                // `set_inference_socket_path` is re-settable for exactly
+                // this scenario) and both MCP server paths are re-synced
+                // inside the wiring function.
+                if !inference_wired {
+                    let registry =
+                        cx.update(|cx| language_model::LanguageModelRegistry::global(cx));
+                    let rewire_wired =
+                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let kask_settings_for_rewire = kask_settings.clone();
+                    let cybernetics_loop_for_rewire = cybernetics_loop_for_panel_deferred.clone();
+                    let embedding_port_for_rewire = embedding_port_for_ipc.clone();
+                    let mcp_runtime_for_rewire = mcp_runtime_for_deferred.clone();
+                    let restart_env_for_rewire = kask_mcp_restart_env_for_deferred.clone();
+                    cx.subscribe(
+                        &registry,
+                        move |_, event: &language_model::Event, cx| {
+                            if !matches!(
+                                event,
+                                language_model::Event::DefaultModelChanged
+                                    | language_model::Event::ProviderStateChanged(_)
+                                    | language_model::Event::AddedProvider(_)
+                                    | language_model::Event::ProvidersChanged
+                            ) {
+                                return;
+                            }
+                            // The latch check, the wiring, and the latch
+                            // store all run synchronously on the main
+                            // thread (this handler has no awaits), so they
+                            // are atomic against later events — no second
+                            // server can race a first success.
+                            if rewire_wired.load(std::sync::atomic::Ordering::SeqCst) {
+                                return;
+                            }
+                            let wired = wire_kask_inference_stack(
+                                &kask_settings_for_rewire,
+                                &cybernetics_loop_for_rewire,
+                                embedding_port_for_rewire.clone(),
+                                mcp_runtime_for_rewire.clone(),
+                                restart_env_for_rewire.clone(),
+                                cx,
+                            );
+                            if wired {
+                                rewire_wired.store(true, std::sync::atomic::Ordering::SeqCst);
+                                log::info!(
+                                    "hKask inference stack wired by the model-resolved \
+                                     re-wire task — the no-op IPC fallback has been replaced"
+                                );
+                            }
+                        },
+                    )
+                    .detach();
+                    log::info!(
+                        "hKask inference-stack re-wire task armed — waiting for \
+                         LanguageModelRegistry to report a default model"
+                    );
+                }
 
                 // Launch MCP servers via McpRuntime for app-global metered
                 // dispatch (call metering + regulation spans). These instances
@@ -2443,10 +2364,11 @@ fn main() {
         //
         // The task subscribes to `LanguageModelRegistry` events
         // (`DefaultModelChanged`, `ProviderStateChanged`, `AddedProvider`,
-        // `ProvidersChanged`) and fires the wiring on the first event where
-        // `default_model()` returns `Some`. An `AtomicBool` ensures it fires
-        // only once — the edit-prediction port uses an AtomicBool guard.
-        // second call would warn and be dropped.
+        // `ProvidersChanged`) and fires the wiring on each event until it
+        // succeeds. The `AtomicBool` guard latches on success only (see
+        // `try_wire_edit_prediction_port`) — events that fire while provider
+        // credentials are still loading are retried on the next event, and a
+        // call after success is dropped before reaching the set-once hook.
         //
         // The registry path resolution (dev source vs seeded) is duplicated
         // from the deferred task because it doesn't need the user and must
@@ -2964,7 +2886,13 @@ async fn try_wire_edit_prediction_port(
     http_client: std::sync::Arc<dyn http_client::HttpClient>,
     cx: &mut gpui::AsyncApp,
 ) -> anyhow::Result<()> {
-    if wired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    // Latch on SUCCESS, not on attempt: an event can fire while provider
+    // credentials are still loading, and latching on a failed attempt left
+    // the port permanently unwired for the session (live-observed
+    // 2026-08-30: the 18:07 "no api_url/api_key" failure latched the guard
+    // and no later event retried). The load/store pair needs no CAS —
+    // handlers run on the GPUI main thread and this closure has no awaits.
+    if wired.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
 
@@ -2981,6 +2909,7 @@ async fn try_wire_edit_prediction_port(
                 std::sync::Arc::new(port)
                     as std::sync::Arc<dyn edit_prediction::open_ai_compatible::KaskCompletionPort>,
             ));
+            wired.store(true, std::sync::atomic::Ordering::SeqCst);
             log::info!(
                 "hKask edit-prediction port wired — routing FIM completions \
                  through LanguageModelRegistry ({})",
@@ -2996,6 +2925,161 @@ async fn try_wire_edit_prediction_port(
         }
         Ok(())
     })
+}
+
+/// Wire the kask inference stack from the resolved default model: the real
+/// `LanguageModelInferencePort`, the inference IPC server (replacing any
+/// no-op fallback server started earlier), and the regulation health source.
+///
+/// Returns `false` when `LanguageModelRegistry::default_model()` is still
+/// `None` — nothing is wired in that case. The deferred task calls this once
+/// at startup; when it returns `false`, the deferred task also arms the
+/// model-resolved re-wire subscription (see the call site), which retries on
+/// registry events. Latching is the caller's responsibility: a successful
+/// call starts a new IPC server and registers another health sensor, so this
+/// must not be called again after it returns `true`.
+fn wire_kask_inference_stack(
+    kask_settings: &kask_bridge::KaskSettings,
+    cybernetics_loop: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
+    embedding_port: Option<kask_bridge::LanguageModelEmbeddingPort>,
+    mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    restart_env: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+    >,
+    cx: &mut gpui::App,
+) -> bool {
+    let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+    let Some(configured) = model_registry.default_model() else {
+        return false;
+    };
+    let async_cx = cx.to_async();
+    let inference_model: Arc<dyn language_model::LanguageModel> = {
+        let kask_default = kask_settings.models.effective_default_model();
+        match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
+            .0
+            .into_values()
+            .next()
+        {
+            Some(model) => {
+                log::info!(
+                    "hKask inference using kask.models.default_model: {}",
+                    kask_default
+                );
+                model
+            }
+            None => {
+                log::warn!(
+                    "kask.models.default_model '{}' could not be resolved \
+                     from LanguageModelRegistry — falling back to zed default",
+                    kask_default
+                );
+                configured.model.clone()
+            }
+        }
+    };
+
+    let inference_timeout =
+        std::time::Duration::from_secs(kask_settings.general.inference_timeout_secs);
+    // Publish the server's establishment deadline so IPC clients (child MCP
+    // server processes) can align their read timeout with it. Without this,
+    // the client's independent 120s read deadline fires before the server's
+    // 300s establishment deadline, closing the socket mid-flight; the
+    // server's later response write then hits `BrokenPipe`, producing a warn
+    // storm that blames the IPC layer for what was a self-inflicted
+    // cancellation. See `INFERENCE_TIMEOUT_ENV`.
+    kask_bridge::set_inference_timeout_secs(kask_settings.general.inference_timeout_secs);
+    let (inference_port, inference_task) = kask_bridge::LanguageModelInferencePort::new(
+        inference_model.clone(),
+        inference_timeout,
+        kask_settings.general.max_concurrency as usize,
+        async_cx,
+    );
+    inference_task.detach();
+
+    // Wire the inference health source into the cybernetics loop so it can
+    // sense inference saturation and timeout storms. Without this, the loop
+    // reports `signal_count=0` during a timeout storm — its existing sensors
+    // read ledger/DB state, not inference dispatch state. The
+    // `set_inference_health_source` method is used (not the `with_*` builder)
+    // because the loop is already wrapped in `Arc<RwLock<...>>` by the time
+    // the port exists.
+    //
+    // The health source is a clone of the port — the port's health counters
+    // are `Arc`-shared, so the sensor reads the same atomics the receiver
+    // task updates. This mirrors the `set_event_sink` /
+    // `set_alert_escalation_sink` pattern used elsewhere in the deferred
+    // task.
+    let inference_health_source: std::sync::Arc<dyn hkask_regulation::InferenceHealthSource> =
+        std::sync::Arc::new(inference_port.clone());
+    {
+        let loop_for_health = cybernetics_loop.clone();
+        gpui_tokio::Tokio::spawn(cx, async move {
+            let mut loop_guard = loop_for_health.write().await;
+            loop_guard.set_inference_health_source(inference_health_source);
+        })
+        .detach();
+    }
+
+    let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+        std::sync::Arc::new(inference_port);
+
+    // Start the inference IPC server so MCP server child processes can route
+    // inference through zed's LanguageModelRegistry (with zed's configured
+    // API keys) instead of constructing their own MediaRouter with separate
+    // keys.
+    //
+    // The governed McpRuntime backs `tool_invoke` requests (delegated swarm
+    // agents calling MCP tools). The IPC server mints the panel token — the
+    // child process never holds token material.
+    let tool_port_for_ipc: Option<std::sync::Arc<dyn hkask_tool_port::ToolPort>> =
+        Some(mcp_runtime.clone());
+    match kask_bridge::InferenceIpcServer::start(
+        inference_port,
+        embedding_port,
+        tool_port_for_ipc,
+        cx,
+    ) {
+        Ok(ipc_server) => {
+            let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
+            kask_bridge::set_inference_socket_path(&socket_path);
+            log::info!(
+                "hKask inference IPC server started at {socket_path} — \
+                 MCP servers will route inference through zed"
+            );
+            // The server's tasks are detached inside `start` and run for the
+            // process lifetime: the tokio listener (detach-on-drop) and the
+            // GPUI-side channel tasks (explicit `.detach()` — a GPUI `Task`
+            // is CANCELLED on handle drop, so storing the handles here would
+            // kill the credential/list_models/worktree channels when this
+            // closure's scope ends). Dropping this value is therefore
+            // harmless; the binding exists only to acknowledge the result.
+            let _ipc_server = ipc_server;
+            // zed-kask: D3/D8 — F19: MCP re-sync (inference socket).
+            // Re-sync both MCP server paths so the inference socket path is
+            // included in the env passed to context server processes:
+            //   1. `sync_kask_mcp_servers` — restarts the per-project
+            //      ContextServerStore instances (agent tool picker)
+            //   2. `sync_kask_mcp_runtime_servers` — restarts the governed
+            //      McpRuntime instances (skill execution + kask panel)
+            // Without (2), the governed servers keep their stale env (no
+            // socket) and all inference calls fail with "IPC bridge not
+            // configured" even though the socket is live.
+            sync_kask_mcp_servers(cx);
+            sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, cx);
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to start inference IPC server: {e} — \
+                 MCP servers will fall back to MediaRouter (media-only)"
+            );
+        }
+    }
+
+    // The skill execution and edit-prediction wiring live in the separate
+    // model-dependent task, which fires on registry events — the inference
+    // port constructed here is a second port, but they wrap the same
+    // underlying model, so the duplication is harmless.
+    true
 }
 
 /// Reconcile the app-level `ContextServerDescriptorRegistry` with the
@@ -4700,6 +4784,22 @@ mod tests {
                 >,
                 &mut gpui::App,
             );
+
+        // D8: wire_kask_inference_stack — the inference-stack wiring helper
+        // called by both the deferred task and the model-resolved re-wire
+        // subscription. Pinning the fn pointer pins its existence, name, and
+        // signature; renaming or deleting it breaks compilation here.
+        let _ = wire_kask_inference_stack
+            as fn(
+                &kask_bridge::KaskSettings,
+                &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
+                Option<kask_bridge::LanguageModelEmbeddingPort>,
+                std::sync::Arc<hkask_mcp::McpRuntime>,
+                std::sync::Arc<
+                    std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+                >,
+                &mut gpui::App,
+            ) -> bool;
 
         // If this test compiles, the functional units' key symbols are
         // present. Removing any wiring function/type breaks compilation here.

@@ -19,7 +19,6 @@
 # Terms used by the hKask bridge (object properties relevant to
 # assertion-extraction predicates):
 SEPIO:0000001	assertion
-IAO:0000005	objective specification (IAO reuse, defined in the SEPIO OWL)
 SEPIO:0000030	asserts_proposition
 SEPIO:0000041	was_specified_by
 SEPIO:0000008	has_disputing_evidence_line

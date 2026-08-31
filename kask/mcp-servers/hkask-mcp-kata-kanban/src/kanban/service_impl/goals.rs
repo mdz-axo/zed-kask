@@ -80,14 +80,18 @@ impl KanbanService {
         goal.prediction = prediction;
         goal.task_id = task_id;
 
-        // State-axis type: IAO's published `objective specification` —
-        // "a directive information entity that describes an intended
-        // state of the world" — the exact concept for a kata target
-        // condition. (The former `pko:Goal` was fabricated; PKO publishes
-        // no Goal class.)
+        // Process-family anchor: `pplan:Step` (P-Plan, soft-reused by PKO) —
+        // the same term the goal responses emit via `kanban_type_to_pko`,
+        // so the goal's record and its wire surface agree. Operator decision
+        // 2026-08-30: goals anchor on the PKO family so the whole kanban
+        // graph (boards = pko:Procedure, tasks and goals = pplan:Step,
+        // verdicts = pko:StepVerification) is one linked dataset in a
+        // published ontology — family coherence over concept-exactness.
+        // The former `pko:Goal` was fabricated (PKO publishes no Goal
+        // class); the interim IAO:0000005 anchor was rejected as opaque.
         let goal_ontology = hkask_types::HMemOntology {
             dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            dc_type: hkask_bridge_ontology::sepio::OBJECTIVE_SPECIFICATION.to_string(),
+            dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
             dc_source: "kanban".to_string(),
             pko_procedure: Some(goal.id.to_string()),
             ..Default::default()

@@ -10,8 +10,12 @@
 //!    connector latency envelope.
 //! 3. **Compute** — when a signal deviates beyond its set-point, produce an
 //!    efferent signal: throttle, escalate, calibrate, or circuit-break.
-//! 4. **Act** — dispatch the efferent signal to the target loop's `regulate`
-//!    entry point.
+//! 4. **Act** — route the computed action as an `Escalate` alert to the
+//!    Curator/human (`route_action_as_alert`). The loop is a sensor+advisor,
+//!    not an actuator: the efferent actuator is deliberately not wired — the
+//!    human decides whether to apply the recommendation (user sovereignty;
+//!    see `kask/docs/diataxis/hkask-regulation/reference.md` § "Efferent
+//!    action dispatch").
 //!
 //! The loop is self-stabilizing: if the Cybernetics Loop itself becomes unstable
 //! (e.g., alert cascade), the Curation Loop detects it via metacognitive monitoring

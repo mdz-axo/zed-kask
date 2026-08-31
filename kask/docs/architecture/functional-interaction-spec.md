@@ -1,8 +1,8 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-08-29
-version: "1.0.0"
+last_updated: 2026-08-30
+version: "1.2.0"
 status: "Active"
 domain: "agent interaction"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -229,6 +229,13 @@ When a user works with the agent:
   against the live goal store at each write — an invalid replacement is
   rejected and leaves the task's existing citations untouched.
 
+  **Criterion-instrument rule (2026-08-30, operator ruling).** A goal
+  criterion must name its resolution instrument — a test outcome, a
+  tool result, a file state, a market resolution, a log line, a date.
+  A criterion that cannot name one is a preference, not a criterion:
+  preferences live in the goal text, never the criteria. The Brier
+  signal is only as empirical as the criteria it resolves against.
+
 - **Loop closed (2026-08-29):** the Division section now wires the moves
   to the native tools — conditionally on `kanban_goal_create` being in
   the turn's tool registry (Move 1 → `kanban_goal_create` at intake,
@@ -239,7 +246,7 @@ When a user works with the agent:
 
 - A without B stays per-conversation; B without A changes tracking but
   not the conversation the user sits in. Both are landed and wired;
-  the remaining verification is the behavioral probe (§7).
+  the behavioral probe has run (2026-08-30) — its record is §7.
 
 ## 7. Verification
 
@@ -250,6 +257,98 @@ the report leads with the outcome. Longitudinally: convergence across
 the series — the user's goal-statements sharpen and the agent's language
 drifts functional. Gradient strength is an empirical parameter; the
 series of prompts is what accumulates the pressure.
+
+### Probe record (2026-08-30)
+
+The probe ran live. Two defects blocked it across three prior sessions —
+both found by the probe's own attempts, and recorded here because they
+are failure modes a future probe must not reintroduce:
+
+- **The thread-stop defect (D42):** hardcoded 4096-token thinking budgets
+  in provider model modes silently killed reasoning-heavy turns —
+  `finish_reason: "length"` mapped to `StopReason::MaxTokens`, the turn
+  ended with no operator-visible error, and six consecutive probe turns
+  died after announcing tool calls. Fixed in the provider layer
+  (`budget_tokens: None`); D43 additionally logs MaxTokens turn-ends
+  with the stop reason and content state.
+- **Per-turn tool pruning (D44):** the LazyToolRouter removed
+  `kanban_goal_create` from every probe turn — the probe could not run
+  its own instrument. Removed outright (2026-08-30): the full registered
+  MCP surface is presented every turn, a system-prompt visibility
+  marker names the count of tools hidden by the remaining filter layers
+  (agent-profile allowlists, per-tab server scope, curator edit-tool
+  gating), and the `list_mcp_tools` meta-tool enumerates the registered
+  surface on demand.
+
+**Verified live (2026-08-30):**
+
+- The goal tools instantiate and loop on the native system: a goal
+  created with 4 criteria and an intake prediction (0.75) before any
+  work — the first session of the mission with the full MCP surface
+  present.
+- The ephemerality architecture works end-to-end: prior sessions' goals
+  died with their processes, and the mission's predictions returned
+  from curator memory — the durable vehicle carried the record across
+  the restart. Write leg (turn → memory ingest, 26+ ingests) verified
+  2026-08-30; read leg verified in both forms:
+  `curator_semantic_search` (5 results) and entity recall on
+  `curator:thread:<uuid>` (17 h_mems).
+- **The score did not fire — the ephemeral goal store died with a
+  mid-session server restart.** The concurrent session's rebuild landed
+  between turns; `kanban_goal_judge` and `kanban_goal_score` return
+  not-found on the dead goal (fix A's no-ghost-replay design working as
+  intended — the fresh store already carries another session's goal,
+  created post-restart). The outcome resolves from the durable record,
+  per criterion: goal-create ✓, recall leg ✓, spec §7 ✓, judge/score ✗
+  — the instrument died before it could record. Intake prediction
+  0.75, committed before the work, against achieved=false → **Brier
+  0.5625, computed from the record, not instrument-scored.** Two
+  calibration lessons: (1) the 0.75 did not price the mid-session
+  restart hazard (concurrent commits landing, a rebuild expected) —
+  intake predictions price environmental liveness; (2) a criterion's
+  resolution instrument must outlive the work, or the score fires
+  before the instrument dies. The first live instrument-scored Brier
+  awaits the next goal that closes within its process's life.
+
+**Operational findings (the recall surface):**
+
+- Turn records are keyed under `curator:thread:<uuid>` entities; recall
+  on topic names returns 0. An agent that does not know its thread uuid
+  should use semantic search.
+- Zed-agent turns are ingested as shared, perspective-free copies:
+  `perspective_scoped` recall returns 0 on agent threads while
+  `entity_wide` returns the records — consistent with the design
+  (shared, not sovereign).
+- This session's own turns were not surfaced by semantic search at
+  close: the query naming the goal id and its prediction returned only
+  prior-session turns (top-3). Either this thread's turns have not
+  ingested since the restart, or their embeddings lag the searchable
+  surface. The write leg was verified on the prior session's thread
+  (26+ ingests); this session's thread is unresolved — discriminator:
+  entity recall on this thread's uuid, or a later search once
+  embeddings settle. Reported, not chased.
+
+**Design lesson (operator corrections, 2026-08-30, two steps):** the
+probe's scoring basis was corrected twice, each step deeper. First:
+the scoring basis must be the operator's own observation channel — an
+agent's evidence table is self-report, not ground truth. Then the
+deeper correction: no subjective reading of a long text stream is a
+stable optimization target — optimizing to it optimizes to reading
+comprehension, attention, and mood. The calibration signal must be
+empirical and out-of-sample: predictions committed before observation,
+resolved by the world (a test outcome, a tool result, a file state, a
+market resolution, a log line, a date), Brier-scored against the
+resolution. The operator's subjective experience is the requirements
+signal and a longitudinal check across the series — never a per-turn
+scoring instrument. Behavioral properties of the interaction are
+pinned structurally (the D40 template tests), not scored by reading.
+The behavioral predictions P1 = 0.75 (report leads with the functional
+outcome), P2 = 0.60 (interpretation before code), P4 = 0.65 (choices as
+experiences with options + recommendation) are retired as scored
+instruments; P3 was structural (the wiring) all along. The reference
+models were anchored precisely so the loop inherits their empirical
+validation instead of inventing homegrown signals — the behavioral
+probe invented one anyway; this correction retires it.
 
 ## 8. Stewardship
 

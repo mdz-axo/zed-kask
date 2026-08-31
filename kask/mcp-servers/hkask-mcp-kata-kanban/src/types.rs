@@ -116,15 +116,15 @@ pub(crate) struct GoalCreateResponse {
     pub goal_text: String,
     pub criteria_count: usize,
     pub prediction: Option<f64>,
-    /// Ontology concept emitted on the response. Currently `pplan:Step`
-    /// (via `kanban_type_to_pko("Goal")`) — a real term, but a semantic
-    /// stretch: a goal is not a step. The goal's h_mem state-axis anchor is
-    /// the exact concept, `IAO:0000005` (objective specification,
-    /// `sepio::OBJECTIVE_SPECIFICATION`). PKO publishes no Goal class — the
-    /// former `pko:Goal` was fabricated (verified against the PKO v2.0.0
-    /// OWL, 2026-08-29). Whether the response anchor should move to the
-    /// objective-specification concept is an open ontology-selection
-    /// question for the operator.
+    /// Ontology concept emitted on the response: `pplan:Step` (P-Plan,
+    /// soft-reused by PKO) via `kanban_type_to_pko("Goal")`. Operator
+    /// decision 2026-08-30: goals anchor on the PKO family — boards =
+    /// `pko:Procedure`, tasks and goals = `pplan:Step`, verdicts =
+    /// `pko:StepVerification` — so the whole kanban graph is one linked
+    /// dataset in a published ontology. The goal's h_mem record anchors on
+    /// the same term, so the wire surface and the stored record agree.
+    /// (PKO publishes no Goal class — the former `pko:Goal` was fabricated;
+    /// the interim IAO:0000005 anchor was rejected as opaque.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }

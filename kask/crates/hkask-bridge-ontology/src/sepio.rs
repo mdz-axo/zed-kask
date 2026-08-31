@@ -59,12 +59,6 @@ sepio_terms! {
     /// true. The state-axis type for extracted assertion h_mems.
     ASSERTION = "SEPIO:0000001",
 
-    /// An objective specification — a directive information entity that
-    /// describes an intended state of the world (IAO, reused by SEPIO;
-    /// defined in the SEPIO OWL artifact). The anchor for target
-    /// conditions / goals.
-    OBJECTIVE_SPECIFICATION = "IAO:0000005",
-
     /// An agent asserts a proposition (a claim's content).
     ASSERTS_PROPOSITION = "SEPIO:0000030",
 

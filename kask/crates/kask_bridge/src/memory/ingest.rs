@@ -174,10 +174,14 @@ pub(crate) async fn write_turn(
             .unwrap_or("list");
         let goal_ontology = HMemOntology {
             dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            // IAO's published `objective specification` — the anchor for a
-            // kata target condition. (The former `pko:Goal` was fabricated;
-            // PKO publishes no Goal class.)
-            dc_type: hkask_bridge_ontology::sepio::OBJECTIVE_SPECIFICATION.to_string(),
+            // `pplan:Step` (P-Plan, soft-reused by PKO) — the same term the
+            // kanban goal store and the goal responses use, so the ephemeral
+            // and durable records of the same goal agree. Operator decision
+            // 2026-08-30: goals anchor on the PKO family — one linked
+            // dataset. (The former `pko:Goal` was fabricated; PKO publishes
+            // no Goal class; the interim IAO:0000005 anchor was rejected as
+            // opaque.)
+            dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
             dc_source: "kanban".to_string(),
             ..Default::default()
         };
