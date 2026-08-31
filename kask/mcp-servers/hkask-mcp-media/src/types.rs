@@ -240,6 +240,10 @@ pub struct EductParagraphPassRequest {
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
     /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
     pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false — v1 (schema-in-prompt), the
+    /// mode every catalog model serves.
+    pub structured: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -252,6 +256,10 @@ pub struct EductSpeakerPassRequest {
     /// model hears the recording; the scaffold's primary source) or
     /// "text" (the text-cue pass — works with every model, approximate).
     pub source: Option<String>,
+    /// Opt into the v2 structured-outputs mode for the "text" source
+    /// (provider-enforced JSON Schema). Not supported with source
+    /// "audio" — the audio path is prompt-schema. Default false.
+    pub structured: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -260,6 +268,9 @@ pub struct EductCorrectionPassRequest {
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
     /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
     pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false.
+    pub structured: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -278,6 +289,9 @@ pub struct EductHighlightPassRequest {
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
     /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
     pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false.
+    pub structured: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

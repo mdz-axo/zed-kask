@@ -9,7 +9,7 @@
 
 use crate::transcript::TranscriptBundle;
 use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};
-use crate::transcript_pass::{self, PassError};
+use crate::transcript_pass::{self, PassError, PassMode};
 use crate::transcript_select::{Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan, union_ranges};
 use crate::transcript_store::{self, TranscriptFilter, TranscriptStoreError};
 use crate::types::{
@@ -247,6 +247,7 @@ impl MediaServer {
         Parameters(EductParagraphPassRequest {
             transcript_id,
             model,
+            structured,
         }): Parameters<EductParagraphPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_paragraph_pass", async {
@@ -265,10 +266,16 @@ impl MediaServer {
                      first",
                 ));
             }
+            let mode = if structured.unwrap_or(false) {
+                PassMode::Structured
+            } else {
+                PassMode::PromptSchema
+            };
             let layer = transcript_pass::run_paragraph_pass(
                 &self.vision_port,
                 &self.template_env,
                 &bundle,
+                mode,
                 model.as_deref(),
             )
             .await
@@ -296,6 +303,7 @@ impl MediaServer {
             transcript_id,
             model,
             source,
+            structured,
         }): Parameters<EductSpeakerPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_speaker_pass", async {
@@ -314,6 +322,21 @@ impl MediaServer {
                      first",
                 ));
             }
+            // Structured outputs apply to the text passes only — the
+            // audio path is prompt-schema (rejected here, never a silent
+            // no-op).
+            let structured_requested = structured.unwrap_or(false);
+            if structured_requested && !matches!(source.as_deref(), Some("text")) {
+                return Err(McpToolError::invalid_argument(
+                    "structured outputs apply to the text passes (source \"text\"); the \
+                     audio path is prompt-schema",
+                ));
+            }
+            let mode = if structured_requested {
+                PassMode::Structured
+            } else {
+                PassMode::PromptSchema
+            };
             // Source dispatch: "audio" (default — the scaffold's primary,
             // decision 7) or "text" (the text-cue pass). An audio failure
             // surfaces as its own error — retry with source "text" is the
@@ -331,6 +354,7 @@ impl MediaServer {
                     &self.vision_port,
                     &self.template_env,
                     &bundle,
+                    mode,
                     model.as_deref(),
                 )
                 .await
@@ -363,6 +387,7 @@ impl MediaServer {
         Parameters(EductCorrectionPassRequest {
             transcript_id,
             model,
+            structured,
         }): Parameters<EductCorrectionPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_correction_pass", async {
@@ -381,10 +406,16 @@ impl MediaServer {
                      first",
                 ));
             }
+            let mode = if structured.unwrap_or(false) {
+                PassMode::Structured
+            } else {
+                PassMode::PromptSchema
+            };
             let layer = transcript_pass::run_correction_pass(
                 &self.vision_port,
                 &self.template_env,
                 &bundle,
+                mode,
                 model.as_deref(),
             )
             .await
@@ -473,6 +504,7 @@ impl MediaServer {
             transcript_id,
             request,
             model,
+            structured,
         }): Parameters<EductHighlightPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_highlight_pass", async {
@@ -491,11 +523,17 @@ impl MediaServer {
                      first",
                 ));
             }
+            let mode = if structured.unwrap_or(false) {
+                PassMode::Structured
+            } else {
+                PassMode::PromptSchema
+            };
             let layer = transcript_pass::run_highlight_pass(
                 &self.vision_port,
                 &self.template_env,
                 &bundle,
                 &request,
+                mode,
                 model.as_deref(),
             )
             .await

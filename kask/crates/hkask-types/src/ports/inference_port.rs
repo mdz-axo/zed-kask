@@ -72,6 +72,9 @@ pub struct MediaGenerateParams {
     /// Mask image (base64 data URI or URL) for region-selective editing (inpainting).
     /// White regions are edited; black regions are preserved. None for whole-image transform.
     pub mask: Option<String>,
+    /// JSON Schema (as a JSON string) for `chat_json`'s strict structured
+    /// outputs — the provider embeds it as `response_format: json_schema`.
+    pub schema: Option<String>,
     /// Model override. When set, the provider uses this model id instead of
     /// the env/default resolution (`model_constants::resolve`). Makes the
     /// model browser (`model_list` / `model_info`) actionable: a listed id can

@@ -246,6 +246,15 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
    paths; proven against real media). Tool surface 78 → 81.
 6. *(Optional)* v2 structured-outputs spike, only if slice 3's measured
    failure rate warrants it.
+   **Landed 2026-08-31 as the opt-in measurement instrument** — the A/B
+   (v1 totals vs the `structured` stats sub-object) is what the gate
+   wanted; you cannot measure v2's improvement without v2 existing.
+   `MediaOp::ChatJson` (child-local, the ChatAudio precedent — no IPC
+   bridge, no upstream changes) + `strict_schema` normalization (the
+   probe showed schemars lacks `additionalProperties: false` and adds
+   strict-incompatible annotations) + `structured: Option<bool>` on the
+   four text-pass tools, default off. The adoption decision (flipping
+   the default) reads the accumulated A/B. See design doc §4.
 7. **Exports** (SRT from `TimedWord`, CSV highlights) and **repository
    search wiring** (corpus composition, per decision 8).
 8. **Redaction** (gap 8, hardest): time-varying face blur from existing
@@ -286,11 +295,11 @@ call → `extract_json_from_response` (`hkask-types/src/json_extract.rs`;
 array-correctness pinned by tests) → schema-validate → typed
 deserialize → invariant check → store with provenance. Works with every
 catalog model today; the schema in the prompt is a contract, the hard
-validation gate after parsing is the enforcement. **v2 is a timeboxed
-spike only**: provider-enforced `response_format: json_schema` passthrough
-(verified absent in `kask/` — zero grep hits, re-verified 2026-08-30) is
-adopted only if slice 3's measured failure rate justifies it; the
-validation gate stays either way.
+validation gate after parsing is the enforcement. **v2 landed
+2026-08-31 as the opt-in instrument** (`structured: Option<bool>` on the
+text-pass tools, default off — the child-local `chat_json` op with
+`response_format: json_schema`, strict; see design doc §4 for the spike
+findings and the adoption gate). The validation gate stays either way.
 
 ## Cloud mode — the Reduct seam
 

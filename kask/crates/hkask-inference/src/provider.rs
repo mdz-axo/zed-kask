@@ -34,6 +34,10 @@ pub enum MediaOp {
     /// content parts (the OpenAI audio-chat format). Audio in + prompt,
     /// text out; the Educt speaker pass's primary source.
     ChatAudio,
+    /// Chat under a strict JSON Schema — OpenRouter structured outputs
+    /// (`response_format: json_schema`). The provider enforces the schema;
+    /// the Educt v2 pass mode's opt-in measurement instrument.
+    ChatJson,
 }
 
 /// Parse the string op name used by `InferencePort::media_generate`.
@@ -54,6 +58,7 @@ impl std::str::FromStr for MediaOp {
             "generate_speech" => Ok(Self::GenerateSpeech),
             "transcribe" => Ok(Self::Transcribe),
             "chat_audio" => Ok(Self::ChatAudio),
+            "chat_json" => Ok(Self::ChatJson),
             other => Err(InferenceError::Connection(format!(
                 "unknown media op: {other}"
             ))),
@@ -75,6 +80,7 @@ impl MediaOp {
             Self::GenerateSpeech => "generate_speech",
             Self::Transcribe => "transcribe",
             Self::ChatAudio => "chat_audio",
+            Self::ChatJson => "chat_json",
         }
     }
 }
@@ -88,6 +94,13 @@ mod tests {
         let op: MediaOp = "chat_audio".parse().expect("chat_audio parses");
         assert_eq!(op, MediaOp::ChatAudio);
         assert_eq!(op.as_str(), "chat_audio");
+    }
+
+    #[test]
+    fn chat_json_op_round_trips() {
+        let op: MediaOp = "chat_json".parse().expect("chat_json parses");
+        assert_eq!(op, MediaOp::ChatJson);
+        assert_eq!(op.as_str(), "chat_json");
     }
 }
 

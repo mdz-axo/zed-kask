@@ -163,9 +163,46 @@ schema-validate → typed deserialize → per-layer invariants → store with
 `classify_inference_error` precedent (`src/error.rs:183-188`:
 `NotConfigured` → `permission_denied`, else `unavailable`).
 
-**v2** (deferred, timeboxed spike): `response_format: json_schema`
-passthrough — new inference surface (verified absent). Gated on slice 3's
-measured failure rate; the validation gate stays either way.
+**v2** (spike landed 2026-08-31 — the opt-in measurement instrument;
+nothing adopted by default): provider-enforced structured outputs via
+`MediaOp::ChatJson` — a child-local `chat_json` provider method POSTing
+`/v1/chat/completions` with `response_format: {type: "json_schema",
+json_schema: {name, strict: true, schema}}` (the OpenAI-compatible format
+OpenRouter proxies). The ChatAudio precedent (slice 4) changed the route:
+the original v2 assessment assumed IPC-bridge passthrough (upstream zed
+request-model changes — DIVERGENCE); the child-local provider path needs
+no bridge and no upstream changes.
+
+Spike findings (researched + probed 2026-08-31):
+- Wire format confirmed (OpenRouter docs): `response_format: json_schema`
+  with `strict: true`; streaming supported.
+- Strict mode supports `$defs`/`$ref` — schemars' nested-type output
+  (e.g. `SpeakerPassOutput` → `$defs/SpeakerSpan`) is compatible.
+- Strict mode requires `additionalProperties: false` on every object
+  schema and may reject annotation keywords — the probe showed schemars
+  emits complete `required` lists but NO `additionalProperties`, plus
+  `format`/`$schema` annotations. `strict_schema` (in `transcript_pass.rs`)
+  normalizes deterministically: strips `format`/`$schema`, injects
+  `additionalProperties: false`, walks `items`/`properties`/`$defs`.
+- Model support is per-model (a provider-listing capability flag); the
+classifier default's support is unverified, so the structured mode
+  resolves its own default (`OpenRouter/openai/gpt-4o-mini`, the
+canonical structured-outputs family; override via
+  `HKASK_MEDIA_STRUCTURED_PASS_MODEL`). The first live structured call is
+  the probe.
+
+The instrument: every text-pass tool takes `structured: Option<bool>`
+(default false — v1, the mode every catalog model serves). Structured
+mode routes through `chat_json` with the normalized schema; the
+validation gate stays (enforcement reduces failures, it does not replace
+validation). The speaker audio path rejects the combo (named error — the
+audio path is prompt-schema). Every pass response's stats now carry a
+`structured` sub-object (attempts/rejections/rejection_rate) alongside
+the per-pass v1 totals — the A/B that decides adoption.
+
+**Adoption gate (unchanged):** the default stays v1 until the accumulated
+A/B shows the structured rejection_rate meaningfully below the v1 rate
+over real volume. The gate is the design's non-negotiable either way.
 
 ## 5. Slice status
 
@@ -176,7 +213,7 @@ measured failure rate; the validation gate stays either way.
 | 3 — paragraph pass (first LLM layer; measures v1 failure rate) | **landed 2026-08-30** (`src/transcript_pass.rs` + `educt_paragraph_pass` tool; tool surface 74 → 75; the attempts/rejections counters ride every pass response — the v1 rate accumulates in live use, and the v2 spike decision reads it) |
 | 4 — speaker + correction passes | **landed 2026-08-30, extended same day** (`educt_speaker_pass` with `source: "audio"` (default) \| `"text"`, `educt_correction_pass`, `educt_apply_corrections`; tool surface 75 → 78. The audio source routes through `MediaOp::ChatAudio` — child-local provider keys, OpenAI `input_audio` content parts on `/v1/chat/completions` — NOT an `InferencePort` trait method; provenance's `prompt_template` distinguishes the source, per decision 7) |
 | 5 — semantic selection → EDL → render | **landed 2026-08-30** (`educt_highlight_pass` — the semantic selection; `educt_edl_from_highlights` — deterministic union-merged composition; `educt_render_edl` — the slice-1 algebra driving ffmpeg stream-copy renders, audio and video paths; tool surface 78 → 81. The closing loop: "find where he explains X and cut it to a clip" works end to end, proven against real media by a live-render test) |
-| 6 — v2 spike (conditional) | deferred |
+| 6 — v2 spike (conditional) | **landed 2026-08-31 as the opt-in instrument** (`MediaOp::ChatJson` + `strict_schema` normalization + `structured` param on the four text-pass tools, default off; the `structured` stats sub-object is the A/B measurement. Adoption — flipping the default — remains gated on the accumulated A/B over real volume) |
 | 7 — exports + corpus search wiring | planned |
 | 8 — redaction (hardest local gap) | planned, last |
 

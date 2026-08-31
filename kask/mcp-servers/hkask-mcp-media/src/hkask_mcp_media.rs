@@ -83,6 +83,11 @@ pub mod models {
     pub const AUDIO_CHAT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_AUDIO_CHAT_MODEL;
     pub const AUDIO_CHAT_ENV: &str = "HKASK_MEDIA_AUDIO_CHAT_MODEL";
 
+    /// Default structured-outputs pass model (the v2 spike's opt-in mode)
+    pub const STRUCTURED_PASS_DEFAULT: &str =
+        hkask_inference::model_constants::DEFAULT_STRUCTURED_PASS_MODEL;
+    pub const STRUCTURED_PASS_ENV: &str = "HKASK_MEDIA_STRUCTURED_PASS_MODEL";
+
     /// Default vision model: Qwen3-VL (Apache 2.0) via OpenRouter
     pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
@@ -1198,6 +1203,7 @@ mod tool_behavior_tests {
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect("pass succeeds");
@@ -1233,6 +1239,7 @@ mod tool_behavior_tests {
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect_err("out-of-bounds index must be rejected");
@@ -1259,6 +1266,7 @@ mod tool_behavior_tests {
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect_err("unparseable output must surface");
@@ -1298,6 +1306,7 @@ mod tool_behavior_tests {
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id,
                 model: None,
+                structured: None,
             }))
             .await
             .expect_err("no word timings must reject");
@@ -1315,6 +1324,7 @@ mod tool_behavior_tests {
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: "no-such-transcript".to_string(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect_err("missing transcript must be not-found");
@@ -1337,6 +1347,7 @@ mod tool_behavior_tests {
                 transcript_id: transcript_id.clone(),
                 model: None,
                 source: Some("text".to_string()),
+                structured: None,
             }))
             .await
             .expect("pass succeeds");
@@ -1376,6 +1387,7 @@ mod tool_behavior_tests {
                 transcript_id: transcript_id.clone(),
                 model: None,
                 source: Some("text".to_string()),
+                structured: None,
             }))
             .await
             .expect_err("overlapping spans must be rejected");
@@ -1406,6 +1418,7 @@ mod tool_behavior_tests {
                 transcript_id,
                 model: None,
                 source: None,
+                structured: None,
             }))
             .await
             .expect("audio pass succeeds");
@@ -1431,6 +1444,7 @@ mod tool_behavior_tests {
                 transcript_id,
                 model: None,
                 source: Some("bogus".to_string()),
+                structured: None,
             }))
             .await
             .expect_err("unknown source must be rejected");
@@ -1453,6 +1467,7 @@ mod tool_behavior_tests {
                 transcript_id,
                 model: None,
                 source: Some("audio".to_string()),
+                structured: None,
             }))
             .await
             .expect_err("unparseable audio output must surface");
@@ -1474,6 +1489,7 @@ mod tool_behavior_tests {
             .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect("pass succeeds");
@@ -1507,6 +1523,7 @@ mod tool_behavior_tests {
             .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
                 transcript_id: transcript_id.clone(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect_err("out-of-bounds edit must be rejected");
@@ -1554,6 +1571,7 @@ mod tool_behavior_tests {
                 transcript_id: transcript_id.clone(),
                 request: "where he explains the curve".to_string(),
                 model: None,
+                structured: None,
             }))
             .await
             .expect("pass succeeds");
@@ -1576,6 +1594,77 @@ mod tool_behavior_tests {
             .await
             .expect("list layers succeeds");
         assert_eq!(content_of(&layers)["count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_structured_mode_stores_via_chat_json() {
+        let server =
+            make_inference_server("unused".to_string(), "{\"breaks_after\": [0]}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id,
+                model: None,
+                structured: Some(true),
+            }))
+            .await
+            .expect("structured pass succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            content["stored"]["layer"]["kind"],
+            serde_json::json!("paragraph")
+        );
+        // The structured A/B measurement counts the attempt.
+        assert!(
+            content["pass_stats"]["structured"]["attempts"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 1,
+            "structured stats must count the attempt: {}",
+            content["pass_stats"]
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_paragraph_pass_structured_unparseable_surfaces() {
+        let server = make_inference_server(
+            "unused".to_string(),
+            "I refuse to emit schema-conforming JSON.".to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
+                transcript_id,
+                model: None,
+                structured: Some(true),
+            }))
+            .await
+            .expect_err("unparseable structured output must surface");
+        assert!(
+            error.message.contains("failed to parse"),
+            "the parse failure must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_speaker_pass_rejects_structured_with_audio_source() {
+        let server = make_inference_server("unused".to_string(), "{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: None,
+                source: None,
+                structured: Some(true),
+            }))
+            .await
+            .expect_err("structured+audio must be rejected, never a silent no-op");
+        assert!(
+            error.message.contains("structured outputs apply"),
+            "the named rejection must surface: {}",
+            error.message
+        );
     }
 
     #[tokio::test]

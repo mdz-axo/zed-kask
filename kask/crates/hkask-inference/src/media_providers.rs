@@ -452,8 +452,14 @@ impl MediaProvider for DeepInfraMediaProvider {
                 // `input_audio` content-part format.
                 MediaOp::ChatAudio => Err(InferenceError::Connection(
                     "deepinfra does not support chat_audio — route via an \
-                     OpenRouter audio-chat model (e.g. \
-                     OpenRouter/mistralai/voxtral-small-24b-2507)"
+                     OpenRouter audio-chat model (e.g. OpenRouter/mistralai/voxtral-small-24b-2507)"
+                        .into(),
+                )),
+                // Same discipline for structured outputs: served by
+                // OpenRouter's response_format passthrough.
+                MediaOp::ChatJson => Err(InferenceError::Connection(
+                    "deepinfra does not support chat_json — route via an \
+                     OpenRouter structured-outputs model (e.g. OpenRouter/openai/gpt-4o-mini)"
                         .into(),
                 )),
             }
@@ -676,6 +682,53 @@ impl OpenRouterMediaProvider {
         Ok(serde_json::json!({ "text": content, "model": model }))
     }
 
+    /// Chat under a strict JSON Schema — OpenRouter structured outputs
+    /// (`response_format: json_schema`, the OpenAI-compatible format).
+    /// The provider enforces the schema; the caller's validation gate
+    /// stays regardless (enforcement reduces failures, it does not replace
+    /// validation — the design doc's non-negotiable).
+    async fn chat_json(
+        &self,
+        prompt: &str,
+        schema: &str,
+        model: &str,
+    ) -> Result<Value, InferenceError> {
+        let body = chat_json_request_body(model, prompt, schema)?;
+
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                InferenceError::Connection(format!("OpenRouter structured chat failed: {e}"))
+            })?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
+        if !status.is_success() {
+            return Err(InferenceError::Connection(format!(
+                "OpenRouter structured chat {status}: {}",
+                sanitize_error_body(&text)
+            )));
+        }
+
+        let json: Value = serde_json::from_str(&text)
+            .map_err(|e| InferenceError::Json(format!("OpenRouter structured chat parse: {e}")))?;
+        let content = extract_chat_content(&json).ok_or_else(|| {
+            InferenceError::Connection(
+                "OpenRouter: no message content in structured chat response".into(),
+            )
+        })?;
+        Ok(serde_json::json!({ "text": content, "model": model }))
+    }
+
     /// Generate a video via OpenRouter's async video generation API.
     ///
     /// Uses `/v1/videos` (submit + poll). Submits the prompt, receives a job
@@ -848,10 +901,12 @@ impl MediaProvider for OpenRouterMediaProvider {
         matches!(
             op,
             MediaOp::GenerateImage
+                | MediaOp::GenerateSpeech
                 | MediaOp::Transcribe
                 | MediaOp::GenerateVideo
                 | MediaOp::ImageToVideo
                 | MediaOp::ChatAudio
+                | MediaOp::ChatJson
         )
     }
 
@@ -904,6 +959,18 @@ impl MediaProvider for OpenRouterMediaProvider {
                     });
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.chat_audio(&prompt, &audio_url, &model).await
+                }
+                MediaOp::ChatJson => {
+                    let prompt = params.prompt.clone().unwrap_or_default();
+                    let schema = params.schema.clone().unwrap_or_default();
+                    let model = params.model.clone().unwrap_or_else(|| {
+                        crate::model_constants::resolve(
+                            "HKASK_MEDIA_STRUCTURED_PASS_MODEL",
+                            crate::model_constants::DEFAULT_STRUCTURED_PASS_MODEL,
+                        )
+                    });
+                    let model = strip_prefix(&model, "OpenRouter/");
+                    self.chat_json(&prompt, &schema, &model).await
                 }
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
@@ -987,6 +1054,34 @@ fn chat_audio_request_body(model: &str, prompt: &str, audio_b64: &str, format: &
             ]},
         ],
     })
+}
+
+/// Build the structured-outputs request body: `response_format: json_schema`
+/// with `strict: true` (the OpenAI-compatible format OpenRouter proxies).
+/// The schema arrives as a JSON string (our own serialization) — a parse
+/// failure is a named error, never a silently-null schema.
+fn chat_json_request_body(
+    model: &str,
+    prompt: &str,
+    schema: &str,
+) -> Result<Value, InferenceError> {
+    let schema_value: Value = serde_json::from_str(schema).map_err(|e| {
+        InferenceError::Connection(format!("chat_json schema is not valid JSON: {e}"))
+    })?;
+    Ok(serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "educt_pass_output",
+                "strict": true,
+                "schema": schema_value,
+            },
+        },
+    }))
 }
 
 /// Extract the assistant's text from a chat-completions response.
@@ -1089,6 +1184,39 @@ mod tests {
             content[1]["input_audio"]["format"],
             serde_json::json!("wav")
         );
+    }
+
+    #[test]
+    fn chat_json_request_body_enforces_the_schema() {
+        let body = chat_json_request_body(
+            "test-model",
+            "select the passages",
+            r#"{"type": "object", "properties": {}}"#,
+        )
+        .expect("valid schema builds");
+        assert_eq!(body["model"], serde_json::json!("test-model"));
+        assert_eq!(
+            body["messages"][0]["content"],
+            serde_json::json!("select the passages")
+        );
+        assert_eq!(
+            body["response_format"]["type"],
+            serde_json::json!("json_schema")
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["strict"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["type"],
+            serde_json::json!("object")
+        );
+    }
+
+    #[test]
+    fn chat_json_request_body_rejects_non_json_schema() {
+        let error = chat_json_request_body("m", "p", "not json").expect_err("named error");
+        assert!(error.to_string().contains("not valid JSON"));
     }
 
     #[test]

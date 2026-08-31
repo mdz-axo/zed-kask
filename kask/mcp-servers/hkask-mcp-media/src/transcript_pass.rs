@@ -41,6 +41,20 @@ pub const SPEAKER_AUDIO_PASS_TEMPLATE: &str = "educt_speaker_audio_pass";
 pub const CORRECTION_PASS_TEMPLATE: &str = "educt_correction_pass";
 pub const HIGHLIGHT_PASS_TEMPLATE: &str = "educt_highlight_pass";
 
+/// The pass call mode — the v2 spike's opt-in instrument.
+/// - `PromptSchema` (v1, the default): the schema rides in the prompt;
+///   works with every catalog model.
+/// - `Structured` (v2): `chat_json` with `response_format: json_schema`
+///   (strict) — the provider enforces the schema. The validation gate
+///   stays either way. Nothing adopts Structured by default; the A/B
+///   between the per-pass totals and the `structured` stats decides
+///   adoption (design doc §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassMode {
+    PromptSchema,
+    Structured,
+}
+
 static PARAGRAPH_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static PARAGRAPH_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static SPEAKER_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
@@ -49,6 +63,10 @@ static CORRECTION_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static CORRECTION_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static HIGHLIGHT_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static HIGHLIGHT_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+/// Structured-mode (v2) attempts and rejections across all passes — the
+/// mechanism-level A/B measurement against the per-pass v1 totals.
+static STRUCTURED_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static STRUCTURED_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// What the model returns for the paragraph pass — the layer shape minus
 /// provenance (provenance is attached by the pipeline, never claimed by
@@ -100,6 +118,8 @@ pub enum PassError {
 fn pass_stats_json(attempts: &AtomicU64, rejections: &AtomicU64) -> serde_json::Value {
     let attempts = attempts.load(Ordering::Relaxed);
     let rejections = rejections.load(Ordering::Relaxed);
+    let structured_attempts = STRUCTURED_PASS_ATTEMPTS.load(Ordering::Relaxed);
+    let structured_rejections = STRUCTURED_PASS_REJECTIONS.load(Ordering::Relaxed);
     serde_json::json!({
         "attempts": attempts,
         "rejections": rejections,
@@ -107,6 +127,15 @@ fn pass_stats_json(attempts: &AtomicU64, rejections: &AtomicU64) -> serde_json::
             0.0
         } else {
             (rejections as f64) / (attempts as f64)
+        },
+        "structured": {
+            "attempts": structured_attempts,
+            "rejections": structured_rejections,
+            "rejection_rate": if structured_attempts == 0 {
+                0.0
+            } else {
+                (structured_rejections as f64) / (structured_attempts as f64)
+            },
         },
     })
 }
@@ -142,33 +171,73 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
     schema: &str,
     request: Option<&str>,
     words: &[TimedWord],
+    mode: PassMode,
     model_override: Option<&str>,
     attempts: &AtomicU64,
     rejections: &AtomicU64,
     expected: &'static str,
 ) -> Result<(TOutput, String), PassError> {
-    let resolved_model = model_override.map(str::to_string).unwrap_or_else(|| {
-        hkask_inference::model_constants::resolve(
-            crate::models::PASS_ENV,
-            crate::models::PASS_DEFAULT,
-        )
-    });
+    let resolved_model = model_override
+        .map(str::to_string)
+        .unwrap_or_else(|| match mode {
+            PassMode::PromptSchema => hkask_inference::model_constants::resolve(
+                crate::models::PASS_ENV,
+                crate::models::PASS_DEFAULT,
+            ),
+            PassMode::Structured => hkask_inference::model_constants::resolve(
+                crate::models::STRUCTURED_PASS_ENV,
+                crate::models::STRUCTURED_PASS_DEFAULT,
+            ),
+        });
 
     let prompt = render_pass_prompt(template_env, template_name, schema, request, words)?;
-    let result = inference
-        .generate_with_model(
-            &prompt,
-            &LLMParameters::default(),
-            Some(&resolved_model),
-            None,
-        )
-        .await
-        .map_err(PassError::Inference)?;
-    attempts.fetch_add(1, Ordering::Relaxed);
+    let model_text = match mode {
+        PassMode::PromptSchema => {
+            let result = inference
+                .generate_with_model(
+                    &prompt,
+                    &LLMParameters::default(),
+                    Some(&resolved_model),
+                    None,
+                )
+                .await
+                .map_err(PassError::Inference)?;
+            attempts.fetch_add(1, Ordering::Relaxed);
+            result.text
+        }
+        PassMode::Structured => {
+            let params = hkask_types::MediaGenerateParams {
+                prompt: Some(prompt),
+                schema: Some(strict_schema(schema)?),
+                model: Some(resolved_model.clone()),
+                ..Default::default()
+            };
+            let raw = inference
+                .media_generate("chat_json", &params)
+                .await
+                .map_err(PassError::Inference)?;
+            attempts.fetch_add(1, Ordering::Relaxed);
+            STRUCTURED_PASS_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+            raw.get("text")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    rejections.fetch_add(1, Ordering::Relaxed);
+                    STRUCTURED_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+                    PassError::UnparseableOutput {
+                        expected: "chat_json response {\"text\": …}",
+                        raw: truncate(&raw.to_string(), 200),
+                    }
+                })?
+                .to_string()
+        }
+    };
 
-    let extracted = hkask_types::json_extract::extract_json_from_response(&result.text);
+    let extracted = hkask_types::json_extract::extract_json_from_response(&model_text);
     let output: TOutput = serde_json::from_str(&extracted).map_err(|_| {
         rejections.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        }
         PassError::UnparseableOutput {
             expected,
             raw: truncate(&extracted, 200),
@@ -202,17 +271,65 @@ fn render_pass_prompt(
 }
 
 /// Validate a produced layer against the transcript's word count; a
-/// failure increments the pass's rejection counter before surfacing.
+/// failure increments the pass's rejection counter (and the structured
+/// counter in structured mode) before surfacing.
 fn validate_or_reject(
     layer: &TranscriptLayer,
     words_count: usize,
     rejections: &AtomicU64,
+    mode: PassMode,
 ) -> Result<(), PassError> {
     if let Err(error) = layer.validate(words_count) {
         rejections.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        }
         return Err(PassError::Validation(error));
     }
     Ok(())
+}
+
+/// Normalize a schemars-generated schema (JSON string) for strict-mode
+/// structured outputs. Strict providers require `additionalProperties:
+/// false` on every object schema — schemars does not emit it (verified by
+/// probe 2026-08-31: complete `required` lists and `$defs`/`$ref`, both
+/// strict-supported, but no `additionalProperties` and `format`/
+/// `$schema` annotations strict providers may reject). Deterministic —
+/// the same schema always normalizes identically.
+fn strict_schema(schema: &str) -> Result<String, PassError> {
+    let value: serde_json::Value = serde_json::from_str(schema)
+        .map_err(|e| PassError::Prompt(format!("schema is not valid JSON: {e}")))?;
+    let normalized = normalize_schema_object(value);
+    serde_json::to_string(&normalized)
+        .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))
+}
+
+/// The recursive normalizer: strip strict-incompatible annotations
+/// (`format`, root `$schema`), inject `additionalProperties: false` on
+/// every object schema, and walk `items`, `properties`, and `$defs`.
+fn normalize_schema_object(mut value: serde_json::Value) -> serde_json::Value {
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+    object.remove("$schema");
+    object.remove("format");
+    if object.get("type") == Some(&serde_json::json!("object")) {
+        object.insert("additionalProperties".to_string(), serde_json::json!(false));
+    }
+    if let Some(items) = object.get_mut("items") {
+        *items = normalize_schema_object(std::mem::take(items));
+    }
+    if let Some(properties) = object.get_mut("properties").and_then(|p| p.as_object_mut()) {
+        for (_key, property) in properties.iter_mut() {
+            *property = normalize_schema_object(std::mem::take(property));
+        }
+    }
+    if let Some(defs) = object.get_mut("$defs").and_then(|d| d.as_object_mut()) {
+        for (_name, definition) in defs.iter_mut() {
+            *definition = normalize_schema_object(std::mem::take(definition));
+        }
+    }
+    value
 }
 
 /// Run the paragraph pass: the model identifies paragraph boundaries as
@@ -222,6 +339,7 @@ pub async fn run_paragraph_pass(
     inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     bundle: &TranscriptBundle,
+    mode: PassMode,
     model_override: Option<&str>,
 ) -> Result<ParagraphLayer, PassError> {
     if bundle.words.is_empty() {
@@ -236,6 +354,7 @@ pub async fn run_paragraph_pass(
         &schema,
         None,
         &bundle.words,
+        mode,
         model_override,
         &PARAGRAPH_PASS_ATTEMPTS,
         &PARAGRAPH_PASS_REJECTIONS,
@@ -254,6 +373,7 @@ pub async fn run_paragraph_pass(
         &TranscriptLayer::Paragraph(layer.clone()),
         bundle.words.len(),
         &PARAGRAPH_PASS_REJECTIONS,
+        mode,
     )?;
     Ok(layer)
 }
@@ -266,6 +386,7 @@ pub async fn run_speaker_pass(
     inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     bundle: &TranscriptBundle,
+    mode: PassMode,
     model_override: Option<&str>,
 ) -> Result<SpeakerLayer, PassError> {
     if bundle.words.is_empty() {
@@ -280,6 +401,7 @@ pub async fn run_speaker_pass(
         &schema,
         None,
         &bundle.words,
+        mode,
         model_override,
         &SPEAKER_PASS_ATTEMPTS,
         &SPEAKER_PASS_REJECTIONS,
@@ -298,6 +420,7 @@ pub async fn run_speaker_pass(
         &TranscriptLayer::Speaker(layer.clone()),
         bundle.words.len(),
         &SPEAKER_PASS_REJECTIONS,
+        mode,
     )?;
     Ok(layer)
 }
@@ -378,6 +501,9 @@ pub async fn run_speaker_pass_audio(
         &TranscriptLayer::Speaker(layer.clone()),
         bundle.words.len(),
         &SPEAKER_PASS_REJECTIONS,
+        // The audio path is prompt-schema by definition (the structured
+        // mode applies to the text passes; the tool rejects the combo).
+        PassMode::PromptSchema,
     )?;
     Ok(layer)
 }
@@ -390,6 +516,7 @@ pub async fn run_correction_pass(
     inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     bundle: &TranscriptBundle,
+    mode: PassMode,
     model_override: Option<&str>,
 ) -> Result<CorrectionLayer, PassError> {
     if bundle.words.is_empty() {
@@ -404,6 +531,7 @@ pub async fn run_correction_pass(
         &schema,
         None,
         &bundle.words,
+        mode,
         model_override,
         &CORRECTION_PASS_ATTEMPTS,
         &CORRECTION_PASS_REJECTIONS,
@@ -422,6 +550,7 @@ pub async fn run_correction_pass(
         &TranscriptLayer::Correction(layer.clone()),
         bundle.words.len(),
         &CORRECTION_PASS_REJECTIONS,
+        mode,
     )?;
     Ok(layer)
 }
@@ -435,6 +564,7 @@ pub async fn run_highlight_pass(
     template_env: &Environment<'static>,
     bundle: &TranscriptBundle,
     request: &str,
+    mode: PassMode,
     model_override: Option<&str>,
 ) -> Result<HighlightLayer, PassError> {
     if bundle.words.is_empty() {
@@ -454,6 +584,7 @@ pub async fn run_highlight_pass(
         &schema,
         Some(request),
         &bundle.words,
+        mode,
         model_override,
         &HIGHLIGHT_PASS_ATTEMPTS,
         &HIGHLIGHT_PASS_REJECTIONS,
@@ -472,6 +603,7 @@ pub async fn run_highlight_pass(
         &TranscriptLayer::Highlight(layer.clone()),
         bundle.words.len(),
         &HIGHLIGHT_PASS_REJECTIONS,
+        mode,
     )?;
     Ok(layer)
 }
@@ -603,6 +735,48 @@ mod tests {
             assert!(stats.get("attempts").is_some());
             assert!(stats.get("rejections").is_some());
             assert!(stats.get("rejection_rate").is_some());
+            assert!(stats.get("structured").is_some(), "the A/B measurement");
         }
+    }
+
+    #[test]
+    fn strict_schema_normalizes_schemars_output_for_strict_mode() {
+        // SpeakerPassOutput is the $defs case (nested SpeakerSpan); the
+        // probe (2026-08-31) showed schemars emits complete `required`
+        // lists and `$defs`/`$ref` (both strict-supported) but NO
+        // `additionalProperties` and `format`/`$schema` annotations.
+        let raw =
+            serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput)).expect("serializes");
+        let normalized: serde_json::Value =
+            serde_json::from_str(&strict_schema(&raw).expect("normalizes"))
+                .expect("normalized schema is valid JSON");
+
+        // Strict-mode requirements now hold at the root…
+        assert_eq!(
+            normalized["additionalProperties"],
+            serde_json::json!(false),
+            "root object gets additionalProperties: false"
+        );
+        assert!(normalized.get("$schema").is_none(), "$schema stripped");
+        // …and inside $defs (the nested type).
+        let defs = normalized["$defs"].as_object().expect("$defs preserved");
+        let span = defs.get("SpeakerSpan").expect("nested type preserved");
+        assert_eq!(
+            span["additionalProperties"],
+            serde_json::json!(false),
+            "$defs entries get additionalProperties: false"
+        );
+        // The `format` annotations schemars adds to properties are
+        // stripped (strict providers may reject unsupported keywords).
+        let start_word = span["properties"]["start_word"]
+            .as_object()
+            .expect("property preserved");
+        assert!(start_word.get("format").is_none(), "format stripped");
+        // Required completeness is preserved untouched.
+        assert_eq!(normalized["required"], serde_json::json!(["spans"]));
+        assert_eq!(
+            span["required"],
+            serde_json::json!(["start_word", "end_word", "speaker", "confidence"])
+        );
     }
 }

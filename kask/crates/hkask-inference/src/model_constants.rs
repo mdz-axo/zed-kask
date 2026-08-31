@@ -70,6 +70,15 @@ pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
 /// audio-input catalog 2026-08-31), so Voxtral is the open-weight pick.
 pub const DEFAULT_AUDIO_CHAT_MODEL: &str = "OpenRouter/mistralai/voxtral-small-24b-2507";
 
+/// Default structured-outputs pass model — provider-enforced JSON Schema
+/// (`response_format: json_schema`, strict) on `/v1/chat/completions`.
+/// Structured-output support is per-model (the provider listing carries a
+/// capability flag); the classifier default's support is unverified, so
+/// the structured path resolves its own known-capable default (the
+/// gpt-4o family is the canonical structured-outputs model class).
+/// Override via `HKASK_MEDIA_STRUCTURED_PASS_MODEL`.
+pub const DEFAULT_STRUCTURED_PASS_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";
+
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
