@@ -53,10 +53,10 @@ pub enum MediaError {
     #[error("{0}")]
     VisionParse(String),
 
-    /// Generated-asset persistence failure. Persistence is best-effort
-    /// (the tool result already carries the provider URL/data), so callers
-    /// log-and-continue rather than failing the tool — but the reason must
-    /// be visible, not swallowed as `None`.
+    /// Generated-asset persistence failure. The raw provider payload is
+    /// never the tool-result fallback (base64 payloads overflow the model
+    /// context — see `persist_and_slim_result`), so a persist failure fails
+    /// the tool with this error and the operator can retry.
     #[error("Generated asset not persisted: {0}")]
     AssetPersistence(String),
 

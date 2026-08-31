@@ -46,7 +46,9 @@ pub mod tools;
 
 // Extracted implementation modules (C2 split). Re-exported so the
 // `use crate::*` imports in tools/ keep resolving without churn.
+#[cfg(test)]
 pub(crate) use assets::persist_generated_asset;
+pub(crate) use assets::{media_op_kind, persist_and_slim_result, persist_slim_and_enrich};
 pub(crate) use faces::default_face_folder;
 pub(crate) use text::{draw_text_mut, load_meme_font, measure_text};
 
@@ -61,6 +63,12 @@ use std::sync::{Arc, Mutex};
 const MAX_IMAGE_READ_BYTES: u64 = 32 * 1024 * 1024;
 use video::FfmpegRunner;
 use video::YtDlpRunner;
+
+/// Serializes tests that mutate `HKASK_ARTIFACTS_DIR` — the env var is
+/// process-global and parallel test threads race on it (each test's
+/// tempdir must stay alive until its own assertions finish).
+#[cfg(test)]
+pub(crate) static ARTIFACTS_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 // ── Model configuration ───────────────────────────────────────────────
 
@@ -1057,12 +1065,16 @@ mod tool_behavior_tests {
     /// the old code hardcoded the "png" extension for every b64 payload.
     #[tokio::test]
     async fn persist_image_extension_matches_sniffed_format() {
+        // Serialize with every other test that mutates HKASK_ARTIFACTS_DIR —
+        // the env var is process-global and parallel test threads race on
+        // it.
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK
+            .lock()
+            .expect("artifacts env lock poisoned");
         let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
         // Isolate the artifacts dir so the test never writes into the real
-        // ~/Documents/zk-data tree. Env is process-global; no other test in
-        // this binary resolves the artifacts dir, and any that did would
-        // land in the tempdir — the safe direction. Save/restore per the
-        // kask env-test pattern.
+        // ~/Documents/zk-data tree. Save/restore per the kask env-test
+        // pattern.
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
 
@@ -1075,9 +1087,14 @@ mod tool_behavior_tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
         let result = serde_json::json!({"data": [{"b64_json": b64}]});
 
-        let path = persist_generated_asset(&server, &result, "image")
-            .await
-            .expect("persist jpeg payload");
+        let path = persist_generated_asset(
+            &server.gallery_state,
+            &server.gallery_store,
+            &result,
+            "image",
+        )
+        .await
+        .expect("persist jpeg payload");
 
         // The alignment invariant, checked three ways: the extension on
         // disk, the byte round-trip, and a re-sniff of the written file.
@@ -1092,6 +1109,113 @@ mod tool_behavior_tests {
             crate::assets::image_ext_from_bytes(&written),
             "jpg",
             "re-sniffing the persisted file must agree with its extension"
+        );
+
+        match prior {
+            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+        }
+    }
+
+    /// Regression pin for the 2026-08-31 context bomb: the slim tool result
+    /// a media tool returns after `persist_and_slim_result` carries the
+    /// persisted path and the provider's non-payload metadata — never the
+    /// base64 payload. Two raw b64 results (~65K tokens each) breached the
+    /// 262144-token context limit on the following turn.
+    #[tokio::test]
+    async fn persist_and_slim_result_strips_payload_and_returns_paths() {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK
+            .lock()
+            .expect("artifacts env lock poisoned");
+        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+
+        let server = make_server();
+        use base64::Engine;
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+        let png_magic: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+        // (1) Single image: `output` is the persisted path, the payload is
+        // gone, and the provider's non-payload metadata survives.
+        let result = serde_json::json!({
+            "data": [{ "b64_json": encode(&jpeg) }],
+            "model": "flux-1-schnell",
+        });
+        let slim = persist_and_slim_result(
+            &server.gallery_state,
+            &server.gallery_store,
+            &result,
+            "image",
+        )
+        .await
+        .expect("persist + slim must succeed");
+        let serialized = slim.to_string();
+        assert!(
+            !serialized.contains("b64_json") && !serialized.contains("data:"),
+            "the slim result must carry no payload — got: {serialized}"
+        );
+        let output = slim["output"].as_str().expect("output carries the path");
+        assert!(output.ends_with(".jpg"), "extension from sniffed bytes");
+        assert_eq!(
+            std::fs::read(output).expect("persisted file readable"),
+            jpeg,
+            "the persisted file must round-trip the payload bytes"
+        );
+        assert_eq!(
+            slim["model"].as_str(),
+            Some("flux-1-schnell"),
+            "non-payload provider metadata must survive"
+        );
+
+        // (2) Multi-image: every data[] entry persists; `outputs` lists
+        // each path and `output` is the first.
+        let result = serde_json::json!({
+            "data": [
+                { "b64_json": encode(&png_magic) },
+                { "b64_json": encode(&png_magic) },
+            ],
+        });
+        let slim = persist_and_slim_result(
+            &server.gallery_state,
+            &server.gallery_store,
+            &result,
+            "image",
+        )
+        .await
+        .expect("persist + slim must succeed");
+        let outputs = slim["outputs"].as_array().expect("outputs array");
+        assert_eq!(outputs.len(), 2, "num_images > 1 persists every image");
+        for path in outputs {
+            let path = path.as_str().expect("path string");
+            assert!(
+                std::fs::metadata(path)
+                    .expect("persisted file exists")
+                    .is_file(),
+                "every outputs[] entry must exist on disk"
+            );
+        }
+        assert_eq!(
+            slim["output"].as_str(),
+            outputs.first().and_then(|path| path.as_str()),
+            "output is the first of outputs"
+        );
+
+        // (3) Unrecognized shape: a surfaced error — the raw provider
+        // response is never the fallback.
+        let result = serde_json::json!({"something": "else"});
+        let error = persist_and_slim_result(
+            &server.gallery_state,
+            &server.gallery_store,
+            &result,
+            "image",
+        )
+        .await
+        .expect_err("unrecognized shape must fail the tool");
+        assert!(
+            error.to_string().contains("unrecognized"),
+            "the error must name the unrecognized shape"
         );
 
         match prior {

@@ -27,8 +27,9 @@ pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 /// Default embedding model. Served by DeepInfra (OpenAI-compatible
 /// `/v1/embeddings` endpoint). The `DeepInfra/` prefix routes through
 /// `resolve_embedding_credentials` to `https://api.deepinfra.com/v1/openai`
-/// with the `DEEPINFRA_API_KEY` env var. Operators must set this key (via
-/// the settings UI or env var) for embedding-based recall to work.
+/// with the `DEEPINFRA_API_KEY` env var. Operators must set this key via
+/// Settings → AI → LLM Providers (it lives at the provider's `api_url`
+/// keychain slot — the ONE location) for embedding-based recall to work.
 ///
 /// Previously defaulted to `ollama/qwen3-embedding:0.6b` (local Ollama),
 /// which works but is impractically slow on CPU for large corpora (33K+

@@ -12,12 +12,13 @@ use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 const RUNPOD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("runpod");
 
 /// Ask the RunPod endpoint provider to adopt `key` through its existing
-/// `set_api_key` path. That writes the keychain entry at its `api_url`, updates
-/// the in-memory `ApiKeyState`, and notifies discovery so `RunPod/*` models
-/// refresh immediately — no restart required. The Data Services RunPod row
-/// stores the key under `kask://credentials/runpod` for MCP/training env
-/// injection; this is the second half that drives the same key into the OCR
-/// endpoint provider live.
+/// `set_api_key` path: it writes the keychain entry at the provider's
+/// `api_url` (`https://api.runpod.io` — the ONE location for the RunPod
+/// key), updates the in-memory `ApiKeyState`, and notifies discovery so
+/// `RunPod/*` models refresh immediately — no restart required. The Data
+/// Services RunPod row writes the same slot via `write_credential` (which
+/// also nudges MCP servers); this call adds the live in-memory refresh
+/// that a bare keychain write doesn't perform.
 fn refresh_runpod_endpoint_key(api_key: Option<String>, cx: &mut App) {
     let Some(provider) = LanguageModelRegistry::global(cx)
         .read(cx)
@@ -40,12 +41,13 @@ pub(crate) fn render_data_services_page(
     let provider = zed_credentials::global(cx);
 
     let mut rows: Vec<AnyElement> = Vec::new();
-    for (key, label, dashboard_url, env_var) in data_service_descriptors() {
+    for (key, label, dashboard_url, env_var, credential_url) in data_service_descriptors() {
         rows.push(render_data_service_row(
             key,
             label,
             dashboard_url,
             env_var,
+            credential_url,
             provider.clone(),
             cx,
         ));
@@ -66,9 +68,9 @@ pub(crate) fn render_data_services_page(
                 .child(SettingsSectionHeader::new("Data Services"))
                 .child(
                     Label::new(
-                        "API keys are stored in the system keychain \
-                         (kask://credentials/<key>). A service is enabled when its \
-                         key is present — enter the key to activate it.",
+                        "API keys are stored in the system keychain. A service \
+                         is enabled when its key is present — enter the key to \
+                         activate it.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -84,11 +86,19 @@ fn render_data_service_row(
     label: &'static str,
     dashboard_url: &'static str,
     env_var: &'static str,
+    credential_url: String,
     provider: Arc<dyn CredentialsProvider>,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/{key}");
     let has_key = has_credential(&provider, &[&credential_url], env_var);
+
+    // Built before the closures below move `credential_url` — the copy names
+    // the exact keychain slot this row reads and writes.
+    let storage_copy = format!(
+        "Enabled when the API key is present. Stored in the \
+         keychain under {credential_url}, or set the \
+         {env_var} environment variable."
+    );
 
     let key_input = if has_key {
         let reset_id = format!("kask-{key}-reset");
@@ -189,13 +199,9 @@ fn render_data_service_row(
         .gap_2()
         .child(
             v_flex().gap_0p5().child(Label::new(label)).child(
-                Label::new(format!(
-                    "Enabled when the API key is present. Stored in the \
-                     keychain under kask://credentials/{key}, or set the \
-                     {env_var} environment variable."
-                ))
-                .size(LabelSize::Small)
-                .color(Color::Muted),
+                Label::new(storage_copy)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
             ),
         )
         .child(key_input)

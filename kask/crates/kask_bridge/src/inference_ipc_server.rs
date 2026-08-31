@@ -58,8 +58,9 @@ pub(crate) type WorktreeSpawnRequest = (
 /// (same pattern as `ListModels`). The GPUI-side task reads the key from the
 /// keychain and returns it via the oneshot reply channel.
 ///
-/// `credential_url` is the `kask://credentials/<key>` URL the keychain entry
-/// is stored under (e.g. `kask://credentials/openrouter`).
+/// `credential_url` is the keychain URL the API key is stored under — for
+/// inference providers (openrouter, deepinfra), the provider's `api_url`
+/// slot, resolved via `provider_by_credential_key` (one key, one location).
 pub(crate) type BatchCredentialRequest = (
     String,                                  // credential_url
     oneshot::Sender<Result<String, String>>, // api_key or error
@@ -954,11 +955,29 @@ async fn dispatch(
             };
         };
 
-        // Read the API key from the keychain via the GPUI-side channel
-        let credential_url = match provider {
-            hkask_inference::batch::BatchProvider::OpenRouter => "kask://credentials/openrouter",
-            hkask_inference::batch::BatchProvider::DeepInfra => "kask://credentials/deepinfra",
+        // Read the API key from the keychain via the GPUI-side channel. One
+        // key, one location: the provider's key lives at its `api_url`
+        // keychain slot — the same slot zed's `ApiKeyState`, MCP env
+        // injection, and the settings UI read.
+        let credential_key = match provider {
+            hkask_inference::batch::BatchProvider::OpenRouter => "openrouter",
+            hkask_inference::batch::BatchProvider::DeepInfra => "deepinfra",
         };
+        let Some(provider_descriptor) =
+            crate::inference_providers::provider_by_credential_key(credential_key)
+        else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Internal".to_string(),
+                    message: format!(
+                        "batch provider credential key '{credential_key}' has no \
+                         INFERENCE_PROVIDERS entry — the descriptor table and \
+                         hkask-inference's BatchProvider enum diverged"
+                    ),
+                },
+            };
+        };
+        let credential_url = provider_descriptor.api_url;
         let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
         if batch_credential_tx
             .send((credential_url.to_string(), tx_reply))
@@ -980,8 +999,9 @@ async fn dispatch(
                     error: InferenceErrorPayload {
                         code: "PermissionDenied".to_string(),
                         message: format!(
-                            "batch API requires {credential_url}: {e}. \
-                             Set the API key via the kask settings UI."
+                            "batch API requires {} (keychain slot {credential_url}): \
+                             {e}. Set the API key via Settings → AI → LLM Providers.",
+                            provider_descriptor.env_var
                         ),
                     },
                 };
@@ -1083,8 +1103,23 @@ async fn dispatch(
             };
         };
 
-        // Read the API key from the keychain via the GPUI-side channel.
-        let credential_url = "kask://credentials/openrouter";
+        // Read the API key from the keychain via the GPUI-side channel. One
+        // key, one location: OpenRouter's key lives at its `api_url`
+        // keychain slot — the same slot zed's `ApiKeyState`, MCP env
+        // injection, and the settings UI read.
+        let Some(openrouter_descriptor) =
+            crate::inference_providers::provider_by_credential_key("openrouter")
+        else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Internal".to_string(),
+                    message: "rerank provider 'openrouter' has no INFERENCE_PROVIDERS \
+                             entry — the descriptor table diverged"
+                        .to_string(),
+                },
+            };
+        };
+        let credential_url = openrouter_descriptor.api_url;
         let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
         if batch_credential_tx
             .send((credential_url.to_string(), tx_reply))
@@ -1106,8 +1141,9 @@ async fn dispatch(
                     error: InferenceErrorPayload {
                         code: "PermissionDenied".to_string(),
                         message: format!(
-                            "rerank requires {credential_url}: {e}. \
-                             Set the API key via the kask settings UI."
+                            "rerank requires {} (keychain slot {credential_url}): \
+                             {e}. Set the API key via Settings → AI → LLM Providers.",
+                            openrouter_descriptor.env_var
                         ),
                     },
                 };

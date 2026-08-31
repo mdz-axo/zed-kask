@@ -160,16 +160,30 @@ pub(crate) fn builtin_mcp_servers() -> Vec<(&'static str, &'static str)> {
 /// Data service descriptors, sourced from the bridge's canonical registry
 /// (`kask_bridge::DATA_SERVICES`). The bridge's `DataServiceDescriptor` is the
 /// single source of truth; the UI re-binds it as `(key, label, dashboard_url,
-/// env_var)` tuples for the settings UI's rendering pattern. This eliminates
-/// the former parallel `DATA_SERVICES` 4-tuple that drifted from the bridge's
-/// `DATA_SERVICE_CREDENTIALS` 2-tuple (different field order, overlapping but
-/// not identical entries).
-pub(crate) fn data_service_descriptors()
--> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+/// env_var, credential_url)` tuples for the settings UI's rendering pattern.
+/// The credential URL resolves through `kask_bridge::credential_url_for_key`
+/// so each row reads/writes exactly the slot `build_mcp_server_env` injects
+/// from (inference-provider-backed rows like RunPod live at the provider's
+/// `api_url`; everything else at `kask://credentials/<key>`).
+pub(crate) fn data_service_descriptors() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    String,
+)> {
     kask_bridge::DATA_SERVICES
         .iter()
         .filter(|d| d.shows_in_ui)
-        .map(|d| (d.credential_key, d.label, d.dashboard_url, d.env_var))
+        .map(|d| {
+            (
+                d.credential_key,
+                d.label,
+                d.dashboard_url,
+                d.env_var,
+                kask_bridge::credential_url_for_key(d.credential_key),
+            )
+        })
         .collect()
 }
 
@@ -182,9 +196,9 @@ pub(crate) fn data_service_descriptors()
 ///
 /// The keychain read is async, so we can't block on it here. We check the env
 /// var synchronously (instant) and the session-level cache of recently-written
-/// URLs. For credentials with a single keychain URL (data services, curator
-/// SMTP), pass `&[url]`. For inference providers with two keychain URLs
-/// (api_url + credential_url), pass `&[api_url, credential_url]`.
+/// URLs. `urls` carries the credential's canonical keychain URL(s) — one per
+/// credential (inference providers live at their `api_url`, data services at
+/// `kask://credentials/<key>`; `credential_urls_for_mcp` lists the same set).
 pub(crate) fn has_credential(
     _provider: &Arc<dyn CredentialsProvider>,
     urls: &[&str],
@@ -201,8 +215,6 @@ pub(crate) fn has_credential(
         return true;
     }
     // Check the session cache for keys written via the settings UI.
-    // Inference providers have two keychain URLs (api_url + credential_url);
-    // either one being recently written means the key is configured.
     for url in urls {
         if was_recently_written(url) {
             return true;
@@ -235,13 +247,14 @@ pub(crate) fn write_credential(
     let provider = provider.clone();
     let url = url.to_string();
     let value = value.to_string();
-    let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
-    // Extract the credential key from the URL (e.g. `kask://credentials/openrouter` → `openrouter`).
-    let credential_key = url
-        .strip_prefix(KASK_CREDENTIAL_NAMESPACE)
-        .and_then(|s| s.strip_prefix('/'))
-        .unwrap_or("")
-        .to_string();
+    // Whether this URL feeds MCP server env — `build_mcp_server_env` resolves
+    // exactly the URLs in `credential_urls_for_mcp`, so a write to one of them
+    // must restart the affected servers. This covers `kask://credentials/*`
+    // (data services) AND inference-provider `api_url` slots: the media server
+    // reads `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY` from the provider slots,
+    // so a write there is not restart-wasted work (the old kask-namespace-only
+    // guard predates that consolidation).
+    let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
     // Mark as written immediately so the UI shows "Configured" on next render.
     // The keychain write is async; the session cache bridges the gap.
     // `refresh_windows` triggers a re-render so the "Configured" card appears.
@@ -252,30 +265,12 @@ pub(crate) fn write_credential(
             .write_credentials(&url, "kask", value.as_bytes(), cx)
             .await
             .log_err();
-        // Mirror the key to the inference provider's `api_url` in the Zed
-        // keychain so the `LanguageModelProvider`'s `ApiKeyState` finds it.
-        // This is essential for OpenRouter, RunPod, DeepInfra, etc. — without
-        // it, the key is at `kask://credentials/<key>` but the provider reads
-        // from `https://openrouter.ai/api/v1` (or similar) and never sees it.
-        let mirror_value = value.clone();
-        let _ = kask_bridge::mirror_credential_to_provider(
-            &provider,
-            &credential_key,
-            Some(&mirror_value),
-            &cx,
-        )
-        .await
-        .log_err();
         // After the keychain write lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain via
         // `build_mcp_server_env` and restarts any governed MCP server whose
         // env changed. The nudge must fire AFTER the write completes —
         // otherwise the restart would re-read the stale (empty) value.
-        // Only kask-namespaced credentials feed MCP servers; inference-provider
-        // keys (written under their `api_url`) are consumed by zed's
-        // `LanguageModelRegistry`, not by kask MCP servers, so they don't need
-        // a restart.
-        if is_kask_namespace {
+        if feeds_mcp_servers {
             // `AsyncApp::update` returns `R` directly (not `Result`), so there
             // is no error to propagate — the call is infallible once the app
             // is alive (the spawn's `cx` keeps it alive).
@@ -291,32 +286,34 @@ pub(crate) fn delete_credential(
 ) -> Task<()> {
     let provider = provider.clone();
     let url = url.to_string();
-    let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
-    // Extract the credential key from the URL (e.g. `kask://credentials/openrouter` → `openrouter`).
-    let credential_key = url
-        .strip_prefix(KASK_CREDENTIAL_NAMESPACE)
-        .and_then(|s| s.strip_prefix('/'))
-        .unwrap_or("")
-        .to_string();
+    // Same predicate as `write_credential`: any URL that feeds MCP server env
+    // needs the restart nudge after deletion (see `credential_url_feeds_mcp_servers`).
+    let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
     // Remove from session cache so the UI shows the input field again.
     unmark_recently_written(&url);
     cx.refresh_windows();
     cx.spawn(async move |cx| {
         let _ = provider.delete_credentials(&url, cx).await.log_err();
-        // Mirror the deletion to the inference provider's `api_url` so the
-        // `LanguageModelProvider`'s `ApiKeyState` sees the key as removed.
-        let _ = kask_bridge::mirror_credential_to_provider(&provider, &credential_key, None, &cx)
-            .await
-            .log_err();
         // After the keychain delete lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain and
         // restarts any governed MCP server that no longer has a key (rather
-        // than keeping a stale key in its launch env). Same namespace guard as
-        // `write_credential` — inference-provider deletes don't need a restart.
-        if is_kask_namespace {
+        // than keeping a stale key in its launch env).
+        if feeds_mcp_servers {
             cx.update(|cx| nudge_mcp_servers(cx));
         }
     })
+}
+
+/// Whether a credential URL feeds MCP server env — i.e. whether
+/// `credential_urls_for_mcp` (the URL set `build_mcp_server_env` resolves)
+/// contains it. Keychain writes/deletes to such URLs must nudge
+/// `SettingsStore` so governed MCP servers restart with the new value; for
+/// every other URL (none today — every UI-written credential feeds a server)
+/// a restart would be wasted work.
+fn credential_url_feeds_mcp_servers(url: &str) -> bool {
+    kask_bridge::credential_urls_for_mcp()
+        .iter()
+        .any(|(_, credential_url)| credential_url == url)
 }
 
 /// Nudge `SettingsStore` so the `sync_kask_mcp_runtime_servers` observer
@@ -333,9 +330,10 @@ pub(crate) fn delete_credential(
 /// `update_settings_file` re-write) while preserving D32's loop-breaker (no
 /// file write → no file-watcher re-fire → no self-sustaining loop).
 ///
-/// Only call this for `kask://credentials/...` URLs — inference-provider
-/// keys are consumed by zed's `LanguageModelRegistry`, not by kask MCP
-/// servers, so a restart would be wasted work.
+/// Only call this for URLs that feed MCP server env (`credential_urls_for_mcp`)
+/// — data-service `kask://credentials/...` slots AND inference-provider
+/// `api_url` slots (the media server reads its provider keys from the latter).
+/// For any other URL a restart would be wasted work.
 pub(crate) fn nudge_mcp_servers(cx: &mut App) {
     SettingsStore::notify_observers(cx);
 }
@@ -825,44 +823,60 @@ mod tests {
         let _ = nudge_mcp_servers as fn(&mut gpui::App);
     }
 
-    /// The nudge must only fire for `kask://credentials/...` URLs. Inference
-    /// providers write keys under their `api_url` (e.g.
-    /// `https://openrouter.ai/api/v1`) AND mirror to
-    /// `kask://credentials/<key>`; the `api_url` write is consumed by zed's
-    /// `LanguageModelRegistry`, not by kask MCP servers, so it must NOT
-    /// trigger a restart. This test pins the namespace guard predicate so a
-    /// future change that drops the `starts_with(KASK_CREDENTIAL_NAMESPACE)`
-    /// check (and starts nudging on every credential write, including
-    /// inference-provider `api_url` writes) fails loudly.
+    /// The nudge must fire for exactly the URLs that feed MCP server env —
+    /// the set `credential_urls_for_mcp` (what `build_mcp_server_env`
+    /// resolves). That includes inference-provider `api_url` slots: the media
+    /// server's child-local MediaRouter reads `DEEPINFRA_API_KEY` /
+    /// `OPENROUTER_API_KEY` injected from those slots, so a key rotated there
+    /// MUST restart the server or it keeps authenticating with the stale key
+    /// (the 2026-08-31 DeepInfra 401). This test pins the
+    /// `credential_url_feeds_mcp_servers` predicate so a future change that
+    /// narrows it back to the kask namespace (or drops the api_url entries)
+    /// fails loudly.
     #[test]
-    fn kask_credential_namespace_guard_distinguishes_kask_and_provider_urls() {
-        // Kask-namespaced credential URLs (data services, swarm, curator
-        // email, etc.) — these feed MCP server env and MUST nudge.
-        let kask_urls = [
-            "kask://credentials/hkask_abw_api_key",
-            "kask://credentials/hkask_eodhd_api_key",
-            "kask://credentials/hkask_smtp_password",
-            "kask://credentials/hkask_exa_api_key",
-        ];
-        for url in kask_urls {
+    fn nudge_guard_covers_provider_api_urls_and_excludes_legacy_slots() {
+        // Inference-provider api_url slots — MUST nudge (the media server
+        // injects its keys from these).
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "https://api.deepinfra.com/v1/openai",
+            "https://api.runpod.io",
+        ] {
             assert!(
-                url.starts_with(KASK_CREDENTIAL_NAMESPACE),
-                "expected `{url}` to be in the kask credential namespace"
+                credential_url_feeds_mcp_servers(url),
+                "provider slot {url} feeds MCP server env and must nudge"
             );
         }
 
-        // Inference-provider `api_url` writes — these are consumed by zed's
-        // `LanguageModelRegistry`, NOT by kask MCP servers, and must NOT nudge.
-        // (The mirrored `kask://credentials/<key>` write from the same flow IS
-        // kask-namespaced and will nudge — that's the intended dual-write.)
-        let provider_api_urls = ["https://openrouter.ai/api/v1", "https://api.runpod.io"];
-        for url in provider_api_urls {
+        // Data-service kask slots — MUST nudge.
+        for url in [
+            "kask://credentials/hkask_abw_api_key",
+            "kask://credentials/hkask_smtp_password",
+            "kask://credentials/exa",
+        ] {
             assert!(
-                !url.starts_with(KASK_CREDENTIAL_NAMESPACE),
-                "inference-provider `api_url` `{url}` must NOT be in the kask \
-                 credential namespace — it is consumed by zed's \
-                 `LanguageModelRegistry`, not by kask MCP servers"
+                credential_url_feeds_mcp_servers(url),
+                "kask slot {url} feeds MCP server env and must nudge"
             );
         }
+
+        // The LEGACY inference-provider kask slots feed nothing — nudging on
+        // them would be wasted work, and their mere presence in the feed set
+        // would mean the split-brain read is back.
+        for url in [
+            "kask://credentials/openrouter",
+            "kask://credentials/deepinfra",
+            "kask://credentials/runpod",
+        ] {
+            assert!(
+                !credential_url_feeds_mcp_servers(url),
+                "legacy slot {url} must not feed MCP server env"
+            );
+        }
+
+        // An arbitrary URL neither the registries know about — no nudge.
+        assert!(!credential_url_feeds_mcp_servers(
+            "https://example.com/other"
+        ));
     }
 }

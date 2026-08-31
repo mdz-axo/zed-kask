@@ -30,27 +30,17 @@ impl MediaServer {
                 .media_generate("remove_background", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Background removal failed", e))?;
-            match persist_generated_asset(self, &result, "image").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Background-removed image persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            // Persist the payload and compose the slim result (the provider's
+            // base64 payload never enters the model's context).
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "image_remove_background",
                 "image",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }
@@ -83,19 +73,23 @@ impl MediaServer {
                 ..Default::default()
             };
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("image_to_image", &media_params)
                 .await
-                .map_err(|e| classify_inference_error("Style transfer failed", e))
-                .map(|result| {
-                    crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "image_apply_style",
-                        "image",
-                        args,
-                        None,
-                    )
-                })
+                .map_err(|e| classify_inference_error("Style transfer failed", e))?;
+            // Persist the payload and compose the slim result (the provider's
+            // base64 payload never enters the model's context). Previously this
+            // tool returned the raw provider response unpersisted.
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
+                "image_apply_style",
+                "image",
+                args,
+            )
+            .await
         })
         .await
     }
@@ -461,19 +455,23 @@ impl MediaServer {
                 ..Default::default()
             };
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
-                .map_err(|e| classify_inference_error("Image-to-video failed", e))
-                .map(|result| {
-                    crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "image_to_video",
-                        "video",
-                        args,
-                        None,
-                    )
-                })
+                .map_err(|e| classify_inference_error("Image-to-video failed", e))?;
+            // Persist the video payload and compose the slim result (the
+            // payload never enters the model's context). Previously this
+            // tool returned the raw provider response unpersisted.
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
+                "image_to_video",
+                "video",
+                args,
+            )
+            .await
         })
         .await
     }
@@ -932,19 +930,23 @@ impl MediaServer {
             };
             let args = serde_json::to_value(&media_params)
                 .unwrap_or(serde_json::Value::Null);
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
-                .map_err(|e| classify_inference_error("Image-to-video failed", e))
-                .map(|result| {
-                    crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "video_meme",
-                        "video",
-                        args,
-                        None,
-                    )
-                })
+                .map_err(|e| classify_inference_error("Image-to-video failed", e))?;
+            // Persist the video payload and compose the slim result (the
+            // payload never enters the model's context). Previously this
+            // tool returned the raw provider response unpersisted.
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
+                "video_meme",
+                "video",
+                args,
+            )
+            .await
         })
         .await
     }

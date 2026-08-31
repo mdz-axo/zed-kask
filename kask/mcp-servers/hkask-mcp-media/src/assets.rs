@@ -4,8 +4,10 @@
 //! they belong in the open artifacts tree, not the hidden internal data dir
 //! (which holds only databases/infrastructure).
 
-use crate::MediaServer;
-use crate::error::MediaError;
+use crate::error::{MediaError, map_media_error};
+use crate::{GalleryState, GalleryStore};
+use hkask_mcp_server::server::McpToolError;
+use std::sync::{Arc, Mutex};
 
 pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     let dir = hkask_types::agent_paths::resolve_under_artifacts_dir(
@@ -22,24 +24,31 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     dir
 }
 
-/// Persist a generated asset to the artifacts directory and add it to the
-/// gallery.
+/// Persist a single generated asset to the artifacts directory and index it
+/// in the gallery — the extraction step of [`persist_and_slim_result`],
+/// the composition helper every media tool routes its `media_generate`
+/// result through.
 ///
-/// Downloads the asset from a URL or decodes a base64 data URI, saves it to
+/// Downloads the asset from a URL or decodes a base64 payload, saves it to
 /// `{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and registers it in
-/// the gallery store. Returns the local file path on success.
+/// the gallery store (best-effort — a gallery-less persist still returns
+/// the path, with a warning naming the skipped indexing). Returns the local
+/// file path on success.
+///
+/// Takes the gallery Arcs rather than `&MediaServer` so the background job
+/// task (`job_submit`) — which cannot borrow the server — persists through
+/// the same path as the synchronous tools.
 ///
 /// `kind` is "image", "video", or "audio" — determines the file extension.
-/// `result` is the raw provider response JSON. The function tries multiple
-/// response shapes:
+/// `result` is the raw provider response JSON. The recognized shapes:
 /// - `data[0].b64_json` (DeepInfra image generation)
 /// - `data[0].url` (OpenRouter image generation)
-/// - `output_urls[0]` (legacy format)
 /// - `audio` (TTS — base64 data URI)
 /// - `video_url` (DeepInfra video — data URI)
 /// - `url` (OpenRouter video — HTTP URL)
 pub(crate) async fn persist_generated_asset(
-    server: &MediaServer,
+    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery_store: &Arc<GalleryStore>,
     result: &serde_json::Value,
     kind: &str,
 ) -> Result<std::path::PathBuf, MediaError> {
@@ -77,27 +86,10 @@ pub(crate) async fn persist_generated_asset(
                 let bytes = download_asset(url).await?;
                 let ext = image_ext_from_bytes(&bytes);
                 (bytes, ext)
-            }
-            // Legacy: output_urls[0]
-            else if let Some(url) = result
-                .get("output_urls")
-                .and_then(|u| u.as_array())
-                .and_then(|u| u.first())
-                .and_then(|v| v.as_str())
-            {
-                if url.starts_with("data:") {
-                    let (bytes, _) = decode_data_uri(url)?;
-                    let ext = image_ext_from_bytes(&bytes);
-                    (bytes, ext)
-                } else {
-                    let bytes = download_asset(url).await?;
-                    let ext = image_ext_from_bytes(&bytes);
-                    (bytes, ext)
-                }
             } else {
                 return Err(MediaError::AssetPersistence(format!(
                     "unrecognized {kind} provider response shape: no \
-                     data[0].b64_json / data[0].url / output_urls[0] field"
+                     data[0].b64_json / data[0].url field"
                 )));
             }
         }
@@ -148,59 +140,192 @@ pub(crate) async fn persist_generated_asset(
             path.display()
         )));
     }
+    tracing::info!(
+        target: "hkask.mcp.media",
+        path = %path.display(),
+        kind,
+        "Generated asset persisted"
+    );
 
-    // Add to gallery (all media types — images, video, and audio are indexed).
+    // Index in the gallery (all media types). Best-effort: without an
+    // organized gallery the asset is still persisted and its path returned —
+    // the warning names the degradation so it is surfaced, never silent.
     let media_type = match kind {
-        "image" => "image",
         "video" => "video",
         "audio" => "audio",
         _ => "image",
     };
-    {
-        let ga = match server.access_gallery() {
-            Ok(ga) => ga,
-            Err(e) => {
+    let gallery_id = match gallery_state.lock() {
+        Ok(guard) => match guard.as_ref().and_then(|state| state.gallery_id.clone()) {
+            Some(gallery_id) => gallery_id,
+            None => {
                 tracing::warn!(
                     target: "hkask.mcp.media",
-                    error = %e,
-                    "Gallery not initialized — generated {} not indexed",
-                    media_type
+                    "Gallery not initialized — generated {media_type} not indexed"
                 );
                 return Ok(path);
             }
-        };
-        let hash = {
-            use sha2::Digest;
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(&bytes);
-            format!("{:x}", hasher.finalize())
-        };
-        let (width, height) = if media_type == "image" {
-            infer_image_dimensions(&bytes)
-        } else {
-            (0, 0)
-        };
-        if let Err(e) = server.gallery_store.add_media(
-            &ga.gallery_id,
-            &filename,
-            path.to_str().unwrap_or(""),
-            &hash,
-            width,
-            height,
-            ext,
-            bytes.len() as u64,
-            media_type,
-        ) {
+        },
+        Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.media",
-                error = %e,
-                "Failed to add generated {} to gallery",
-                media_type
+                %error,
+                "Gallery state lock poisoned — generated {media_type} not indexed"
             );
+            return Ok(path);
         }
+    };
+    let hash = {
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&bytes);
+        format!("{:x}", hasher.finalize())
+    };
+    let (width, height) = if media_type == "image" {
+        infer_image_dimensions(&bytes)
+    } else {
+        (0, 0)
+    };
+    if let Err(error) = gallery_store.add_media(
+        &gallery_id,
+        &filename,
+        path.to_str().unwrap_or(""),
+        &hash,
+        width,
+        height,
+        ext,
+        bytes.len() as u64,
+        media_type,
+    ) {
+        tracing::warn!(
+            target: "hkask.mcp.media",
+            %error,
+            "Failed to add generated {media_type} to gallery"
+        );
     }
 
     Ok(path)
+}
+
+/// Map a `media_generate` op string to the asset kind its result persists
+/// as ("image", "video", or "audio"). Ops whose results carry no persisted
+/// asset (transcription, audio-chat, structured chat) return `None` — a job
+/// submitted for such an op is rejected, since there is nothing to persist.
+pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
+    match op {
+        "generate_image" | "image_to_image" | "remove_background" | "upscale" => Some("image"),
+        "generate_video" | "image_to_video" => Some("video"),
+        "generate_speech" => Some("audio"),
+        _ => None,
+    }
+}
+
+/// Persist a generated-media provider response and compose the slim tool
+/// result every media tool returns.
+///
+/// Provider responses carry megabyte-scale base64 payloads. Returning the
+/// raw JSON puts those payloads in the model's context — the 2026-08-31
+/// context bomb: two ~65K-token base64 results plus the prompt breached the
+/// 262144-token limit on the following turn. This is the single composition
+/// site for every `media_generate` caller: the payload is decoded/downloaded
+/// exactly once, written under `{artifacts_dir}/media-mcp/generated/`,
+/// gallery-indexed, and the tool result becomes the persisted path plus the
+/// provider's non-payload metadata. Multi-image responses (`data[]` with
+/// several entries) persist every image — `outputs` lists each path,
+/// `output` the first.
+///
+/// Persist failure returns `Err` — the raw payload is never the fallback.
+pub(crate) async fn persist_and_slim_result(
+    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery_store: &Arc<GalleryStore>,
+    result: &serde_json::Value,
+    kind: &str,
+) -> Result<serde_json::Value, MediaError> {
+    // Multi-image responses persist every entry — the singular persist
+    // extracts only data[0], which silently dropped all but the first
+    // image of a `num_images > 1` request.
+    let multi_image_entries = if kind == "image" {
+        result
+            .get("data")
+            .and_then(|data| data.as_array())
+            .filter(|entries| entries.len() > 1)
+    } else {
+        None
+    };
+    let paths = match multi_image_entries {
+        Some(entries) => {
+            let mut paths = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let single = serde_json::json!({ "data": [entry] });
+                paths.push(
+                    persist_generated_asset(gallery_state, gallery_store, &single, kind).await?,
+                );
+            }
+            paths
+        }
+        None => vec![persist_generated_asset(gallery_state, gallery_store, result, kind).await?],
+    };
+
+    let Some(output_path) = paths.first() else {
+        return Err(MediaError::AssetPersistence(
+            "no assets persisted — empty provider response".to_string(),
+        ));
+    };
+    let mut slim = serde_json::Map::new();
+    slim.insert(
+        "output".to_string(),
+        serde_json::Value::String(output_path.to_string_lossy().into_owned()),
+    );
+    if paths.len() > 1 {
+        slim.insert(
+            "outputs".to_string(),
+            serde_json::Value::Array(
+                paths
+                    .iter()
+                    .map(|path| serde_json::Value::String(path.to_string_lossy().into_owned()))
+                    .collect(),
+            ),
+        );
+    }
+
+    // Carry the provider's non-payload metadata (model name, usage, seed).
+    // The payload fields are the exact fields `persist_generated_asset`
+    // consumes — never copy them into the tool result.
+    if let Some(object) = result.as_object() {
+        for (field, value) in object {
+            if !matches!(field.as_str(), "data" | "video_url" | "url" | "audio") {
+                slim.entry(field.clone()).or_insert_with(|| value.clone());
+            }
+        }
+    }
+
+    Ok(serde_json::Value::Object(slim))
+}
+
+/// Persist a provider payload and compose the complete slim tool result
+/// every `media_generate` tool returns: the persisted path plus the
+/// provider's non-payload metadata, enriched with the OMC-tagged,
+/// provenance-carrying display hint (so the media widget can dispatch the
+/// "Explain" affordance and compose back the "I disagree" gesture).
+///
+/// The single composition path — call this instead of re-assembling
+/// `persist_and_slim_result` + `enrich_with_omc_and_provenance` by hand at
+/// each call site; a hand-rolled variant is how the base64 payload once
+/// leaked into the model's context.
+pub(crate) async fn persist_slim_and_enrich(
+    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery_store: &Arc<GalleryStore>,
+    result: &serde_json::Value,
+    tool: &str,
+    kind: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, McpToolError> {
+    let slim = persist_and_slim_result(gallery_state, gallery_store, result, kind)
+        .await
+        .map_err(map_media_error)?;
+    Ok(crate::media_block::enrich_with_omc_and_provenance(
+        slim, tool, kind, args, None,
+    ))
 }
 
 /// Download asset bytes from an HTTP URL.

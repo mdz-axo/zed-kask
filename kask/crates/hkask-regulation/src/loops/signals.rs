@@ -164,6 +164,25 @@ impl SignalMetric {
 mod tests {
     use super::*;
 
+    /// Pins the strict boundary semantics: a value exactly AT the
+    /// set-point is not a deviation. This is the boundary check behind
+    /// `tool_reliability_degraded` and friends — non-strict (`>=`/`<=`)
+    /// semantics here would fire an alert when value and threshold are
+    /// equal, the "0 exceeds 0" false-positive class.
+    #[test]
+    fn from_signal_returns_none_at_set_point_equality() {
+        let signal = Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::ToolReliability,
+            0.80,
+            0.80,
+        );
+        assert!(
+            Deviation::from_signal(&signal).is_none(),
+            "value == set-point is the homeostatic state, not a deviation"
+        );
+    }
+
     #[test]
     fn metric_name_round_trips() {
         // Every variant must survive as_str -> from_str_name. A variant

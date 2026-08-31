@@ -83,8 +83,8 @@ not on any storage crate — durable sinks are injected as traits
 | `SetPoints` struct | `kask/crates/hkask-regulation/src/set_points.rs:184-291` |
 | `SetPointsConfig` | `kask/crates/hkask-regulation/src/set_points.rs:296-328` |
 | `InferenceThrottleMode` enum | `kask/crates/hkask-regulation/src/set_points.rs:60-67` |
-| `SetPoints::validate` | `kask/crates/hkask-regulation/src/set_points.rs:480-528` |
-| `load_set_points` | `kask/crates/hkask-regulation/src/set_points.rs:538-572` |
+| `SetPoints::validate` | `kask/crates/hkask-regulation/src/set_points.rs:482-541` |
+| `load_set_points` | `kask/crates/hkask-regulation/src/set_points.rs:585-619` |
 | `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:123` |
 | `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:101` |
 | `RegulationReason` enum | `kask/crates/hkask-regulation/src/regulation_policy.rs:18` |
@@ -348,11 +348,12 @@ alerts would be a variety inversion.
 values. Defaults are declared once as `DEFAULT_*` constants
 (`set_points.rs:13-176`) and reused in the `Default` impl
 (`set_points.rs:346-382`), `SetPointsConfig` (`set_points.rs:296-328`), and
-`from_config` (`set_points.rs:387-476`). `validate()` (`set_points.rs:480-528`)
+`from_config` (`set_points.rs:387-476`). `validate()` (`set_points.rs:482-541`)
 checks range and ordering invariants (e.g., warning threshold > critical
-threshold, stage ratio < block ratio).
+threshold, stage ratio < block ratio, tool reliability floor in
+(0.0, 1.0] so the sensor can never be silently disabled).
 
-`load_set_points()` (`set_points.rs:538-572`) reads the `HKASK_REG_CONFIG`
+`load_set_points()` (`set_points.rs:585-619`) reads the `HKASK_REG_CONFIG`
 env var, parses the YAML file, validates, and falls back to defaults on any
 error with a `tracing::warn!`.
 

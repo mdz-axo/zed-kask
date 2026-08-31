@@ -247,9 +247,9 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 //   this stage reorders on top. On total failure the RRF order is kept.
 // - Inference IPC bridge: the rerank call routes through
 //   `InferenceMethod::Rerank` to the zed side, which holds the OpenRouter key
-//   (keychain `kask://credentials/openrouter`) and calls the provider
-//   directly — the MCP server never sees the credential (same pattern as
-//   `GenerateBatch`).
+//   (keychain slot at the provider `api_url`, `https://openrouter.ai/api/v1`)
+//   and calls the provider directly — the MCP server never sees the
+//   credential (same pattern as `GenerateBatch`).
 // - Degradation surfacing: every degraded outcome (call failed, documents
 //   missing from the response) is named in the tool output's `rerank` field
 //   — never silent.

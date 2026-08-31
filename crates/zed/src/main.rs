@@ -1514,23 +1514,6 @@ fn main() {
                 // (curator, swarm memory, kanban, research, training) opens
                 // with it.
 
-                // zed-kask: mirror kask credential store keys to each provider's
-                // `api_url` in the Zed keychain. The kask settings UI writes keys
-                // to `kask://credentials/<key>`, but each `LanguageModelProvider`'s
-                // `ApiKeyState` reads from the provider's `api_url` (e.g.
-                // `https://openrouter.ai/api/v1`). Without this mirror, a key set
-                // via the kask settings UI is invisible to the provider — models
-                // never load. This generalizes the former RunPod-only mirror to
-                // all inference providers, and replaces the removed
-                // `mirror_env_keys_to_keychain` (which mirrored from env vars).
-                // Must `.await` before the embedding port resolution below, which
-                // reads from the provider's `api_url` in the keychain.
-                let provider_key_mirror_task = cx.update(|cx| {
-                    let credentials_provider = zed_credentials_provider::global(cx);
-                    kask_bridge::mirror_kask_credentials_to_providers(&credentials_provider, cx)
-                });
-                provider_key_mirror_task.await;
-
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the
                 // `match provision_result` below.

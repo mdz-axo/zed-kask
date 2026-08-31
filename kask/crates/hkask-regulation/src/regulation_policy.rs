@@ -394,40 +394,47 @@ impl RegulationPolicy {
 /// string for the alert message — avoiding the misleading "Variety deficit 0
 /// exceeds threshold 0" message that the previous `(0, 0)` fallback produced
 /// for non-variety alerts.
+///
+/// Fractional scalars are unit-scaled before the u64 conversion — a bare
+/// `as u64` cast truncates (0.80 → 0), which produced the live-observed
+/// "tool_reliability_degraded — value 0 exceeds threshold 0" escalation:
+/// a positive 0.80 floor displayed as 0. Rates and ratios scale to whole
+/// percent (0.80 → 80), latency seconds to whole milliseconds, and
+/// count-valued scalars round to the nearest integer.
 pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u64)> {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
-            Some((*deficit as u64, *threshold as u64))
+            Some((rounded_count(*deficit), rounded_count(*threshold)))
         }
         RegulationData::ErrorRateExceeded {
             error_rate,
             threshold,
-        } => Some((*error_rate as u64, *threshold as u64)),
+        } => Some((percent_of(*error_rate), percent_of(*threshold))),
         RegulationData::ConnectorLatencyExceeded {
             latency_secs,
             threshold,
-        } => Some((*latency_secs as u64, *threshold as u64)),
+        } => Some((millis_of(*latency_secs), millis_of(*threshold))),
         RegulationData::CommunicationBackpressure {
             queue_depth,
             threshold,
-        } => Some((*queue_depth as u64, *threshold as u64)),
+        } => Some((rounded_count(*queue_depth), rounded_count(*threshold))),
         RegulationData::ToolReliabilityDegraded {
             reliability,
             threshold,
-        } => Some((*reliability as u64, *threshold as u64)),
+        } => Some((percent_of(*reliability), percent_of(*threshold))),
         RegulationData::EnergyBudgetLow {
             remaining_ratio,
             set_point,
-        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
         RegulationData::BudgetGuardEscalation {
             remaining_ratio,
             set_point,
             ..
-        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
         RegulationData::EnergyDepletionAutoAdjust {
             remaining_ratio,
             set_point,
-        } => Some((*remaining_ratio as u64, *set_point as u64)),
+        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
         RegulationData::ContextServerFleetHealth {
             healthy_count,
             total_count,
@@ -435,6 +442,118 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::CuratorBudgetOverride { .. }
         | RegulationData::RolloutImpactCheck { .. }
         | RegulationData::NoData => None,
+    }
+}
+
+/// Scale a rate or ratio in [0.0, 1.0] to whole percent, rounding to
+/// nearest.
+///
+/// A bare `as u64` cast truncates (0.80 → 0); percent scaling preserves
+/// the set-point's magnitude so an alert never displays a threshold of 0
+/// for a positive floor.
+fn percent_of(value: f64) -> u64 {
+    (value * 100.0).round() as u64
+}
+
+/// Scale a duration in seconds to whole milliseconds, rounding to nearest
+/// so fractional-second set-points survive the u64 conversion.
+fn millis_of(value: f64) -> u64 {
+    (value * 1000.0).round() as u64
+}
+
+/// Round a count-valued f64 to the nearest integer.
+fn rounded_count(value: f64) -> u64 {
+    value.round() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the fractional-set-point fix in `extract_deficit_threshold`.
+    ///
+    /// The previous `*value as u64` casts truncated every fractional
+    /// scalar: a `ToolReliabilityDegraded { reliability: 0.0, threshold: 0.80 }`
+    /// extracted as `(0, 0)`, producing the live-observed
+    /// "tool_reliability_degraded — value 0 exceeds threshold 0" escalation —
+    /// a threshold of 0 the loop could never meaningfully breach, and
+    /// indistinguishable from a broken sense input returning zero (the
+    /// `.rules` `unwrap_or(0)` trap). The extraction must preserve the
+    /// set-point's magnitude.
+    #[test]
+    fn extract_deficit_threshold_preserves_fractional_magnitude() {
+        // Rates/ratios scale to whole percent (0.80 → 80).
+        let data = RegulationData::ToolReliabilityDegraded {
+            reliability: 0.0,
+            threshold: 0.80,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((0, 80)));
+
+        let data = RegulationData::ErrorRateExceeded {
+            error_rate: 0.45,
+            threshold: 0.30,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((45, 30)));
+
+        let data = RegulationData::EnergyBudgetLow {
+            remaining_ratio: 0.15,
+            set_point: 0.20,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((15, 20)));
+
+        let data = RegulationData::EnergyDepletionAutoAdjust {
+            remaining_ratio: 0.12,
+            set_point: 0.20,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((12, 20)));
+
+        // Latency scales to milliseconds so fractional seconds survive.
+        let data = RegulationData::ConnectorLatencyExceeded {
+            latency_secs: 2.5,
+            threshold: 30.0,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((2500, 30000)));
+
+        // Count-valued scalars round to the nearest integer.
+        let data = RegulationData::CommunicationBackpressure {
+            queue_depth: 12.7,
+            threshold: 10.0,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((13, 10)));
+
+        // Integer-valued data is unchanged by the scaling.
+        let data = RegulationData::VarietyDeficitExceeded {
+            deficit: 100.0,
+            threshold: 19.0,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((100, 19)));
+    }
+
+    /// A fractional set-point below 0.5 must not display as a threshold
+    /// of 0 — that is the exact `(0, 0)` pair the operator cannot
+    /// distinguish from a broken sensor.
+    #[test]
+    fn extract_never_yields_zero_threshold_for_positive_set_point() {
+        let data = RegulationData::ToolReliabilityDegraded {
+            reliability: 0.0,
+            threshold: 0.30,
+        };
+        assert_eq!(extract_deficit_threshold(&data), Some((0, 30)));
+    }
+
+    /// Variants without a quantitative pair return `None` — the caller
+    /// falls back to the reason string with the `(1, 1)` advisory sentinel,
+    /// never a fabricated `(0, 0)`.
+    #[test]
+    fn extract_returns_none_for_non_threshold_variants() {
+        assert_eq!(extract_deficit_threshold(&RegulationData::NoData), None);
+        assert_eq!(
+            extract_deficit_threshold(&RegulationData::CuratorBudgetOverride {
+                agent: "curator".into(),
+                new_budget: 1000,
+            }),
+            None
+        );
     }
 }
 

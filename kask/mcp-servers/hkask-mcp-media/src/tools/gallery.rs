@@ -1148,19 +1148,24 @@ impl MediaServer {
                 .await
                 .map_err(|e| classify_inference_error("Reproduce failed", e))?;
             // Connect the reproduced asset to the inline widget (mirrors
-            // generate_image/generate_video). image_to_video yields a video;
-            // every other recorded op yields an image. The OMC tag reflects
+            // generate_image/generate_video). The kind comes from the
+            // recorded op — image_to_video yields a video, generate_speech
+            // an audio asset, every other op an image. The OMC tag reflects
             // the reproduced op (a reproduce of `upscale` is a `Version`).
-            let kind = if lineage.op == "image_to_video" { "video" } else { "image" };
+            // Persist the payload and compose the slim result (the raw
+            // provider response never enters the model's context).
+            let kind = media_op_kind(&lineage.op).unwrap_or("image");
             let args = serde_json::to_value(&media_params)
                 .unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "gallery_reproduce",
                 kind,
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }

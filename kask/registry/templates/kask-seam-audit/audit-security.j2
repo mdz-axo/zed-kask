@@ -40,7 +40,7 @@ an issue in an upstream non-D-seam file, report it with `deferred: true` and
 7. `input_mapping` taint propagation before `context.insert`.
 8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
 9. D28 artifact storage path safety — `THREADS_DB_PATH_OVERRIDE` / `GLOBAL_SKILLS_DIR_OVERRIDE` hooks canonicalize and reject paths resolving inside Zed's app/data/config dirs; `resolve_under_data_dir` enforces the single rooted tree. Verify no MCP server DB path escapes `{kask_data_dir}/mcp/{server_id}/`.
-10. D29 RunPod credential mirroring — `mirror_kask_credentials_to_providers` writes the key to the Zed keychain at `https://api.runpod.io` only if absent (doesn't clobber UI-entered keys); `resolve_ocr_model` uses `eq_ignore_ascii_case` to match `RunPod/...` against lowercase `runpod/...`. Verify the mirror is fail-closed on a missing `kask://credentials/runpod` source.
+10. Inference-provider credential consolidation (D29 successor) — one key, one location: a provider's API key lives at its `api_url` keychain slot (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`, `https://api.runpod.io`), the same slot zed's `ApiKeyState` reads; every consumer (`credential_urls_for_mcp` via `credential_url_for_key`, `resolve_embedding_credentials`, the IPC batch/rerank paths, the settings UI) resolves that one slot. Verify no consumer reads a `kask://credentials/{openrouter,deepinfra,runpod}` slot (the 2026-08-31 split-brain: a stale legacy copy fed MCP servers a dead key — DeepInfra 401). `resolve_ocr_model` uses `eq_ignore_ascii_case` to match `RunPod/...` against lowercase `runpod/...`.
 
 ## Convention prior heads-up
 {% for pv in prior_verdicts %}

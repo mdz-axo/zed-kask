@@ -47,8 +47,9 @@ but semantically wrong judgments that structural validation cannot catch.
 The default model is a dedicated reranker — `OpenRouter/qwen/qwen3-reranker-8b`,
 served via OpenRouter's native rerank endpoint — overridable via
 `HKASK_RERANK_MODEL` or the `kask.models.rerank_model` setting. The zed side
-of the bridge holds the OpenRouter key (keychain
-`kask://credentials/openrouter`) and calls the provider directly; the MCP
+of the bridge holds the OpenRouter key (keychain slot at the provider
+`api_url`, `https://openrouter.ai/api/v1` — the ONE location) and calls the
+provider directly; the MCP
 server never sees the credential (same pattern as `GenerateBatch`).
 
 **Why the native protocol.**

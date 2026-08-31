@@ -84,6 +84,10 @@ The `media` entry (`mcp_servers.rs:405-430`) is a complete example: id
 `"media"`, binary `hkask-mcp-media`, a two-key credentials allowlist
 (`OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`), and an eight-var config
 allowlist (inference socket, data dir, gallery DB, five model overrides).
+Allowlist entries are env var names; each resolves to its keychain URL via
+`credential_urls_for_mcp` — for inference providers that is the provider's
+`api_url` slot (one key, one location), for data services
+`kask://credentials/<key>`.
 
 Because `builtin_mcp_server_ids()` and `builtin_mcp_server_pairs()`
 (`mcp_servers.rs:435-447`) derive from the registry, your new entry

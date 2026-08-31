@@ -89,72 +89,6 @@ pub fn image_block(src: &str) -> String {
     media_block("image", src)
 }
 
-/// Format a ```media block for a video asset.
-pub fn video_block(src: &str) -> String {
-    media_block("video", src)
-}
-
-/// Format a ```media block for an audio asset.
-pub fn audio_block(src: &str) -> String {
-    media_block("audio", src)
-}
-
-/// Format a ```media block for an SVG asset.
-pub fn svg_block(src: &str) -> String {
-    media_block("svg", src)
-}
-
-/// Extract the first URL from a `media_generate` result's `output_urls`
-/// array and format it as an image display hint.
-pub fn image_hint_from_result(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("output_urls")
-        .and_then(|urls| urls.as_array())
-        .and_then(|urls| urls.first())
-        .and_then(|url| url.as_str())
-        .map(image_block)
-}
-
-/// Extract the first URL from a `media_generate` result's `output_urls`
-/// array and format it as a video display hint.
-pub fn video_hint_from_result(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("output_urls")
-        .and_then(|urls| urls.as_array())
-        .and_then(|urls| urls.first())
-        .and_then(|url| url.as_str())
-        .map(video_block)
-}
-
-/// Extract the first URL from a `media_generate` result's `output_urls`
-/// array and format it as an audio display hint. Falls back to the `"audio"`
-/// field used by speech generation (TTS providers return a single data URI).
-pub fn audio_hint_from_result(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("output_urls")
-        .and_then(|urls| urls.as_array())
-        .and_then(|urls| urls.first())
-        .and_then(|url| url.as_str())
-        .map(audio_block)
-        .or_else(|| {
-            result
-                .get("audio")
-                .and_then(|audio| audio.as_str())
-                .map(audio_block)
-        })
-}
-
-/// Attach a `display_hint` field to a media tool result if a hint is available.
-pub fn enrich_with_display_hint(
-    mut result: serde_json::Value,
-    hint: Option<String>,
-) -> serde_json::Value {
-    if let Some(hint) = hint {
-        result["display_hint"] = serde_json::Value::String(hint);
-    }
-    result
-}
-
 /// Build an OMC-tagged, provenance-carrying display hint for a tool output,
 /// then attach it to the result as `display_hint`.
 ///
@@ -184,35 +118,16 @@ pub fn enrich_with_omc_and_provenance(
     result
 }
 
-/// Extract the asset src (URL or path) from a tool result, dispatching on the
-/// media kind. Mirrors the extraction logic in `*_hint_from_result` /
-/// `*_hint_from_path` but unified so `enrich_with_omc_and_provenance` can
-/// resolve the src for any kind in one call.
+/// Extract the asset src (a persisted file path) from a tool result,
+/// dispatching on the media kind. Media tools compose their results via
+/// `persist_and_slim_result` (assets.rs), so the `output` field carries the
+/// persisted path for every kind; the audio arm additionally accepts the
+/// `audio_path` field produced by the record-and-transcribe tools.
 pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
     match kind {
         "audio" => result
-            .get("output_urls")
-            .and_then(|urls| urls.as_array())
-            .and_then(|urls| urls.first())
-            .and_then(|url| url.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                result
-                    .get("audio")
-                    .and_then(|audio| audio.as_str())
-                    .map(str::to_string)
-            })
-            .or_else(|| {
-                result
-                    .get("audio_path")
-                    .and_then(|path| path.as_str())
-                    .map(str::to_string)
-            }),
-        _ => result
-            .get("output_urls")
-            .and_then(|urls| urls.as_array())
-            .and_then(|urls| urls.first())
-            .and_then(|url| url.as_str())
+            .get("audio_path")
+            .and_then(|path| path.as_str())
             .map(str::to_string)
             .or_else(|| {
                 result
@@ -220,25 +135,11 @@ pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
                     .and_then(|output| output.as_str())
                     .map(str::to_string)
             }),
+        _ => result
+            .get("output")
+            .and_then(|output| output.as_str())
+            .map(str::to_string),
     }
-}
-
-/// Extract a file path from a JSON object's `"output"` field and format it
-/// as a display hint of the given `kind` ("image", "video", "audio").
-pub fn hint_from_output_path(result: &serde_json::Value, kind: &str) -> Option<String> {
-    result
-        .get("output")
-        .and_then(|output| output.as_str())
-        .map(|path| media_block(kind, path))
-}
-
-/// Extract a file path from a JSON object's `"audio_path"` field and format
-/// it as an audio display hint.
-pub fn audio_hint_from_path(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("audio_path")
-        .and_then(|path| path.as_str())
-        .map(audio_block)
 }
 
 #[cfg(test)]
@@ -252,109 +153,6 @@ mod tests {
             block,
             "```media\n{\"kind\":\"image\",\"src\":\"/path/to/img.png\"}\n```"
         );
-    }
-
-    #[test]
-    fn test_image_hint_from_result() {
-        let result = serde_json::json!({
-            "output_urls": ["https://example.com/img.png"]
-        });
-        let hint = image_hint_from_result(&result).unwrap();
-        assert!(hint.contains("\"kind\":\"image\""));
-        assert!(hint.contains("https://example.com/img.png"));
-    }
-
-    #[test]
-    fn test_image_hint_from_result_empty_urls() {
-        let result = serde_json::json!({"output_urls": []});
-        assert!(image_hint_from_result(&result).is_none());
-    }
-
-    #[test]
-    fn test_image_hint_from_result_no_urls_field() {
-        let result = serde_json::json!({"status": "ok"});
-        assert!(image_hint_from_result(&result).is_none());
-    }
-
-    #[test]
-    fn test_video_hint_from_result() {
-        let result = serde_json::json!({
-            "output_urls": ["https://example.com/clip.mp4"]
-        });
-        let hint = video_hint_from_result(&result).unwrap();
-        assert!(hint.contains("\"kind\":\"video\""));
-    }
-
-    #[test]
-    fn test_audio_hint_from_result_output_urls() {
-        let result = serde_json::json!({
-            "output_urls": ["https://example.com/audio.mp3"]
-        });
-        let hint = audio_hint_from_result(&result).unwrap();
-        assert!(hint.contains("\"kind\":\"audio\""));
-    }
-
-    #[test]
-    fn test_audio_hint_from_result_audio_field() {
-        // TTS providers return {"audio": "data:audio/mp3;base64,..."}
-        let result = serde_json::json!({
-            "audio": "data:audio/mp3;base64,SUQzBAAAAAA",
-            "format": "mp3"
-        });
-        let hint = audio_hint_from_result(&result).unwrap();
-        assert!(hint.contains("\"kind\":\"audio\""));
-        assert!(hint.contains("data:audio/mp3;base64,SUQzBAAAAAA"));
-    }
-
-    #[test]
-    fn test_audio_hint_from_result_no_match() {
-        let result = serde_json::json!({"status": "ok"});
-        assert!(audio_hint_from_result(&result).is_none());
-    }
-
-    #[test]
-    fn test_enrich_with_display_hint_some() {
-        let result = serde_json::json!({"output": "/tmp/clip.mp4"});
-        let hint = hint_from_output_path(&result, "video");
-        let enriched = enrich_with_display_hint(result, hint);
-        assert!(enriched.get("display_hint").is_some());
-        let hint_str = enriched["display_hint"].as_str().unwrap();
-        assert!(hint_str.contains("\"kind\":\"video\""));
-    }
-
-    #[test]
-    fn test_enrich_with_display_hint_none() {
-        let result = serde_json::json!({"status": "ok"});
-        let enriched = enrich_with_display_hint(result, None);
-        assert!(enriched.get("display_hint").is_none());
-    }
-
-    #[test]
-    fn test_hint_from_output_path() {
-        let result = serde_json::json!({"output": "/tmp/collage.png"});
-        let hint = hint_from_output_path(&result, "image").unwrap();
-        assert!(hint.contains("\"kind\":\"image\""));
-        assert!(hint.contains("/tmp/collage.png"));
-    }
-
-    #[test]
-    fn test_hint_from_output_path_missing() {
-        let result = serde_json::json!({"status": "done"});
-        assert!(hint_from_output_path(&result, "video").is_none());
-    }
-
-    #[test]
-    fn test_audio_hint_from_path() {
-        let result = serde_json::json!({"audio_path": "/tmp/recording.wav"});
-        let hint = audio_hint_from_path(&result).unwrap();
-        assert!(hint.contains("\"kind\":\"audio\""));
-        assert!(hint.contains("/tmp/recording.wav"));
-    }
-
-    #[test]
-    fn test_audio_hint_from_path_missing() {
-        let result = serde_json::json!({"text": "hello"});
-        assert!(audio_hint_from_path(&result).is_none());
     }
 
     #[test]
@@ -389,7 +187,9 @@ mod tests {
 
     #[test]
     fn test_enrich_with_omc_and_provenance_generate_image() {
-        let result = serde_json::json!({"output_urls": ["/tmp/img.png"]});
+        // The slim result shape every media tool returns after
+        // persist_and_slim_result: `output` carries the persisted path.
+        let result = serde_json::json!({"output": "/tmp/img.png"});
         let enriched = enrich_with_omc_and_provenance(
             result,
             "generate_image",
@@ -405,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_enrich_with_omc_and_provenance_transform_maps_to_version() {
-        let result = serde_json::json!({"output_urls": ["/tmp/out.png"]});
+        let result = serde_json::json!({"output": "/tmp/out.png"});
         let enriched = enrich_with_omc_and_provenance(
             result,
             "transform_image",
@@ -463,12 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_src_image_from_output_urls() {
-        let result = serde_json::json!({"output_urls": ["/tmp/a.png"]});
-        assert_eq!(extract_src(&result, "image"), Some("/tmp/a.png".into()));
-    }
-
-    #[test]
     fn test_extract_src_image_from_output_field() {
         let result = serde_json::json!({"output": "/tmp/b.png"});
         assert_eq!(extract_src(&result, "image"), Some("/tmp/b.png".into()));
@@ -480,12 +274,16 @@ mod tests {
         assert_eq!(extract_src(&result, "audio"), Some("/tmp/c.wav".into()));
     }
 
+    // The audio arm must also read `output` — generate_speech composes its
+    // slim result through persist_and_slim_result, whose path field is
+    // `output` (same as every other kind). Without this fallback the speech
+    // display hint never attached.
     #[test]
-    fn test_extract_src_audio_from_audio_data_uri() {
-        let result = serde_json::json!({"audio": "data:audio/mp3;base64,abc"});
+    fn test_extract_src_audio_falls_back_to_output_field() {
+        let result = serde_json::json!({"output": "/tmp/speech.mp3"});
         assert_eq!(
             extract_src(&result, "audio"),
-            Some("data:audio/mp3;base64,abc".into())
+            Some("/tmp/speech.mp3".into())
         );
     }
 }

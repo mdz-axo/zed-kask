@@ -41,34 +41,19 @@ impl MediaServer {
                 .media_generate("generate_image", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Image generation failed", e))?;
-            // Persist the generated image to
-            // {artifacts_dir}/media-mcp/generated/ and add it to the
-            // gallery index.
-            match persist_generated_asset(self, &result, "image").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated image persisted to data directory"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
-            // Attach an OMC-tagged, provenance-carrying display hint so the
-            // media widget can dispatch the OMC-driven "Explain" affordance and
-            // compose-back the "I disagree" gesture.
+            // Persist the payload and compose the slim result (path +
+            // metadata + display hint — the base64 payload never enters
+            // the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "generate_image",
                 "image",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }
@@ -115,28 +100,18 @@ impl MediaServer {
                 .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Image transform failed", e))?;
-            match persist_generated_asset(self, &result, "image").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Transformed image persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
+            // Persist the payload and compose the slim result (the provider's
+            // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "transform_image",
                 "image",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }
@@ -158,28 +133,18 @@ impl MediaServer {
                 .media_generate("upscale", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Upscale failed", e))?;
-            match persist_generated_asset(self, &result, "image").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Upscaled image persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
+            // Persist the payload and compose the slim result (the provider's
+            // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "upscale_image",
                 "image",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }
@@ -219,28 +184,18 @@ impl MediaServer {
                 .media_generate("generate_video", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Video generation failed", e))?;
-            match persist_generated_asset(self, &result, "video").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated video persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
+            // Persist the payload and compose the slim result (the video
+            // payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "generate_video",
                 "video",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }
@@ -380,27 +335,19 @@ impl MediaServer {
                     if variants.len() >= count as usize {
                         break;
                     }
-                    match persist_generated_asset(self, &single_result, "image").await {
-                        Ok(path) => {
-                            tracing::info!(
-                                target: "hkask.mcp.media",
-                                path = %path.display(),
-                                "Variant persisted to data directory"
-                            );
-                        }
-                        Err(error) => tracing::warn!(
-                            target: "hkask.mcp.media",
-                            %error,
-                            "Failed to persist variant (tool result still carries the provider URL)"
-                        ),
-                    }
-                    variants.push(crate::media_block::enrich_with_omc_and_provenance(
-                        single_result,
-                        "generate_variants",
-                        "image",
-                        serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null),
-                        None,
-                    ));
+                    // Persist each variant and compose its slim result (the
+                    // base64 payload never enters the model's context).
+                    variants.push(
+                        persist_slim_and_enrich(
+                            &self.gallery_state,
+                            &self.gallery_store,
+                            &single_result,
+                            "generate_variants",
+                            "image",
+                            serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null),
+                        )
+                        .await?,
+                    );
                 }
             }
             // Top-level display_hints (one fenced media block per variant)
@@ -469,28 +416,18 @@ impl MediaServer {
                 .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Region edit failed", e))?;
-            match persist_generated_asset(self, &result, "image").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Region-edited image persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist region-edited image"
-                ),
-            }
+            // Persist the payload and compose the slim result (the provider's
+            // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "image_edit_region",
                 "image",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }

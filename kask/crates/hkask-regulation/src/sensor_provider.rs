@@ -940,4 +940,69 @@ mod tests {
             "max_concurrency=0 means no data — return None, not a signal masking a broken sensor"
         );
     }
+
+    // ── ToolReliabilitySensor: pins the boundary semantics behind the
+    // live-observed "tool_reliability_degraded — value 0 exceeds threshold 0"
+    // escalation ──────────────────────────────────────────────────────────
+    //
+    // Three properties must hold for the alert to be trustworthy:
+    // 1. A zero set-point disables the sensor (no alert can carry threshold 0
+    //    from a configured floor) — and `SetPoints::validate` now rejects 0.0
+    //    outright, so this is defense in depth.
+    // 2. No tracked domains = no data, not 0% success — the alert can only
+    //    fire after real tool calls, so the live alert was a TRUE positive
+    //    (0% success in a real domain), not a startup false positive.
+    // 3. When it does fire at 0% success against the 0.80 floor, the
+    //    extracted (value, threshold) pair preserves the floor's magnitude —
+    //    (0, 80) percent, never the truncated (0, 0).
+
+    /// Property 1: a 0.0 set-point stays silent even with failing domains.
+    #[tokio::test]
+    async fn tool_reliability_sensor_returns_none_when_set_point_zero() {
+        let ledger = RegulationLedger::default();
+        ledger.record_outcome("media", false, None).await;
+        let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.0);
+        assert!(
+            sensor.sense().await.is_none(),
+            "set_point=0.0 makes every aggregate >= set_point — silent, not a (0, 0) alert"
+        );
+    }
+
+    /// Property 2: no tracked outcomes is the legitimate no-data state.
+    #[tokio::test]
+    async fn tool_reliability_sensor_returns_none_with_no_tracked_domains() {
+        let sensor = ToolReliabilitySensor::new(
+            Arc::new(tokio::sync::RwLock::new(RegulationLedger::default())),
+            0.80,
+        );
+        assert!(
+            sensor.sense().await.is_none(),
+            "no tracked domains = no data — None, not a 0%-success signal"
+        );
+    }
+
+    /// Property 3: end-to-end — 0% success vs the 0.80 floor fires, and the
+    /// extracted pair preserves the threshold's magnitude.
+    #[tokio::test]
+    async fn tool_reliability_alert_pair_preserves_threshold_magnitude() {
+        let ledger = RegulationLedger::default();
+        ledger.record_outcome("media", false, None).await;
+        let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.80);
+        let signal = sensor
+            .sense()
+            .await
+            .expect("0% aggregate success must emit a signal");
+        assert_eq!(signal.value, 0.0);
+        assert_eq!(signal.set_point, 0.80);
+        let data = crate::loops::RegulationData::ToolReliabilityDegraded {
+            reliability: signal.value,
+            threshold: signal.set_point,
+        };
+        assert_eq!(
+            crate::regulation_policy::extract_deficit_threshold(&data),
+            Some((0, 80)),
+            "0% reliability vs the 0.80 floor must extract as (0, 80) percent — \
+             the truncated (0, 0) is the live-observed false-positive appearance"
+        );
+    }
 }

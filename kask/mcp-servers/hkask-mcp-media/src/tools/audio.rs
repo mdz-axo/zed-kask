@@ -54,7 +54,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate speech audio from text using a voice design. Returns audio as base64 data URI."
+        description = "Generate speech audio from text using a voice design. Returns the persisted audio file path."
     )]
     pub async fn generate_speech(
         &self,
@@ -84,27 +84,17 @@ impl MediaServer {
                 .media_generate("generate_speech", &media_params)
                 .await
                 .map_err(|e| classify_inference_error("Speech generation failed", e))?;
-            match persist_generated_asset(self, &result, "audio").await {
-                Ok(path) => {
-                    tracing::info!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        "Generated audio persisted"
-                    );
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    %error,
-                    "Failed to persist generated asset (tool result still carries the provider URL)"
-                ),
-            }
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            // Persist the audio payload and compose the slim result (the
+            // base64 data URI never enters the model's context).
+            persist_slim_and_enrich(
+                &self.gallery_state,
+                &self.gallery_store,
+                &result,
                 "generate_speech",
                 "audio",
                 args,
-                None,
-            ))
+            )
+            .await
         })
         .await
     }

@@ -78,7 +78,7 @@ arm — see the test `build_regulation_action_produces_action_for_all_new_reason
 Add the set-point to `SetPoints` (`set_points.rs:184`), its `Default`
 (`set_points.rs:346`), the `SetPointsConfig` mirror (`set_points.rs:296`),
 the `from_config` mapping (`set_points.rs:387`), and a `validate()` check
-(`set_points.rs:480`) if the value has range constraints. Add a
+(`set_points.rs:482`) if the value has range constraints. Add a
 `DEFAULT_*` constant near the top of the file (`set_points.rs:13` onward)
 so the default is declared once.
 

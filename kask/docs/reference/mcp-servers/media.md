@@ -104,6 +104,22 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides via `
 
 Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the group's source file. Descriptions are condensed from each tool's `#[tool(description = ...)]` doc comment.
 
+**Tool-result contract (slim results).** Every tool whose `media_generate`
+call produces an asset — image, video, and speech generation, transforms,
+upscales, background removal, variants, region edits, `image_to_video`,
+`video_meme`, `gallery_reproduce`, and the `job_submit` background path —
+composes its result through `assets::persist_and_slim_result`
+(`src/assets.rs`): the provider payload (base64 / data URI / URL) is decoded
+or downloaded exactly once, written under
+`{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, gallery-indexed, and the
+tool result carries the persisted path (`output`, plus `outputs` for
+multi-image responses where every `data[]` entry is persisted) and the
+provider's non-payload metadata — never the payload itself. Returning the
+raw provider response overflowed the model's context (the 2026-08-31
+context bomb: two ~65K-token base64 results breached the 262144-token
+limit on the following turn). A persist failure surfaces as a tool error
+(`AssetPersistence` → `internal`); the raw payload is never the fallback.
+
 ### Gallery management (`tools/gallery.rs`, 27 tools)
 
 | Tool | Line | Description |
@@ -125,7 +141,7 @@ Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the gro
 | `gallery_record_generation` | 1026 | Record generation lineage for a gallery image (prompt, model, provider, seed, params) so it can be reproduced or varied later; image must already be indexed. |
 | `gallery_lineage` | 1079 | Show the recorded generation lineage for a gallery image; `lineage: null` if none recorded. |
 | `gallery_asset_detail` | 1108 | Complete details for a gallery asset — record, tags, lineage, face associations in one call; the inspector-panel data source. |
-| `gallery_reproduce` | 1148 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
+| `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
 | `gallery_delete_image` | 1205 | Delete an image from the gallery index; by default index-only, `delete_file=true` also removes the file. |
 | `gallery_add_video` | 1256 | Import a video file into the gallery index; SHA-256 hash for deduplication. |
 | `gallery_add_audio` | 1315 | Import an audio file into the gallery index; SHA-256 hash for deduplication. |
@@ -141,18 +157,18 @@ Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the gro
 | Tool | Line | Description |
 |------|------|-------------|
 | `image_remove_background` | 11 | Remove background from a gallery image; delegates to the configured background-removal provider. |
-| `image_apply_style` | 66 | Apply style transfer to a gallery image; delegates to fal.ai Flux dev img2img. |
+| `image_apply_style` | 53 | Apply style transfer to a gallery image; delegates to fal.ai Flux dev img2img. |
 | `image_create_collage` | 116 | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. |
 | `video_clip` | 321 | Trim a video to start/end times using local ffmpeg. |
 | `video_to_gif` | 382 | Convert a video segment to GIF using local ffmpeg. |
-| `image_to_video` | 457 | Animate a gallery image into a short video clip; delegates to fal.ai Seedance 2.0. |
+| `image_to_video` | 435 | Animate a gallery image into a short video clip; delegates to fal.ai Seedance 2.0. |
 | `video_add_caption` | 507 | Add a text caption overlay to a video using local ffmpeg. |
 | `video_remix` | 566 | Generate a video remix: clip, add caption, convert to GIF. |
 | `video_from_images` | 651 | Create a video or GIF from a sequence of gallery images using ffmpeg. |
 | `video_concat` | 715 | Concatenate multiple video clips into one using ffmpeg. |
 | `video_caption` | 763 | Describe video content by extracting keyframes and analyzing them with a vision LLM. |
 | `video_extract_frames` | 833 | Extract keyframes from a video as searchable gallery assets, each with its own lineage. |
-| `video_meme` | 913 | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
+| `video_meme` | 867 | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | 1009 | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
 | `video_fetch` | 1036 | Download a video from a URL (YouTube, Vimeo, direct file) to local storage, index it in the gallery, return a media block; requires yt-dlp for platform URLs. |
 
@@ -161,19 +177,19 @@ Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the gro
 | Tool | Line | Description |
 |------|------|-------------|
 | `generate_image` | 9 | Generate an image from a text prompt. |
-| `transform_image` | 78 | Transform an existing image with a text prompt describing the change. |
-| `upscale_image` | 144 | Upscale an image to higher resolution. |
-| `generate_video` | 194 | Generate a short video from a text prompt describing the scene in motion. |
-| `expand_prompt` | 255 | Expand a short media prompt into a rich, detailed prompt using a vision LLM (Fooocus "V2" pattern); optional style preset (default, anime, realistic, cinematic, minimal). |
-| `generate_variants` | 320 | Generate multiple image variants from a single prompt (default 4), each persisted individually; returns an array of media blocks for grid display. |
-| `image_edit_region` | 446 | Region-selective edit (inpainting): mask (base64, white = edit, black = preserve) + prompt describing the edit. |
+| `transform_image` | 69 | Transform an existing image with a text prompt describing the change. |
+| `upscale_image` | 127 | Upscale an image to higher resolution. |
+| `generate_video` | 164 | Generate a short video from a text prompt describing the scene in motion. |
+| `expand_prompt` | 217 | Expand a short media prompt into a rich, detailed prompt using a vision LLM (Fooocus "V2" pattern); optional style preset (default, anime, realistic, cinematic, minimal). |
+| `generate_variants` | 282 | Generate multiple image variants from a single prompt (default 4), each persisted individually; returns an array of media blocks for grid display. |
+| `image_edit_region` | 399 | Region-selective edit (inpainting): mask (base64, white = edit, black = preserve) + prompt describing the edit. |
 
 ### Audio and voice (`tools/audio.rs`, 8 tools)
 
 | Tool | Line | Description |
 |------|------|-------------|
 | `voice_design` | 11 | Design a synthetic voice profile from a character description; returns a `VoiceDesign` JSON for `generate_speech`. |
-| `generate_speech` | 64 | Generate speech audio from text using a voice design; returns audio as base64 data URI. |
+| `generate_speech` | 59 | Generate speech audio from text using a voice design; returns the persisted audio file path. |
 | `transcribe` | 127 | Transcribe speech audio to text for REPL injection. |
 | `transcribe_bundle` | 158 | Transcribe audio into a synchronized `TranscriptBundle` with word-level timings for interactive highlighting and click-to-seek. |
 | `audio_capture` | 250 | Capture audio from the default system microphone to a WAV file optimized for Whisper transcription (16 kHz mono). |
@@ -192,10 +208,10 @@ Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the gro
 
 | Tool | Line | Description |
 |------|------|-------------|
-| `job_submit` | 61 | Submit an async media generation job; returns a job ID immediately, poll `job_status` for completion. |
-| `job_list` | 177 | List generation jobs with status; optional filter (queued, running, completed, failed, cancelled). |
-| `job_status` | 206 | Status of a specific generation job by ID. |
-| `job_cancel` | 236 | Cancel a running or queued generation job by ID. |
+| `job_submit` | 67 | Submit an async media generation job; returns a job ID immediately, poll `job_status` for completion. Accepts only asset-producing ops (generate_image, image_to_image, upscale, remove_background, generate_video, image_to_video, generate_speech). |
+| `job_list` | 220 | List generation jobs with status; optional filter (queued, running, completed, failed, cancelled). |
+| `job_status` | 249 | Status of a specific generation job by ID. |
+| `job_cancel` | 274 | Cancel a running or queued generation job by ID. |
 
 ### Workflows (`tools/workflows.rs`, 4 tools)
 
@@ -208,7 +224,7 @@ Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the gro
 
 ### Support modules (no registered tools)
 
-Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`src/hkask_mcp_media.rs:44-48`): `assets.rs` (`persist_generated_asset`), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore`), `omc.rs` (OMC mapping).
+Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`src/hkask_mcp_media.rs:44-48`): `assets.rs` (`persist_and_slim_result` — the slim-result composition site — over `persist_generated_asset`), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore`), `omc.rs` (OMC mapping).
 
 ## Error classification
 

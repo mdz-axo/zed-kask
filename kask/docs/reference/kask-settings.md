@@ -38,7 +38,6 @@ storage-root fields:
 | `swarm` | `KaskSwarmSettings` | `Default` |
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
-| `inference_providers` | `KaskInferenceProvidersSettings` | derived `Default` (all false) |
 
 ## MCP Servers (`KaskMcpSettings`)
 
@@ -59,8 +58,12 @@ take precedence. Set `load_default: false` to disable all kask MCP servers.
 ## Data Services
 
 API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP,
-EODHD, RunPod, Nebius, HuggingFace, FRED, etc.) are stored in the system
-keychain under `kask://credentials/<key>`. There are no settings.json
+EODHD, Nebius, HuggingFace, FRED, etc.) are stored in the system
+keychain under `kask://credentials/<key>`. Inference-provider keys
+(OpenRouter, DeepInfra, RunPod) are the exception — each lives at its
+provider's `api_url` keychain slot (one key, one location), the same slot
+zed's `ApiKeyState` reads; see [Inference Providers](#inference-providers).
+There are no settings.json
 toggles — a service is enabled when its key is present in the keychain.
 When MCP servers start, the composition root reads keys from the keychain
 and injects them as environment variables into the MCP server child process.
@@ -74,7 +77,7 @@ and injects them as environment variables into the MCP server child process.
 | `kask://credentials/firecrawl` | `HKASK_FIRECRAWL_API_KEY` |
 | `kask://credentials/fmp` | `HKASK_FMP_API_KEY` |
 | `kask://credentials/eodhd` | `HKASK_EODHD_API_KEY` |
-| `kask://credentials/runpod` | `RUNPOD_API_KEY` |
+| `https://api.runpod.io` (provider slot) | `RUNPOD_API_KEY` |
 | `kask://credentials/nebius_project_id` | `NEBIUS_PROJECT_ID` |
 | `kask://credentials/hf_token` | `HF_TOKEN` |
 | `kask://credentials/fred` | `HKASK_FRED_API_KEY` |
@@ -83,22 +86,27 @@ and injects them as environment variables into the MCP server child process.
 The key is written to the keychain immediately and the MCP server restarts
 with the new key.
 
-## Inference Providers (`KaskInferenceProvidersSettings`)
+## Inference Providers
 
-API key toggles for OpenAI-compatible inference providers. When a provider is
-enabled:[^openai-compatible-settings]
+Inference providers (OpenRouter, DeepInfra, RunPod, Ollama) are NOT
+configured through the kask settings section — there is no
+`KaskInferenceProvidersSettings` struct. Providers are registered via zed's
+native **Settings → AI → LLM Providers**, and each provider's API key
+lives at exactly ONE keychain location: the provider's `api_url`
+(`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`,
+`https://api.runpod.io`) — the same slot zed's `ApiKeyState` reads.
+Every consumer — `ApiKeyState`, MCP server env injection
+(`credential_urls_for_mcp` via `credential_url_for_key`), the embedding
+port (`resolve_embedding_credentials`), and the IPC batch/rerank paths —
+resolves that one slot. The former `kask://credentials/<key>` duplicates
+are dead data nothing reads: they were the 2026-08-31 split-brain in which
+a stale copy fed MCP servers a dead key while the user's fresh key sat
+unread at `api_url` (the DeepInfra 401).
 
-1. An `openai_compatible.<provider_id>` entry is written to settings.json with
-   the provider's API URL and an empty `available_models` list.
-2. The provider appears in **Settings → AI → LLM Providers** and in the agent
-   model picker.
-3. The API key is stored in the keychain under the provider's `api_url` (so
-   zed's OpenAI-compatible provider finds it) and mirrored to
-   `kask://credentials/<key>` (for MCP server env injection).
-
-| Field | Default | Env var auto-enable check |
-|-------|---------|---------------------------|
-| `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
+The Data Services RunPod row writes the same `https://api.runpod.io` slot
+and additionally drives the key into the RunPod endpoint provider live
+(via its `set_api_key` path), so `RunPod/*` models refresh without a
+restart.
 
 fal.ai is not an inference provider here — it is not OpenAI-compatible
 (`/v1/chat/completions` returns 404; `/v1/models` uses `Authorization: Key`).
@@ -106,13 +114,7 @@ Its `FALAI_API_KEY` is managed as a data-service credential (see Data
 Services) and consumed by the media and corpus MCP servers. Cline was removed
 from the kask provider set.
 
-`Default` returns all-false (pure, no side effects). The env-var-based
-auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>` and
-`KaskInferenceProvidersSettings::from_env()` (settings.rs:175-184), which
-auto-enable a provider when its API key env var is set and the user hasn't
-explicitly toggled it.
-
-**To add models**: After enabling a provider, go to Settings → AI → LLM
+**To add models**: go to Settings → AI → LLM
 Providers, find the provider, and add models via its configuration sub-page.
 
 ## Curator (`KaskCuratorSettings`)
@@ -544,9 +546,6 @@ are configurable via the `HKASK_REG_CONFIG` YAML file, not env vars. See
 
 [^owasp-secrets-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
     Cited for the secrets-in-keychain-not-in-config principle the data services settings follow.
-
-[^openai-compatible-settings]: OpenAI. (2024). *OpenAI API Reference — Models*. OpenAI. https://platform.openai.com/docs/api-reference/models
-    Cited for the OpenAI-compatible provider model that the inference provider toggles configure.
 
 [^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
     Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill process with; provider-side safety and refusal fallbacks remain the active defense.

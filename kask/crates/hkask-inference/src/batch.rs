@@ -22,9 +22,10 @@
 //!
 //! ## Credentials
 //!
-//! API keys are read from env vars (injected by `build_mcp_server_env`):
-//! - OpenRouter: `OPENROUTER_API_KEY`
-//! - DeepInfra: `DEEPINFRA_TOKEN` (or `DEEPINFRA_API_KEY` as fallback)
+//! `submit_batch` takes `api_key` as a caller-resolved parameter; this
+//! module never reads env vars or the keychain. The zed-side IPC server
+//! resolves the key from the keychain at the provider's `api_url` slot (one
+//! key, one location) and passes it here.
 //!
 //! ## Endpoints
 //!

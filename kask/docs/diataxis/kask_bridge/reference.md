@@ -530,9 +530,10 @@ identity types (`provision_agent`, `provision_swarm_memory_passphrase`,
 (`LanguageModelInferencePort`, `NoModelInferencePort`,
 `BridgeEditPredictionPort`, `LanguageModelEmbeddingPort`), the IPC server
 (`InferenceIpcServer`, `WorktreeSpawner`, `set_worktree_spawner`),
-inference provider descriptors (`INFERENCE_PROVIDERS`, `DATA_SERVICES`,
-`credential_urls_for_mcp`, `mirror_credential_to_provider`,
-`mirror_kask_credentials_to_providers`, `resolve_embedding_credentials`),
+inference provider descriptors (`INFERENCE_PROVIDERS`,
+`InferenceProviderDescriptor`, `DATA_SERVICES`, `DataServiceDescriptor`,
+`credential_url_for_key`, `credential_urls_for_mcp`,
+`resolve_embedding_credentials`),
 the inference socket accessors, the MCP server registry and helpers
 (`BUILT_IN_MCP_SERVERS`, `BuiltinMcpServer`, `build_mcp_server_env`,
 `builtin_mcp_server_ids`, `builtin_mcp_server_pairs`,

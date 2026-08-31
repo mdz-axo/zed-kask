@@ -72,6 +72,18 @@ impl MediaServer {
             if op.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("op must not be empty"));
             }
+            // Only asset-producing generation ops are accepted: the job's
+            // result is persisted through `persist_and_slim_result`, and a
+            // non-generation op has no asset to persist (the raw provider
+            // response is never stored — base64 payloads overflow the
+            // model's context).
+            let Some(kind) = media_op_kind(&op) else {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unsupported generation op '{op}' — job_submit accepts \
+                     generate_image, image_to_image, upscale, remove_background, \
+                     generate_video, image_to_video, generate_speech"
+                )));
+            };
             // Parse the params JSON into MediaGenerateParams.
             let media_params: hkask_types::MediaGenerateParams = serde_json::from_str(&params)
                 .map_err(|e| {
@@ -106,8 +118,11 @@ impl MediaServer {
             // Spawn the background generation task.
             let vision_port = self.vision_port.clone();
             let job_store = self.job_store.clone();
+            let gallery_state = self.gallery_state.clone();
+            let gallery_store = self.gallery_store.clone();
             let job_id_for_task = job_id.clone();
             let op_for_task = op.clone();
+            let kind_for_task = kind;
 
             tokio::spawn(async move {
                 // Update status to "running".
@@ -138,35 +153,47 @@ impl MediaServer {
                     .media_generate(&op_for_task, &media_params)
                     .await;
 
-                // Update the job record with the result.
+                // Persist the payload and compose the slim result BEFORE
+                // taking the job-store lock — the std Mutex guard is !Send
+                // and cannot be held across the await. The slim result means
+                // the raw provider response (base64 payloads) never enters
+                // the job record the model reads back.
+                let persisted = match result {
+                    Ok(value) => persist_and_slim_result(
+                        &gallery_state,
+                        &gallery_store,
+                        &value,
+                        kind_for_task,
+                    )
+                    .await
+                    .map_err(|error| format!("asset not persisted: {error}")),
+                    Err(e) => Err(e.to_string()),
+                };
+
+                // Update the job record with the outcome.
                 {
                     let Ok(mut store) = job_store.lock() else {
                         tracing::warn!(
                             target: "hkask.mcp.media.jobs",
                             job_id = %job_id_for_task,
-                            "Job store lock poisoned — completed job result could not be recorded"
+                            "Job store lock poisoned — completed job outcome could not be recorded"
                         );
                         return;
                     };
                     if let Some(job) = store.get_mut(&job_id_for_task) {
                         let now = hkask_types::time::now_rfc3339();
                         job.completed_at = Some(now);
-                        match result {
-                            Ok(value) => {
-                                // Check if the job was cancelled while running.
-                                if job.status == "cancelled" {
-                                    // Keep cancelled status.
-                                } else {
+                        // A job cancelled while running keeps its cancelled
+                        // status — the outcome is discarded, not recorded.
+                        if job.status != "cancelled" {
+                            match persisted {
+                                Ok(slim) => {
                                     job.status = "completed".to_string();
-                                    job.result = Some(value);
+                                    job.result = Some(slim);
                                 }
-                            }
-                            Err(e) => {
-                                if job.status == "cancelled" {
-                                    // Keep cancelled status.
-                                } else {
+                                Err(error) => {
                                     job.status = "failed".to_string();
-                                    job.error = Some(e.to_string());
+                                    job.error = Some(error);
                                 }
                             }
                         }

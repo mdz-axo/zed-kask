@@ -526,7 +526,52 @@ impl SetPoints {
         if self.dampen_window_secs == 0 {
             return Err(anyhow::anyhow!("dampen_window_secs must be > 0"));
         }
+        // A 0.0 reliability floor silently disables the check: the sensor
+        // emits nothing when the set-point is 0 (every aggregate is >= 0), so
+        // an operator cannot distinguish "all tools healthy" from "check
+        // disabled". A floor above 1.0 is unsatisfiable — every aggregate
+        // (<= 1.0) would deviate every tick. Reject both so load_set_points
+        // falls back to the 0.80 default instead of running a blind sensor.
+        if !(0.0 < self.tool_reliability_threshold && self.tool_reliability_threshold <= 1.0) {
+            return Err(anyhow::anyhow!(
+                "tool_reliability_threshold must be in (0.0, 1.0], got {}",
+                self.tool_reliability_threshold
+            ));
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the non-zero floor for tool_reliability_threshold: 0.0
+    /// configures a silently-vacuous sensor (no outcome can ever breach a
+    /// 0.0 floor), and > 1.0 configures an always-firing one. Both must be
+    /// rejected so `load_set_points` falls back to the 0.80 default.
+    #[test]
+    fn validate_bounds_tool_reliability_threshold() {
+        let mut points = SetPoints::default();
+        assert!(points.validate().is_ok(), "defaults must validate");
+
+        points.tool_reliability_threshold = 0.0;
+        assert!(
+            points.validate().is_err(),
+            "0.0 silently disables the reliability check — must be rejected"
+        );
+
+        points.tool_reliability_threshold = 1.0;
+        assert!(
+            points.validate().is_ok(),
+            "1.0 (perfect-reliability floor) is a valid, if strict, setting"
+        );
+
+        points.tool_reliability_threshold = 1.5;
+        assert!(
+            points.validate().is_err(),
+            "> 1.0 is unsatisfiable — every aggregate would deviate every tick"
+        );
     }
 }
 
